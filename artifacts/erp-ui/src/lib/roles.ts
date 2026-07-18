@@ -42,6 +42,8 @@ export const CAN_APPROVE: AppRole[] = ['superadmin', 'tenant_admin'];
 export const CAN_RECALL: AppRole[]  = ['superadmin', 'tenant_admin'];
 /** Roles that may export transaction data (CSV / PDF). */
 export const CAN_EXPORT: AppRole[]  = ['superadmin', 'tenant_admin', 'finance'];
+/** Roles that may receive / record payment on a completed transaction. */
+export const CAN_RECEIVE_PAYMENT: AppRole[] = ['superadmin', 'tenant_admin', 'finance', 'operator'];
 
 // ── Static navigation tree ────────────────────────────────────────────────────
 

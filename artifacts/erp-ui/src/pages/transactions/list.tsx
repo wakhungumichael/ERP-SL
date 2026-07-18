@@ -8,9 +8,10 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import {
   Plus, Search, Scale, ChevronLeft, ChevronRight,
   ChevronsLeft, ChevronsRight, Printer, SlidersHorizontal, CalendarRange, X,
-  GripVertical, Download, CheckCircle2, RotateCcw,
+  GripVertical, Download, CheckCircle2, RotateCcw, DollarSign,
 } from 'lucide-react';
-import { CAN_APPROVE, CAN_RECALL, CAN_EXPORT } from '@/lib/roles';
+import { CAN_APPROVE, CAN_RECALL, CAN_EXPORT, CAN_RECEIVE_PAYMENT } from '@/lib/roles';
+import { Label } from '@/components/ui/label';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger,
 } from '@/components/ui/dialog';
@@ -387,6 +388,112 @@ function Pagination({
   );
 }
 
+// ── Quick Pay Popover ─────────────────────────────────────────────────────────
+
+const PAYMENT_METHODS = ['Cash', 'Mpesa', 'Bank Deposit', 'Debt'];
+
+function QuickPayPopover({
+  tx, token, onPaid,
+}: {
+  tx: any;
+  token: string | null;
+  onPaid: () => void;
+}) {
+  const [open, setOpen]         = useState(false);
+  const [method, setMethod]     = useState('Cash');
+  const [reference, setReference] = useState('');
+  const [loading, setLoading]   = useState(false);
+  const { toast }               = useToast();
+
+  const canPay = tx.status === 'Completed' && tx.payment_status !== 'Paid';
+  if (!canPay) return null;
+
+  const handleConfirm = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(
+        `/api/commercial-weighbridge/transactions/${tx.id}/receive-payment/`,
+        {
+          method: 'POST',
+          headers: { Authorization: `Token ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ method, reference }),
+        },
+      );
+      const body = await res.json();
+      if (!res.ok) throw new Error(body?.error ?? res.statusText);
+      toast({ title: 'Payment recorded', description: `TX-${String(tx.id).padStart(5, '0')} marked as Paid.` });
+      setOpen(false);
+      setReference('');
+      setMethod('Cash');
+      onPaid();
+    } catch (err: any) {
+      toast({ title: 'Payment failed', description: err?.message, variant: 'destructive' });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          title="Receive payment"
+          className="inline-flex items-center justify-center h-6 w-6 rounded hover:bg-emerald-50 text-emerald-600 hover:text-emerald-700 dark:hover:bg-emerald-900/20 transition-colors"
+        >
+          <DollarSign className="h-3.5 w-3.5" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-64 p-4" align="end" side="left">
+        <div className="text-xs font-bold uppercase tracking-widest text-muted-foreground mb-3">
+          Receive Payment — TX-{String(tx.id).padStart(5, '0')}
+        </div>
+        <div className="space-y-3">
+          <div className="space-y-1.5">
+            <Label className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Method</Label>
+            <Select value={method} onValueChange={setMethod}>
+              <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {PAYMENT_METHODS.map(m => <SelectItem key={m} value={m} className="text-xs">{m}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Reference</Label>
+            <Input
+              placeholder="e.g. MPE-12345"
+              value={reference}
+              onChange={e => setReference(e.target.value)}
+              className="h-8 text-xs font-mono"
+              onKeyDown={e => { if (e.key === 'Enter') handleConfirm(); }}
+            />
+          </div>
+          <div className="flex gap-2 pt-1">
+            <Button
+              variant="outline"
+              size="sm"
+              className="flex-1 text-xs h-8"
+              onClick={() => setOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              className="flex-1 text-xs h-8 bg-emerald-600 hover:bg-emerald-700 text-white gap-1"
+              disabled={loading}
+              onClick={handleConfirm}
+            >
+              {loading
+                ? <span className="h-3 w-3 rounded-full border-2 border-white border-t-transparent animate-spin" />
+                : <CheckCircle2 className="h-3 w-3" />}
+              {loading ? 'Saving…' : 'Confirm'}
+            </Button>
+          </div>
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function TransactionsList() {
@@ -684,7 +791,7 @@ export default function TransactionsList() {
                 ))}
                 {/* Action columns always visible */}
                 <TableHead className="w-8 text-center text-[10px] font-bold uppercase tracking-widest">Rcpt</TableHead>
-                {(CAN_APPROVE.includes(role) || CAN_RECALL.includes(role)) && (
+                {(CAN_APPROVE.includes(role) || CAN_RECALL.includes(role) || CAN_RECEIVE_PAYMENT.includes(role)) && (
                   <TableHead className="text-center text-[10px] font-bold uppercase tracking-widest whitespace-nowrap">Actions</TableHead>
                 )}
               </TableRow>
@@ -722,8 +829,8 @@ export default function TransactionsList() {
                         <Printer className="h-3.5 w-3.5" />
                       </button>
                     </TableCell>
-                    {/* Workflow actions */}
-                    {(CAN_APPROVE.includes(role) || CAN_RECALL.includes(role)) && (
+                    {/* Workflow + payment actions */}
+                    {(CAN_APPROVE.includes(role) || CAN_RECALL.includes(role) || CAN_RECEIVE_PAYMENT.includes(role)) && (
                       <TableCell className="text-center py-2">
                         <div className="flex items-center justify-center gap-1">
                           {CAN_APPROVE.includes(role) && !t.approval_status && t.status === 'Pending' && (
@@ -749,6 +856,13 @@ export default function TransactionsList() {
                                 ? <span className="h-3 w-3 rounded-full border-2 border-amber-500 border-t-transparent animate-spin inline-block" />
                                 : <RotateCcw className="h-3.5 w-3.5" />}
                             </button>
+                          )}
+                          {CAN_RECEIVE_PAYMENT.includes(role) && (
+                            <QuickPayPopover
+                              tx={t}
+                              token={token}
+                              onPaid={() => queryClient.invalidateQueries({ queryKey: ['transactions'] })}
+                            />
                           )}
                         </div>
                       </TableCell>
