@@ -10,10 +10,11 @@ from rest_framework.views import APIView
 logger = logging.getLogger(__name__)
 
 try:
-    from SL_Weighbridge.models import Invoice, InvoiceLine, Transaction, Customer
+    from SL_Weighbridge.models import Invoice, InvoiceLine, Transaction, Customer, InvoiceEmailLog
     HAS_PAYMENT_MODELS = True
 except ImportError:
     HAS_PAYMENT_MODELS = False
+    InvoiceEmailLog = None
 
 try:
     from SL_Weighbridge.models import PaymentMethod
@@ -82,6 +83,24 @@ def _serialize_invoice(inv, with_lines=False, with_transactions=False):
             ]
         except Exception:
             data["lines"] = []
+
+    # ── Email log (most recent attempt) ──────────────────────────────────
+    try:
+        if InvoiceEmailLog is not None:
+            log = InvoiceEmailLog.objects.filter(invoice=inv).order_by('-sent_at').first()
+            if log:
+                data["email_log"] = {
+                    "recipient":      log.recipient,
+                    "sent_at":        log.sent_at.isoformat(),
+                    "success":        log.success,
+                    "failure_reason": log.failure_reason or "",
+                }
+            else:
+                data["email_log"] = None
+        else:
+            data["email_log"] = None
+    except Exception:
+        data["email_log"] = None
 
     if with_transactions:
         try:
@@ -742,6 +761,8 @@ class DebtConsolidateView(APIView):
         # misconfigured SMTP setup must never break invoice creation.
         customer_email = getattr(customer, "email", None)
         if customer_email:
+            _email_success = False
+            _email_failure = None
             try:
                 from django.core.mail import EmailMultiAlternatives
                 from django.template.loader import render_to_string
@@ -781,16 +802,29 @@ class DebtConsolidateView(APIView):
                 )
                 msg.attach_alternative(html_body, "text/html")
                 msg.send(fail_silently=False)
+                _email_success = True
                 logger.info(
                     "Debt consolidation payment email sent to %s for invoice %s",
                     customer_email, inv.invoice_number or inv.id,
                 )
             except Exception as exc:
                 # Log the failure but never surface it as an API error
+                _email_failure = str(exc)
                 logger.warning(
                     "Failed to send debt consolidation email to %s for invoice %s: %s",
                     customer_email, inv.invoice_number or inv.id, exc,
                 )
+            # ── Persist email send result ──────────────────────────────────────
+            try:
+                if InvoiceEmailLog is not None:
+                    InvoiceEmailLog.objects.create(
+                        invoice=inv,
+                        recipient=customer_email,
+                        success=_email_success,
+                        failure_reason=_email_failure,
+                    )
+            except Exception as log_exc:
+                logger.warning("Could not write InvoiceEmailLog for invoice %s: %s", inv.id, log_exc)
 
         return Response({
             **_serialize_invoice(inv, with_lines=True, with_transactions=True),

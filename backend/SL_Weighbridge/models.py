@@ -563,6 +563,22 @@ class InvoiceLine(models.Model):
 
 
 
+class InvoiceEmailLog(models.Model):
+    """Records each attempt to send a payment-link email for an invoice."""
+    invoice         = models.ForeignKey(Invoice, on_delete=models.CASCADE, related_name='email_logs')
+    recipient       = models.EmailField(max_length=255)
+    sent_at         = models.DateTimeField(auto_now_add=True)
+    success         = models.BooleanField(default=False)
+    failure_reason  = models.TextField(blank=True, null=True)
+
+    class Meta:
+        ordering = ['-sent_at']
+
+    def __str__(self):
+        status = "OK" if self.success else "FAILED"
+        return f"Email to {self.recipient} [{status}] for Invoice {self.invoice_id}"
+
+
 class Report(models.Model):
     REPORT_TYPE_CHOICES = [
         ('transactions', 'Transaction Report'),

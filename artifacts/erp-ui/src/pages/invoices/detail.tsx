@@ -25,7 +25,7 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import {
   ArrowLeft, CheckCircle2, DollarSign, Send, FileText,
-  Building2, Hash, Calendar, AlertCircle, Printer, Tag,
+  Building2, Hash, Calendar, AlertCircle, Printer, Tag, Mail, MailX,
 } from 'lucide-react';
 
 /* ─────────────────────────────────────────── helpers ── */
@@ -415,6 +415,57 @@ export default function InvoiceDetail({ id }: { id: string }) {
                 ))}
               </TableBody>
             </Table>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Email delivery status */}
+      {inv.email_log !== undefined && (
+        <Card>
+          <CardHeader className="pb-2 bg-muted/20 border-b">
+            <CardTitle className="text-xs font-bold uppercase tracking-widest flex items-center gap-1.5">
+              <Mail className="h-3.5 w-3.5" /> Payment Email
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-4">
+            {inv.email_log === null ? (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <MailX className="h-4 w-4 text-muted-foreground" />
+                <span>No email sent — customer has no email address on record, or no email was attempted for this invoice.</span>
+              </div>
+            ) : inv.email_log.success ? (
+              <div className="flex flex-col gap-1">
+                <div className="flex items-center gap-2">
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                    <Mail className="h-3.5 w-3.5" /> Email sent
+                  </span>
+                  <span className="text-xs text-muted-foreground font-mono">
+                    {new Date(inv.email_log.sent_at).toLocaleString('en-KE')}
+                  </span>
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Delivered to <span className="font-mono font-medium">{inv.email_log.recipient}</span>
+                </p>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-1">
+                <div className="flex items-center gap-2">
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-red-100 text-red-800 border border-red-200">
+                    <MailX className="h-3.5 w-3.5" /> Email not sent
+                  </span>
+                  <span className="text-xs text-muted-foreground font-mono">
+                    {new Date(inv.email_log.sent_at).toLocaleString('en-KE')}
+                  </span>
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Attempted to <span className="font-mono font-medium">{inv.email_log.recipient}</span>
+                  {inv.email_log.failure_reason && (
+                    <span className="block mt-0.5 text-red-600">{inv.email_log.failure_reason}</span>
+                  )}
+                </p>
+                <p className="text-xs text-amber-700 mt-1 font-medium">↑ Follow up with the customer directly.</p>
+              </div>
+            )}
           </CardContent>
         </Card>
       )}
