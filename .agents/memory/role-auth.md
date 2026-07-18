@@ -16,14 +16,6 @@ description: How the ERP UI implements role-based access control using Django gr
 | finance | group name matches /finance|accountant|billing/ |
 | operator | group name matches /operator|ops/ (default for authenticated users) |
 
-## Test users (created 2026-07-16)
-| Username | Password | Role |
-|---|---|---|
-| admin | admin123 | superadmin (is_superuser=True) |
-| tenant_admin | admin123 | tenant_admin (group: tenant_admin) |
-| finance01 | fin123 | finance (group: finance) |
-| operator01 | op123 | operator (group: operator) |
-
 ## Nav sections visible per role
 - operator: Weighbridge (Dashboard, Transactions, Customers, Vehicles, Live Weight)
 - finance: Weighbridge (Dashboard, Transactions), Payments (Invoices)

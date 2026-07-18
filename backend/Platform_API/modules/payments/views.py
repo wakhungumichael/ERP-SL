@@ -57,6 +57,8 @@ def _serialize_invoice(inv, with_lines=False, with_transactions=False):
         "due_date":       str(inv.due_date)           if getattr(inv, "due_date",    None) else None,
         "created_at":     inv.issued_date.isoformat() if getattr(inv, "issued_date", None) else None,
         "notes":          getattr(inv, "notes", "") or "",
+        "source_module":  getattr(inv, "source_module", "manual") or "manual",
+        "source_id":      getattr(inv, "source_id", None),
     }
 
     if with_lines:
@@ -65,6 +67,9 @@ def _serialize_invoice(inv, with_lines=False, with_transactions=False):
             data["lines"] = [
                 {
                     "id":           line.id,
+                    "description":  getattr(line, "description", "") or (
+                        getattr(getattr(line, "vehicle_type", None), "name", "") or "Service"
+                    ),
                     "vehicle_type": getattr(getattr(line, "vehicle_type", None), "name", ""),
                     "quantity":     getattr(line, "quantity", 0),
                     "unit_price":   float(getattr(line, "unit_price", 0) or 0),
@@ -99,6 +104,60 @@ def _serialize_invoice(inv, with_lines=False, with_transactions=False):
     return data
 
 
+def create_draft_invoice_for_transaction(tx):
+    """
+    Create a draft invoice linked to a completed weighbridge transaction.
+    Skips if:
+    - payment models are not available
+    - the transaction already has an auto_invoice set
+    - the transaction charge is zero or negative (nothing to bill)
+    Returns the created Invoice or None.
+    """
+    try:
+        if not HAS_PAYMENT_MODELS:
+            return None
+        # Skip if already invoiced via auto_invoice
+        if getattr(tx, 'auto_invoice_id', None):
+            return None
+        # Skip zero-charge transactions — nothing to bill
+        if float(tx.charge or 0) <= 0:
+            return None
+
+        total = float(tx.charge or 0)
+        inv = Invoice.objects.create(
+            customer=tx.customer,
+            total_amount=total,
+            currency='KES',
+            status='draft',
+            source_module='weighbridge',
+            source_id=tx.id,
+            notes=f"Auto-generated for transaction TX-{tx.id:05d}",
+        )
+        inv.transactions.add(tx)
+
+        # Create a single InvoiceLine
+        vt = getattr(tx, 'vehicle_type', None)
+        desc = vt.name if vt else 'Weighbridge Charge'
+        InvoiceLine.objects.create(
+            invoice=inv,
+            vehicle_type=vt,
+            description=desc,
+            quantity=1,
+            unit_price=total,
+            total_amount=total,
+        )
+
+        # Link back
+        tx.auto_invoice = inv
+        tx.invoiced = True
+        tx.save(update_fields=["auto_invoice", "invoiced", "updated_at"])
+
+        return inv
+    except Exception:
+        return None
+
+
+
 # ── Views ─────────────────────────────────────────────────────────────────────
 
 class InvoiceListView(APIView):
@@ -120,6 +179,64 @@ class InvoiceListView(APIView):
             qs = qs.filter(customer_id=cust)
         data = [_serialize_invoice(inv) for inv in qs[:200]]
         return Response({"count": len(data), "next": None, "previous": None, "results": data})
+
+    def post(self, request):
+        """
+        Manual invoice creation — no transaction required.
+        Body: { customer_id, line_items: [{description, qty, unit_price}],
+                currency, due_date, notes, source_module }
+        """
+        if not HAS_PAYMENT_MODELS:
+            return Response({"error": "Payment models not available."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+        customer_id   = request.data.get("customer_id")
+        line_items    = request.data.get("line_items", [])
+        currency      = request.data.get("currency", "KES")
+        due_date      = request.data.get("due_date")
+        notes         = request.data.get("notes", "")
+        source_module = request.data.get("source_module", "manual")
+
+        if not customer_id:
+            return Response({"error": "customer_id is required."}, status=status.HTTP_400_BAD_REQUEST)
+        if not line_items:
+            return Response({"error": "line_items must not be empty."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            customer = Customer.objects.get(pk=customer_id)
+        except Customer.DoesNotExist:
+            return Response({"error": "Customer not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        # Calculate total
+        total = 0.0
+        for item in line_items:
+            qty = float(item.get("qty", item.get("quantity", 1)) or 1)
+            unit_price = float(item.get("unit_price", 0) or 0)
+            total += qty * unit_price
+
+        inv = Invoice.objects.create(
+            customer=customer,
+            total_amount=total,
+            currency=currency,
+            due_date=due_date or (timezone.now() + timedelta(days=30)).date(),
+            status='draft',
+            notes=notes,
+            source_module=source_module,
+        )
+
+        for item in line_items:
+            qty = float(item.get("qty", item.get("quantity", 1)) or 1)
+            unit_price = float(item.get("unit_price", 0) or 0)
+            line_total = qty * unit_price
+            InvoiceLine.objects.create(
+                invoice=inv,
+                description=item.get("description", "Service"),
+                quantity=int(qty),
+                unit_price=unit_price,
+                total_amount=line_total,
+            )
+
+        return Response(_serialize_invoice(inv, with_lines=True), status=status.HTTP_201_CREATED)
+
 
 
 class InvoiceDetailView(APIView):
@@ -179,17 +296,22 @@ class ReceivePaymentView(APIView):
 
     def post(self, request, pk):
         amount       = request.data.get("amount")
-        payment_mode = request.data.get("payment_mode", "Cash")
         method_id    = request.data.get("method")
         reference    = request.data.get("reference", "")
 
-        # Resolve payment_mode from method id if needed
-        if method_id and not payment_mode:
-            _mode_map = {1: "Cash", 2: "Mpesa", 3: "Bank Deposit", 4: "Debt"}
+        # Resolve payment_mode:
+        # 1. Explicit payment_mode string from client is always preferred.
+        # 2. If absent, resolve from method ID via DB (not a hardcoded map).
+        # 3. Fall back to "Cash".
+        payment_mode = (request.data.get("payment_mode") or "").strip()
+        if not payment_mode and method_id is not None:
             try:
-                payment_mode = _mode_map.get(int(method_id), "Cash")
+                pm = PaymentMethod.objects.get(pk=int(method_id))
+                payment_mode = pm.name
             except Exception:
-                pass
+                payment_mode = ""
+        if not payment_mode:
+            payment_mode = "Cash"
 
         if not HAS_PAYMENT_MODELS:
             return Response({"error": "Not found."}, status=status.HTTP_404_NOT_FOUND)
@@ -399,17 +521,17 @@ class GenerateInvoiceView(APIView):
 
         # Create invoice
         inv = Invoice.objects.create(
-            customer     = customer,
-            total_amount = total,
-            currency     = currency,
-            due_date     = (timezone.now() + timedelta(days=due_days)).date(),
-            status       = "draft",
-            notes        = notes,
+            customer=customer,
+            total_amount=total,
+            currency=currency,
+            due_date=(timezone.now() + timedelta(days=due_days)).date(),
+            status='draft',
+            notes=notes,
+            source_module='weighbridge',
         )
         inv.transactions.set(txns)
 
         # Build InvoiceLine records grouped by vehicle_type
-        from django.db.models import Sum
         from collections import defaultdict
         vt_groups = defaultdict(lambda: {"qty": 0, "total": 0.0, "vt": None})
         for t in txns:
@@ -420,11 +542,14 @@ class GenerateInvoiceView(APIView):
 
         for key, g in vt_groups.items():
             if g["vt"]:
+                unit_price = g["total"] / g["qty"] if g["qty"] else 0
                 InvoiceLine.objects.create(
-                    invoice      = inv,
-                    vehicle_type = g["vt"],
-                    quantity     = g["qty"],
-                    total_amount = g["total"],
+                    invoice=inv,
+                    vehicle_type=g["vt"],
+                    description=g["vt"].name,
+                    quantity=g["qty"],
+                    unit_price=unit_price,
+                    total_amount=g["total"],
                 )
 
         # Mark transactions as invoiced
@@ -479,3 +604,125 @@ class CustomerListForInvoiceView(APIView):
             qs = qs.filter(name__icontains=q)
         data = [{"id": c.id, "name": c.name, "email": c.email or "", "phone": c.phone_number or ""} for c in qs[:200]]
         return Response({"results": data})
+
+
+class DebtSummaryView(APIView):
+    """
+    GET /api/payments/debt/
+    Returns customers with outstanding Debt transactions, grouped with totals.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if not HAS_PAYMENT_MODELS:
+            return Response({"results": [], "count": 0})
+
+        from django.db.models import Sum, Min, Count
+        from django.db.models import Q
+
+        qs = Transaction.objects.filter(
+            payment_mode="Debt",
+            payment_status="Pending",
+            status="Completed",
+        ).select_related("customer").values(
+            "customer__id", "customer__name", "customer__email", "customer__phone_number"
+        ).annotate(
+            total_owed=Sum("charge"),
+            transaction_count=Count("id"),
+            oldest_date=Min("created_at"),
+        ).order_by("-total_owed")
+
+        results = [
+            {
+                "customer_id":       row["customer__id"],
+                "customer_name":     row["customer__name"],
+                "customer_email":    row["customer__email"] or "",
+                "customer_phone":    row["customer__phone_number"] or "",
+                "total_owed":        float(row["total_owed"] or 0),
+                "transaction_count": row["transaction_count"],
+                "oldest_date":       row["oldest_date"].isoformat() if row["oldest_date"] else None,
+            }
+            for row in qs
+        ]
+        return Response({"results": results, "count": len(results)})
+
+
+class DebtConsolidateView(APIView):
+    """
+    POST /api/payments/debt/consolidate/
+    Body: { customer_id, currency?, notes? }
+    Creates one invoice from all outstanding debt transactions for the customer.
+    Returns the invoice and a shareable token URL.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        if not HAS_PAYMENT_MODELS:
+            return Response({"error": "Payment models not available."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+        customer_id = request.data.get("customer_id")
+        currency    = request.data.get("currency", "KES")
+        notes       = request.data.get("notes", "")
+
+        if not customer_id:
+            return Response({"error": "customer_id is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            customer = Customer.objects.get(pk=customer_id)
+        except Customer.DoesNotExist:
+            return Response({"error": "Customer not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        txns = Transaction.objects.filter(
+            customer=customer,
+            payment_mode="Debt",
+            payment_status="Pending",
+            status="Completed",
+        ).select_related("vehicle_type")
+
+        if not txns.exists():
+            return Response({"error": "No outstanding debt transactions for this customer."}, status=status.HTTP_400_BAD_REQUEST)
+
+        total = float(sum(t.charge or 0 for t in txns))
+
+        inv = Invoice.objects.create(
+            customer=customer,
+            total_amount=total,
+            currency=currency,
+            due_date=timezone.now().date(),
+            status='draft',
+            notes=notes or f"Debt consolidation invoice for {customer.name}",
+            source_module='weighbridge',
+        )
+        inv.transactions.set(txns)
+
+        # Build InvoiceLines grouped by vehicle_type
+        from collections import defaultdict
+        vt_groups = defaultdict(lambda: {"qty": 0, "total": 0.0, "vt": None, "desc": ""})
+        for t in txns:
+            key = t.vehicle_type_id if t.vehicle_type_id else 0
+            vt_groups[key]["qty"]   += 1
+            vt_groups[key]["total"] += float(t.charge or 0)
+            vt_groups[key]["vt"]     = t.vehicle_type
+            vt_groups[key]["desc"]   = t.vehicle_type.name if t.vehicle_type else "Weighbridge Charge"
+
+        for key, g in vt_groups.items():
+            unit_price = g["total"] / g["qty"] if g["qty"] else 0
+            InvoiceLine.objects.create(
+                invoice=inv,
+                vehicle_type=g["vt"],
+                description=g["desc"],
+                quantity=g["qty"],
+                unit_price=unit_price,
+                total_amount=g["total"],
+            )
+
+        # Generate a signed shareable token
+        from django.core import signing
+        token = signing.dumps({"invoice_id": inv.id}, salt="invoice-share")
+        share_path = f"/payments/invoices/{inv.id}?token={token}"
+
+        return Response({
+            **_serialize_invoice(inv, with_lines=True, with_transactions=True),
+            "share_path": share_path,
+            "share_token": token,
+        }, status=status.HTTP_201_CREATED)

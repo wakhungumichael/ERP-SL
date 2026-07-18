@@ -302,6 +302,13 @@ class Transaction(models.Model):
         related_name='paired_second_transactions',
         limit_choices_to={'weight_type': 'First Weight'}
     )
+    auto_invoice = models.ForeignKey(
+        'Invoice',
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='auto_invoiced_transactions',
+    )
     
     
     
@@ -496,6 +503,13 @@ class Invoice(models.Model):
         ('paid',    'Paid'),
         ('overdue', 'Overdue'),
     ]
+    SOURCE_MODULE_CHOICES = [
+        ('weighbridge',  'Weighbridge'),
+        ('hr',           'HR'),
+        ('procurement',  'Procurement'),
+        ('crm',          'CRM'),
+        ('manual',       'Manual'),
+    ]
 
     transactions   = models.ManyToManyField('Transaction', blank=True)
     invoice_number = models.CharField(max_length=100, unique=True, blank=True)
@@ -507,6 +521,8 @@ class Invoice(models.Model):
     due_date       = models.DateField(null=True, blank=True)
     status         = models.CharField(max_length=20, choices=STATUS_CHOICES, default='draft')
     notes          = models.TextField(blank=True, null=True)
+    source_module  = models.CharField(max_length=20, choices=SOURCE_MODULE_CHOICES, default='manual')
+    source_id      = models.IntegerField(null=True, blank=True)
 
     # ── created_at alias so serializers can use either name ──────────────────
     @property
@@ -532,13 +548,16 @@ class Invoice(models.Model):
 
 
 class InvoiceLine(models.Model):
-    invoice = models.ForeignKey(Invoice, related_name='lines', on_delete=models.CASCADE)
-    vehicle_type = models.ForeignKey('VehicleType', on_delete=models.CASCADE)
-    quantity = models.PositiveIntegerField(default=0)
+    invoice      = models.ForeignKey(Invoice, related_name='lines', on_delete=models.CASCADE)
+    vehicle_type = models.ForeignKey('VehicleType', on_delete=models.SET_NULL, null=True, blank=True)
+    description  = models.CharField(max_length=300, blank=True)
+    quantity     = models.PositiveIntegerField(default=1)
+    unit_price   = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     total_amount = models.DecimalField(max_digits=10, decimal_places=2)
 
     def __str__(self):
-        return f"{self.vehicle_type.name} - Qty: {self.quantity} - Amount: {self.total_amount}"
+        label = self.description or (self.vehicle_type.name if self.vehicle_type else 'Line')
+        return f"{label} - Qty: {self.quantity} - Amount: {self.total_amount}"
 
 
 

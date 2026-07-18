@@ -74,12 +74,17 @@ class TransactionSerializer(serializers.ModelSerializer):
     vehicle_plate = serializers.CharField(source="vehicle.number_plate", read_only=True)
     item_name = serializers.SerializerMethodField()
     vehicle_type_name = serializers.SerializerMethodField()
+    auto_invoice_id = serializers.SerializerMethodField()
 
     def get_item_name(self, obj):
         return getattr(getattr(obj, "item", None), "name", "")
 
     def get_vehicle_type_name(self, obj):
         return getattr(getattr(obj, "vehicle_type", None), "name", "")
+
+    def get_auto_invoice_id(self, obj):
+        return getattr(obj, "auto_invoice_id", None)
+
 
     class Meta:
         model = Transaction
@@ -95,6 +100,7 @@ class TransactionSerializer(serializers.ModelSerializer):
             "charge", "destination", "invoiced", "approval_status",
             "manual_weight_capture", "weight_reason",
             "paired", "paired_first_transaction",
+            "auto_invoice_id",
             "created_at", "updated_at",
         ]
         read_only_fields = ["id", "created_at", "updated_at"]
@@ -392,6 +398,29 @@ class CaptureWeightView(APIView):
 
             tx.manual_weight_capture = False
             tx.save()
+
+            # ── Auto-create draft invoice when a charge-bearing transaction completes ──
+            # Only invoice the transaction that carries the actual charge (charge > 0).
+            # In a paired First/Second Weight workflow the charge lives on the First Weight
+            # record; the Second Weight record has charge=0 and should not generate its
+            # own invoice.
+            if tx.status == "Completed":
+                try:
+                    from Platform_API.modules.payments.views import create_draft_invoice_for_transaction
+                    charge_tx = tx
+                    if tx.weight_type == "Second Weight" and tx.paired_first_transaction_id:
+                        # The charge is on the first-weight record
+                        first = tx.paired_first_transaction
+                        if first and float(first.charge or 0) > 0:
+                            charge_tx = first
+                        elif float(tx.charge or 0) <= 0:
+                            charge_tx = None  # nothing to invoice
+                    # Only create if the chosen transaction actually has a charge
+                    if charge_tx and float(charge_tx.charge or 0) > 0:
+                        create_draft_invoice_for_transaction(charge_tx)
+                except Exception:
+                    pass
+
             updated_transaction = TransactionSerializer(tx).data
 
         return Response({
@@ -1011,4 +1040,62 @@ class LiveWeightView(APIView):
             "source": cfg_name,
             "branch_id": branch.id if branch else None,
             "timestamp": timezone.now().isoformat(),
+        })
+
+
+class TransactionReceivePaymentView(APIView):
+    """
+    POST /api/commercial-weighbridge/transactions/<pk>/receive-payment/
+    Body: { method: str, reference: str }
+    Marks the transaction as Paid and, if linked, marks its auto_invoice as paid too.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        try:
+            tx = Transaction.objects.select_related(
+                "customer", "vehicle", "vehicle_type", "auto_invoice"
+            ).get(pk=pk)
+        except Transaction.DoesNotExist:
+            return Response({"error": f"Transaction {pk} not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        if tx.status != "Completed":
+            return Response(
+                {"error": "Only Completed transactions can receive payment."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        method    = request.data.get("method", "Cash")
+        reference = request.data.get("reference", "")
+
+        # Update transaction payment
+        tx.payment_mode   = method
+        tx.payment_status = "Paid"
+        tx.save(update_fields=["payment_mode", "payment_status", "updated_at"])
+
+        # If there's a linked auto_invoice, mark it paid
+        invoice_id = None
+        try:
+            auto_inv = tx.auto_invoice
+            if auto_inv and auto_inv.status != "paid":
+                auto_inv.status = "paid"
+                auto_inv.issued_at = auto_inv.issued_at or timezone.now()
+                auto_inv.save(update_fields=["status", "issued_at"])
+                # Also mark all transactions on that invoice as paid
+                auto_inv.transactions.filter(payment_status="Pending").update(
+                    payment_status="Paid",
+                    payment_mode=method,
+                )
+                invoice_id = auto_inv.id
+        except Exception:
+            pass
+
+        return Response({
+            "success":        True,
+            "transaction_id": tx.id,
+            "payment_mode":   tx.payment_mode,
+            "payment_status": tx.payment_status,
+            "reference":      reference,
+            "invoice_id":     invoice_id,
+            "transaction":    TransactionSerializer(tx).data,
         })

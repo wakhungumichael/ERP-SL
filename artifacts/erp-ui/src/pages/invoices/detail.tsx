@@ -25,7 +25,7 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import {
   ArrowLeft, CheckCircle2, DollarSign, Send, FileText,
-  Building2, Hash, Calendar, AlertCircle, Printer,
+  Building2, Hash, Calendar, AlertCircle, Printer, Tag,
 } from 'lucide-react';
 
 /* ─────────────────────────────────────────── helpers ── */
@@ -144,6 +144,24 @@ function ReceivePaymentDialog({
   );
 }
 
+/* ─────────────────────────────────────────── Source Module Badge ── */
+const MODULE_META: Record<string, { cls: string; label: string }> = {
+  weighbridge:  { cls: 'bg-indigo-100 text-indigo-800 border-indigo-200',   label: 'Weighbridge' },
+  hr:           { cls: 'bg-purple-100 text-purple-800 border-purple-200',   label: 'HR' },
+  procurement:  { cls: 'bg-amber-100 text-amber-800 border-amber-200',      label: 'Procurement' },
+  crm:          { cls: 'bg-sky-100 text-sky-800 border-sky-200',            label: 'CRM' },
+  manual:       { cls: 'bg-gray-100 text-gray-800 border-gray-200',         label: 'Manual' },
+};
+
+function SourceBadge({ module }: { module?: string }) {
+  const m = MODULE_META[module ?? 'manual'] ?? MODULE_META['manual'];
+  return (
+    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold tracking-widest uppercase border ${m.cls}`}>
+      <Tag className="h-3 w-3" /> {m.label}
+    </span>
+  );
+}
+
 /* ════════════════════════════════════════════════════════ main page ── */
 export default function InvoiceDetail({ id }: { id: string }) {
   const { token } = useAuth();
@@ -209,9 +227,10 @@ export default function InvoiceDetail({ id }: { id: string }) {
             <ArrowLeft className="h-4 w-4" />
           </Button>
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <h1 className="text-2xl font-bold tracking-tight font-mono">{inv.invoice_number}</h1>
               <StatusBadge s={displayStatus} />
+              <SourceBadge module={inv.source_module} />
               {isOverdue && (
                 <span className="flex items-center gap-1 text-xs text-red-600 font-bold">
                   <AlertCircle className="h-3.5 w-3.5" /> OVERDUE

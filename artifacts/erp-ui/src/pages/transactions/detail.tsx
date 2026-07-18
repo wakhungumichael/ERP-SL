@@ -4,11 +4,22 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useGetTransaction, getGetTransactionQueryKey } from '@workspace/api-client-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
-import { ArrowLeft, CheckCircle2, RotateCcw, Download, Printer, AlertTriangle, Scale } from 'lucide-react';
+import {
+  ArrowLeft, CheckCircle2, RotateCcw, Download, Printer, AlertTriangle,
+  Scale, DollarSign, FileText,
+} from 'lucide-react';
 import { Link } from 'wouter';
 import { ReceiptDialog } from '@/components/weighbridge/receipt';
 import { CAN_APPROVE, CAN_RECALL, CAN_EXPORT } from '@/lib/roles';
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
+} from '@/components/ui/dialog';
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from '@/components/ui/select';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -34,6 +45,88 @@ function Field({ label, value, mono = false }: { label: string; value: React.Rea
   );
 }
 
+// ── Receive Payment Dialog ────────────────────────────────────────────────────
+
+interface ReceivePaymentDialogProps {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  transactionId: number;
+  token: string | null;
+  onSuccess: (invoiceId: number | null) => void;
+}
+
+function ReceivePaymentDialog({ open, onOpenChange, transactionId, token, onSuccess }: ReceivePaymentDialogProps) {
+  const { toast } = useToast();
+  const [method, setMethod] = useState('Cash');
+  const [reference, setReference] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const handleConfirm = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/commercial-weighbridge/transactions/${transactionId}/receive-payment/`, {
+        method: 'POST',
+        headers: { Authorization: `Token ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ method, reference }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body?.error ?? res.statusText);
+      toast({ title: 'Payment recorded', description: 'Transaction marked as Paid.' });
+      onSuccess(body.invoice_id ?? null);
+      onOpenChange(false);
+    } catch (err: any) {
+      toast({ title: 'Payment failed', description: err?.message, variant: 'destructive' });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const methods = ['Cash', 'Mpesa', 'Bank Deposit', 'Debt'];
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-sm">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <DollarSign className="h-4 w-4" /> Receive Payment
+          </DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4 pt-2">
+          <div className="space-y-1.5">
+            <Label>Payment Method</Label>
+            <Select value={method} onValueChange={setMethod}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {methods.map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Reference / Receipt #</Label>
+            <Input
+              placeholder="e.g. MPE-12345 or CHQ-0001"
+              value={reference}
+              onChange={e => setReference(e.target.value)}
+              className="font-mono text-sm"
+            />
+          </div>
+        </div>
+        <DialogFooter className="pt-2">
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button
+            disabled={loading}
+            onClick={handleConfirm}
+            className="bg-emerald-600 hover:bg-emerald-700 text-white gap-1.5"
+          >
+            <CheckCircle2 className="h-4 w-4" />
+            {loading ? 'Processing…' : 'Confirm Payment'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function TransactionDetail({ id }: { id: string }) {
@@ -46,8 +139,10 @@ export default function TransactionDetail({ id }: { id: string }) {
     query: { enabled: !isNaN(numericId), queryKey: getGetTransactionQueryKey(numericId) },
   });
 
-  const [acting, setActing]     = useState<'approve' | 'recall' | null>(null);
+  const [acting, setActing]         = useState<'approve' | 'recall' | null>(null);
   const [receiptOpen, setReceiptOpen] = useState(false);
+  const [payOpen, setPayOpen]       = useState(false);
+  const [invoiceId, setInvoiceId]   = useState<number | null>(null);
 
   if (isLoading) return (
     <div className="p-12 text-center text-muted-foreground font-mono animate-pulse">
@@ -64,9 +159,13 @@ export default function TransactionDetail({ id }: { id: string }) {
 
   // ── Actions ─────────────────────────────────────────────────────────────────
 
-  const canApprove = CAN_APPROVE.includes(role) && !tx.approval_status;
-  const canRecall  = CAN_RECALL.includes(role) && tx.status === 'Completed';
-  const canExport  = CAN_EXPORT.includes(role);
+  const canApprove       = CAN_APPROVE.includes(role) && !tx.approval_status;
+  const canRecall        = CAN_RECALL.includes(role) && tx.status === 'Completed';
+  const canExport        = CAN_EXPORT.includes(role);
+  const canReceivePayment = tx.status === 'Completed' && tx.payment_status !== 'Paid';
+  const isPaid           = tx.payment_status === 'Paid';
+  // auto_invoice_id from API, or an invoice returned after receive-payment
+  const linkedInvoiceId  = invoiceId ?? tx.auto_invoice_id ?? null;
 
   const postAction = async (action: 'approve' | 'recall') => {
     setActing(action);
@@ -93,7 +192,6 @@ export default function TransactionDetail({ id }: { id: string }) {
   };
 
   const handleExportCSV = () => {
-    const qs = new URLSearchParams({ page_size: '1', status: tx.status });
     window.open(
       `/api/commercial-weighbridge/transactions/export/csv/?vehicle_plate=${tx.vehicle_plate ?? ''}&search=${tx.vehicle_plate ?? ''}`,
       '_blank',
@@ -162,10 +260,20 @@ export default function TransactionDetail({ id }: { id: string }) {
               {acting === 'recall' ? 'Recalling…' : 'Recall'}
             </Button>
           )}
+          {canReceivePayment && (
+            <Button
+              size="sm"
+              className="gap-1.5 text-xs font-bold uppercase tracking-wide bg-emerald-600 hover:bg-emerald-700 text-white"
+              onClick={() => setPayOpen(true)}
+            >
+              <DollarSign className="h-3.5 w-3.5" /> Receive Payment
+            </Button>
+          )}
           <Button
             size="sm"
             variant="outline"
             className="gap-1.5 text-xs font-bold uppercase tracking-wide"
+            disabled={!isPaid}
             onClick={() => setReceiptOpen(true)}
           >
             <Printer className="h-3.5 w-3.5" /> Receipt
@@ -271,6 +379,18 @@ export default function TransactionDetail({ id }: { id: string }) {
                 }
               />
               <Field label="Invoiced" value={tx.invoiced ? 'Yes' : 'No'} />
+              {linkedInvoiceId && (
+                <Field
+                  label="Invoice"
+                  value={
+                    <Link href={`/payments/invoices/${linkedInvoiceId}`}>
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold tracking-widest uppercase border bg-blue-100 text-blue-800 border-blue-300 dark:bg-blue-900/30 dark:text-blue-400 cursor-pointer hover:bg-blue-200 transition-colors">
+                        <FileText className="h-3 w-3" /> View Invoice
+                      </span>
+                    </Link>
+                  }
+                />
+              )}
             </CardContent>
           </Card>
         </div>
@@ -313,6 +433,19 @@ export default function TransactionDetail({ id }: { id: string }) {
 
       {/* Receipt dialog */}
       <ReceiptDialog transaction={tx} open={receiptOpen} onOpenChange={setReceiptOpen} />
+
+      {/* Receive Payment dialog */}
+      <ReceivePaymentDialog
+        open={payOpen}
+        onOpenChange={setPayOpen}
+        transactionId={numericId}
+        token={token}
+        onSuccess={(invId) => {
+          if (invId) setInvoiceId(invId);
+          queryClient.invalidateQueries({ queryKey: getGetTransactionQueryKey(numericId) });
+          queryClient.invalidateQueries({ queryKey: ['transactions'] });
+        }}
+      />
     </div>
   );
 }
