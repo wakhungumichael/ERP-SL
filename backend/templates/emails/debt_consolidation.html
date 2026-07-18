@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Invoice {{ invoice_number }}</title>
+  <style>
+    body {
+      margin: 0; padding: 0;
+      font-family: Arial, Helvetica, sans-serif;
+      background-color: #f4f4f4;
+      color: #333333;
+    }
+    .wrapper {
+      width: 100%; max-width: 600px;
+      margin: 40px auto;
+      background-color: #ffffff;
+      border-radius: 6px;
+      overflow: hidden;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    }
+    .header {
+      background-color: #1e3a5f;
+      padding: 28px 32px;
+      text-align: center;
+    }
+    .header h1 {
+      margin: 0;
+      color: #ffffff;
+      font-size: 22px;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+    }
+    .body {
+      padding: 32px 32px 24px;
+    }
+    .body p {
+      margin: 0 0 16px;
+      font-size: 15px;
+      line-height: 1.6;
+    }
+    .summary-box {
+      background-color: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 4px;
+      padding: 20px 24px;
+      margin: 24px 0;
+    }
+    .summary-box table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    .summary-box td {
+      padding: 6px 0;
+      font-size: 14px;
+    }
+    .summary-box td:first-child {
+      color: #64748b;
+    }
+    .summary-box td:last-child {
+      text-align: right;
+      font-weight: 600;
+      color: #1e293b;
+    }
+    .summary-box .total-row td {
+      padding-top: 12px;
+      font-size: 16px;
+      border-top: 1px solid #e2e8f0;
+    }
+    .cta {
+      text-align: center;
+      margin: 32px 0 24px;
+    }
+    .cta a {
+      display: inline-block;
+      background-color: #2563eb;
+      color: #ffffff;
+      text-decoration: none;
+      padding: 14px 36px;
+      border-radius: 5px;
+      font-size: 16px;
+      font-weight: 600;
+      letter-spacing: 0.3px;
+    }
+    .link-fallback {
+      text-align: center;
+      font-size: 12px;
+      color: #94a3b8;
+      word-break: break-all;
+      margin-bottom: 24px;
+    }
+    .footer {
+      background-color: #f1f5f9;
+      padding: 18px 32px;
+      text-align: center;
+      font-size: 12px;
+      color: #94a3b8;
+      border-top: 1px solid #e2e8f0;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrapper">
+    <div class="header">
+      <h1>Payment Invoice</h1>
+    </div>
+
+    <div class="body">
+      <p>Dear <strong>{{ customer_name }}</strong>,</p>
+      <p>
+        Your outstanding weighbridge charges have been consolidated into a single invoice.
+        Please review the summary below and use the button to pay securely online.
+      </p>
+
+      <div class="summary-box">
+        <table>
+          <tr>
+            <td>Invoice Number</td>
+            <td>{{ invoice_number }}</td>
+          </tr>
+          <tr>
+            <td>Currency</td>
+            <td>{{ currency }}</td>
+          </tr>
+          <tr class="total-row">
+            <td>Total Amount Due</td>
+            <td>{{ currency }} {{ total_amount }}</td>
+          </tr>
+        </table>
+      </div>
+
+      <div class="cta">
+        <a href="{{ payment_url }}">Pay Now</a>
+      </div>
+
+      <p class="link-fallback">
+        If the button above doesn't work, copy and paste this link into your browser:<br>
+        <a href="{{ payment_url }}" style="color:#2563eb;">{{ payment_url }}</a>
+      </p>
+
+      <p style="font-size:13px;color:#64748b;">
+        If you have already made a payment or believe this invoice was sent in error,
+        please contact us and we will resolve it promptly.
+      </p>
+    </div>
+
+    <div class="footer">
+      This is an automated message from {{ platform_name }}. Please do not reply to this email.
+    </div>
+  </div>
+</body>
+</html>

@@ -1,10 +1,13 @@
+import logging
 from datetime import timedelta
 
 from django.utils import timezone
 from rest_framework import serializers, status
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
+
+logger = logging.getLogger(__name__)
 
 try:
     from SL_Weighbridge.models import Invoice, InvoiceLine, Transaction, Customer
@@ -729,10 +732,105 @@ class DebtConsolidateView(APIView):
         # Generate a signed shareable token
         from django.core import signing
         token = signing.dumps({"invoice_id": inv.id}, salt="invoice-share")
-        share_path = f"/payments/invoices/{inv.id}?token={token}"
+
+        # Public payment URL — token-validated, no login required
+        public_pay_path = f"/api/payments/invoices/pay/{token}/"
+        payment_url = request.build_absolute_uri(public_pay_path)
+
+        # ── Email notification ────────────────────────────────────────────────
+        # Send only when the customer has an email address. A missing/
+        # misconfigured SMTP setup must never break invoice creation.
+        customer_email = getattr(customer, "email", None)
+        if customer_email:
+            try:
+                from django.core.mail import EmailMultiAlternatives
+                from django.template.loader import render_to_string
+                from django.conf import settings
+
+                invoice_number = inv.invoice_number or f"INV-{inv.id:04d}"
+                platform_name  = getattr(settings, "PLATFORM_NAME", "SL-ERP Platform")
+                inv_currency   = inv.currency or "KES"
+
+                subject = f"Invoice {invoice_number} — Payment Link"
+
+                plain_body = (
+                    f"Dear {customer.name},\n\n"
+                    f"Your outstanding weighbridge charges have been consolidated "
+                    f"into invoice {invoice_number}.\n\n"
+                    f"Total amount due: {inv_currency} {float(inv.total_amount or 0):,.2f}\n\n"
+                    f"Pay here: {payment_url}\n\n"
+                    f"If you have already made a payment or believe this invoice "
+                    f"was sent in error, please contact us.\n\n"
+                    f"— {platform_name}"
+                )
+
+                html_body = render_to_string("emails/debt_consolidation.html", {
+                    "customer_name":  customer.name,
+                    "invoice_number": invoice_number,
+                    "total_amount":   f"{float(inv.total_amount or 0):,.2f}",
+                    "currency":       inv_currency,
+                    "payment_url":    payment_url,
+                    "platform_name":  platform_name,
+                })
+
+                msg = EmailMultiAlternatives(
+                    subject=subject,
+                    body=plain_body,
+                    from_email=settings.DEFAULT_FROM_EMAIL,
+                    to=[customer_email],
+                )
+                msg.attach_alternative(html_body, "text/html")
+                msg.send(fail_silently=False)
+                logger.info(
+                    "Debt consolidation payment email sent to %s for invoice %s",
+                    customer_email, inv.invoice_number or inv.id,
+                )
+            except Exception as exc:
+                # Log the failure but never surface it as an API error
+                logger.warning(
+                    "Failed to send debt consolidation email to %s for invoice %s: %s",
+                    customer_email, inv.invoice_number or inv.id, exc,
+                )
 
         return Response({
             **_serialize_invoice(inv, with_lines=True, with_transactions=True),
-            "share_path": share_path,
+            "share_path": public_pay_path,
             "share_token": token,
+            "payment_url": payment_url,
         }, status=status.HTTP_201_CREATED)
+
+
+class PublicInvoicePayView(APIView):
+    """
+    GET /api/payments/invoices/pay/<token>/
+    Public endpoint — no authentication required.
+    Validates the signed token and returns invoice details so the customer
+    can review and pay without logging in to the ERP.
+    """
+    permission_classes = [AllowAny]
+
+    def get(self, request, token):
+        if not HAS_PAYMENT_MODELS:
+            return Response({"error": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        from django.core import signing
+
+        try:
+            payload = signing.loads(token, salt="invoice-share", max_age=86400 * 30)  # 30-day expiry
+        except signing.SignatureExpired:
+            return Response({"error": "This payment link has expired."}, status=status.HTTP_410_GONE)
+        except signing.BadSignature:
+            return Response({"error": "Invalid payment link."}, status=status.HTTP_400_BAD_REQUEST)
+
+        invoice_id = payload.get("invoice_id")
+        if not invoice_id:
+            return Response({"error": "Invalid payment link."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            inv = Invoice.objects.select_related("customer").get(pk=invoice_id)
+        except Invoice.DoesNotExist:
+            return Response({"error": "Invoice not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        data = _serialize_invoice(inv, with_lines=True)
+        data["token"] = token  # echo back so the client can POST to confirm payment
+        return Response(data)

@@ -14,6 +14,9 @@ urlpatterns = [
     path("debt/",                                  views.DebtSummaryView.as_view(),               name="debt-summary"),
     path("debt/consolidate/",                      views.DebtConsolidateView.as_view(),           name="debt-consolidate"),
 
+    # Public customer payment link (no auth required — token-validated)
+    path("invoices/pay/<str:token>/",              views.PublicInvoicePayView.as_view(),          name="invoice-public-pay"),
+
 
     # Supporting data
     path("uninvoiced-transactions/",               views.UninvoicedTransactionsView.as_view(),   name="uninvoiced-transactions"),
