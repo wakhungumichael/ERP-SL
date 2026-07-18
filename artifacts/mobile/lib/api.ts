@@ -197,3 +197,26 @@ export interface CaptureWeightResponse {
   indicator_meta: Record<string, unknown>;
   timestamp: string;
 }
+
+export interface ReceivePaymentResponse {
+  success: boolean;
+  transaction_id: number;
+  payment_mode: string;
+  payment_status: string;
+  reference: string;
+  invoice_id: number | null;
+  transaction: Transaction;
+}
+
+export async function receivePayment(
+  txId: number,
+  method: string,
+  reference: string,
+  token?: string | null,
+): Promise<ReceivePaymentResponse> {
+  return apiRequest<ReceivePaymentResponse>(
+    `/commercial-weighbridge/transactions/${txId}/receive-payment/`,
+    { method: 'POST', body: JSON.stringify({ method, reference }) },
+    token,
+  );
+}

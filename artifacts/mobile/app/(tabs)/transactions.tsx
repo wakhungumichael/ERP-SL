@@ -1,19 +1,29 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Animated,
   FlatList,
+  KeyboardAvoidingView,
+  Modal,
   Platform,
   Pressable,
   RefreshControl,
   StyleSheet,
   Text,
+  TextInput,
+  TouchableWithoutFeedback,
   View,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
-import { useInfiniteQuery } from '@tanstack/react-query';
+import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '@/context/auth';
-import { apiRequest, type PaginatedTransactions, type Transaction } from '@/lib/api';
+import {
+  apiRequest,
+  receivePayment,
+  type PaginatedTransactions,
+  type Transaction,
+} from '@/lib/api';
 import colors from '@/constants/colors';
 
 const C = colors.light;
@@ -23,6 +33,8 @@ const FILTERS = [
   { label: 'Pending', value: 'Pending' },
   { label: 'Completed', value: 'Completed' },
 ] as const;
+
+const PAYMENT_METHODS = ['Cash', 'Mpesa', 'Bank Transfer', 'Cheque'] as const;
 
 function formatWeight(kg: number | null): string {
   if (!kg) return '–';
@@ -41,10 +53,171 @@ function relativeTime(iso: string): string {
   return `${d}d ago`;
 }
 
-function TxCard({ tx }: { tx: Transaction }) {
+// ── Pay Bottom Sheet ──────────────────────────────────────────────────────────
+
+interface PaySheetProps {
+  tx: Transaction | null;
+  visible: boolean;
+  onClose: () => void;
+  onSuccess: (updated: Transaction) => void;
+  token: string | null | undefined;
+}
+
+function PayBottomSheet({ tx, visible, onClose, onSuccess, token }: PaySheetProps) {
+  const insets = useSafeAreaInsets();
+  const [method, setMethod] = useState<string>('Cash');
+  const [reference, setReference] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const slideAnim = useRef(new Animated.Value(400)).current;
+
+  React.useEffect(() => {
+    if (visible) {
+      setMethod('Cash');
+      setReference('');
+      setError(null);
+      Animated.spring(slideAnim, {
+        toValue: 0,
+        useNativeDriver: true,
+        bounciness: 4,
+      }).start();
+    } else {
+      Animated.timing(slideAnim, {
+        toValue: 400,
+        duration: 200,
+        useNativeDriver: true,
+      }).start();
+    }
+  }, [visible]);
+
+  const handleConfirm = async () => {
+    if (!tx) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await receivePayment(tx.id, method, reference, token);
+      onSuccess(res.transaction);
+    } catch (e: any) {
+      setError(e?.message || 'Payment failed. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (!tx) return null;
+
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="none"
+      onRequestClose={onClose}
+      statusBarTranslucent
+    >
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
+        <TouchableWithoutFeedback onPress={onClose}>
+          <View style={styles.overlay} />
+        </TouchableWithoutFeedback>
+
+        <Animated.View
+          style={[
+            styles.sheet,
+            { paddingBottom: insets.bottom + 16, transform: [{ translateY: slideAnim }] },
+          ]}
+        >
+          {/* Handle */}
+          <View style={styles.sheetHandle} />
+
+          {/* Header */}
+          <View style={styles.sheetHeader}>
+            <View>
+              <Text style={styles.sheetTitle}>Receive Payment</Text>
+              <Text style={styles.sheetSub}>
+                {tx.vehicle_plate} · {tx.customer_name}
+              </Text>
+            </View>
+            <Pressable onPress={onClose} hitSlop={12}>
+              <Feather name="x" size={20} color={C.mutedForeground} />
+            </Pressable>
+          </View>
+
+          {/* Charge summary */}
+          <View style={styles.chargeRow}>
+            <Text style={styles.chargeLabel}>Amount Due</Text>
+            <Text style={styles.chargeAmount}>
+              KES {parseFloat(tx.charge || '0').toLocaleString()}
+            </Text>
+          </View>
+
+          {/* Method selector */}
+          <Text style={styles.fieldLabel}>Payment Method</Text>
+          <View style={styles.methodRow}>
+            {PAYMENT_METHODS.map((m) => (
+              <Pressable
+                key={m}
+                style={[styles.methodChip, method === m && styles.methodChipActive]}
+                onPress={() => setMethod(m)}
+              >
+                <Text style={[styles.methodText, method === m && styles.methodTextActive]}>
+                  {m}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+
+          {/* Reference field */}
+          <Text style={styles.fieldLabel}>Reference / Receipt No. <Text style={styles.optional}>(optional)</Text></Text>
+          <TextInput
+            style={styles.input}
+            placeholder="e.g. Mpesa code, cheque no."
+            placeholderTextColor={C.mutedForeground}
+            value={reference}
+            onChangeText={setReference}
+            returnKeyType="done"
+            autoCapitalize="characters"
+          />
+
+          {/* Error */}
+          {error ? (
+            <View style={styles.errorBox}>
+              <Feather name="alert-circle" size={14} color="#B91C1C" />
+              <Text style={styles.errorText}>{error}</Text>
+            </View>
+          ) : null}
+
+          {/* Confirm button */}
+          <Pressable
+            style={[styles.confirmBtn, loading && { opacity: 0.6 }]}
+            onPress={handleConfirm}
+            disabled={loading}
+          >
+            {loading ? (
+              <ActivityIndicator color="#fff" size="small" />
+            ) : (
+              <Text style={styles.confirmBtnText}>Confirm Payment</Text>
+            )}
+          </Pressable>
+        </Animated.View>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
+}
+
+// ── Transaction Card ──────────────────────────────────────────────────────────
+
+interface TxCardProps {
+  tx: Transaction;
+  onPay: (tx: Transaction) => void;
+}
+
+function TxCard({ tx, onPay }: TxCardProps) {
   const isDone = tx.status === 'Completed';
   const isPaid = tx.payment_status === 'Paid';
   const isPending = tx.payment_status === 'Pending';
+  const canPay = isDone && !isPaid;
 
   return (
     <View style={styles.card}>
@@ -108,15 +281,26 @@ function TxCard({ tx }: { tx: Transaction }) {
         ) : null}
 
         <Text style={styles.charge}>KES {parseFloat(tx.charge || '0').toLocaleString()}</Text>
+
+        {canPay && (
+          <Pressable style={styles.payBtn} onPress={() => onPay(tx)}>
+            <Feather name="credit-card" size={12} color="#fff" />
+            <Text style={styles.payBtnText}>Pay</Text>
+          </Pressable>
+        )}
       </View>
     </View>
   );
 }
 
+// ── Screen ────────────────────────────────────────────────────────────────────
+
 export default function TransactionsScreen() {
   const { token } = useAuth();
   const insets = useSafeAreaInsets();
+  const queryClient = useQueryClient();
   const [filter, setFilter] = useState<'' | 'Pending' | 'Completed'>('');
+  const [payTx, setPayTx] = useState<Transaction | null>(null);
   const topPad = Platform.OS === 'web' ? Math.max(insets.top, 67) : insets.top;
 
   const {
@@ -142,6 +326,13 @@ export default function TransactionsScreen() {
 
   const transactions: Transaction[] = data?.pages.flatMap((p) => p.results) ?? [];
   const total = data?.pages[0]?.count ?? 0;
+
+  const handlePaySuccess = (updated: Transaction) => {
+    setPayTx(null);
+    // Invalidate to refetch fresh data
+    queryClient.invalidateQueries({ queryKey: ['transactions'] });
+    queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+  };
 
   return (
     <View style={[styles.root, { paddingTop: topPad }]}>
@@ -175,7 +366,7 @@ export default function TransactionsScreen() {
         <FlatList
           data={transactions}
           keyExtractor={(t) => String(t.id)}
-          renderItem={({ item }) => <TxCard tx={item} />}
+          renderItem={({ item }) => <TxCard tx={item} onPay={setPayTx} />}
           contentContainerStyle={{
             paddingHorizontal: 16,
             paddingTop: 8,
@@ -202,6 +393,15 @@ export default function TransactionsScreen() {
           showsVerticalScrollIndicator={false}
         />
       )}
+
+      {/* Pay bottom sheet */}
+      <PayBottomSheet
+        tx={payTx}
+        visible={!!payTx}
+        onClose={() => setPayTx(null)}
+        onSuccess={handlePaySuccess}
+        token={token}
+      />
     </View>
   );
 }
@@ -269,12 +469,24 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 10,
     gap: 6,
+    flexWrap: 'nowrap',
   },
   weightBlock: { alignItems: 'center' },
   weightLabel: { fontSize: 9, fontFamily: 'Inter_500Medium', color: C.mutedForeground, textTransform: 'uppercase' },
   weightVal: { fontSize: 12, fontFamily: 'Inter_700Bold', color: C.foreground },
   netWeight: { color: C.primary },
   charge: { fontSize: 12, fontFamily: 'Inter_700Bold', color: C.foreground },
+
+  payBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: C.primary,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
+  },
+  payBtnText: { fontSize: 11, fontFamily: 'Inter_700Bold', color: '#fff' },
 
   badge: { paddingHorizontal: 6, paddingVertical: 3, borderRadius: 4 },
   badgeGreen: { backgroundColor: C.successLight },
@@ -291,4 +503,116 @@ const styles = StyleSheet.create({
   retryBtnText: { fontSize: 14, fontFamily: 'Inter_600SemiBold', color: '#fff' },
   emptyState: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 80, gap: 12 },
   emptyText: { fontSize: 14, fontFamily: 'Inter_400Regular', color: C.mutedForeground },
+
+  // Bottom sheet
+  overlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+  },
+  sheet: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: C.card,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+    elevation: 20,
+  },
+  sheetHandle: {
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: C.border,
+    alignSelf: 'center',
+    marginBottom: 16,
+  },
+  sheetHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 16,
+  },
+  sheetTitle: { fontSize: 18, fontFamily: 'Inter_700Bold', color: C.foreground },
+  sheetSub: { fontSize: 12, fontFamily: 'Inter_400Regular', color: C.mutedForeground, marginTop: 2 },
+
+  chargeRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: C.muted,
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginBottom: 20,
+  },
+  chargeLabel: { fontSize: 13, fontFamily: 'Inter_500Medium', color: C.mutedForeground },
+  chargeAmount: { fontSize: 20, fontFamily: 'Inter_700Bold', color: C.primary },
+
+  fieldLabel: {
+    fontSize: 12,
+    fontFamily: 'Inter_600SemiBold',
+    color: C.foreground,
+    marginBottom: 8,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  optional: { fontFamily: 'Inter_400Regular', color: C.mutedForeground, textTransform: 'none', letterSpacing: 0 },
+  methodRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 20 },
+  methodChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1.5,
+    borderColor: C.border,
+    backgroundColor: C.background,
+  },
+  methodChipActive: {
+    borderColor: C.primary,
+    backgroundColor: `${C.primary}15`,
+  },
+  methodText: { fontSize: 13, fontFamily: 'Inter_600SemiBold', color: C.mutedForeground },
+  methodTextActive: { color: C.primary },
+
+  input: {
+    backgroundColor: C.background,
+    borderWidth: 1.5,
+    borderColor: C.border,
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 14,
+    fontFamily: 'Inter_400Regular',
+    color: C.foreground,
+    marginBottom: 16,
+  },
+
+  errorBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#FEF2F2',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#FECACA',
+  },
+  errorText: { fontSize: 13, fontFamily: 'Inter_400Regular', color: '#B91C1C', flex: 1 },
+
+  confirmBtn: {
+    backgroundColor: C.primary,
+    borderRadius: 12,
+    paddingVertical: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  confirmBtnText: { fontSize: 15, fontFamily: 'Inter_700Bold', color: '#fff' },
 });
