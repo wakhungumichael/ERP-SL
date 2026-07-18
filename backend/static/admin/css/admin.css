@@ -1,0 +1,13 @@
+fieldset {
+    display: flex;
+    flex-wrap: wrap;
+}
+
+fieldset .form-row {
+    flex: 1 0 48%; /* Adjust the percentage to control column width */
+    margin-right: 2%;
+}
+
+fieldset .form-row:last-child {
+    margin-right: 0;
+}

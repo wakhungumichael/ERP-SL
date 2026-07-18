@@ -1,0 +1,172 @@
+{% extends "admin/base_site.html" %}
+{% load static %}
+
+{% block content %}
+<style>
+  .payment-container {
+    max-width: 600px;
+    margin: 50px auto;
+    padding: 30px;
+    border: 1px solid #ddd;
+    background: #ffffff;
+    border-radius: 12px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+    text-align: center;
+  }
+  h1 {
+    color: #0F5132;
+    margin-bottom: 20px;
+    font-size: 1.5em;
+  }
+  h2 {
+    color: #0F5132;
+    margin: 30px 0 15px 0;
+    font-size: 1.2em;
+  }
+  .form-group {
+    margin: 20px 0;
+  }
+  .form-group label {
+    display: block;
+    margin-bottom: 8px;
+    font-weight: bold;
+    color: #333;
+  }
+  .footer {
+    margin-top: 40px;
+    font-size: 0.9em;
+    color: #999;
+  }
+  button {
+    background-color: #0F5132;
+    border: none;
+    padding: 12px 30px;
+    color: white;
+    font-weight: bold;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 1em;
+    margin: 10px;
+  }
+  button:hover {
+    background-color: #0d3f26;
+  }
+  .cancel-btn {
+    background-color: #6c757d;
+  }
+  .cancel-btn:hover {
+    background-color: #5a6268;
+  }
+  ul.invoice-list {
+    list-style: none;
+    padding: 0;
+    margin-top: 25px;
+    text-align: left;
+    max-height: 200px;
+    overflow-y: auto;
+    border: 1px solid #eee;
+    border-radius: 5px;
+    padding: 15px;
+  }
+  ul.invoice-list li {
+    padding: 8px 0;
+    border-bottom: 1px solid #eee;
+    display: flex;
+    justify-content: space-between;
+  }
+  ul.invoice-list li:last-child {
+    border-bottom: none;
+  }
+  .invoice-number {
+    font-weight: bold;
+    color: #0F5132;
+  }
+  .invoice-status {
+    color: #666;
+    font-size: 0.9em;
+  }
+  .error-messages {
+    background-color: #f8d7da;
+    color: #721c24;
+    padding: 10px;
+    border-radius: 5px;
+    margin: 15px 0;
+    border: 1px solid #f5c6cb;
+  }
+  .button-group {
+    margin-top: 20px;
+  }
+</style>
+
+<div class="payment-container">
+  <h1>{{ title }}</h1>
+  
+  {% if form.errors %}
+    <div class="error-messages">
+      <strong>Please correct the following errors:</strong>
+      {% for field, errors in form.errors.items %}
+        {% for error in errors %}
+          <div>{{ error }}</div>
+        {% endfor %}
+      {% endfor %}
+    </div>
+  {% endif %}
+  
+  <form method="post" action="">
+    {% csrf_token %}
+    
+    <div class="form-group">
+      {{ form.payment_method.label_tag }}
+      {{ form.payment_method }}
+    </div>
+
+    {# Pass the selected action as a single comma-separated string #}
+    <input type="hidden" name="_selected_action" value="{{ selected_action }}">
+
+    <div class="button-group">
+      <button type="submit" name="apply">Apply Payment Method</button>
+      <a href="{% url 'admin:SL_Weighbridge_invoice_changelist' %}">Back</a>
+
+        <button type="button" class="cancel-btn">Cancel</button>
+      </a>
+    </div>
+  </form>
+
+  <h2>Selected Pending Invoices ({{ invoices.count }}):</h2>
+  <ul class="invoice-list">
+    {% for invoice in invoices %}
+      <li>
+        <span class="invoice-number">{{ invoice.invoice_number }}</span>
+        <span class="invoice-status">{{ invoice.status }} - ${{ invoice.total_amount|floatformat:2 }}</span>
+      </li>
+    {% empty %}
+      <li>No pending invoices selected</li>
+    {% endfor %}
+  </ul>
+
+  <div class="footer">
+    &copy; {% now "Y" %} Metrix Weighbridge Services
+  </div>
+</div>
+
+<script>
+// Add some client-side validation
+document.addEventListener('DOMContentLoaded', function() {
+    const form = document.querySelector('form');
+    const submitBtn = document.querySelector('button[name="apply"]');
+    
+    form.addEventListener('submit', function(e) {
+        const paymentMethod = document.querySelector('select[name="payment_method"]').value;
+        if (!paymentMethod) {
+            e.preventDefault();
+            alert('Please select a payment method.');
+            return false;
+        }
+        
+        // Disable submit button to prevent double submission
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Processing...';
+    });
+});
+</script>
+{% endblock %}

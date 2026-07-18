@@ -1,0 +1,27 @@
+kind = "web"
+previewPath = "/"
+title = "SL-ERP Workspace"
+version = "1.0.0"
+id = "artifacts/erp-ui"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 18366
+
+[services.development]
+run = "pnpm --filter @workspace/erp-ui run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/erp-ui", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/erp-ui/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "18366"
+BASE_PATH = "/"

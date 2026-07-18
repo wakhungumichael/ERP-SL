@@ -1,0 +1,318 @@
+import { useRef, useState } from 'react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Printer, Mail, Send, CheckCircle2 } from 'lucide-react';
+
+export interface ReceiptTransaction {
+  id: number;
+  branch_name?: string;
+  customer_name?: string;
+  customer_email?: string;
+  vehicle_plate?: string;
+  vehicle_type_name?: string;
+  operator?: string;
+  item_name?: string;
+  weight_type?: string;
+  gross_weight?: number | null;
+  tare_weight?: number | null;
+  net_weight?: number | null;
+  charge?: number | string | null;
+  destination?: string;
+  payment_mode?: string;
+  payment_status?: string;
+  status?: string;
+  approval_status?: boolean;
+  gross_weight_date?: string | null;
+  tare_weight_date?: string | null;
+  created_at?: string;
+  updated_at?: string;
+  manual_weight_capture?: boolean;
+  weight_reason?: string;
+  discounted?: boolean;
+}
+
+interface ReceiptDialogProps {
+  transaction: ReceiptTransaction | null;
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  token?: string | null;
+}
+
+function fmt(dt?: string | null) {
+  if (!dt) return '—';
+  const d = new Date(dt);
+  return d.toLocaleString('en-KE', {
+    day: '2-digit', month: 'short', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  });
+}
+
+function kg(v?: number | null) {
+  if (v == null || v === 0) return '—';
+  return `${Number(v).toLocaleString()} kg`;
+}
+
+function kes(v?: number | string | null) {
+  if (v == null) return '—';
+  const n = Number(v);
+  if (isNaN(n)) return '—';
+  return `KES ${n.toLocaleString('en-KE', { minimumFractionDigits: 2 })}`;
+}
+
+export function ReceiptDialog({ transaction: t, open, onOpenChange, token }: ReceiptDialogProps) {
+  const printRef = useRef<HTMLDivElement>(null);
+
+  // Email state
+  const [emailOpen, setEmailOpen]     = useState(false);
+  const [emailAddr, setEmailAddr]     = useState('');
+  const [emailSending, setEmailSending] = useState(false);
+  const [emailResult, setEmailResult] = useState<{ ok: boolean; msg: string } | null>(null);
+
+  const handlePrint = () => {
+    if (!printRef.current) return;
+    const content = printRef.current.innerHTML;
+    const win = window.open('', '_blank', 'width=720,height=900');
+    if (!win) return;
+    win.document.write(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Weighbridge Receipt — TX${String(t?.id ?? '').padStart(5, '0')}</title>
+          <style>
+            * { box-sizing: border-box; margin: 0; padding: 0; }
+            body { font-family: 'Courier New', monospace; font-size: 12px; color: #000; background: #fff; padding: 20px; }
+            .receipt { max-width: 400px; margin: 0 auto; border: 2px solid #000; padding: 16px; }
+            .header { text-align: center; border-bottom: 2px dashed #000; padding-bottom: 10px; margin-bottom: 10px; }
+            .header h1 { font-size: 18px; font-weight: bold; letter-spacing: 2px; }
+            .header h2 { font-size: 13px; font-weight: normal; margin-top: 2px; }
+            .txid { font-size: 22px; font-weight: bold; text-align: center; margin: 8px 0; letter-spacing: 4px; }
+            .section { margin-bottom: 10px; }
+            .section-title { font-size: 10px; text-transform: uppercase; letter-spacing: 2px; border-bottom: 1px solid #000; margin-bottom: 6px; padding-bottom: 2px; }
+            .row { display: flex; justify-content: space-between; margin-bottom: 3px; }
+            .label { color: #444; }
+            .value { font-weight: bold; text-align: right; max-width: 55%; word-break: break-word; }
+            .weights { background: #f5f5f5; border: 1px solid #000; padding: 8px; margin: 10px 0; }
+            .net-weight { font-size: 20px; font-weight: bold; text-align: center; margin: 4px 0; }
+            .net-label { font-size: 10px; text-align: center; text-transform: uppercase; letter-spacing: 2px; }
+            .divider { border-top: 1px dashed #000; margin: 8px 0; }
+            .footer { text-align: center; font-size: 10px; margin-top: 10px; color: #555; }
+            .charge-row { font-size: 14px; font-weight: bold; border-top: 2px solid #000; padding-top: 6px; margin-top: 6px; display: flex; justify-content: space-between; }
+            .manual-note { background: #fff3cd; border: 1px solid #ffc107; padding: 4px 6px; font-size: 10px; margin-top: 4px; }
+            @media print { body { padding: 0; } }
+          </style>
+        </head>
+        <body>${content}</body>
+      </html>
+    `);
+    win.document.close();
+    win.focus();
+    setTimeout(() => { win.print(); win.close(); }, 300);
+  };
+
+  const openEmail = () => {
+    setEmailAddr(t?.customer_email ?? '');
+    setEmailResult(null);
+    setEmailOpen(true);
+  };
+
+  const handleSendEmail = async () => {
+    if (!t || !token) return;
+    setEmailSending(true);
+    setEmailResult(null);
+    try {
+      const res = await fetch(
+        `/api/commercial-weighbridge/transactions/${t.id}/email-receipt/`,
+        {
+          method: 'POST',
+          headers: { Authorization: `Token ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: emailAddr.trim() }),
+        },
+      );
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body?.error ?? res.statusText);
+      setEmailResult({ ok: true, msg: body.message ?? 'Receipt sent.' });
+    } catch (err: any) {
+      setEmailResult({ ok: false, msg: err?.message ?? 'Failed to send email.' });
+    } finally {
+      setEmailSending(false);
+    }
+  };
+
+  if (!t) return null;
+
+  const isCompleted = t.status === 'Completed';
+  const txNum = String(t.id).padStart(5, '0');
+
+  return (
+    <Dialog open={open} onOpenChange={v => { onOpenChange(v); if (!v) { setEmailOpen(false); setEmailResult(null); } }}>
+      <DialogContent className="sm:max-w-[480px] max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="font-mono font-bold tracking-widest">WEIGHBRIDGE RECEIPT</DialogTitle>
+        </DialogHeader>
+
+        {/* Action buttons */}
+        <div className="flex gap-2 mb-3">
+          <Button size="sm" onClick={handlePrint} className="gap-2 flex-1 font-bold uppercase tracking-wide">
+            <Printer className="h-4 w-4" /> Print Receipt
+          </Button>
+          {token && (
+            <Button
+              size="sm" variant="outline"
+              onClick={emailOpen ? undefined : openEmail}
+              className="gap-2 font-bold uppercase tracking-wide"
+            >
+              <Mail className="h-4 w-4" /> Email Receipt
+            </Button>
+          )}
+        </div>
+
+        {/* Email panel */}
+        {emailOpen && (
+          <div className="rounded-md border border-border bg-muted/40 p-3 mb-3 space-y-2">
+            <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+              Send receipt by email
+            </div>
+            <div className="flex gap-2">
+              <Input
+                type="email"
+                placeholder="customer@example.com"
+                value={emailAddr}
+                onChange={e => { setEmailAddr(e.target.value); setEmailResult(null); }}
+                className="h-8 text-sm flex-1 font-mono"
+                disabled={emailSending}
+              />
+              <Button
+                size="sm" className="gap-1.5 font-bold uppercase tracking-wide"
+                onClick={handleSendEmail}
+                disabled={emailSending || !emailAddr.trim()}
+              >
+                {emailSending
+                  ? <span className="h-3 w-3 rounded-full border-2 border-primary-foreground border-t-transparent animate-spin inline-block" />
+                  : <Send className="h-3.5 w-3.5" />}
+                Send
+              </Button>
+            </div>
+            {emailResult && (
+              <div className={`flex items-center gap-1.5 text-xs font-medium ${emailResult.ok ? 'text-emerald-600' : 'text-destructive'}`}>
+                {emailResult.ok && <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />}
+                {emailResult.msg}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Receipt preview */}
+        <div ref={printRef}>
+          <div className="receipt" style={{ fontFamily: "'Courier New', monospace", border: '2px solid #000', padding: 16, fontSize: 12, color: '#000', background: '#fff' }}>
+            {/* Header */}
+            <div className="header" style={{ textAlign: 'center', borderBottom: '2px dashed #000', paddingBottom: 10, marginBottom: 10 }}>
+              <div style={{ fontSize: 18, fontWeight: 'bold', letterSpacing: 2 }}>SL-ERP</div>
+              <div style={{ fontSize: 13 }}>WEIGHBRIDGE TICKET</div>
+              <div style={{ fontSize: 10, color: '#555', marginTop: 2 }}>{t.branch_name ?? 'Main Branch'}</div>
+            </div>
+
+            <div className="txid" style={{ fontSize: 22, fontWeight: 'bold', textAlign: 'center', letterSpacing: 4, margin: '8px 0' }}>
+              #{txNum}
+            </div>
+
+            {/* Status badge */}
+            <div style={{ textAlign: 'center', marginBottom: 10 }}>
+              <span style={{
+                display: 'inline-block', padding: '2px 12px',
+                border: `2px solid ${isCompleted ? '#16a34a' : '#d97706'}`,
+                color: isCompleted ? '#16a34a' : '#d97706',
+                fontWeight: 'bold', fontSize: 11, letterSpacing: 2, textTransform: 'uppercase',
+              }}>
+                {t.status ?? 'PENDING'}
+              </span>
+            </div>
+
+            {/* Vehicle & customer */}
+            <div className="section" style={{ marginBottom: 10 }}>
+              <div className="section-title" style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: 2, borderBottom: '1px solid #000', marginBottom: 6, paddingBottom: 2 }}>Vehicle & Customer</div>
+              {([
+                ['Plate Number', t.vehicle_plate],
+                ['Vehicle Type', t.vehicle_type_name],
+                ['Customer', t.customer_name],
+                ['Item / Commodity', t.item_name],
+                ['Destination', t.destination],
+                ['Operator', t.operator],
+              ] as [string, string | undefined][]).map(([label, value]) => value ? (
+                <div key={label} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
+                  <span style={{ color: '#444' }}>{label}</span>
+                  <span style={{ fontWeight: 'bold', textAlign: 'right', maxWidth: '55%' }}>{value}</span>
+                </div>
+              ) : null)}
+            </div>
+
+            {/* Weights */}
+            <div style={{ background: '#f5f5f5', border: '1px solid #000', padding: 8, margin: '10px 0' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                <div style={{ textAlign: 'center', flex: 1 }}>
+                  <div style={{ fontSize: 10, textTransform: 'uppercase', color: '#555' }}>Gross</div>
+                  <div style={{ fontWeight: 'bold', fontSize: 14 }}>{kg(t.gross_weight)}</div>
+                  <div style={{ fontSize: 9, color: '#777' }}>{fmt(t.gross_weight_date)}</div>
+                </div>
+                <div style={{ padding: '0 8px', display: 'flex', alignItems: 'center', fontSize: 16, fontWeight: 'bold' }}>−</div>
+                <div style={{ textAlign: 'center', flex: 1 }}>
+                  <div style={{ fontSize: 10, textTransform: 'uppercase', color: '#555' }}>Tare</div>
+                  <div style={{ fontWeight: 'bold', fontSize: 14 }}>{kg(t.tare_weight)}</div>
+                  <div style={{ fontSize: 9, color: '#777' }}>{fmt(t.tare_weight_date)}</div>
+                </div>
+              </div>
+              <div style={{ borderTop: '1px solid #000', paddingTop: 6, textAlign: 'center' }}>
+                <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: 2, color: '#555' }}>NET WEIGHT</div>
+                <div style={{ fontSize: 22, fontWeight: 'bold' }}>{kg(t.net_weight)}</div>
+              </div>
+            </div>
+
+            {/* Payment */}
+            <div className="section" style={{ marginBottom: 10 }}>
+              <div className="section-title" style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: 2, borderBottom: '1px solid #000', marginBottom: 6, paddingBottom: 2 }}>Payment</div>
+              {([
+                ['Payment Mode', t.payment_mode],
+                ['Payment Status', t.payment_status],
+                ['Discounted', t.discounted ? 'YES' : undefined],
+              ] as [string, string | undefined][]).map(([label, value]) => value ? (
+                <div key={label} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
+                  <span style={{ color: '#444' }}>{label}</span>
+                  <span style={{ fontWeight: 'bold' }}>{value}</span>
+                </div>
+              ) : null)}
+              <div style={{ fontSize: 14, fontWeight: 'bold', borderTop: '2px solid #000', paddingTop: 6, marginTop: 6, display: 'flex', justifyContent: 'space-between' }}>
+                <span>CHARGE</span>
+                <span>{kes(t.charge)}</span>
+              </div>
+            </div>
+
+            {/* Timestamps */}
+            <div style={{ borderTop: '1px dashed #000', paddingTop: 8, marginTop: 8, fontSize: 10, color: '#555' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>First Weight:</span><span>{fmt(t.gross_weight_date ?? t.created_at)}</span>
+              </div>
+              {t.tare_weight_date && (
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span>Second Weight:</span><span>{fmt(t.tare_weight_date)}</span>
+                </div>
+              )}
+            </div>
+
+            {t.manual_weight_capture && (
+              <div style={{ background: '#fff3cd', border: '1px solid #ffc107', padding: '4px 6px', fontSize: 10, marginTop: 4 }}>
+                ⚠ MANUAL CAPTURE — {t.weight_reason ?? 'No reason provided'}
+              </div>
+            )}
+
+            {/* Footer */}
+            <div style={{ textAlign: 'center', fontSize: 10, marginTop: 12, color: '#555', borderTop: '1px dashed #000', paddingTop: 8 }}>
+              <div>Thank you for using our weighbridge</div>
+              <div style={{ marginTop: 2, fontWeight: 'bold', letterSpacing: 1 }}>SL-ERP OPERATIONS PLATFORM</div>
+              <div style={{ marginTop: 4, fontSize: 9 }}>Printed: {new Date().toLocaleString('en-KE')}</div>
+            </div>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}

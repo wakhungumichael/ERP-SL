@@ -1,0 +1,18 @@
+<!-- create_transaction.html -->
+<form method="POST">
+    {% csrf_token %}
+    {{ form.as_p }}
+    <button type="button" onclick="capturePlateNumber()">Capture Plate Number</button>
+    <input type="text" id="plate_number" name="plate_number" readonly />
+    <button type="submit">Create Transaction</button>
+</form>
+
+<script>
+function capturePlateNumber() {
+    fetch('/capture_plate_number/')
+        .then(response => response.json())
+        .then(data => {
+            document.getElementById('plate_number').value = data.plate_number;
+        });
+}
+</script>

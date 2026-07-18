@@ -354,7 +354,7 @@ export async function customFetch<T = unknown>(
   if (_authTokenGetter && !headers.has("authorization")) {
     const token = await _authTokenGetter();
     if (token) {
-      headers.set("authorization", `Bearer ${token}`);
+      headers.set("authorization", `Token ${token}`);
     }
   }
 

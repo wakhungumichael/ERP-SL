@@ -1,0 +1,65 @@
+<!-- templates/admin/discrepancy_report.html -->
+
+{% extends "admin/base_site.html" %}
+{% block content %}
+    <h1>Discrepancy Report</h1>
+
+    {% if discrepancies %}
+        <h2>Discrepancies Found:</h2>
+        <ul>
+            {% for discrepancy in discrepancies %}
+                <li>{{ discrepancy }}</li>
+            {% endfor %}
+        </ul>
+    {% else %}
+        <p>No discrepancies found.</p>
+    {% endif %}
+
+    <h2>Transaction Records:</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Vehicle ID</th>
+                <th>Amount</th>
+                <th>Timestamp</th>
+                <!-- Add other relevant fields -->
+            </tr>
+        </thead>
+        <tbody>
+            {% for transaction in transactions %}
+                <tr>
+                    <td>{{ transaction.id }}</td>
+                    <td>{{ transaction.vehicle_id }}</td>
+                    <td>{{ transaction.amount }}</td>
+                    <td>{{ transaction.timestamp }}</td>
+                    <!-- Add other relevant fields -->
+                </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <h2>Vehicle Presence Records:</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Vehicle ID</th>
+                <th>Detected Weight</th>
+                <th>Timestamp</th>
+                <!-- Add other relevant fields -->
+            </tr>
+        </thead>
+        <tbody>
+            {% for presence in vehicle_presences %}
+                <tr>
+                    <td>{{ presence.id }}</td>
+                    <td>{{ presence.vehicle_id }}</td>
+                    <td>{{ presence.detected_weight }}</td>
+                    <td>{{ presence.timestamp }}</td>
+                    <!-- Add other relevant fields -->
+                </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+{% endblock %}

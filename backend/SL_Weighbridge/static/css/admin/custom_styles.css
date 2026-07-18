@@ -1,0 +1,57 @@
+/* custom_styles.css */
+.table thead th {
+    position: relative; /* Positioning for resizable handle */
+    user-select: none; /* Prevent text selection while resizing */
+}
+
+.resizable {
+    padding-right: 20px; /* Space for the resize handle */
+}
+
+.resizable:after {
+    content: ""; /* Resize handle */
+    position: absolute;
+    top: 0;
+    right: 0;
+    height: 100%;
+    width: 10px; /* Width of the resize handle */
+    cursor: col-resize; /* Cursor style when hovering over the handle */
+}
+/* custom_styles.css */
+.table thead th {
+    position: relative; /* Positioning for resizable handle */
+    user-select: none; /* Prevent text selection while resizing */
+}
+
+.resizable {
+    padding-right: 20px; /* Space for the resize handle */
+}
+
+.resizable:after {
+    content: ""; /* Resize handle */
+    position: absolute;
+    top: 0;
+    right: 0;
+    height: 100%;
+    width: 10px; /* Width of the resize handle */
+    cursor: col-resize; /* Cursor style when hovering over the handle */
+}
+/* custom_styles.css */
+.table thead th {
+    position: relative; /* Positioning for resizable handle */
+    user-select: none; /* Prevent text selection while resizing */
+}
+
+.resizable {
+    padding-right: 20px; /* Space for the resize handle */
+}
+
+.resizable:after {
+    content: ""; /* Resize handle */
+    position: absolute;
+    top: 0;
+    right: 0;
+    height: 100%;
+    width: 10px; /* Width of the resize handle */
+    cursor: col-resize; /* Cursor style when hovering over the handle */
+}

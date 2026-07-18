@@ -1,0 +1,8 @@
+{% extends "admin/change_form.html" %}
+{% load static %}  <!-- Add this line to load the static tag -->
+
+
+{% block extrahead %}
+    {{ block.super }}
+    <script src="{% static 'admin/js/transaction_admin.js' %}"></script>
+{% endblock %}

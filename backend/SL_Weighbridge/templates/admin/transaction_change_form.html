@@ -1,0 +1,163 @@
+{% extends "admin/change_form.html" %}
+{% load static %}
+
+{% block submit_buttons_bottom %}
+    <button class="button capture-weight-button" style="
+        background-color: #003366;
+        color: #ffffff;
+        border: none;
+        padding: 6px 12px;
+        text-align: center;
+        text-decoration: none;
+        display: inline-block;
+        font-size: 14px;
+        margin: 4px 2px;
+        cursor: pointer;
+        border-radius: 4px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        transition: background-color 0.3s, box-shadow 0.3s;
+    " type="button" data-transaction-id="{{ original.id }}">
+        Capture Weight
+    </button>
+    {{ block.super }}
+{% endblock %}
+
+{% block extrahead %}
+    {{ block.super }}
+    <script src="{% static 'admin/js/capture_weight.js' %}"></script>
+{% endblock %}
+
+{% block content %}
+
+<style>
+    /* Scoped wrapper to avoid admin CSS conflicts */
+    .live-weight-widget {
+        margin-top: 20px;
+        padding: 10px;
+        border: 1px solid #ddd;
+        border-radius: 6px;
+        background: #fff;
+    }
+
+    .live-weight-widget .weight-box {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        width: 100%;
+        height: 100px;
+        background-color: black;
+        border-radius: 5px;
+    }
+
+    .live-weight-widget .weight-box span {
+        color: green;
+        font-size: 2em;
+        font-weight: bold;
+        text-align: center;
+        width: 100%;
+    }
+
+    .live-weight-widget .status {
+        text-align: center;
+        margin-top: 10px;
+        font-size: 0.9em;
+        color: gray;
+    }
+</style>
+
+<div class="live-weight-widget">
+    <div class="weight-box">
+        <span id="real-time-weight">Connecting...</span>
+    </div>
+    <div id="connection-status" class="status">Live Weight Preview</div>
+</div>
+
+
+
+
+
+
+<script>
+    (function($) {
+        $(document).ready(function() {
+            const weightEl = document.getElementById("real-time-weight");
+            const statusEl = document.getElementById("connection-status");
+            const liveWeightUrl = "{% url 'admin_live_weight' %}";
+
+            function renderWeight(data, sourceLabel) {
+                const rawValue =
+                    data.value !== undefined && data.value !== null
+                        ? data.value
+                        : data.weight;
+
+                if (rawValue === undefined || rawValue === null) {
+                    throw new Error("Weight value missing");
+                }
+
+                weightEl.textContent = rawValue + " kg";
+                statusEl.textContent = data.stable === false ? `${sourceLabel} live` : sourceLabel;
+                statusEl.style.color = data.stable === false ? "orange" : "green";
+            }
+
+            function fetchJson(url) {
+                return fetch(url, {
+                    headers: { "X-Requested-With": "XMLHttpRequest" }
+                })
+                .then(function(response) {
+                    const contentType = response.headers.get("content-type") || "";
+
+                    if (!contentType.includes("application/json")) {
+                        return response.text().then(function(text) {
+                            const preview = text.replace(/\s+/g, " ").trim().slice(0, 120);
+                            throw new Error(
+                                preview.startsWith("<!DOCTYPE") || preview.startsWith("<html")
+                                    ? "The live-weight endpoint returned HTML instead of JSON."
+                                    : (preview || ("HTTP " + response.status))
+                            );
+                        });
+                    }
+
+                    return response.json().then(function(data) {
+                        if (!response.ok) {
+                            throw new Error(data.error || ("HTTP " + response.status));
+                        }
+                        return data;
+                    });
+                });
+            }
+
+            function fetchWeight() {
+                fetchJson(liveWeightUrl)
+                .then(function(data) {
+                    renderWeight(data, "Live Weight");
+                })
+                .catch(function(error) {
+                    console.error("Live weight error:", error);
+                    weightEl.textContent = "---";
+                    statusEl.textContent = error.message || "No signal";
+                    statusEl.style.color = "red";
+                });
+            }
+
+            fetchWeight();
+            window.setInterval(fetchWeight, 2000);
+        });
+    })(django.jQuery);
+</script>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+{{ block.super }}
+{% endblock %}

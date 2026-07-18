@@ -1,0 +1,6 @@
+- [Django backend setup](django-backend.md) — CWD for api-server workflow is artifacts/api-server/, so Django is launched with `cd ../../backend`.
+- [CRM module](crm-module.md) — SL_CRM app, /api/crm/ namespace, plain-English URL/UI naming convention for all modules.
+- [Role-based auth](role-auth.md) — AppRole system in erp-ui/src/lib/roles.ts; role detected from Django User groups after login.
+- [Django startup blockers](django-deps.md) — weasyprint import must stay try/except in SL_Weighbridge/utils.py; pyserial, requests, and all other deps installed in .pythonlibs.
+- [Missing Platform_API stubs](platform-api-stubs.md) — api.py, mixins.py, integrations.py, weighbridge/*, payments/* were not committed; stubs live in backend/Platform_API/modules/.
+- [HR and Procurement modules](hr-procurement-modules.md) — SL_HR and SL_Procurement Django apps with migrations; Platform_API modules at /api/hr/ and /api/procurement/.

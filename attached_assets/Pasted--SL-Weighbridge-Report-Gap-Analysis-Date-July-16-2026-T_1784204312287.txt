@@ -1,0 +1,349 @@
+# SL Weighbridge Report Gap Analysis
+
+Date: July 16, 2026
+
+This note reviews the external Replit-generated SL Weighbridge report against the current codebase.
+
+It is intended to:
+
+- separate verified implementation from inferred claims
+- identify real gaps in the current `SL_Weighbridge` and modular platform structure
+- provide a correction brief that can be fed back into Replit or any other generator
+- guide the migration from legacy operational logic into the modular `commercial-weighbridge` platform surface
+
+## Executive Summary
+
+The Replit report is partially correct, especially around core transaction fields, charge logic, and the basic weighbridge flow. However, it overstates several parts of the API, assumes richer frontend coverage than the current backend guarantees, and misses key architectural changes already introduced in this repository.
+
+The main reality of the current codebase is this:
+
+- `SL_Weighbridge` still carries a large share of the operational domain logic and legacy admin/UI behavior
+- `Platform_Core` now contains important shared platform and service logic
+- `Platform_API/modules/commercial_weighbridge` exposes the intended modular API surface
+- both the legacy and modular layers currently coexist
+- some indicator and UI paths are still duplicated or inconsistent
+
+## What The Report Got Right
+
+### Transaction model and charge logic
+
+The report correctly identifies the main operational fields on `Transaction`, including:
+
+- `weight_type`
+- `gross_weight`
+- `tare_weight`
+- `net_weight`
+- `status`
+- `payment_mode`
+- `payment_status`
+- `approval_status`
+- `manual_weight_capture`
+- `weight_reason`
+- `paired_first_transaction`
+
+The report is also correct about the current charge calculation order:
+
+1. `CustomerVehicleTypeDiscount.discounted_charge`
+2. `Customer.discounted` with `Customer.charge`
+3. `VehicleType.charge`
+
+It is also correct that:
+
+- second weight sets charge to `0.00`
+- `net_weight = abs(gross_weight - tare_weight)`
+
+Verified in:
+
+- `SL_Weighbridge/models.py`
+
+### Indicator defaults
+
+The report is broadly correct that environment-driven indicator settings exist in `SL_ERP/settings.py`, including:
+
+- `INDICATOR_API_BASE_URL`
+- `INDICATOR_API_ID`
+- `INDICATOR_REQUEST_TIMEOUT`
+- `INDICATOR_LIVE_WEIGHT_URL`
+- `INDICATOR_STABLE_WEIGHT_URL`
+- `INDICATOR_LIVE_WEIGHT_STREAM_URL`
+
+## Where The Report Is Inaccurate
+
+### 1. It overstates the commercial weighbridge API
+
+The report describes several API capabilities that are not currently exposed by the modular backend exactly as written.
+
+Examples:
+
+- `transactions/<id>/` is described as `GET/PATCH`
+- customers and vehicles are described as full CRUD APIs
+- transaction filters are described as supporting richer date/time query semantics
+
+Current backend reality:
+
+- `TransactionDetailAPIView` is retrieve-only
+- `CustomerListAPIView` is list-only
+- `VehicleListAPIView` is list-only
+- the transaction list relies on DRF filter/search/order fields, not the full custom filter contract described in the report
+
+Affected code:
+
+- `Platform_API/modules/commercial_weighbridge/views.py`
+
+### 2. It overstates the dashboard payload
+
+The report says the dashboard exposes:
+
+- daily totals
+- monthly totals
+- net weight today
+- revenue
+- last 10 transactions
+
+The current backend dashboard actually returns:
+
+- counts
+- aggregate weight totals
+- charge totals
+- breakdown by weight type
+- breakdown by payment status
+
+This is useful, but it is not the same as the report's richer analytics contract.
+
+Affected code:
+
+- `Platform_API/modules/commercial_weighbridge/views.py`
+
+### 3. It treats missing export as a backend gap when export endpoints already exist
+
+The report says export is still missing.
+
+That is not fully accurate.
+
+Current backend already includes transaction export endpoints for:
+
+- CSV
+- PDF
+
+The more accurate gap is:
+
+- export APIs exist
+- some frontend or workspace surfaces may not yet expose them consistently
+
+Affected code:
+
+- `Platform_API/modules/commercial_weighbridge/views.py`
+- `templates/admin/reports/dashboard.html`
+
+### 4. It understates existing invoice and payment flow wiring
+
+The report implies invoice flow is not yet meaningfully wired.
+
+That is incomplete.
+
+Current code already contains:
+
+- transaction-to-invoice generation for eligible debt transactions
+- invoice payment receipt flow
+- payment confirmation flow
+- accounting posting on payment confirmation
+- gateway initiation/callback simulation
+
+The real maturity gap is not the absence of all payment logic.
+The real gap is broader enterprise-grade expansion, provider execution maturity, and stronger UI alignment.
+
+Affected code:
+
+- `Platform_Core/commercial_operations.py`
+- `Platform_API/modules/payments/views.py`
+- `Platform_Core/accounting.py`
+
+### 5. It presents approval and recall as missing actions, but they already exist in the API
+
+The report says approval and recall are not implemented.
+
+That is not accurate as a backend statement.
+
+Current code already includes approve and recall actions. The more precise issue is that the current approval logic is narrow:
+
+- only pending transactions can be approved
+- manual weight capture must be enabled
+
+So the gap is workflow maturity and UI exposure, not total absence.
+
+Affected code:
+
+- `Platform_Core/commercial_operations.py`
+- `Platform_API/modules/commercial_weighbridge/views.py`
+
+### 6. It misses the modular platform architecture already in place
+
+The report is too centered on the older weighbridge app structure and does not properly account for the newer modular platform direction.
+
+Current structure already includes:
+
+- `Platform_Core`
+- `Platform_API/modules/platform`
+- `Platform_API/modules/payments`
+- `Platform_API/modules/accounting`
+- `Platform_API/modules/commercial_weighbridge`
+
+This is a major omission because it changes how future UI, integrations, licensing, modules, and multi-tenant behavior should be designed.
+
+### 7. It misses the current integration resolution model
+
+The report frames indicator resolution mostly around branch config plus settings fallback.
+
+The actual backend now has a more important service path:
+
+- resolve tenant/branch indicator integration from `IntegrationEndpoint`
+- use integration-specific URLs where present
+- fall back to environment settings only if no integration is configured
+
+That service path matters because it is the foundation for multi-tenant, branch-aware, and future multi-indicator support.
+
+Affected code:
+
+- `Platform_Core/commercial_weighbridge.py`
+
+### 8. It does not call out a real inconsistency in the old live-weight UI
+
+One of the actual technical debts in the repo is that an older JS file still hardcodes:
+
+- `https://ws.metrixws.co.ke/live_weight`
+
+This bypasses the newer tenant-aware integration resolution logic and should not be treated as the target architecture.
+
+Affected code:
+
+- `SL_Weighbridge/static/SL_Weighbridge/js/weight_display.js`
+
+### 9. It likely overstates mobile implementation
+
+The report claims a mobile app stack and mobile tab structure as if it is part of the current verified repository surface.
+
+That should not be accepted without a direct code-level confirmation in this repository.
+
+The same applies to the report header claim that the project stack is:
+
+- `Django 5.2`
+- `Expo React Native`
+
+Those claims should be re-verified before they are used as planning assumptions.
+
+## Important Current-State Realities The Report Missed
+
+### There are two active operational surfaces
+
+The current system has both:
+
+- legacy operational/admin behavior in `SL_Weighbridge`
+- newer modular APIs in `Platform_API/modules/commercial_weighbridge`
+
+This coexistence is one of the most important architectural realities in the codebase.
+
+### Service logic has started to move into shared platform code
+
+Examples already in shared service form include:
+
+- indicator URL resolution
+- live weight fetching
+- stable weight capture
+- transaction approval/recall service logic
+- invoice generation and payment/accounting posting flow
+
+This is the correct direction and should continue.
+
+### Role-based and module-aware platform foundations already exist
+
+The report does not sufficiently acknowledge the platform layer for:
+
+- tenants
+- plans
+- licenses
+- module activation
+- integration endpoints
+- workspace navigation
+- payment gateway visibility
+- accounting foundations
+
+That matters because future ERP work should build on this platform layer, not duplicate it inside a single-domain app.
+
+## Real Gaps In The Current System
+
+These are the more important actual gaps that should guide the next implementation steps.
+
+### 1. Legacy and modular weighbridge logic still coexist
+
+We still have overlapping logic across:
+
+- `SL_Weighbridge`
+- `Platform_Core`
+- `Platform_API/modules/commercial_weighbridge`
+
+The system needs a clearer split where:
+
+- domain models can remain where needed for stability in the short term
+- operational services move into reusable platform/domain services
+- APIs consume those services
+- frontend uses module APIs instead of legacy ad hoc endpoints
+
+### 2. Indicator access is not fully centralized in all UI paths
+
+Although shared indicator resolution exists, some old UI scripts still use hardcoded URLs or older access paths.
+
+We need one canonical indicator access strategy:
+
+- resolve tenant
+- resolve branch
+- resolve integration endpoint
+- fall back to settings
+- expose clean live, stable, stream, health, and capability endpoints
+
+### 3. Workflow maturity is incomplete
+
+The operational flow exists, but it still needs stronger alignment across:
+
+- approval rules
+- recall rules
+- workflow step visibility
+- manual capture controls
+- auditability
+- frontend actions
+
+### 4. UI maturity is still transitional
+
+The new frontend and workspace are not yet at the final enterprise role-based workspace quality level.
+
+Remaining needs include:
+
+- login-first experience
+- polished role-based menu system
+- configurable workspace navigation
+- operator-friendly forms
+- business-focused workspace instead of a developer-style console
+
+### 5. Payments and accounting are foundational, not yet fully enterprise-complete
+
+The system already links:
+
+- transactions
+- invoices
+- payments
+- accounting posting
+
+But it still needs:
+
+- quotations
+- broader chart/journal/reporting depth
+- stronger provider execution
+- more complete receivables and reconciliation flows
+- cleaner document and PDF surface
+
+### 6. Technical debt remains in duplicated operational endpoints
+
+Some admin-era endpoints and JS flows are still in place beside the modular APIs.
+
+That is normal during transition, but it should be explicitly tracked and gradually retired.
+
+## Migration Direction For `SL_Weighbridge`

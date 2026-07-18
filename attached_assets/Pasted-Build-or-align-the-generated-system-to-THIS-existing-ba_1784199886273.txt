@@ -1,0 +1,426 @@
+Build or align the generated system to THIS existing backend, not to a new invented API.
+
+DATE CONTEXT
+Today is Thursday, July 16, 2026.
+
+PRIMARY GOAL
+We already have a Django + DRF backend for a multi-tenant ERP platform starting with a Commercial Weighbridge vertical. The new system must use our EXISTING module-based API structure and business logic, especially for weighbridge transactions, live weight, stable weight capture, invoicing, payments, and accounting linkage.
+
+VERY IMPORTANT
+Do not invent a different backend contract.
+Do not invent random field names.
+Do not switch to a different API style.
+Do not create a parallel weighbridge model that conflicts with the current backend.
+The frontend/system must align to the existing API and domain logic below.
+
+==================================================
+1. EXISTING PLATFORM DIRECTION
+==================================================
+
+We are transforming an older Django weighbridge application into a multi-tenant SaaS ERP platform.
+
+Current major backend areas:
+- Platform_Core
+- Platform_API
+- SL_Weighbridge
+
+Conceptually:
+- Platform_Core = tenants, modules, plans, subscriptions, licensing, integrations, templates, backups, accounting foundation, workspace menu config
+- Platform_API = public/internal module-based API layer
+- SL_Weighbridge = operational domain logic for weighbridge transactions and related business flows
+
+The target product is:
+- multi-tenant
+- role-based
+- license-aware
+- module-activatable
+- integration-driven
+- extensible for multiple industries
+- starting with Commercial Weighbridge
+
+==================================================
+2. REQUIRED API STRUCTURE TO USE
+==================================================
+
+The system must use these module-based API namespaces:
+
+- /api/platform/...
+- /api/payments/...
+- /api/accounting/...
+- /api/commercial-weighbridge/...
+- /api/system/...
+
+Do NOT use:
+- fake /api/v2 invented routes
+- random GraphQL layer unless mapped cleanly to this backend
+- any legacy /api/v1 public contract for the new UI
+- hardcoded alternative data shapes
+
+==================================================
+3. PLATFORM / ACCESS REQUIREMENTS
+==================================================
+
+The ERP framework must support:
+
+- multi-tenant architecture
+- role-based access control
+- configurable workspace menus
+- per-tenant module activation
+- subscription plans
+- license keys
+- tenant-specific integrations
+- tenant-specific document templates
+- backup policy management
+- clean admin and user workspaces
+
+Access model should support at least:
+- superadmin
+- platform admin
+- tenant admin
+- operations manager
+- weighbridge operator
+- finance/accounting user
+- reporting/audit user
+- read-only user
+
+Menu visibility must depend on:
+- user roles/groups
+- permissions
+- active tenant modules
+- subscription/license state
+
+==================================================
+4. CURRENT PLATFORM FEATURES ALREADY AVAILABLE
+==================================================
+
+The generated system must assume these backend concepts already exist or must be preserved:
+
+Platform foundation:
+- tenants
+- modules
+- plans
+- subscriptions
+- license keys
+- tenant module activations
+- integration endpoints
+- document templates
+- backup policies
+- workspace menu sections
+- workspace menu items
+- role-to-menu assignments
+
+User/access:
+- login by token API
+- current user endpoint
+- user list/detail
+- role list/detail
+- permission list
+- user role assignment
+- role-aware workspace navigation
+
+==================================================
+5. COMMERCIAL WEIGHBRIDGE MODULE: BUSINESS REQUIREMENTS
+==================================================
+
+This is the most important operational module right now.
+
+The Commercial Weighbridge module must support:
+
+MASTER DATA
+- branches
+- customers
+- vehicles
+- vehicle types
+- items/products/materials
+- operators
+- destinations
+- pricing/charge rules
+- discounts if applicable
+
+TRANSACTION FLOW
+- first weight transaction
+- second weight transaction
+- workflow pairing between first and second weight
+- gross/tare/net weight handling
+- pending transaction detection
+- validation that second weight cannot happen without the correct first weight context
+- transaction approval
+- transaction recall/reversal where allowed
+- invoice generation from completed transactions
+- payment status visibility
+- auditability
+
+WEIGHT CAPTURE MODES
+- live weight display
+- stable weight capture from an integration API
+- manual weight capture fallback
+- future support for multiple indicator transport types:
+  - serial
+  - USB
+  - bluetooth
+  - TCP/IP
+  - UDP
+  - HTTP API
+  - websocket
+  - local bridge/agent service
+
+REPORTING
+- transaction reports
+- invoice reports
+- discrepancy reports
+- vehicle presence / operational monitoring reports
+- dashboard summary for operations
+
+USER EXPERIENCE EXPECTATION
+The UI should be enterprise-grade and role-based, not a developer console.
+The weighbridge workflow should be extremely clear and operationally fast.
+
+==================================================
+6. VERY IMPORTANT: WEIGHT CAPTURE / INTEGRATION LOGIC
+==================================================
+
+The system MUST preserve and use our current backend-based weight capture approach.
+
+The frontend must not directly talk to random external indicator APIs unless explicitly required by backend design.
+
+The preferred flow is:
+Frontend -> our Django API -> integration resolution -> actual indicator source
+
+Meaning:
+- tenant and branch determine which indicator integration to use
+- the backend resolves integration endpoints from configured IntegrationEndpoint records
+- the frontend consumes the backend APIs only
+
+The UI must support these existing backend capabilities:
+
+A. Live weight
+Use:
+- GET /api/commercial-weighbridge/live-weight/
+
+Purpose:
+- fetch current live weight resolved through tenant/branch indicator integration
+
+Expected concept:
+- returns reading info like weight/value, unit, stability, branch context
+
+B. Workflow context
+Use:
+- GET /api/commercial-weighbridge/transactions/workflow-context/?vehicle_id=<id>
+
+Purpose:
+- determine whether vehicle has pending first weight / valid recent first weight
+- prepare second weight flow correctly
+
+C. Transactions list/detail
+Use:
+- GET /api/commercial-weighbridge/transactions/
+- GET /api/commercial-weighbridge/transactions/<id>/
+
+D. Create transaction
+Use:
+- POST /api/commercial-weighbridge/transactions/
+
+Expected business payload concept:
+- branch
+- customer
+- vehicle
+- item
+- operator
+- vehicle_type
+- destination
+- weight_type
+- payment_mode
+- payment_status
+- manual_weight_capture
+- weight_reason if needed
+
+E. Stable capture onto transaction
+Use:
+- POST /api/commercial-weighbridge/transactions/capture-weight/
+
+Purpose:
+- capture stable weight via backend integration logic for a selected transaction
+
+This is critical:
+The system must be able to capture weight using the API here, through the backend workflow.
+Do not replace this with a fake client-side simulation.
+Do not remove this endpoint behavior.
+
+==================================================
+7. PAYMENTS / INVOICING / ACCOUNTING LOGIC
+==================================================
+
+Preserve this linked business chain:
+
+Transaction -> Invoice -> Payment -> Accounting Posting
+
+Required capabilities:
+- generate invoice from transaction
+- issue invoice
+- receive payment
+- initiate gateway payment
+- simulate or process callback
+- confirm payment
+- reflect invoice/payment state correctly
+- maintain accounting foundation
+
+Important existing API concepts:
+
+Payments:
+- /api/payments/
+- /api/payments/methods/
+- /api/payments/invoices/
+- /api/payments/entries/
+- /api/payments/provider-capabilities/
+- POST actions for receive-payment, confirm, gateway initiation, callback
+
+Accounting:
+- /api/accounting/dashboard/
+- accounting foundation should remain integrated with transaction/invoice/payment flow
+
+Do not separate finance from operations in a way that breaks this chain.
+
+==================================================
+8. UI / UX REQUIREMENTS
+==================================================
+
+The generated system should provide a polished ERP workspace with:
+
+AUTH
+- real login page
+- friendly error messages
+- authenticated workspace shell
+- sign out
+- current user display
+- role chips / role identity
+
+WORKSPACE SHELL
+- left sidebar
+- role-based navigation
+- top workspace header
+- tenant/branch context controls
+- module-aware sections
+- non-developer visual language
+
+PLATFORM ADMIN AREAS
+- tenants
+- modules
+- plans
+- subscriptions
+- licenses
+- integrations
+- users
+- roles
+- permissions
+- workspace menus
+
+WEIGHBRIDGE AREAS
+- dashboard
+- transactions
+- create first weight
+- create second weight
+- live weight
+- capture weight
+- reports
+- customer/vehicle/item management
+
+FINANCE AREAS
+- invoices
+- payment methods
+- payments
+- accounting overview
+- provider integrations
+
+IMPORTANT
+Do not show all raw endpoint cards like a developer tool.
+Show proper pages, lists, tables, forms, and actions.
+
+==================================================
+9. FIELD / DATA ALIGNMENT RULE
+==================================================
+
+If the generated system currently has different field names, different DTOs, or different form structures, align them to the existing backend contract instead of inventing adapters blindly.
+
+Examples of fields/concepts already relevant in the current backend:
+- tenant_code
+- branch_id
+- vehicle_id
+- branch
+- customer
+- vehicle
+- item
+- operator
+- vehicle_type
+- destination
+- weight_type
+- payment_mode
+- payment_status
+- manual_weight_capture
+- weight_reason
+
+If the generated code used alternative names, refactor it to match these concepts.
+
+==================================================
+10. IMPLEMENTATION RULES
+==================================================
+
+Follow these rules:
+
+- Use the existing module-based backend API.
+- Preserve tenant-aware querying.
+- Preserve role-aware workspace logic.
+- Preserve backend-driven weight integration resolution.
+- Preserve transaction -> invoice -> payment -> accounting flow.
+- Keep menus configurable.
+- Keep UI product-grade.
+- Keep architecture extensible for future ERP modules.
+- Do not regress the current commercial weighbridge logic.
+
+==================================================
+11. WHAT TO GENERATE NEXT
+==================================================
+
+Generate or align the system in this order:
+
+1. Login page and authenticated workspace shell
+2. Role-based sidebar using workspace navigation API
+3. Platform admin pages:
+   - users
+   - roles
+   - permissions
+   - workspace menus
+   - tenants
+   - modules
+   - plans
+   - subscriptions
+   - licenses
+   - integrations
+4. Commercial Weighbridge pages:
+   - dashboard
+   - transactions list/detail
+   - first weight creation
+   - second weight creation using workflow context
+   - live weight page
+   - capture stable weight action
+   - reports
+5. Finance pages:
+   - invoices
+   - payments
+   - payment methods
+   - accounting dashboard
+6. Prepare future extensions:
+   - quotations
+   - document templates
+   - richer accounting
+   - logistics
+   - government weighbridge
+
+==================================================
+12. FINAL INSTRUCTION
+==================================================
+
+Do not build a generic dashboard.
+Build an enterprise-grade, multi-tenant, role-based ERP framework centered on Commercial Weighbridge operations and tightly integrated with invoicing, payments, accounting, licensing, modules, and configurable integrations.
+
+Most importantly:
+Make sure the weighbridge module can display live weight and capture stable weight using the existing backend API flow.

@@ -1,0 +1,100 @@
+{% load static %}
+<html>
+<head>
+    <title>View Reports</title>
+    <style>
+        .sidebar {
+            float: left;
+            width: 20%;
+            background: #f4f4f4;
+            padding: 20px;
+        }
+        .content {
+            margin-left: 20%;
+            padding: 20px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 8px;
+        }
+        th {
+            background-color: #f2f2f2;
+        }
+    </style>
+</head>
+<body>
+    <div class="sidebar">
+        <h2>Dashboard</h2>
+        <ul>
+            <li><a href="{% url 'record_weight' %}">Record Weight</a></li>
+            <li><a href="{% url 'view_reports' %}">View Reports</a></li>
+        </ul>
+    </div>
+    <div class="content">
+        <h1>Reports</h1>
+        <h2>Transactions</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Branch</th>
+                    <th>Customer</th>
+                    <th>Vehicle</th>
+                    <th>Item</th>
+                    <th>Gross Weight</th>
+                    <th>Tare Weight</th>
+                    <th>Net Weight</th>
+                    <th>Operator</th>
+                    <th>Weight Type</th>
+                    <th>Weight Date</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for transaction in transactions %}
+                    <tr>
+                        <td>{{ transaction.branch }}</td>
+                        <td>{{ transaction.customer }}</td>
+                        <td>{{ transaction.vehicle }}</td>
+                        <td>{{ transaction.item }}</td>
+                        <td>{{ transaction.gross_weight }}</td>
+                        <td>{{ transaction.tare_weight }}</td>
+                        <td>{{ transaction.net_weight }}</td>
+                        <td>{{ transaction.operator }}</td>
+                        <td>{{ transaction.weight_type }}</td>
+                        <td>{{ transaction.weight_date }}</td>
+                    </tr>
+                {% empty %}
+                    <tr>
+                        <td colspan="10">No transactions found.</td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+
+        <h2>Discrepancy Reports</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Report File</th>
+                    <th>Generated At</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for report in discrepancy_reports %}
+                    <tr>
+                        <td><a href="{{ report.report_file.url }}" download>Download</a></td>
+                        <td>{{ report.generated_at }}</td>
+                    </tr>
+                {% empty %}
+                    <tr>
+                        <td colspan="2">No discrepancy reports found.</td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</body>
+</html>

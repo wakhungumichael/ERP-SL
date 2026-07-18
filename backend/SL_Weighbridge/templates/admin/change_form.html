@@ -1,0 +1,8 @@
+{% block object-tools %}
+    {{ block.super }}
+    <a class="button" href="{{ capture_weight_url }}">Capture Weight</a>
+{% endblock %}
+
+
+<!-- Link to external JavaScript file -->
+<script src="{% static 'admin/js/capture_weight.js' %}"></script>

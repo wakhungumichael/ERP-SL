@@ -1,0 +1,106 @@
+{% extends "admin/base_site.html" %}
+
+{% block content %}
+<div class="container">
+    <h1>Reports Dashboard</h1>
+
+    <h2>Vehicle Presence Report</h2>
+    <table class="table table-striped">
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Timestamp</th>
+                <th>Detected Weight (kg)</th>
+                <th>Plate Number</th>
+                <th>Capture Status</th>
+                <th>Vehicle Image</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for presence in vehicle_presence_data %}
+            <tr>
+                <td>{{ presence.id }}</td>
+                <td>{{ presence.timestamp }}</td>
+                <td>{{ presence.detected_weight }}</td>
+                <td>{{ presence.plate_number }}</td>
+                <td>{{ presence.capture_status }}</td>
+                <td>
+                    {% if presence.vehicle_image %}
+                    <img src="{{ presence.vehicle_image.url }}" alt="Vehicle Image" style="width: 100px; height: auto;">
+                    {% else %}
+                    No Image
+                    {% endif %}
+                </td>
+            </tr>
+            {% empty %}
+            <tr>
+                <td colspan="6">No vehicle presence records available.</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <h2>Discrepancy Report</h2>
+    <table class="table table-striped">
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Vehicle ID</th>
+                <th>Recorded Weight (kg)</th>
+                <th>Discrepancy Weight (kg)</th>
+                <th>Timestamp</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for discrepancy in discrepancy_data %}
+            <tr>
+                <td>{{ discrepancy.id }}</td>
+                <td>{{ discrepancy.vehicle_id }}</td>
+                <td>{{ discrepancy.recorded_weight }}</td>
+                <td>{{ discrepancy.discrepancy_weight }}</td>
+                <td>{{ discrepancy.timestamp }}</td>
+            </tr>
+            {% empty %}
+            <tr>
+                <td colspan="5">No discrepancies recorded.</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <h2>Transaction Report</h2>
+    <table class="table table-striped">
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Vehicle ID</th>
+                <th>Gross Weight (kg)</th>
+                <th>Tare Weight (kg)</th>
+                <th>Net Weight (kg)</th>
+                <th>Transaction Date</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for transaction in transaction_data %}
+            <tr>
+                <td>{{ transaction.id }}</td>
+                <td>{{ transaction.vehicle_id }}</td>
+                <td>{{ transaction.gross_weight }}</td>
+                <td>{{ transaction.tare_weight }}</td>
+                <td>{{ transaction.net_weight }}</td>
+                <td>{{ transaction.transaction_date }}</td>
+            </tr>
+            {% empty %}
+            <tr>
+                <td colspan="6">No transactions recorded.</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <div class="export-section">
+        <h3>Export Reports</h3>
+        <a href="{% url 'admin:export_vehicle_presence' %}" class="btn btn-primary">Export Vehicle Presence Report</a>
+    </div>
+</div>
+{% endblock %}

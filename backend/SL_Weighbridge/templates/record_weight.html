@@ -1,0 +1,80 @@
+<!-- SL_Weighbridge/templates/record_weight.html -->
+
+{% load static %}
+<html>
+<head>
+    <title>Record Weight</title>
+    <script src="{% static 'js/record_weight.js' %}" defer></script>
+</head>
+<body>
+    <div class="sidebar">
+        <h2>Dashboard</h2>
+        <ul>
+            <li><a href="{% url 'record_weight' %}">Record Weight</a></li>
+            <!-- Remove the View Reports link if you no longer need it -->
+        </ul>
+    </div>
+    <div class="content">
+        <h1>Record Weight</h1>
+        <form id="weightForm" method="post" action="{% url 'record_weight' %}">
+            {% csrf_token %}
+            <label for="branch">Branch:</label>
+            <select id="branch" name="branch" required>
+                {% for branch in branches %}
+                    <option value="{{ branch.id }}">{{ branch.name }}</option>
+                {% endfor %}
+            </select><br><br>
+
+            <label for="customer">Customer:</label>
+            <select id="customer" name="customer" required>
+                {% for customer in customers %}
+                    <option value="{{ customer.id }}">{{ customer.name }}</option>
+                {% endfor %}
+            </select><br><br>
+
+            <label for="vehicle">Vehicle:</label>
+            <select id="vehicle" name="vehicle" required>
+                {% for vehicle in vehicles %}
+                    <option value="{{ vehicle.id }}">{{ vehicle.number_plate }}</option>
+                {% endfor %}
+            </select><br><br>
+
+            <label for="item">Item:</label>
+            <select id="item" name="item" required>
+                {% for item in items %}
+                    <option value="{{ item.id }}">{{ item.name }}</option>
+                {% endfor %}
+            </select><br><br>
+
+            <label for="gross_weight">Gross Weight:</label>
+            <input type="number" id="gross_weight" name="gross_weight" step="0.01" required><br><br>
+
+            <label for="tare_weight">Tare Weight:</label>
+            <input type="number" id="tare_weight" name="tare_weight" step="0.01" required><br><br>
+
+            <label for="operator">Operator:</label>
+            <input type="text" id="operator" name="operator" required><br><br>
+
+            <label for="weight_type">Weight Type:</label>
+            <select id="weight_type" name="weight_type" required>
+                <option value="First Weight">First Weight</option>
+                <option value="Second Weight">Second Weight</option>
+            </select><br><br>
+
+            <button type="submit">Submit</button>
+        </form>
+    </div>
+    <style>
+        .sidebar {
+            float: left;
+            width: 20%;
+            background: #f4f4f4;
+            padding: 20px;
+        }
+        .content {
+            margin-left: 20%;
+            padding: 20px;
+        }
+    </style>
+</body>
+</html>

@@ -1,0 +1,180 @@
+{% extends "admin/base_site.html" %}
+{% load static %}
+
+{% block title %}Weighbridge Dashboard{% endblock %}
+
+{% block content %}
+<style>
+    .dashboard-container {
+        display: flex;
+        flex-direction: column;
+        gap: 30px;
+    }
+
+    .card {
+        background: white;
+        padding: 20px;
+        border-radius: 10px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+    }
+
+    .card h2 {
+        font-size: 20px;
+        margin-bottom: 10px;
+        color: #003366;
+    }
+
+    .live-weight-box {
+        background: #111;
+        color: #0f0;
+        font-size: 3em;
+        text-align: center;
+        padding: 20px;
+        border-radius: 8px;
+        font-weight: bold;
+    }
+
+    .action-buttons {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 10px;
+    }
+
+    .action-buttons a {
+        background-color: #003366;
+        color: white;
+        padding: 12px 20px;
+        border-radius: 5px;
+        font-size: 14px;
+        text-decoration: none;
+        transition: background 0.2s ease;
+    }
+
+    .action-buttons a:hover {
+        background-color: #0055aa;
+    }
+
+    .section-title {
+        font-size: 18px;
+        font-weight: 600;
+        margin-bottom: 10px;
+        border-bottom: 1px solid #ccc;
+        padding-bottom: 5px;
+    }
+</style>
+
+<div class="dashboard-container">
+
+    <!-- 📦 Live Weight Stream -->
+    <div class="card">
+        <h2>📡 Live Weight</h2>
+        <div id="live-weight" class="live-weight-box">Waiting...</div>
+    </div>
+
+    <!-- 🔧 Actions -->
+    <div class="card">
+        <h2 class="section-title">⚙️ Quick Actions</h2>
+        <div class="action-buttons">
+            {% if perms.SL_Weighbridge.add_transaction %}
+                <a href="{% url 'admin:SL_Weighbridge_transaction_add' %}">➕ New Transaction</a>
+            {% endif %}
+            {% if perms.SL_Weighbridge.view_transaction %}
+                <a href="{% url 'admin:SL_Weighbridge_transaction_changelist' %}">📄 View Transactions</a>
+            {% endif %}
+            {% if perms.SL_Weighbridge.view_invoice %}
+                <a href="{% url 'admin:SL_Weighbridge_invoice_changelist' %}">📋 View Invoices</a>
+            {% endif %}
+            {% if perms.SL_Weighbridge.can_export_transaction %}
+                <a href="{% url 'generate_transaction_report' %}">📤 Export Report</a>
+            {% endif %}
+            {% if perms.SL_Weighbridge.view_vehiclepresence %}
+                <a href="{% url 'admin:SL_Weighbridge_vehiclepresence_changelist' %}">🚗 Vehicle Presence</a>
+            {% endif %}
+        </div>
+    </div>
+
+</div>
+
+<!-- 🔄 Live Weight Stream Script -->
+<script>
+  document.addEventListener("DOMContentLoaded", function () {
+    const liveWeightBox = document.getElementById("live-weight");
+    const liveWeightUrl = "{% url 'admin_live_weight' %}";
+
+    function renderWeight(data) {
+      liveWeightBox.textContent = `${data.value} KG`;
+      liveWeightBox.style.color = data.stable ? "green" : "orange";
+    }
+
+    function fetchWeight() {
+      fetch(liveWeightUrl, {
+        headers: { "X-Requested-With": "XMLHttpRequest" }
+      })
+        .then((response) => {
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+          }
+          return response.json();
+        })
+        .then((data) => {
+          if (data.value === undefined || data.value === null) {
+            throw new Error("Weight value missing");
+          }
+          renderWeight(data);
+        })
+        .catch((err) => {
+          console.error("Live weight error:", err);
+          liveWeightBox.textContent = "---";
+          liveWeightBox.style.color = "red";
+        });
+    }
+
+    fetchWeight();
+    window.setInterval(fetchWeight, 2000);
+  });
+</script>
+
+
+
+
+<div class="card">
+    <h2 class="section-title">📊 Reports</h2>
+    <div class="action-buttWeight too low (0 kg). Not captured.
+ons">
+
+        {% if perms.SL_Weighbridge.view_transaction %}
+            <a href="{% url 'generate_transaction_report' %}">🧾 Transactions Report</a>
+        {% endif %}
+
+        {% if perms.SL_Weighbridge.view_invoice %}
+            <a href="{% url 'generate_invoice_report' %}">💰 Invoice Report</a>
+        {% endif %}
+
+        {% if perms.SL_Weighbridge.view_vehiclepresence %}
+            <a href="{% url 'generate_vehicle_presence_report' %}">🚗 Vehicle Presence</a>
+        {% endif %}
+
+        {% if perms.SL_Weighbridge.view_discrepancyreport %}
+            <a href="{% url 'generate_discrepancy_report' %}">⚠️ Discrepancy Report</a>
+        {% endif %}
+
+    </div>
+</div>
+
+
+
+<div class="card">
+    <h2>📁 Reports</h2>
+    <ul>
+        {% if perms.SL_Weighbridge.view_report %}
+            <li><a href="{% url 'report_dashboard' %}">📊 Report Dashboard</a></li>
+        {% endif %}
+    </ul>
+    
+</div>
+
+
+
+
+{% endblock %}

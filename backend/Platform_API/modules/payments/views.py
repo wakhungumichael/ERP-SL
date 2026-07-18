@@ -1,0 +1,481 @@
+from datetime import timedelta
+
+from django.utils import timezone
+from rest_framework import serializers, status
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+from rest_framework.views import APIView
+
+try:
+    from SL_Weighbridge.models import Invoice, InvoiceLine, Transaction, Customer
+    HAS_PAYMENT_MODELS = True
+except ImportError:
+    HAS_PAYMENT_MODELS = False
+
+try:
+    from SL_Weighbridge.models import PaymentMethod
+    HAS_PAYMENT_METHOD_MODEL = True
+except ImportError:
+    HAS_PAYMENT_METHOD_MODEL = False
+
+
+# ── Serializers ───────────────────────────────────────────────────────────────
+
+class PaymentMethodSerializer(serializers.Serializer):
+    id       = serializers.IntegerField()
+    name     = serializers.CharField()
+    is_active = serializers.BooleanField()
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _customer_data(inv):
+    c = getattr(inv, "customer", None)
+    if not c:
+        return {"name": "", "email": "", "phone": "", "id": None}
+    return {
+        "id":    c.id,
+        "name":  getattr(c, "name", ""),
+        "email": getattr(c, "email", "") or "",
+        "phone": getattr(c, "phone_number", "") or "",
+    }
+
+
+def _serialize_invoice(inv, with_lines=False, with_transactions=False):
+    customer = _customer_data(inv)
+    data = {
+        "id":             inv.id,
+        "invoice_number": inv.invoice_number or f"INV-{inv.id:04d}",
+        "customer":       customer["id"],
+        "customer_name":  customer["name"],
+        "customer_email": customer["email"],
+        "customer_phone": customer["phone"],
+        "status":         inv.status,
+        "total_amount":   float(inv.total_amount or 0),
+        "currency":       getattr(inv, "currency", "KES") or "KES",
+        "issued_at":      inv.issued_at.isoformat()  if getattr(inv, "issued_at",   None) else None,
+        "due_date":       str(inv.due_date)           if getattr(inv, "due_date",    None) else None,
+        "created_at":     inv.issued_date.isoformat() if getattr(inv, "issued_date", None) else None,
+        "notes":          getattr(inv, "notes", "") or "",
+    }
+
+    if with_lines:
+        try:
+            lines = InvoiceLine.objects.filter(invoice=inv).select_related("vehicle_type")
+            data["lines"] = [
+                {
+                    "id":           line.id,
+                    "vehicle_type": getattr(getattr(line, "vehicle_type", None), "name", ""),
+                    "quantity":     getattr(line, "quantity", 0),
+                    "unit_price":   float(getattr(line, "unit_price", 0) or 0),
+                    "total":        float(getattr(line, "total_amount", 0) or 0),
+                }
+                for line in lines
+            ]
+        except Exception:
+            data["lines"] = []
+
+    if with_transactions:
+        try:
+            txns = inv.transactions.select_related("customer", "vehicle", "vehicle_type").all()
+            data["transactions"] = [
+                {
+                    "id":             t.id,
+                    "vehicle_plate":  getattr(getattr(t, "vehicle", None), "number_plate", ""),
+                    "vehicle_type":   getattr(getattr(t, "vehicle_type", None), "name", ""),
+                    "net_weight":     t.net_weight or 0,
+                    "weight_type":    t.weight_type,
+                    "payment_mode":   t.payment_mode,
+                    "payment_status": t.payment_status,
+                    "charge":         float(t.charge or 0),
+                    "destination":    t.destination,
+                    "created_at":     t.created_at.isoformat() if hasattr(t, "created_at") else None,
+                }
+                for t in txns
+            ]
+        except Exception:
+            data["transactions"] = []
+
+    return data
+
+
+# ── Views ─────────────────────────────────────────────────────────────────────
+
+class InvoiceListView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if not HAS_PAYMENT_MODELS:
+            return Response({"count": 0, "next": None, "previous": None, "results": []})
+        qs = Invoice.objects.select_related("customer").order_by("-issued_date")
+        if s := request.query_params.get("status"):
+            qs = qs.filter(status=s)
+        if q := request.query_params.get("search"):
+            from django.db.models import Q
+            qs = qs.filter(
+                Q(invoice_number__icontains=q) |
+                Q(customer__name__icontains=q)
+            )
+        if cust := request.query_params.get("customer_id"):
+            qs = qs.filter(customer_id=cust)
+        data = [_serialize_invoice(inv) for inv in qs[:200]]
+        return Response({"count": len(data), "next": None, "previous": None, "results": data})
+
+
+class InvoiceDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+        if not HAS_PAYMENT_MODELS:
+            return Response({"error": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        try:
+            inv = Invoice.objects.select_related("customer").get(pk=pk)
+            return Response(_serialize_invoice(inv, with_lines=True, with_transactions=True))
+        except Invoice.DoesNotExist:
+            return Response({"error": "Invoice not found."}, status=status.HTTP_404_NOT_FOUND)
+
+    def patch(self, request, pk):
+        if not HAS_PAYMENT_MODELS:
+            return Response({"error": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        try:
+            inv = Invoice.objects.get(pk=pk)
+        except Invoice.DoesNotExist:
+            return Response({"error": "Invoice not found."}, status=status.HTTP_404_NOT_FOUND)
+        allowed = ["notes", "due_date", "currency"]
+        for field in allowed:
+            if field in request.data:
+                setattr(inv, field, request.data[field])
+        inv.save()
+        return Response(_serialize_invoice(inv))
+
+
+class IssueInvoiceView(APIView):
+    """POST /api/payments/invoices/<pk>/issue/ — move draft → issued"""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        if not HAS_PAYMENT_MODELS:
+            return Response({"error": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        try:
+            inv = Invoice.objects.get(pk=pk)
+        except Invoice.DoesNotExist:
+            return Response({"error": "Invoice not found."}, status=status.HTTP_404_NOT_FOUND)
+        if inv.status not in ("draft", "Draft", "Pending"):
+            return Response(
+                {"error": f"Cannot issue invoice with status '{inv.status}'."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        inv.status    = "issued"
+        inv.issued_at = timezone.now()
+        if not inv.due_date:
+            inv.due_date = (timezone.now() + timedelta(days=30)).date()
+        inv.save(update_fields=["status", "issued_at", "due_date"])
+        return Response(_serialize_invoice(inv))
+
+
+class ReceivePaymentView(APIView):
+    """POST /api/payments/invoices/<pk>/receive-payment/"""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        amount       = request.data.get("amount")
+        payment_mode = request.data.get("payment_mode", "Cash")
+        method_id    = request.data.get("method")
+        reference    = request.data.get("reference", "")
+
+        # Resolve payment_mode from method id if needed
+        if method_id and not payment_mode:
+            _mode_map = {1: "Cash", 2: "Mpesa", 3: "Bank Deposit", 4: "Debt"}
+            try:
+                payment_mode = _mode_map.get(int(method_id), "Cash")
+            except Exception:
+                pass
+
+        if not HAS_PAYMENT_MODELS:
+            return Response({"error": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        try:
+            inv = Invoice.objects.prefetch_related("transactions").get(pk=pk)
+        except Invoice.DoesNotExist:
+            return Response({"error": "Invoice not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        inv.status = "paid"
+        inv.save(update_fields=["status"])
+
+        # Mark linked transactions as paid
+        try:
+            inv.transactions.filter(payment_status="Pending").update(
+                payment_status="Paid",
+                payment_mode=payment_mode,
+            )
+        except Exception:
+            pass
+
+        return Response({
+            "success":        True,
+            "message":        f"Payment of {amount} received for invoice {pk}.",
+            "invoice_id":     pk,
+            "invoice_number": inv.invoice_number,
+            "payment_mode":   payment_mode,
+            "reference":      reference,
+            "invoice_status": inv.status,
+        })
+
+
+class ConfirmPaymentView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        gateway_reference = request.data.get("gateway_reference", "")
+        confirmed_amount  = request.data.get("confirmed_amount")
+        if not HAS_PAYMENT_MODELS:
+            return Response({"error": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        try:
+            inv        = Invoice.objects.get(pk=pk)
+            inv.status = "paid"
+            inv.save(update_fields=["status"])
+            return Response({
+                "success":           True,
+                "message":           f"Payment confirmed for invoice {pk}.",
+                "gateway_reference": gateway_reference,
+                "confirmed_amount":  confirmed_amount,
+                "invoice_status":    inv.status,
+            })
+        except Invoice.DoesNotExist:
+            return Response({"error": "Invoice not found."}, status=status.HTTP_404_NOT_FOUND)
+
+
+class PaymentMethodListView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if HAS_PAYMENT_METHOD_MODEL:
+            try:
+                methods = [
+                    {"id": m.id, "name": m.name, "is_active": getattr(m, "is_active", True)}
+                    for m in PaymentMethod.objects.all()
+                ]
+                return Response(methods)
+            except Exception:
+                pass
+        return Response([
+            {"id": 1, "name": "Cash",         "is_active": True},
+            {"id": 2, "name": "Mpesa",         "is_active": True},
+            {"id": 3, "name": "Bank Deposit",  "is_active": True},
+            {"id": 4, "name": "Debt",          "is_active": True},
+        ])
+
+
+class PaymentEntriesView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if HAS_PAYMENT_MODELS:
+            try:
+                from SL_Weighbridge.models import Payment
+                qs = Payment.objects.select_related("invoice").order_by("-created_at")
+                data = [
+                    {
+                        "id":           p.id,
+                        "invoice_id":   p.invoice_id,
+                        "amount":       float(getattr(p, "amount", 0) or 0),
+                        "payment_mode": getattr(p, "payment_mode", ""),
+                        "reference":    getattr(p, "reference", ""),
+                        "created_at":   p.created_at.isoformat() if hasattr(p, "created_at") else None,
+                    }
+                    for p in qs[:100]
+                ]
+                return Response({"count": len(data), "results": data})
+            except (ImportError, Exception):
+                pass
+        return Response({"count": 0, "results": []})
+
+
+class ProviderCapabilitiesView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        capabilities = []
+        try:
+            from Platform_Core.models import IntegrationEndpoint
+            for gw in IntegrationEndpoint.objects.filter(integration_type="payment_gateway", is_active=True):
+                capabilities.append({
+                    "id":                   gw.id,
+                    "name":                 gw.name,
+                    "provider":             gw.provider,
+                    "transport":            gw.transport,
+                    "is_primary":           gw.is_primary,
+                    "supports_callback":    True,
+                    "supports_initiation":  True,
+                })
+        except Exception:
+            pass
+        if not capabilities:
+            capabilities = [
+                {"id": None, "name": "Cash",        "provider": "manual",    "is_primary": True,  "supports_callback": False},
+                {"id": None, "name": "Mpesa",        "provider": "safaricom", "is_primary": False, "supports_callback": True},
+                {"id": None, "name": "Bank Deposit", "provider": "manual",    "is_primary": False, "supports_callback": False},
+            ]
+        return Response({"capabilities": capabilities})
+
+
+class PaymentSummaryView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        summary = {
+            "total_invoiced": 0.0,
+            "total_received": 0.0,
+            "outstanding":    0.0,
+            "invoices_by_status": [
+                {"status": "draft",  "count": 0, "total": 0.0},
+                {"status": "issued", "count": 0, "total": 0.0},
+                {"status": "paid",   "count": 0, "total": 0.0},
+            ],
+        }
+        if HAS_PAYMENT_MODELS:
+            try:
+                inv_qs = Invoice.objects.all()
+                for row in summary["invoices_by_status"]:
+                    matching = list(inv_qs.filter(status=row["status"]))
+                    row["count"] = len(matching)
+                    row["total"] = float(sum(i.total_amount or 0 for i in matching))
+                summary["total_invoiced"] = sum(
+                    r["total"] for r in summary["invoices_by_status"] if r["status"] in ("issued", "paid")
+                )
+                summary["total_received"] = next(
+                    (r["total"] for r in summary["invoices_by_status"] if r["status"] == "paid"), 0.0
+                )
+                summary["outstanding"] = summary["total_invoiced"] - summary["total_received"]
+            except Exception:
+                pass
+        return Response(summary)
+
+
+class GenerateInvoiceView(APIView):
+    """
+    POST /api/payments/invoices/generate/
+    Body: { customer_id, transaction_ids: [...], due_days: 30, currency: 'KES', notes: '' }
+    Creates an invoice for the given completed, uninvoiced transactions.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        if not HAS_PAYMENT_MODELS:
+            return Response({"error": "Payment models not available."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+        customer_id     = request.data.get("customer_id")
+        transaction_ids = request.data.get("transaction_ids", [])
+        due_days        = int(request.data.get("due_days", 30))
+        currency        = request.data.get("currency", "KES")
+        notes           = request.data.get("notes", "")
+
+        if not customer_id:
+            return Response({"error": "customer_id is required."}, status=status.HTTP_400_BAD_REQUEST)
+        if not transaction_ids:
+            return Response({"error": "transaction_ids must not be empty."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            customer = Customer.objects.get(pk=customer_id)
+        except Customer.DoesNotExist:
+            return Response({"error": "Customer not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        txns = Transaction.objects.filter(
+            id__in=transaction_ids,
+            customer=customer,
+            status="Completed",
+            invoiced=False,
+        ).select_related("vehicle_type")
+
+        found_ids = set(txns.values_list("id", flat=True))
+        bad_ids   = [i for i in transaction_ids if i not in found_ids]
+        if bad_ids:
+            return Response(
+                {"error": f"Transactions {bad_ids} are invalid (not found, wrong customer, not completed, or already invoiced)."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Total from charges
+        total = float(sum(t.charge or 0 for t in txns))
+
+        # Create invoice
+        inv = Invoice.objects.create(
+            customer     = customer,
+            total_amount = total,
+            currency     = currency,
+            due_date     = (timezone.now() + timedelta(days=due_days)).date(),
+            status       = "draft",
+            notes        = notes,
+        )
+        inv.transactions.set(txns)
+
+        # Build InvoiceLine records grouped by vehicle_type
+        from django.db.models import Sum
+        from collections import defaultdict
+        vt_groups = defaultdict(lambda: {"qty": 0, "total": 0.0, "vt": None})
+        for t in txns:
+            key = t.vehicle_type_id if t.vehicle_type_id else 0
+            vt_groups[key]["qty"]   += 1
+            vt_groups[key]["total"] += float(t.charge or 0)
+            vt_groups[key]["vt"]     = t.vehicle_type
+
+        for key, g in vt_groups.items():
+            if g["vt"]:
+                InvoiceLine.objects.create(
+                    invoice      = inv,
+                    vehicle_type = g["vt"],
+                    quantity     = g["qty"],
+                    total_amount = g["total"],
+                )
+
+        # Mark transactions as invoiced
+        txns.update(invoiced=True)
+
+        return Response(_serialize_invoice(inv, with_lines=True, with_transactions=True), status=status.HTTP_201_CREATED)
+
+
+class UninvoicedTransactionsView(APIView):
+    """
+    GET /api/payments/uninvoiced-transactions/?customer_id=<id>
+    Returns completed, uninvoiced transactions for a customer (for the generate dialog).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if not HAS_PAYMENT_MODELS:
+            return Response({"results": [], "count": 0})
+        qs = Transaction.objects.filter(
+            status="Completed",
+            invoiced=False,
+        ).select_related("customer", "vehicle", "vehicle_type")
+        if cust := request.query_params.get("customer_id"):
+            qs = qs.filter(customer_id=cust)
+        data = [
+            {
+                "id":            t.id,
+                "vehicle_plate": getattr(getattr(t, "vehicle", None), "number_plate", ""),
+                "vehicle_type":  getattr(getattr(t, "vehicle_type", None), "name", ""),
+                "net_weight":    t.net_weight or 0,
+                "weight_type":   t.weight_type,
+                "payment_mode":  t.payment_mode,
+                "destination":   t.destination,
+                "charge":        float(t.charge or 0),
+                "currency":      "KES",
+                "created_at":    t.created_at.isoformat() if hasattr(t, "created_at") else None,
+            }
+            for t in qs.order_by("-created_at")[:500]
+        ]
+        return Response({"results": data, "count": len(data)})
+
+
+class CustomerListForInvoiceView(APIView):
+    """GET /api/payments/customers/ — lightweight list for the generate-invoice dropdown."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if not HAS_PAYMENT_MODELS:
+            return Response({"results": []})
+        qs = Customer.objects.all().order_by("name")
+        if q := request.query_params.get("search"):
+            qs = qs.filter(name__icontains=q)
+        data = [{"id": c.id, "name": c.name, "email": c.email or "", "phone": c.phone_number or ""} for c in qs[:200]]
+        return Response({"results": data})

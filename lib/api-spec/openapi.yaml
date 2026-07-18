@@ -3,20 +3,30 @@ info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: SL-ERP API specification
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
-    description: Health operations
+    description: Health
+  - name: auth
+    description: Authentication
+  - name: platform
+    description: Platform management
+  - name: workspace
+    description: Workspace & navigation
+  - name: weighbridge
+    description: Commercial weighbridge operations
+  - name: payments
+    description: Payments & invoices
+
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
@@ -24,13 +34,1198 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  # ── Auth ──────────────────────────────────────────────────────────────────
+  /platform/auth/token/:
+    post:
+      operationId: authLogin
+      tags: [auth]
+      summary: Obtain auth token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginInput"
+      responses:
+        "200":
+          description: Token issued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthTokenResponse"
+        "400":
+          description: Invalid credentials
+
+  /platform/auth/logout/:
+    post:
+      operationId: authLogout
+      tags: [auth]
+      summary: Revoke auth token
+      responses:
+        "200":
+          description: Logged out
+
+  /platform/auth/me/:
+    get:
+      operationId: authMe
+      tags: [auth]
+      summary: Current authenticated user
+      responses:
+        "200":
+          description: Current user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserProfile"
+
+  /platform/auth/status/:
+    get:
+      operationId: authStatus
+      tags: [auth]
+      summary: Authentication status
+      responses:
+        "200":
+          description: Auth status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthStatus"
+
+  # ── Workspace navigation ──────────────────────────────────────────────────
+  /platform/workspace/navigation/:
+    get:
+      operationId: getWorkspaceNavigation
+      tags: [workspace]
+      summary: Role-aware workspace navigation menu
+      responses:
+        "200":
+          description: Navigation menu
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkspaceNavigation"
+
+  /platform/workspace/menu-sections/:
+    get:
+      operationId: listMenuSections
+      tags: [workspace]
+      summary: List workspace menu sections
+      responses:
+        "200":
+          description: Menu sections
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/MenuSection"
+    post:
+      operationId: createMenuSection
+      tags: [workspace]
+      summary: Create menu section
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MenuSectionInput"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MenuSection"
+
+  /platform/workspace/menu-sections/{id}/:
+    get:
+      operationId: getMenuSection
+      tags: [workspace]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      responses:
+        "200":
+          description: Menu section
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MenuSection"
+    patch:
+      operationId: updateMenuSection
+      tags: [workspace]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MenuSectionInput"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MenuSection"
+    delete:
+      operationId: deleteMenuSection
+      tags: [workspace]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      responses:
+        "204":
+          description: Deleted
+
+  /platform/workspace/menu-items/:
+    get:
+      operationId: listMenuItems
+      tags: [workspace]
+      summary: List workspace menu items
+      responses:
+        "200":
+          description: Menu items
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/MenuItem"
+    post:
+      operationId: createMenuItem
+      tags: [workspace]
+      summary: Create menu item
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MenuItemInput"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MenuItem"
+
+  /platform/workspace/menu-items/{id}/:
+    patch:
+      operationId: updateMenuItem
+      tags: [workspace]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MenuItemInput"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MenuItem"
+    delete:
+      operationId: deleteMenuItem
+      tags: [workspace]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      responses:
+        "204":
+          description: Deleted
+
+  # ── Tenants ──────────────────────────────────────────────────────────────
+  /platform/tenants/:
+    get:
+      operationId: listTenants
+      tags: [platform]
+      summary: List tenants
+      responses:
+        "200":
+          description: Tenant list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Tenant"
+    post:
+      operationId: createTenant
+      tags: [platform]
+      summary: Create tenant
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TenantInput"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Tenant"
+
+  /platform/tenants/{id}/:
+    get:
+      operationId: getTenant
+      tags: [platform]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      responses:
+        "200":
+          description: Tenant
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Tenant"
+    patch:
+      operationId: updateTenant
+      tags: [platform]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TenantInput"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Tenant"
+
+  # ── Users & Roles ─────────────────────────────────────────────────────────
+  /platform/users/:
+    get:
+      operationId: listUsers
+      tags: [platform]
+      summary: List platform users
+      responses:
+        "200":
+          description: Users
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PlatformUser"
+
+  /platform/users/{id}/:
+    get:
+      operationId: getUser
+      tags: [platform]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      responses:
+        "200":
+          description: User
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlatformUser"
+    patch:
+      operationId: updateUser
+      tags: [platform]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserProfileInput"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlatformUser"
+
+  /platform/users/{id}/assign-roles/:
+    post:
+      operationId: assignUserRoles
+      tags: [platform]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RoleAssignmentInput"
+      responses:
+        "200":
+          description: Roles assigned
+
+  /platform/roles/:
+    get:
+      operationId: listRoles
+      tags: [platform]
+      summary: List roles/groups
+      responses:
+        "200":
+          description: Roles
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Role"
+
+  /platform/roles/{id}/:
+    get:
+      operationId: getRole
+      tags: [platform]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      responses:
+        "200":
+          description: Role
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Role"
+
+  # ── Modules & Plans ───────────────────────────────────────────────────────
+  /platform/modules/:
+    get:
+      operationId: listModules
+      tags: [platform]
+      summary: List module definitions
+      responses:
+        "200":
+          description: Modules
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ModuleDefinition"
+
+  /platform/plans/:
+    get:
+      operationId: listPlans
+      tags: [platform]
+      summary: List subscription plans
+      responses:
+        "200":
+          description: Plans
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SubscriptionPlan"
+    post:
+      operationId: createPlan
+      tags: [platform]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SubscriptionPlanInput"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SubscriptionPlan"
+
+  /platform/subscriptions/:
+    get:
+      operationId: listSubscriptions
+      tags: [platform]
+      summary: List tenant subscriptions
+      responses:
+        "200":
+          description: Subscriptions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TenantSubscription"
+
+  /platform/integrations/:
+    get:
+      operationId: listIntegrations
+      tags: [platform]
+      summary: List integration endpoints
+      responses:
+        "200":
+          description: Integrations
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/IntegrationEndpoint"
+    post:
+      operationId: createIntegration
+      tags: [platform]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IntegrationEndpointInput"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IntegrationEndpoint"
+
+  /platform/integrations/{id}/:
+    patch:
+      operationId: updateIntegration
+      tags: [platform]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IntegrationEndpointInput"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IntegrationEndpoint"
+
+  # ── Commercial Weighbridge ────────────────────────────────────────────────
+  /commercial-weighbridge/dashboard/:
+    get:
+      operationId: getWeighbridgeDashboard
+      tags: [weighbridge]
+      summary: Dashboard summary — totals, recent activity, status breakdown
+      parameters:
+        - { name: tenant_code, in: query, schema: { type: string } }
+        - { name: branch_id, in: query, schema: { type: integer } }
+      responses:
+        "200":
+          description: Dashboard summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WeighbridgeDashboard"
+
+  /commercial-weighbridge/transactions/:
+    get:
+      operationId: listTransactions
+      tags: [weighbridge]
+      summary: List weighbridge transactions
+      parameters:
+        - { name: tenant_code, in: query, schema: { type: string } }
+        - { name: branch_id, in: query, schema: { type: integer } }
+        - { name: status, in: query, schema: { type: string } }
+        - { name: payment_status, in: query, schema: { type: string } }
+        - { name: page, in: query, schema: { type: integer } }
+      responses:
+        "200":
+          description: Transactions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaginatedTransactions"
+    post:
+      operationId: createTransaction
+      tags: [weighbridge]
+      summary: Create a new transaction (first weight)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TransactionInput"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Transaction"
+
+  /commercial-weighbridge/transactions/{id}/:
+    get:
+      operationId: getTransaction
+      tags: [weighbridge]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      responses:
+        "200":
+          description: Transaction
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Transaction"
+    patch:
+      operationId: updateTransaction
+      tags: [weighbridge]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TransactionInput"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Transaction"
+
+  /commercial-weighbridge/branches/:
+    get:
+      operationId: listBranches
+      tags: [weighbridge]
+      summary: List branches
+      responses:
+        "200":
+          description: Branches
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Branch"
+
+  /commercial-weighbridge/customers/:
+    get:
+      operationId: listCustomers
+      tags: [weighbridge]
+      summary: List customers
+      parameters:
+        - { name: tenant_code, in: query, schema: { type: string } }
+        - { name: branch_id, in: query, schema: { type: integer } }
+        - { name: search, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: Customers
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Customer"
+    post:
+      operationId: createCustomer
+      tags: [weighbridge]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CustomerInput"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Customer"
+
+  /commercial-weighbridge/vehicles/:
+    get:
+      operationId: listVehicles
+      tags: [weighbridge]
+      summary: List vehicles
+      parameters:
+        - { name: customer_id, in: query, schema: { type: integer } }
+        - { name: search, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: Vehicles
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Vehicle"
+    post:
+      operationId: createVehicle
+      tags: [weighbridge]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VehicleInput"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Vehicle"
+
+  /commercial-weighbridge/live-weight/:
+    get:
+      operationId: getLiveWeight
+      tags: [weighbridge]
+      summary: Read live weight from indicator
+      parameters:
+        - { name: branch_id, in: query, schema: { type: integer } }
+      responses:
+        "200":
+          description: Live weight reading
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LiveWeightReading"
+
+  # ── Payments & Invoices ───────────────────────────────────────────────────
+  /payments/invoices/:
+    get:
+      operationId: listInvoices
+      tags: [payments]
+      summary: List invoices
+      parameters:
+        - { name: tenant_code, in: query, schema: { type: string } }
+        - { name: status, in: query, schema: { type: string } }
+        - { name: page, in: query, schema: { type: integer } }
+      responses:
+        "200":
+          description: Invoices
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaginatedInvoices"
+
+  /payments/invoices/{id}/:
+    get:
+      operationId: getInvoice
+      tags: [payments]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      responses:
+        "200":
+          description: Invoice
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Invoice"
+
+  /payments/invoices/{id}/issue/:
+    post:
+      operationId: issueInvoice
+      tags: [payments]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      responses:
+        "200":
+          description: Invoice issued
+
+  /payments/invoices/{id}/receive-payment/:
+    post:
+      operationId: receivePayment
+      tags: [payments]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReceivePaymentInput"
+      responses:
+        "200":
+          description: Payment received
+
+  /payments/payment-methods/:
+    get:
+      operationId: listPaymentMethods
+      tags: [payments]
+      summary: List available payment methods
+      responses:
+        "200":
+          description: Payment methods
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PaymentMethod"
+
+  /payments/summary/:
+    get:
+      operationId: getPaymentSummary
+      tags: [payments]
+      summary: Payment & invoice summary stats
+      parameters:
+        - { name: tenant_code, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: Summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentSummary"
+
 components:
   schemas:
     HealthStatus:
       type: object
       properties:
-        status:
-          type: string
-      required:
-        - status
+        status: { type: string }
+      required: [status]
 
+    # ── Auth ────────────────────────────────────────────────────────────────
+    LoginInput:
+      type: object
+      required: [username, password]
+      properties:
+        username: { type: string }
+        password: { type: string }
+
+    AuthTokenResponse:
+      type: object
+      properties:
+        token: { type: string }
+        user_id: { type: integer }
+        username: { type: string }
+        email: { type: string }
+
+    AuthStatus:
+      type: object
+      properties:
+        authenticated: { type: boolean }
+        username: { type: ["string", "null"] }
+
+    UserProfile:
+      type: object
+      properties:
+        id: { type: integer }
+        username: { type: string }
+        email: { type: string }
+        first_name: { type: string }
+        last_name: { type: string }
+        is_superuser: { type: boolean }
+        groups:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: integer }
+              name: { type: string }
+
+    UserProfileInput:
+      type: object
+      properties:
+        first_name: { type: string }
+        last_name: { type: string }
+        email: { type: string }
+
+    PlatformUser:
+      type: object
+      properties:
+        id: { type: integer }
+        username: { type: string }
+        email: { type: string }
+        first_name: { type: string }
+        last_name: { type: string }
+        is_active: { type: boolean }
+        is_superuser: { type: boolean }
+        groups:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: integer }
+              name: { type: string }
+        date_joined: { type: string }
+        last_login: { type: ["string", "null"] }
+
+    RoleAssignmentInput:
+      type: object
+      properties:
+        group_ids:
+          type: array
+          items: { type: integer }
+
+    Role:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        permissions:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: integer }
+              codename: { type: string }
+              name: { type: string }
+
+    # ── Workspace ────────────────────────────────────────────────────────────
+    WorkspaceNavigation:
+      type: object
+      properties:
+        sections:
+          type: array
+          items:
+            $ref: "#/components/schemas/NavSection"
+
+    NavSection:
+      type: object
+      properties:
+        key: { type: string }
+        title: { type: string }
+        icon: { type: string }
+        sort_order: { type: integer }
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/NavItem"
+
+    NavItem:
+      type: object
+      properties:
+        key: { type: string }
+        title: { type: string }
+        icon: { type: string }
+        route_path: { type: string }
+        badge_text: { type: string }
+        sort_order: { type: integer }
+
+    MenuSection:
+      type: object
+      properties:
+        id: { type: integer }
+        key: { type: string }
+        title: { type: string }
+        icon: { type: string }
+        sort_order: { type: integer }
+        is_active: { type: boolean }
+
+    MenuSectionInput:
+      type: object
+      required: [key, title]
+      properties:
+        key: { type: string }
+        title: { type: string }
+        icon: { type: string }
+        sort_order: { type: integer }
+        is_active: { type: boolean }
+
+    MenuItem:
+      type: object
+      properties:
+        id: { type: integer }
+        section: { type: integer }
+        key: { type: string }
+        title: { type: string }
+        icon: { type: string }
+        route_path: { type: string }
+        sort_order: { type: integer }
+        is_active: { type: boolean }
+
+    MenuItemInput:
+      type: object
+      required: [section, key, title]
+      properties:
+        section: { type: integer }
+        key: { type: string }
+        title: { type: string }
+        icon: { type: string }
+        route_path: { type: string }
+        sort_order: { type: integer }
+        is_active: { type: boolean }
+
+    # ── Platform entities ────────────────────────────────────────────────────
+    Tenant:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        code: { type: string }
+        legal_name: { type: string }
+        contact_email: { type: string }
+        contact_phone: { type: string }
+        status: { type: string }
+        is_active: { type: boolean }
+        default_currency: { type: string }
+        timezone: { type: string }
+        created_at: { type: string }
+
+    TenantInput:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+        legal_name: { type: string }
+        contact_email: { type: string }
+        contact_phone: { type: string }
+        status: { type: string }
+        default_currency: { type: string }
+        timezone: { type: string }
+
+    ModuleDefinition:
+      type: object
+      properties:
+        id: { type: integer }
+        slug: { type: string }
+        name: { type: string }
+        category: { type: string }
+        description: { type: string }
+        is_core: { type: boolean }
+        is_active: { type: boolean }
+
+    SubscriptionPlan:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        code: { type: string }
+        billing_period: { type: string }
+        price: { type: number }
+        currency: { type: string }
+        is_active: { type: boolean }
+
+    SubscriptionPlanInput:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+        billing_period: { type: string }
+        price: { type: number }
+        currency: { type: string }
+
+    TenantSubscription:
+      type: object
+      properties:
+        id: { type: integer }
+        tenant: { type: integer }
+        tenant_name: { type: string }
+        plan: { type: integer }
+        plan_name: { type: string }
+        status: { type: string }
+        starts_at: { type: string }
+        expires_at: { type: ["string", "null"] }
+
+    IntegrationEndpoint:
+      type: object
+      properties:
+        id: { type: integer }
+        tenant: { type: integer }
+        name: { type: string }
+        transport_type: { type: string }
+        provider: { type: string }
+        base_url: { type: string }
+        is_active: { type: boolean }
+        is_primary: { type: boolean }
+
+    IntegrationEndpointInput:
+      type: object
+      required: [name, transport_type]
+      properties:
+        tenant: { type: integer }
+        name: { type: string }
+        transport_type: { type: string }
+        provider: { type: string }
+        base_url: { type: string }
+        is_active: { type: boolean }
+        is_primary: { type: boolean }
+
+    # ── Weighbridge ──────────────────────────────────────────────────────────
+    WeighbridgeDashboard:
+      type: object
+      properties:
+        totals:
+          type: object
+          properties:
+            transactions_today: { type: integer }
+            transactions_this_month: { type: integer }
+            net_weight_today: { type: number }
+            pending_payments: { type: integer }
+        status_breakdown:
+          type: array
+          items:
+            type: object
+            properties:
+              status: { type: string }
+              count: { type: integer }
+        recent_transactions:
+          type: array
+          items:
+            $ref: "#/components/schemas/Transaction"
+
+    Transaction:
+      type: object
+      properties:
+        id: { type: integer }
+        branch: { type: integer }
+        branch_name: { type: string }
+        customer: { type: integer }
+        customer_name: { type: string }
+        vehicle: { type: integer }
+        vehicle_plate: { type: string }
+        operator: { type: string }
+        item: { type: ["integer", "null"] }
+        item_name: { type: string }
+        gross_weight: { type: ["number", "null"] }
+        tare_weight: { type: ["number", "null"] }
+        net_weight: { type: ["number", "null"] }
+        status: { type: string }
+        weight_type: { type: string }
+        payment_status: { type: string }
+        charge: { type: ["number", "null"] }
+        destination: { type: string }
+        invoiced: { type: boolean }
+        approval_status: { type: string }
+        created_at: { type: string }
+        updated_at: { type: string }
+
+    TransactionInput:
+      type: object
+      required: [branch, customer, vehicle]
+      properties:
+        branch: { type: integer }
+        customer: { type: integer }
+        vehicle: { type: integer }
+        item: { type: integer }
+        gross_weight: { type: number }
+        tare_weight: { type: number }
+        weight_type: { type: string }
+        destination: { type: string }
+        operator: { type: string }
+
+    PaginatedTransactions:
+      type: object
+      properties:
+        count: { type: integer }
+        next: { type: ["string", "null"] }
+        previous: { type: ["string", "null"] }
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/Transaction"
+
+    Branch:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        address: { type: string }
+        email: { type: string }
+        phone: { type: string }
+
+    Customer:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        email: { type: string }
+        phone: { type: string }
+
+    CustomerInput:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+        email: { type: string }
+        phone: { type: string }
+        branch: { type: integer }
+
+    Vehicle:
+      type: object
+      properties:
+        id: { type: integer }
+        number_plate: { type: string }
+        customer: { type: integer }
+        customer_name: { type: string }
+        vehicle_type: { type: ["integer", "null"] }
+        vehicle_type_name: { type: string }
+
+    VehicleInput:
+      type: object
+      required: [number_plate, customer]
+      properties:
+        number_plate: { type: string }
+        customer: { type: integer }
+        vehicle_type: { type: integer }
+
+    LiveWeightReading:
+      type: object
+      properties:
+        weight: { type: ["number", "null"] }
+        unit: { type: string }
+        stable: { type: boolean }
+        source: { type: string }
+        timestamp: { type: string }
+
+    # ── Payments ─────────────────────────────────────────────────────────────
+    Invoice:
+      type: object
+      properties:
+        id: { type: integer }
+        invoice_number: { type: string }
+        customer: { type: integer }
+        customer_name: { type: string }
+        transaction: { type: ["integer", "null"] }
+        status: { type: string }
+        total_amount: { type: number }
+        currency: { type: string }
+        issued_at: { type: ["string", "null"] }
+        due_date: { type: ["string", "null"] }
+        created_at: { type: string }
+
+    PaginatedInvoices:
+      type: object
+      properties:
+        count: { type: integer }
+        next: { type: ["string", "null"] }
+        previous: { type: ["string", "null"] }
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/Invoice"
+
+    ReceivePaymentInput:
+      type: object
+      required: [amount, method]
+      properties:
+        amount: { type: number }
+        method: { type: integer }
+        reference: { type: string }
+
+    PaymentMethod:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        is_active: { type: boolean }
+
+    PaymentSummary:
+      type: object
+      properties:
+        total_invoiced: { type: number }
+        total_received: { type: number }
+        outstanding: { type: number }
+        invoices_by_status:
+          type: array
+          items:
+            type: object
+            properties:
+              status: { type: string }
+              count: { type: integer }
+              total: { type: number }

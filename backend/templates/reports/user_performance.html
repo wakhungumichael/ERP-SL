@@ -1,0 +1,206 @@
+{% extends "admin/base_site.html" %}
+{% load static %}
+
+{% block title %}User Performance Report - Metrix Weighbridge{% endblock %}
+
+{% block content %}
+<style>
+  .report-container {
+    max-width: 1400px;
+    margin: 20px auto;
+    padding: 20px;
+  }
+  .performance-card {
+    background: white;
+    border-radius: 12px;
+    padding: 25px;
+    margin-bottom: 30px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  }
+  .table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 15px;
+  }
+  .table th, .table td {
+    padding: 12px;
+    text-align: left;
+    border-bottom: 1px solid #eee;
+  }
+  .table th {
+    background-color: #f8f9fa;
+    font-weight: bold;
+    color: #0F5132;
+  }
+  .table tr:hover {
+    background-color: #f8f9fa;
+  }
+  .efficiency-bar {
+    background: #e9ecef;
+    height: 20px;
+    border-radius: 10px;
+    overflow: hidden;
+    position: relative;
+  }
+  .efficiency-fill {
+    height: 100%;
+    transition: width 0.3s ease;
+    border-radius: 10px;
+  }
+  .efficiency-text {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 0.8em;
+    font-weight: bold;
+    color: white;
+    text-shadow: 1px 1px 1px rgba(0,0,0,0.5);
+  }
+  .high-performance { background: linear-gradient(90deg, #28a745, #0F5132); }
+  .medium-performance { background: linear-gradient(90deg, #ffc107, #fd7e14); }
+  .low-performance { background: linear-gradient(90deg, #dc3545, #c82333); }
+  .revenue-amount {
+    color: #28a745;
+    font-weight: bold;
+  }
+  .btn {
+    padding: 10px 20px;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    text-decoration: none;
+    display: inline-block;
+    font-weight: bold;
+    background: #6c757d;
+    color: white;
+  }
+</style>
+
+<div class="report-container">
+  <h1 style="color: #0F5132; margin-bottom: 30px;">{{ title }}</h1>
+
+  <div class="performance-card">
+    <h2 style="color: #0F5132; margin-bottom: 20px;">Operator Performance Overview</h2>
+    <div style="overflow-x: auto;">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Operator</th>
+            <th>Total Transactions</th>
+            <th>Total Revenue</th>
+            <th>Average Revenue</th>
+            <th>Average Weight (kg)</th>
+            <th>Pending</th>
+            <th>Paid</th>
+            <th>Efficiency</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for operator in operators %}
+          <tr>
+            <td style="font-weight: bold;">{{ operator.operator }}</td>
+            <td>{{ operator.total_transactions }}</td>
+            <td class="revenue-amount">${{ operator.total_revenue|floatformat:2 }}</td>
+            <td class="revenue-amount">${{ operator.avg_revenue|floatformat:2 }}</td>
+            <td>{{ operator.avg_weight|floatformat:0 }}</td>
+            <td style="color: #dc3545;">{{ operator.pending_count }}</td>
+            <td style="color: #28a745;">{{ operator.paid_count }}</td>
+            <td style="width: 150px;">
+              <div class="efficiency-bar">
+                <div class="efficiency-fill {% if operator.efficiency >= 80 %}high-performance{% elif operator.efficiency >= 60 %}medium-performance{% else %}low-performance{% endif %}" 
+                     style="width: {{ operator.efficiency }}%;">
+                </div>
+                <div class="efficiency-text">{{ operator.efficiency|floatformat:1 }}%</div>
+              </div>
+            </td>
+          </tr>
+          {% empty %}
+          <tr>
+            <td colspan="8" style="text-align: center; color: #666;">No operator data available</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Performance Insights -->
+  <div class="performance-card">
+    <h2 style="color: #0F5132; margin-bottom: 20px;">Performance Insights</h2>
+    {% if operators %}
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px;">
+      <div style="background: #d4edda; padding: 20px; border-radius: 8px; border-left: 4px solid #28a745;">
+        <h3 style="color: #155724; margin-bottom: 10px;">Top Performer</h3>
+        {% with top_performer=operators.0 %}
+        <p style="margin: 0; color: #155724;">
+          <strong>{{ top_performer.operator }}</strong><br>
+          {{ top_performer.total_transactions }} transactions<br>
+          ${{ top_performer.total_revenue|floatformat:2 }} revenue<br>
+          {{ top_performer.efficiency|floatformat:1 }}% efficiency
+        </p>
+        {% endwith %}
+      </div>
+      
+      <div style="background: #fff3cd; padding: 20px; border-radius: 8px; border-left: 4px solid #ffc107;">
+        <h3 style="color: #856404; margin-bottom: 10px;">Total Statistics</h3>
+        <p style="margin: 0; color: #856404;">
+          <strong>{{ operators|length }}</strong> active operators<br>
+          {% for operator in operators %}{{ operator.total_transactions }}{% if not forloop.last %}+{% endif %}{% endfor %} total transactions<br>
+          ${% for operator in operators %}{{ operator.total_revenue }}{% if not forloop.last %}+{% endif %}{% endfor %} total revenue
+        </p>
+      </div>
+      
+      <div style="background: #f8d7da; padding: 20px; border-radius: 8px; border-left: 4px solid #dc3545;">
+        <h3 style="color: #721c24; margin-bottom: 10px;">Needs Attention</h3>
+        <p style="margin: 0; color: #721c24;">
+          {% with low_performers=operators|slice:"-3:" %}
+          {% for operator in low_performers %}
+          {% if operator.efficiency < 70 %}
+          <strong>{{ operator.operator }}</strong>: {{ operator.efficiency|floatformat:1 }}% efficiency<br>
+          {% endif %}
+          {% endfor %}
+          {% endwith %}
+        </p>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- Performance Tips -->
+  <div class="performance-card">
+    <h2 style="color: #0F5132; margin-bottom: 20px;">Performance Guidelines</h2>
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px;">
+      <div>
+        <h4 style="color: #28a745; margin-bottom: 10px;">Excellent (80%+ Efficiency)</h4>
+        <ul style="color: #666; line-height: 1.6;">
+          <li>High payment completion rate</li>
+          <li>Consistent transaction processing</li>
+          <li>Minimal pending transactions</li>
+        </ul>
+      </div>
+      <div>
+        <h4 style="color: #ffc107; margin-bottom: 10px;">Good (60-79% Efficiency)</h4>
+        <ul style="color: #666; line-height: 1.6;">
+          <li>Room for improvement in payment processing</li>
+          <li>Follow up on pending transactions</li>
+          <li>Focus on customer payment collection</li>
+        </ul>
+      </div>
+      <div>
+        <h4 style="color: #dc3545; margin-bottom: 10px;">Needs Improvement (&lt;60% Efficiency)</h4>
+        <ul style="color: #666; line-height: 1.6;">
+          <li>Review transaction processing procedures</li>
+          <li>Increase focus on payment collection</li>
+          <li>Consider additional training</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- Back to Dashboard -->
+  <div style="margin-top: 30px; text-align: center;">
+    <a href="{% url 'dashboard' %}" class="btn">Back to Dashboard</a>
+  </div>
+</div>
+{% endblock %}

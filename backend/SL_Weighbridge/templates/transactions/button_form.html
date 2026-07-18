@@ -1,0 +1,20 @@
+{% extends "admin/change_form.html" %}
+{% block object-tools %}
+    {{ block.super }}
+    <a href="{{ capture_weight_url }}" class="button">Capture Weight</a>
+{% endblock %}
+
+
+{% block submit_buttons_bottom %}
+{{ block.super }}
+
+    <div class="submit-row">
+        <input type="submit" value="Capture Weight" style="background-color:#ba2121"  name="_capture-weight">
+        <input type="submit" value="Print Receipt" style="background-color:#ba2121"  name="_print-receipt">
+        <input type="submit" value="Download Receipt" style="background-color:#ba2121"  name="_download-receipt">
+    </div>
+
+{% endblock %}
+
+
+
