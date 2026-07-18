@@ -1088,6 +1088,16 @@ class TransactionReceivePaymentView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        if tx.payment_status == "Paid":
+            return Response(
+                {
+                    "error": "Payment has already been recorded for this transaction.",
+                    "transaction_id": tx.id,
+                    "payment_status": tx.payment_status,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         method    = request.data.get("method", "Cash")
         reference = request.data.get("reference", "")
 
