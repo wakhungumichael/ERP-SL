@@ -498,10 +498,30 @@ class TransactionRecallView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Un-pair the associated first-weight transaction if this is a second weight
+        # ── Void any auto-generated draft invoice ────────────────────────────
+        # Un-pair the associated first-weight transaction if this is a second weight.
+        # The charge (and therefore the auto_invoice) lives on the first-weight record
+        # for paired transactions, so we must void that record's invoice too.
+        def _void_auto_invoice(record):
+            """Void the auto_invoice on `record` and clear the FK."""
+            try:
+                inv = getattr(record, "auto_invoice", None)
+                if inv is None and record.auto_invoice_id:
+                    from SL_Weighbridge.models import Invoice as _Inv
+                    inv = _Inv.objects.filter(pk=record.auto_invoice_id).first()
+                if inv:
+                    inv.status = "void"
+                    inv.save(update_fields=["status"])
+                record.auto_invoice = None
+                record.invoiced = False
+                record.save(update_fields=["auto_invoice", "invoiced", "updated_at"])
+            except Exception:
+                pass
+
         if tx.weight_type == "Second Weight" and tx.paired_first_transaction_id:
             try:
                 first = tx.paired_first_transaction
+                _void_auto_invoice(first)
                 first.status = "Pending"
                 first.tare_weight = None
                 first.net_weight = None
@@ -510,6 +530,9 @@ class TransactionRecallView(APIView):
                 first.save(update_fields=["status", "tare_weight", "net_weight", "paired", "approval_status", "updated_at"])
             except Exception:
                 pass
+
+        # Void the invoice on the recalled transaction itself (covers single-weight flow)
+        _void_auto_invoice(tx)
 
         tx.status = "Pending"
         tx.approval_status = False

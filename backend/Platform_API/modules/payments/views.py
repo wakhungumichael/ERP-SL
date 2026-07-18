@@ -110,15 +110,25 @@ def create_draft_invoice_for_transaction(tx):
     Skips if:
     - payment models are not available
     - the transaction already has an auto_invoice set
+    - the transaction is already linked to any non-void Invoice via the M2M
     - the transaction charge is zero or negative (nothing to bill)
     Returns the created Invoice or None.
     """
     try:
         if not HAS_PAYMENT_MODELS:
             return None
-        # Skip if already invoiced via auto_invoice
+        # Skip if already invoiced via auto_invoice FK
         if getattr(tx, 'auto_invoice_id', None):
             return None
+        # Skip if any non-void invoice is already linked via the M2M relationship
+        try:
+            existing = Invoice.objects.filter(
+                transactions=tx
+            ).exclude(status='void').first()
+            if existing:
+                return None
+        except Exception:
+            pass
         # Skip zero-charge transactions — nothing to bill
         if float(tx.charge or 0) <= 0:
             return None
