@@ -769,3 +769,212 @@ class SuspendedUserLoginTests(TestCase):
             f"A user with a null-tenant TenantUserProfile must not crash the token "
             f"endpoint — got {response.status_code}: {response.data}",
         )
+
+
+# ── cross-tenant data isolation tests ─────────────────────────────────────────
+
+class ProvisionedTenantAdminDataIsolationTests(TestCase):
+    """
+    Confirm that a freshly provisioned tenant admin is immediately scoped to
+    their own tenant on real data endpoints.
+
+    Covers:
+    - GET /api/platform/users/ returns only the requesting tenant's users.
+    - Users belonging to a second tenant are never exposed.
+
+    This guards against regressions where a new tenant admin could silently
+    read cross-tenant data from the very first authenticated request.
+    """
+
+    def setUp(self):
+        self.superadmin_client = APIClient()
+        self.superadmin = _superadmin()
+        self.superadmin_client.force_authenticate(user=self.superadmin)
+        self.provision_url = reverse("tenant-provision")
+        self.token_url = reverse("platform-auth-token")
+        self.users_url = reverse("platform-user-list")
+
+    def _provision(self, name, contact_email, admin_first_name, admin_last_name, admin_email):
+        """Provision a tenant and return the response data dict."""
+        payload = {
+            "name": name,
+            "contact_email": contact_email,
+            "admin_first_name": admin_first_name,
+            "admin_last_name": admin_last_name,
+            "admin_email": admin_email,
+        }
+        response = self.superadmin_client.post(self.provision_url, payload, format="json")
+        self.assertEqual(
+            response.status_code,
+            200,
+            f"Provisioning '{name}' failed unexpectedly: {response.data}",
+        )
+        return response.data.get("data", response.data)
+
+    def _get_token_for(self, username, password):
+        """Obtain an auth token for the given credentials."""
+        anon_client = APIClient()
+        response = anon_client.post(
+            self.token_url,
+            {"username": username, "password": password},
+            format="json",
+        )
+        self.assertEqual(
+            response.status_code,
+            200,
+            f"Token request for '{username}' failed: {response.data}",
+        )
+        return response.data["data"]["token"]
+
+    # ── isolation tests ───────────────────────────────────────────────────────
+
+    def test_tenant_a_admin_sees_only_own_users(self):
+        """
+        GET /api/platform/users/ authenticated as Tenant A's admin must return
+        only users belonging to Tenant A — no users from Tenant B.
+        """
+        data_a = self._provision(
+            name="Isolation Corp A",
+            contact_email="contact@isolation-a.example",
+            admin_first_name="Alice",
+            admin_last_name="AdminA",
+            admin_email="alice@isolation-a.example",
+        )
+        data_b = self._provision(
+            name="Isolation Corp B",
+            contact_email="contact@isolation-b.example",
+            admin_first_name="Bob",
+            admin_last_name="AdminB",
+            admin_email="bob@isolation-b.example",
+        )
+
+        tenant_a_id = data_a["tenant"]["id"]
+        tenant_b_admin_username = data_b["admin_username"]
+
+        token_a = self._get_token_for(
+            data_a["admin_username"], data_a["admin_temp_password"]
+        )
+
+        client_a = APIClient()
+        client_a.credentials(HTTP_AUTHORIZATION=f"Token {token_a}")
+        response = client_a.get(self.users_url)
+
+        self.assertEqual(
+            response.status_code,
+            200,
+            f"Expected 200 from /users/, got {response.status_code}: {response.data}",
+        )
+
+        response_data = response.data
+        # Support both paginated (results key) and plain list responses.
+        users = response_data.get("results", response_data) if isinstance(response_data, dict) else response_data
+
+        # Collect all usernames returned.
+        returned_usernames = {u.get("username") for u in users}
+
+        self.assertNotIn(
+            tenant_b_admin_username,
+            returned_usernames,
+            f"Tenant A's admin must NOT see Tenant B's admin ('{tenant_b_admin_username}') "
+            f"in the user list — cross-tenant data leak detected.",
+        )
+
+    def test_tenant_a_admin_can_see_own_admin_account(self):
+        """
+        GET /api/platform/users/ authenticated as Tenant A's admin must include
+        Tenant A's own admin user in the response.
+        """
+        data_a = self._provision(
+            name="Visibility Corp A",
+            contact_email="contact@visibility-a.example",
+            admin_first_name="Carol",
+            admin_last_name="AdminC",
+            admin_email="carol@visibility-a.example",
+        )
+        # Provision a second tenant to ensure scoping is active.
+        self._provision(
+            name="Visibility Corp B",
+            contact_email="contact@visibility-b.example",
+            admin_first_name="Dave",
+            admin_last_name="AdminD",
+            admin_email="dave@visibility-b.example",
+        )
+
+        token_a = self._get_token_for(
+            data_a["admin_username"], data_a["admin_temp_password"]
+        )
+
+        client_a = APIClient()
+        client_a.credentials(HTTP_AUTHORIZATION=f"Token {token_a}")
+        response = client_a.get(self.users_url)
+
+        self.assertEqual(
+            response.status_code,
+            200,
+            f"Expected 200 from /users/, got {response.status_code}: {response.data}",
+        )
+
+        response_data = response.data
+        users = response_data.get("results", response_data) if isinstance(response_data, dict) else response_data
+
+        returned_usernames = {u.get("username") for u in users}
+
+        self.assertIn(
+            data_a["admin_username"],
+            returned_usernames,
+            f"Tenant A's admin ('{data_a['admin_username']}') must appear in their own "
+            f"user list — own-tenant visibility is broken.",
+        )
+
+    def test_tenant_b_admin_does_not_appear_in_tenant_a_results(self):
+        """
+        Provision two tenants and confirm the user list for Tenant A contains
+        exactly one user (itself) — not the admin of Tenant B.
+        """
+        data_a = self._provision(
+            name="Count Corp A",
+            contact_email="contact@count-a.example",
+            admin_first_name="Eve",
+            admin_last_name="AdminE",
+            admin_email="eve@count-a.example",
+        )
+        data_b = self._provision(
+            name="Count Corp B",
+            contact_email="contact@count-b.example",
+            admin_first_name="Frank",
+            admin_last_name="AdminF",
+            admin_email="frank@count-b.example",
+        )
+
+        token_a = self._get_token_for(
+            data_a["admin_username"], data_a["admin_temp_password"]
+        )
+
+        client_a = APIClient()
+        client_a.credentials(HTTP_AUTHORIZATION=f"Token {token_a}")
+        response = client_a.get(self.users_url)
+
+        self.assertEqual(
+            response.status_code,
+            200,
+            f"Expected 200 from /users/, got {response.status_code}: {response.data}",
+        )
+
+        response_data = response.data
+        users = response_data.get("results", response_data) if isinstance(response_data, dict) else response_data
+
+        returned_usernames = {u.get("username") for u in users}
+
+        # Tenant A's list must contain its own admin.
+        self.assertIn(
+            data_a["admin_username"],
+            returned_usernames,
+            "Tenant A's own admin must be visible to Tenant A.",
+        )
+        # Tenant A's list must NOT contain Tenant B's admin.
+        self.assertNotIn(
+            data_b["admin_username"],
+            returned_usernames,
+            f"Tenant A must not see Tenant B's admin ('{data_b['admin_username']}') "
+            f"— cross-tenant isolation is broken.",
+        )
