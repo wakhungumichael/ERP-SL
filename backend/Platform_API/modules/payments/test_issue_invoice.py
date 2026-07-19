@@ -308,3 +308,60 @@ class IssueInvoiceEmailTests(TestCase):
             response.status_code, 200,
             "API must return 200 even when the SMTP send raises an exception.",
         )
+
+    # ── test 5: template rendering failure is recorded and does not break the API ──
+
+    def test_template_render_error_recorded_as_failure_log(self):
+        """
+        When render_to_string raises TemplateDoesNotExist the view must still
+        return 200 AND write an InvoiceEmailLog row with success=False and a
+        non-empty failure_reason.
+        """
+        from django.template.exceptions import TemplateDoesNotExist
+        from unittest.mock import patch
+        from SL_Weighbridge.models import InvoiceEmailLog
+
+        customer = _make_customer("Nina Wambui", "nina.wambui@example.com")
+        inv = _make_draft_invoice(customer)
+
+        with patch(
+            "django.template.loader.render_to_string",
+            side_effect=TemplateDoesNotExist("emails/invoice_issued.html"),
+        ):
+            response = self._post_issue(inv.pk)
+
+        # Invoice issuance must succeed despite the template error
+        self.assertEqual(response.status_code, 200, response.data)
+
+        invoice_id = response.data.get("id")
+        log = InvoiceEmailLog.objects.filter(invoice_id=invoice_id).first()
+
+        self.assertIsNotNone(log, "InvoiceEmailLog should be written even when template rendering fails.")
+        self.assertFalse(log.success, "Log entry should record success=False when the template is missing.")
+        self.assertTrue(
+            log.failure_reason,
+            "Log entry should record a non-empty failure_reason when template rendering raises.",
+        )
+        self.assertEqual(log.recipient, "nina.wambui@example.com")
+
+    def test_api_returns_200_when_template_render_raises(self):
+        """
+        A missing or broken email template must not surface as an API error —
+        the response must always be 200 so the invoice workflow is not interrupted.
+        """
+        from django.template.exceptions import TemplateDoesNotExist
+        from unittest.mock import patch
+
+        customer = _make_customer("Oscar Maina", "oscar.maina@example.com")
+        inv = _make_draft_invoice(customer)
+
+        with patch(
+            "django.template.loader.render_to_string",
+            side_effect=TemplateDoesNotExist("emails/invoice_issued.html"),
+        ):
+            response = self._post_issue(inv.pk)
+
+        self.assertEqual(
+            response.status_code, 200,
+            "API must return 200 even when render_to_string raises TemplateDoesNotExist.",
+        )
