@@ -1091,6 +1091,25 @@ class CustomerListCreateView(generics.ListCreateAPIView):
 
     def get_queryset(self):
         qs = Customer.objects.all().order_by("name")
+
+        # ── Tenant scoping ────────────────────────────────────────────────────
+        # Customer has no direct tenant FK.  We scope by the set of customers
+        # that appear in at least one Transaction belonging to the requesting
+        # user's tenant — mirroring the pattern used in InvoiceListView.
+        # - Superusers: unfiltered global access
+        # - Profiled non-superusers: scoped to customers in their tenant's txns
+        # - Profileless non-superusers: deny-all (qs.none())
+        resolved = _resolve_user_tenant(self.request.user)
+        if isinstance(resolved, _NoTenantProfile):
+            return qs.none()
+        if resolved is not None:  # Tenant object — non-superuser
+            tenant_customer_ids = (
+                Transaction.objects.filter(tenant=resolved)
+                .values_list("customer_id", flat=True)
+                .distinct()
+            )
+            qs = qs.filter(pk__in=tenant_customer_ids)
+
         if search := self.request.query_params.get("search"):
             qs = qs.filter(name__icontains=search)
         return qs
@@ -1099,7 +1118,21 @@ class CustomerListCreateView(generics.ListCreateAPIView):
 class CustomerDetailView(generics.RetrieveUpdateDestroyAPIView):
     serializer_class = CustomerSerializer
     permission_classes = [IsAuthenticated]
-    queryset = Customer.objects.all()
+
+    def get_queryset(self):
+        qs = Customer.objects.all()
+        # ── Tenant scoping ────────────────────────────────────────────────────
+        resolved = _resolve_user_tenant(self.request.user)
+        if isinstance(resolved, _NoTenantProfile):
+            return qs.none()
+        if resolved is not None:  # Tenant object — non-superuser
+            tenant_customer_ids = (
+                Transaction.objects.filter(tenant=resolved)
+                .values_list("customer_id", flat=True)
+                .distinct()
+            )
+            qs = qs.filter(pk__in=tenant_customer_ids)
+        return qs
 
 
 class VehicleListCreateView(generics.ListCreateAPIView):
@@ -1109,6 +1142,25 @@ class VehicleListCreateView(generics.ListCreateAPIView):
 
     def get_queryset(self):
         qs = Vehicle.objects.select_related("customer", "vehicle_type").order_by("number_plate")
+
+        # ── Tenant scoping ────────────────────────────────────────────────────
+        # Vehicle has no direct tenant FK.  We scope by the set of vehicles
+        # that appear in at least one Transaction belonging to the requesting
+        # user's tenant.
+        # - Superusers: unfiltered global access
+        # - Profiled non-superusers: scoped to vehicles in their tenant's txns
+        # - Profileless non-superusers: deny-all (qs.none())
+        resolved = _resolve_user_tenant(self.request.user)
+        if isinstance(resolved, _NoTenantProfile):
+            return qs.none()
+        if resolved is not None:  # Tenant object — non-superuser
+            tenant_vehicle_ids = (
+                Transaction.objects.filter(tenant=resolved)
+                .values_list("vehicle_id", flat=True)
+                .distinct()
+            )
+            qs = qs.filter(pk__in=tenant_vehicle_ids)
+
         params = self.request.query_params
         if customer_id := params.get("customer_id"):
             qs = qs.filter(customer_id=customer_id)
@@ -1120,7 +1172,21 @@ class VehicleListCreateView(generics.ListCreateAPIView):
 class VehicleDetailView(generics.RetrieveUpdateDestroyAPIView):
     serializer_class = VehicleSerializer
     permission_classes = [IsAuthenticated]
-    queryset = Vehicle.objects.select_related("customer", "vehicle_type")
+
+    def get_queryset(self):
+        qs = Vehicle.objects.select_related("customer", "vehicle_type")
+        # ── Tenant scoping ────────────────────────────────────────────────────
+        resolved = _resolve_user_tenant(self.request.user)
+        if isinstance(resolved, _NoTenantProfile):
+            return qs.none()
+        if resolved is not None:  # Tenant object — non-superuser
+            tenant_vehicle_ids = (
+                Transaction.objects.filter(tenant=resolved)
+                .values_list("vehicle_id", flat=True)
+                .distinct()
+            )
+            qs = qs.filter(pk__in=tenant_vehicle_ids)
+        return qs
 
 
 def _fetch_indicator_url(url: str, timeout: int = 3) -> dict:

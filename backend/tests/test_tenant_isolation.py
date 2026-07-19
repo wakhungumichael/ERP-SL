@@ -1140,7 +1140,236 @@ class ProfilelessUserDenyAllTests(TestCase):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 9. Invoice generation / debt consolidation cross-tenant IDOR
+# 9. Weighbridge customer & vehicle isolation
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class WeighbridgeCustomerVehicleIsolationTests(TestCase):
+    """
+    Verify strict tenant isolation on the customer and vehicle list/detail
+    endpoints.
+
+    Customer and Vehicle have no direct tenant FK; isolation is enforced by
+    scoping to records that appear in at least one Transaction belonging to
+    the requesting user's tenant.
+
+    a) Default list — Tenant A user sees only customers/vehicles from their
+       own tenant's transactions.
+    b) IDOR — Tenant A user fetching Tenant B's customer/vehicle by PK gets 404.
+    c) Profileless non-superuser — gets empty lists and 404 on detail.
+    d) Superuser — unrestricted access.
+    """
+
+    def setUp(self):
+        self.client = APIClient()
+        self.tenant_a = _make_tenant("Alpha CV", code="alpha-cv")
+        self.tenant_b = _make_tenant("Beta CV",  code="beta-cv")
+        self.user_a   = _make_tenant_user("cv_user_a", self.tenant_a)
+
+        # Tenant B's base objects + transaction (ties customer/vehicle to tenant_b)
+        objs_b = _make_wb_base_objects()
+        self.customer_b = objs_b["customer"]
+        self.vehicle_b  = objs_b["vehicle"]
+        _make_transaction(**objs_b, tenant=self.tenant_b)
+
+        # Tenant A's base objects + transaction (ties customer/vehicle to tenant_a)
+        objs_a = _make_wb_base_objects()
+        self.customer_a = objs_a["customer"]
+        self.vehicle_a  = objs_a["vehicle"]
+        _make_transaction(**objs_a, tenant=self.tenant_a)
+
+        self.client.force_authenticate(user=self.user_a)
+
+    # ── Authentication guard ───────────────────────────────────────────────────
+
+    def test_customer_list_requires_authentication(self):
+        """Unauthenticated access to /customers/ must be rejected."""
+        self.client.force_authenticate(user=None)
+        resp = self.client.get(reverse("wb-customers"))
+        self.assertIn(resp.status_code, (401, 403))
+
+    def test_vehicle_list_requires_authentication(self):
+        """Unauthenticated access to /vehicles/ must be rejected."""
+        self.client.force_authenticate(user=None)
+        resp = self.client.get(reverse("wb-vehicles"))
+        self.assertIn(resp.status_code, (401, 403))
+
+    # ── a) Default list scoping ───────────────────────────────────────────────
+
+    def test_customer_list_shows_tenant_a_own_customers(self):
+        """Tenant A user sees their own customers (those in tenant_a transactions)."""
+        resp = self.client.get(reverse("wb-customers"))
+        self.assertEqual(resp.status_code, 200, resp.data)
+        ids = [r.get("id") for r in resp.data.get("results", [])]
+        self.assertIn(self.customer_a.pk, ids,
+            "Tenant A user must see their own customers in the default list.")
+
+    def test_customer_list_excludes_tenant_b_customers(self):
+        """Tenant A user must NOT see Tenant B's customers."""
+        resp = self.client.get(reverse("wb-customers"))
+        self.assertEqual(resp.status_code, 200, resp.data)
+        ids = [r.get("id") for r in resp.data.get("results", [])]
+        self.assertNotIn(self.customer_b.pk, ids,
+            "Tenant A user must not see Tenant B's customers in the default list.")
+
+    def test_vehicle_list_shows_tenant_a_own_vehicles(self):
+        """Tenant A user sees their own vehicles (those in tenant_a transactions)."""
+        resp = self.client.get(reverse("wb-vehicles"))
+        self.assertEqual(resp.status_code, 200, resp.data)
+        ids = [r.get("id") for r in resp.data.get("results", [])]
+        self.assertIn(self.vehicle_a.pk, ids,
+            "Tenant A user must see their own vehicles in the default list.")
+
+    def test_vehicle_list_excludes_tenant_b_vehicles(self):
+        """Tenant A user must NOT see Tenant B's vehicles."""
+        resp = self.client.get(reverse("wb-vehicles"))
+        self.assertEqual(resp.status_code, 200, resp.data)
+        ids = [r.get("id") for r in resp.data.get("results", [])]
+        self.assertNotIn(self.vehicle_b.pk, ids,
+            "Tenant A user must not see Tenant B's vehicles in the default list.")
+
+    # ── b) IDOR blocked ───────────────────────────────────────────────────────
+
+    def test_tenant_a_cannot_fetch_tenant_b_customer_by_pk(self):
+        """
+        Tenant A fetching Tenant B's customer by PK must receive 404 — the
+        detail view scopes the queryset to the requesting user's tenant.
+        """
+        url = reverse("wb-customer-detail", kwargs={"pk": self.customer_b.pk})
+        resp = self.client.get(url)
+        self.assertEqual(resp.status_code, 404,
+            "IDOR: Tenant A must not be able to fetch Tenant B's customer by PK.")
+
+    def test_tenant_a_can_fetch_own_customer_by_pk(self):
+        """Tenant A must still be able to fetch their own customer by PK."""
+        url = reverse("wb-customer-detail", kwargs={"pk": self.customer_a.pk})
+        resp = self.client.get(url)
+        self.assertEqual(resp.status_code, 200,
+            "Tenant A must be able to access their own customer by PK.")
+        self.assertEqual(resp.data.get("id"), self.customer_a.pk)
+
+    def test_tenant_a_cannot_patch_tenant_b_customer(self):
+        """Tenant A must not be able to PATCH Tenant B's customer — 404."""
+        url = reverse("wb-customer-detail", kwargs={"pk": self.customer_b.pk})
+        resp = self.client.patch(url, {"address": "hacked"}, format="json")
+        self.assertEqual(resp.status_code, 404,
+            "Tenant A must not be able to modify Tenant B's customer.")
+
+    def test_tenant_a_cannot_fetch_tenant_b_vehicle_by_pk(self):
+        """
+        Tenant A fetching Tenant B's vehicle by PK must receive 404 — the
+        detail view scopes the queryset to the requesting user's tenant.
+        """
+        url = reverse("wb-vehicle-detail", kwargs={"pk": self.vehicle_b.pk})
+        resp = self.client.get(url)
+        self.assertEqual(resp.status_code, 404,
+            "IDOR: Tenant A must not be able to fetch Tenant B's vehicle by PK.")
+
+    def test_tenant_a_can_fetch_own_vehicle_by_pk(self):
+        """Tenant A must still be able to fetch their own vehicle by PK."""
+        url = reverse("wb-vehicle-detail", kwargs={"pk": self.vehicle_a.pk})
+        resp = self.client.get(url)
+        self.assertEqual(resp.status_code, 200,
+            "Tenant A must be able to access their own vehicle by PK.")
+        self.assertEqual(resp.data.get("id"), self.vehicle_a.pk)
+
+    def test_tenant_a_cannot_patch_tenant_b_vehicle(self):
+        """Tenant A must not be able to PATCH Tenant B's vehicle — 404."""
+        url = reverse("wb-vehicle-detail", kwargs={"pk": self.vehicle_b.pk})
+        resp = self.client.patch(url, {"number_plate": "HACKED"}, format="json")
+        self.assertEqual(resp.status_code, 404,
+            "Tenant A must not be able to modify Tenant B's vehicle.")
+
+    # ── c) Profileless user — deny-all ────────────────────────────────────────
+
+    def test_profileless_customer_list_returns_empty(self):
+        """A non-superuser with no TenantUserProfile must get an empty customer list."""
+        profileless = User.objects.create_user("cv_noprofile", password="pass")
+        self.client.force_authenticate(user=profileless)
+        resp = self.client.get(reverse("wb-customers"))
+        self.assertEqual(resp.status_code, 200)
+        ids = [r.get("id") for r in resp.data.get("results", [])]
+        self.assertNotIn(self.customer_a.pk, ids,
+            "Profileless user must not see any tenant's customers.")
+        self.assertNotIn(self.customer_b.pk, ids,
+            "Profileless user must not see any tenant's customers.")
+
+    def test_profileless_vehicle_list_returns_empty(self):
+        """A non-superuser with no TenantUserProfile must get an empty vehicle list."""
+        profileless = User.objects.create_user("cv_noprofile_v", password="pass")
+        self.client.force_authenticate(user=profileless)
+        resp = self.client.get(reverse("wb-vehicles"))
+        self.assertEqual(resp.status_code, 200)
+        ids = [r.get("id") for r in resp.data.get("results", [])]
+        self.assertNotIn(self.vehicle_a.pk, ids,
+            "Profileless user must not see any tenant's vehicles.")
+        self.assertNotIn(self.vehicle_b.pk, ids,
+            "Profileless user must not see any tenant's vehicles.")
+
+    def test_profileless_customer_detail_returns_404(self):
+        """Profileless user cannot fetch a customer by PK."""
+        profileless = User.objects.create_user("cv_noprofile_cd", password="pass")
+        self.client.force_authenticate(user=profileless)
+        url = reverse("wb-customer-detail", kwargs={"pk": self.customer_a.pk})
+        resp = self.client.get(url)
+        self.assertEqual(resp.status_code, 404,
+            "Profileless user must get 404 on customer detail.")
+
+    def test_profileless_vehicle_detail_returns_404(self):
+        """Profileless user cannot fetch a vehicle by PK."""
+        profileless = User.objects.create_user("cv_noprofile_vd", password="pass")
+        self.client.force_authenticate(user=profileless)
+        url = reverse("wb-vehicle-detail", kwargs={"pk": self.vehicle_a.pk})
+        resp = self.client.get(url)
+        self.assertEqual(resp.status_code, 404,
+            "Profileless user must get 404 on vehicle detail.")
+
+    # ── d) Superuser — unrestricted ───────────────────────────────────────────
+
+    def test_superuser_can_list_all_customers(self):
+        """Superuser without any filter sees all tenants' customers."""
+        su = User.objects.create_superuser("cv_su", password="pass")
+        self.client.force_authenticate(user=su)
+        resp = self.client.get(reverse("wb-customers"))
+        self.assertEqual(resp.status_code, 200, resp.data)
+        ids = [r.get("id") for r in resp.data.get("results", [])]
+        self.assertIn(self.customer_a.pk, ids,
+            "Superuser must see Tenant A's customers.")
+        self.assertIn(self.customer_b.pk, ids,
+            "Superuser must see Tenant B's customers.")
+
+    def test_superuser_can_list_all_vehicles(self):
+        """Superuser without any filter sees all tenants' vehicles."""
+        su = User.objects.create_superuser("cv_su_v", password="pass")
+        self.client.force_authenticate(user=su)
+        resp = self.client.get(reverse("wb-vehicles"))
+        self.assertEqual(resp.status_code, 200, resp.data)
+        ids = [r.get("id") for r in resp.data.get("results", [])]
+        self.assertIn(self.vehicle_a.pk, ids,
+            "Superuser must see Tenant A's vehicles.")
+        self.assertIn(self.vehicle_b.pk, ids,
+            "Superuser must see Tenant B's vehicles.")
+
+    def test_superuser_can_fetch_any_customer_by_pk(self):
+        """Superuser must be able to fetch any tenant's customer by PK."""
+        su = User.objects.create_superuser("cv_su_cd", password="pass")
+        self.client.force_authenticate(user=su)
+        url = reverse("wb-customer-detail", kwargs={"pk": self.customer_b.pk})
+        resp = self.client.get(url)
+        self.assertEqual(resp.status_code, 200,
+            "Superuser must be able to access any tenant's customer.")
+
+    def test_superuser_can_fetch_any_vehicle_by_pk(self):
+        """Superuser must be able to fetch any tenant's vehicle by PK."""
+        su = User.objects.create_superuser("cv_su_vd", password="pass")
+        self.client.force_authenticate(user=su)
+        url = reverse("wb-vehicle-detail", kwargs={"pk": self.vehicle_b.pk})
+        resp = self.client.get(url)
+        self.assertEqual(resp.status_code, 200,
+            "Superuser must be able to access any tenant's vehicle.")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 10. Invoice generation / debt consolidation cross-tenant IDOR
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class InvoiceGenerationIDORTests(TestCase):
