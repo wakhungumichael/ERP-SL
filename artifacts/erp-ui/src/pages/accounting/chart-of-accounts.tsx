@@ -147,7 +147,8 @@ export default function ChartOfAccounts() {
         let msg = 'Cannot delete account';
         try {
           const json = await r.json();
-          if (json?.detail) msg = json.detail;
+          if (json?.error) msg = json.error;
+          else if (json?.detail) msg = json.detail;
           else if (typeof json === 'string') msg = json;
         } catch { /* ignore */ }
         toast({ title: msg, variant: 'destructive' });

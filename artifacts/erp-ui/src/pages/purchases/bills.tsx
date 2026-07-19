@@ -235,7 +235,7 @@ export default function BillsPage() {
                     <TableCell>{b.supplier_name}</TableCell>
                     <TableCell>{b.issue_date}</TableCell>
                     <TableCell>{b.due_date}</TableCell>
-                    <TableCell className="text-right">{fmt(b.total_amount ?? 0)}</TableCell>
+                    <TableCell className="text-right">{fmt((b as any).total ?? (b as any).total_amount ?? 0)}</TableCell>
                     <TableCell>
                       <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_COLORS[b.status] ?? 'bg-gray-100 text-gray-700'}`}>
                         {b.status}
