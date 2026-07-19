@@ -457,6 +457,14 @@ class TokenLoginSerializer(serializers.Serializer):
             raise serializers.ValidationError("Invalid username or password.")
         if not user.is_active:
             raise serializers.ValidationError("This user account is inactive.")
+        # Reject login if the user's tenant has been suspended.
+        # Guard against nullable tenant on the profile (profile.tenant may be None).
+        profile = getattr(user, "tenant_profile", None)
+        tenant = getattr(profile, "tenant", None)
+        if tenant is not None and not tenant.is_active:
+            raise serializers.ValidationError(
+                "Your organization's account has been suspended. Please contact your platform administrator."
+            )
         attrs["user"] = user
         return attrs
 

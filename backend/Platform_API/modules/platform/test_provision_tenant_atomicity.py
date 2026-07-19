@@ -608,3 +608,164 @@ class ProvisionTenantDuplicateAdminEmailTests(TestCase):
             f"Expected 400 when admin_email matches an existing user, "
             f"got {response.status_code}: {response.data}",
         )
+
+
+# ── suspended-account login-rejection tests ────────────────────────────────────
+
+class SuspendedUserLoginTests(TestCase):
+    """
+    Guard tests confirming that a provisioned tenant admin cannot authenticate
+    once their account or their tenant has been deactivated / suspended.
+
+    Covers:
+    1. user.is_active = False  → POST /api/platform/auth/token/ returns non-200.
+    2. tenant.is_active = False (via suspend_tenant) → POST /api/platform/auth/token/
+       returns non-200.
+    """
+
+    def setUp(self):
+        self.superadmin_client = APIClient()
+        self.superadmin = _superadmin()
+        self.superadmin_client.force_authenticate(user=self.superadmin)
+        self.provision_url = reverse("tenant-provision")
+        self.token_url = reverse("platform-auth-token")
+        self.me_url = reverse("platform-auth-me")
+
+    def _provision(self, suffix=""):
+        """Provision a fresh tenant and return the response data dict."""
+        payload = {
+            "name": f"Suspend Test Corp{suffix}",
+            "contact_email": f"contact{suffix}@suspendtest.example",
+            "admin_first_name": "Sam",
+            "admin_last_name": "Suspend",
+            "admin_email": f"sam{suffix}@suspendtest.example",
+        }
+        response = self.superadmin_client.post(self.provision_url, payload, format="json")
+        self.assertEqual(
+            response.status_code,
+            200,
+            f"Provisioning failed unexpectedly: {response.data}",
+        )
+        return response.data.get("data", response.data)
+
+    # ── test 1: user account deactivated ─────────────────────────────────────
+
+    def test_deactivated_user_cannot_obtain_token(self):
+        """
+        After user.is_active is set to False the token endpoint must return a
+        non-200 status (400 or 401) — not issue a valid token.
+        """
+        data = self._provision(suffix="_user_suspend")
+        username = data["admin_username"]
+        password = data["admin_temp_password"]
+
+        # Verify the happy path works first (token is issuable before deactivation).
+        anon_client = APIClient()
+        ok_response = anon_client.post(
+            self.token_url,
+            {"username": username, "password": password},
+            format="json",
+        )
+        self.assertEqual(
+            ok_response.status_code,
+            200,
+            f"Pre-deactivation login should succeed; got {ok_response.status_code}: {ok_response.data}",
+        )
+
+        # Deactivate the admin user.
+        admin_user = User.objects.get(username=username)
+        admin_user.is_active = False
+        admin_user.save(update_fields=["is_active"])
+
+        # Token endpoint must now reject the credentials.
+        bad_response = anon_client.post(
+            self.token_url,
+            {"username": username, "password": password},
+            format="json",
+        )
+        self.assertNotEqual(
+            bad_response.status_code,
+            200,
+            "A deactivated user must not receive a token — expected non-200 but got 200.",
+        )
+
+    # ── test 2: tenant suspended ──────────────────────────────────────────────
+
+    def test_suspended_tenant_admin_cannot_obtain_token(self):
+        """
+        After the tenant is suspended via suspend_tenant (tenant.is_active = False),
+        POSTing to auth/token/ must return a non-200 response — the provisioned
+        admin's credentials should be rejected.
+        """
+        data = self._provision(suffix="_tenant_suspend")
+        username = data["admin_username"]
+        password = data["admin_temp_password"]
+        tenant_id = data["tenant"]["id"]
+
+        # Verify the happy path works before suspension.
+        anon_client = APIClient()
+        ok_response = anon_client.post(
+            self.token_url,
+            {"username": username, "password": password},
+            format="json",
+        )
+        self.assertEqual(
+            ok_response.status_code,
+            200,
+            f"Pre-suspension login should succeed; got {ok_response.status_code}: {ok_response.data}",
+        )
+
+        # Suspend the tenant via the platform endpoint.
+        suspend_url = reverse("tenant-suspend", kwargs={"pk": tenant_id})
+        suspend_response = self.superadmin_client.post(suspend_url)
+        self.assertEqual(
+            suspend_response.status_code,
+            200,
+            f"suspend_tenant should return 200; got {suspend_response.status_code}: {suspend_response.data}",
+        )
+
+        # Token endpoint must now reject the admin's credentials.
+        bad_response = anon_client.post(
+            self.token_url,
+            {"username": username, "password": password},
+            format="json",
+        )
+        self.assertNotEqual(
+            bad_response.status_code,
+            200,
+            "A tenant admin whose tenant is suspended must not receive a token — "
+            "expected non-200 but got 200.",
+        )
+
+    # ── test 3: null-tenant profile — no crash ────────────────────────────────
+
+    def test_user_with_null_tenant_profile_can_obtain_token(self):
+        """
+        A user whose TenantUserProfile has tenant=None must not cause a server
+        crash in the token endpoint. The login should succeed normally (the
+        suspension guard must be null-safe).
+        """
+        # Create a plain user and attach a TenantUserProfile with tenant=None.
+        orphan_user = User.objects.create_user(
+            username="orphan_profile_user",
+            password="testpass123",
+            is_active=True,
+        )
+        TenantUserProfile.objects.create(
+            user=orphan_user,
+            tenant=None,
+            is_tenant_admin=False,
+        )
+
+        anon_client = APIClient()
+        response = anon_client.post(
+            self.token_url,
+            {"username": "orphan_profile_user", "password": "testpass123"},
+            format="json",
+        )
+        self.assertEqual(
+            response.status_code,
+            200,
+            f"A user with a null-tenant TenantUserProfile must not crash the token "
+            f"endpoint — got {response.status_code}: {response.data}",
+        )
