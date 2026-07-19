@@ -298,6 +298,87 @@ class ProvisionTenantDuplicateSubdomainTests(TestCase):
         )
 
 
+class ProvisionTenantDuplicateNameTests(TestCase):
+    """
+    Tests that a duplicate tenant name returns HTTP 400 with a clear message
+    instead of silently creating a confusingly-named tenant.
+    """
+
+    def setUp(self):
+        self.client = APIClient()
+        self.superadmin = _superadmin()
+        self.client.force_authenticate(user=self.superadmin)
+        self.url = reverse("tenant-provision")
+
+    def test_duplicate_name_returns_400(self):
+        """
+        Submitting a tenant name that already exists must return HTTP 400.
+        """
+        self.client.post(self.url, _VALID_PAYLOAD, format="json")
+
+        duplicate_payload = {
+            "name": _VALID_PAYLOAD["name"],
+            "contact_email": "contact2@other.example",
+            "admin_first_name": "Bob",
+            "admin_last_name": "Admin",
+            "admin_email": "bob@other.example",
+        }
+        response = self.client.post(self.url, duplicate_payload, format="json")
+
+        self.assertEqual(
+            response.status_code,
+            400,
+            f"Expected 400 for duplicate tenant name, got {response.status_code}: {response.data}",
+        )
+
+    def test_duplicate_name_returns_human_readable_message(self):
+        """
+        The 400 response for a duplicate name must contain a message that
+        clearly identifies the problem.
+        """
+        self.client.post(self.url, _VALID_PAYLOAD, format="json")
+
+        duplicate_payload = {
+            "name": _VALID_PAYLOAD["name"],
+            "contact_email": "contact2@other.example",
+            "admin_first_name": "Bob",
+            "admin_last_name": "Admin",
+            "admin_email": "bob@other.example",
+        }
+        response = self.client.post(self.url, duplicate_payload, format="json")
+
+        message = response.data.get("message", "")
+        self.assertTrue(
+            any(
+                phrase in message.lower()
+                for phrase in ("already", "exists", "taken", "duplicate")
+            ),
+            f"Error message should indicate a name conflict; got: {message!r}",
+        )
+
+    def test_duplicate_name_does_not_create_new_tenant(self):
+        """
+        A rejected duplicate-name request must not leave a new Tenant row.
+        """
+        self.client.post(self.url, _VALID_PAYLOAD, format="json")
+        tenant_count_after_first = Tenant.objects.count()
+
+        duplicate_payload = {
+            "name": _VALID_PAYLOAD["name"],
+            "contact_email": "contact2@other.example",
+            "admin_first_name": "Bob",
+            "admin_last_name": "Admin",
+            "admin_email": "bob@other.example",
+        }
+        self.client.post(self.url, duplicate_payload, format="json")
+
+        self.assertEqual(
+            Tenant.objects.count(),
+            tenant_count_after_first,
+            "A duplicate-name request must not create an additional Tenant row.",
+        )
+
+
 # ── first-login end-to-end tests ───────────────────────────────────────────────
 
 class ProvisionTenantFirstLoginTests(TestCase):
