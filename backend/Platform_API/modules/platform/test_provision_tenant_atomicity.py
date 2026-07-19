@@ -978,3 +978,202 @@ class ProvisionedTenantAdminDataIsolationTests(TestCase):
             f"Tenant A must not see Tenant B's admin ('{data_b['admin_username']}') "
             f"— cross-tenant isolation is broken.",
         )
+
+
+# ── branch-list isolation tests ────────────────────────────────────────────────
+
+class TenantBranchListIsolationTests(TestCase):
+    """
+    Confirm that a freshly provisioned tenant admin cannot enumerate another
+    tenant's branch list via GET /api/platform/tenants/<id>/branches/.
+
+    Covers:
+    - Tenant A's admin receives 403 when requesting Tenant B's branch list.
+    - Tenant A's admin can access their own (empty) branch list (200).
+    - Tenant B's branches are never returned to Tenant A, even when branches
+      exist in Tenant B before Tenant A's admin makes the request.
+
+    This guards against a regression where _require_tenant_access fails to
+    reject a valid auth token that is scoped to the wrong tenant.
+    """
+
+    def setUp(self):
+        self.superadmin_client = APIClient()
+        self.superadmin = _superadmin()
+        self.superadmin_client.force_authenticate(user=self.superadmin)
+        self.provision_url = reverse("tenant-provision")
+        self.token_url = reverse("platform-auth-token")
+
+    def _provision(self, name, contact_email, admin_first_name, admin_last_name, admin_email):
+        """Provision a tenant and return the response data dict."""
+        payload = {
+            "name": name,
+            "contact_email": contact_email,
+            "admin_first_name": admin_first_name,
+            "admin_last_name": admin_last_name,
+            "admin_email": admin_email,
+        }
+        response = self.superadmin_client.post(self.provision_url, payload, format="json")
+        self.assertEqual(
+            response.status_code,
+            200,
+            f"Provisioning '{name}' failed unexpectedly: {response.data}",
+        )
+        return response.data.get("data", response.data)
+
+    def _get_token_for(self, username, password):
+        """Obtain an auth token for the given credentials."""
+        anon_client = APIClient()
+        response = anon_client.post(
+            self.token_url,
+            {"username": username, "password": password},
+            format="json",
+        )
+        self.assertEqual(
+            response.status_code,
+            200,
+            f"Token request for '{username}' failed: {response.data}",
+        )
+        return response.data["data"]["token"]
+
+    def _branch_list_url(self, tenant_id):
+        return reverse("tenant-branch-list", kwargs={"pk": tenant_id})
+
+    # ── isolation tests ───────────────────────────────────────────────────────
+
+    def test_tenant_a_admin_gets_403_on_tenant_b_branch_list(self):
+        """
+        A freshly provisioned Tenant A admin calling
+        GET /api/platform/tenants/<tenant_b_id>/branches/
+        must receive HTTP 403 — not 200, not data from Tenant B.
+        """
+        data_a = self._provision(
+            name="Branch Isolation A",
+            contact_email="contact@branch-iso-a.example",
+            admin_first_name="Alice",
+            admin_last_name="BranchA",
+            admin_email="alice@branch-iso-a.example",
+        )
+        data_b = self._provision(
+            name="Branch Isolation B",
+            contact_email="contact@branch-iso-b.example",
+            admin_first_name="Bob",
+            admin_last_name="BranchB",
+            admin_email="bob@branch-iso-b.example",
+        )
+
+        tenant_b_id = data_b["tenant"]["id"]
+        token_a = self._get_token_for(data_a["admin_username"], data_a["admin_temp_password"])
+
+        client_a = APIClient()
+        client_a.credentials(HTTP_AUTHORIZATION=f"Token {token_a}")
+        response = client_a.get(self._branch_list_url(tenant_b_id))
+
+        self.assertEqual(
+            response.status_code,
+            403,
+            f"Tenant A's admin must receive 403 when requesting Tenant B's branch list, "
+            f"got {response.status_code}: {response.data}",
+        )
+
+    def test_tenant_a_admin_can_access_own_branch_list(self):
+        """
+        A freshly provisioned Tenant A admin must be able to call
+        GET /api/platform/tenants/<tenant_a_id>/branches/ and receive 200.
+        This confirms the access control isn't simply broken in both directions.
+        """
+        data_a = self._provision(
+            name="Own Branch Corp A",
+            contact_email="contact@own-branch-a.example",
+            admin_first_name="Carol",
+            admin_last_name="OwnBranchA",
+            admin_email="carol@own-branch-a.example",
+        )
+        # Provision a second tenant to make sure isolation is active.
+        self._provision(
+            name="Own Branch Corp B",
+            contact_email="contact@own-branch-b.example",
+            admin_first_name="Dave",
+            admin_last_name="OwnBranchB",
+            admin_email="dave@own-branch-b.example",
+        )
+
+        tenant_a_id = data_a["tenant"]["id"]
+        token_a = self._get_token_for(data_a["admin_username"], data_a["admin_temp_password"])
+
+        client_a = APIClient()
+        client_a.credentials(HTTP_AUTHORIZATION=f"Token {token_a}")
+        response = client_a.get(self._branch_list_url(tenant_a_id))
+
+        self.assertEqual(
+            response.status_code,
+            200,
+            f"Tenant A's admin must receive 200 for their own branch list, "
+            f"got {response.status_code}: {response.data}",
+        )
+
+    def test_tenant_b_branches_not_returned_to_tenant_a(self):
+        """
+        Even when Tenant B has existing branches, calling
+        GET /api/platform/tenants/<tenant_b_id>/branches/ as Tenant A's admin
+        must not return any of Tenant B's branch data.
+
+        Specifically: the response must not be 200 with branch rows, ensuring
+        no silent cross-tenant data leak can occur through the branch endpoint.
+        """
+        from Platform_Core.models import TenantBranch
+
+        data_a = self._provision(
+            name="Leak Check Corp A",
+            contact_email="contact@leak-check-a.example",
+            admin_first_name="Eve",
+            admin_last_name="LeakA",
+            admin_email="eve@leak-check-a.example",
+        )
+        data_b = self._provision(
+            name="Leak Check Corp B",
+            contact_email="contact@leak-check-b.example",
+            admin_first_name="Frank",
+            admin_last_name="LeakB",
+            admin_email="frank@leak-check-b.example",
+        )
+
+        # Seed Tenant B with a branch so there is data to potentially leak.
+        from Platform_Core.models import Tenant as TenantModel
+        tenant_b = TenantModel.objects.get(pk=data_b["tenant"]["id"])
+        TenantBranch.objects.create(
+            tenant=tenant_b,
+            name="Tenant B Head Office",
+        )
+
+        tenant_b_id = data_b["tenant"]["id"]
+        token_a = self._get_token_for(data_a["admin_username"], data_a["admin_temp_password"])
+
+        client_a = APIClient()
+        client_a.credentials(HTTP_AUTHORIZATION=f"Token {token_a}")
+        response = client_a.get(self._branch_list_url(tenant_b_id))
+
+        # The response must not be 200 — a 403 (or any non-200) is required.
+        self.assertNotEqual(
+            response.status_code,
+            200,
+            "Tenant A's admin received HTTP 200 when querying Tenant B's branch list "
+            "— cross-tenant branch data could be exposed.",
+        )
+
+        # Extra belt-and-suspenders: if somehow the status is 200, the branch
+        # data must not contain any of Tenant B's branch names.
+        if response.status_code == 200:
+            response_data = response.data
+            branches = (
+                response_data.get("data", {}).get("branches", [])
+                if isinstance(response_data, dict)
+                else []
+            )
+            branch_names = [b.get("name") for b in branches]
+            self.assertNotIn(
+                "Tenant B Head Office",
+                branch_names,
+                "Tenant A must not see Tenant B's 'Tenant B Head Office' branch "
+                "— cross-tenant data leak detected.",
+            )
