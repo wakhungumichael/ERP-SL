@@ -1,6 +1,7 @@
 import logging
 from datetime import timedelta
 
+from django.db import DatabaseError
 from django.utils import timezone
 from rest_framework import serializers, status
 from rest_framework.permissions import IsAuthenticated, AllowAny
@@ -388,7 +389,7 @@ class IssueInvoiceView(APIView):
                         success=_email_success,
                         failure_reason=_email_failure,
                     )
-            except Exception as log_exc:
+            except DatabaseError as log_exc:
                 logger.warning("Could not write InvoiceEmailLog for invoice %s: %s", inv.id, log_exc)
 
         return Response(_serialize_invoice(inv))
@@ -895,7 +896,7 @@ class DebtConsolidateView(APIView):
                         success=_email_success,
                         failure_reason=_email_failure,
                     )
-            except Exception as log_exc:
+            except DatabaseError as log_exc:
                 logger.warning("Could not write InvoiceEmailLog for invoice %s: %s", inv.id, log_exc)
 
         return Response({
