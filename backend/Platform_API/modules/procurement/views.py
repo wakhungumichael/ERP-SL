@@ -65,6 +65,24 @@ def _next_reference():
 class ProcurementDashboardView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @staticmethod
+    def _apply_po_tenant_filter(request, qs):
+        """
+        Three-state queryset filter for PurchaseOrder tables.
+        - Superuser               → unfiltered
+        - Non-superuser w/ profile → filtered via created_by chain
+        - Non-superuser w/o profile → qs.none() (deny-all)
+        """
+        if request.user.is_superuser:
+            return qs
+        try:
+            profile = request.user.tenant_profile
+            if profile and profile.tenant:
+                return qs.filter(created_by__tenant_profile__tenant=profile.tenant)
+        except Exception:
+            pass
+        return qs.none()
+
     def get(self, request):
         if not HAS_PROCUREMENT_MODELS:
             return Response({
@@ -72,7 +90,7 @@ class ProcurementDashboardView(APIView):
                 "total_value": 0.0,
                 "recent": [],
             })
-        qs = PurchaseOrder.objects.all()
+        qs = self._apply_po_tenant_filter(request, PurchaseOrder.objects.all())
         status_counts = {s: qs.filter(status=s).count() for s in ["Draft", "Submitted", "Approved", "Received", "Cancelled"]}
         total_val = float(sum(po.total_amount for po in qs.filter(status__in=["Approved", "Received"])))
         recent = PurchaseOrderSerializer(qs.order_by("-created_at")[:5], many=True).data
@@ -96,7 +114,28 @@ class PurchaseOrderListCreateView(APIView):
     def get(self, request):
         if not HAS_PROCUREMENT_MODELS:
             return Response({"results": [], "count": 0})
-        qs = PurchaseOrder.objects.prefetch_related("items").order_by("-created_at")
+
+        # ── Tenant isolation guard ────────────────────────────────────────────
+        # - Superusers: global access
+        # - Profiled non-superusers: scoped to their tenant (param check too)
+        # - Profileless non-superusers: deny-all via _apply_po_tenant_filter
+        if not request.user.is_superuser:
+            tenant_code_param = request.query_params.get("tenant_code")
+            user_tenant = None
+            try:
+                profile = request.user.tenant_profile
+                if profile and profile.tenant:
+                    user_tenant = profile.tenant
+            except Exception:
+                pass
+            if tenant_code_param and user_tenant and tenant_code_param != user_tenant.code:
+                return Response({"results": [], "count": 0})
+
+        qs = ProcurementDashboardView._apply_po_tenant_filter(
+            request,
+            PurchaseOrder.objects.prefetch_related("items").order_by("-created_at"),
+        )
+
         if s := request.query_params.get("status"):
             qs = qs.filter(status=s)
         if q := request.query_params.get("search"):
@@ -138,16 +177,26 @@ class PurchaseOrderListCreateView(APIView):
 class PurchaseOrderDetailView(APIView):
     permission_classes = [IsAuthenticated]
 
-    def _get(self, pk):
+    def _get(self, request, pk):
+        """
+        Fetch a PurchaseOrder by PK with tenant scoping.
+
+        - Superusers: global access
+        - Profiled non-superusers: only POs in their own tenant (others → None/404)
+        - Profileless non-superusers: deny-all → qs.none() → always None/404
+        """
+        qs = ProcurementDashboardView._apply_po_tenant_filter(
+            request, PurchaseOrder.objects.prefetch_related("items")
+        )
         try:
-            return PurchaseOrder.objects.prefetch_related("items").get(pk=pk)
+            return qs.get(pk=pk)
         except PurchaseOrder.DoesNotExist:
             return None
 
     def get(self, request, pk):
         if not HAS_PROCUREMENT_MODELS:
             return Response({"error": "Not found."}, status=status.HTTP_404_NOT_FOUND)
-        po = self._get(pk)
+        po = self._get(request, pk)
         if not po:
             return Response({"error": "Not found."}, status=status.HTTP_404_NOT_FOUND)
         return Response(PurchaseOrderSerializer(po).data)
@@ -155,7 +204,7 @@ class PurchaseOrderDetailView(APIView):
     def patch(self, request, pk):
         if not HAS_PROCUREMENT_MODELS:
             return Response({"error": "Not found."}, status=status.HTTP_404_NOT_FOUND)
-        po = self._get(pk)
+        po = self._get(request, pk)
         if not po:
             return Response({"error": "Not found."}, status=status.HTTP_404_NOT_FOUND)
         body = {**request.data}
@@ -180,7 +229,7 @@ class PurchaseOrderDetailView(APIView):
     def delete(self, request, pk):
         if not HAS_PROCUREMENT_MODELS:
             return Response(status=status.HTTP_204_NO_CONTENT)
-        po = self._get(pk)
+        po = self._get(request, pk)
         if not po:
             return Response({"error": "Not found."}, status=status.HTTP_404_NOT_FOUND)
         po.delete()
@@ -203,7 +252,10 @@ class PurchaseOrderStatusView(APIView):
         if not HAS_PROCUREMENT_MODELS:
             return Response({"error": "Not found."}, status=status.HTTP_404_NOT_FOUND)
         try:
-            po = PurchaseOrder.objects.get(pk=pk)
+            qs = ProcurementDashboardView._apply_po_tenant_filter(
+                request, PurchaseOrder.objects.all()
+            )
+            po = qs.get(pk=pk)
         except PurchaseOrder.DoesNotExist:
             return Response({"error": "Not found."}, status=status.HTTP_404_NOT_FOUND)
         new_status = request.data.get("status")

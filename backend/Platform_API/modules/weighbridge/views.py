@@ -106,6 +106,93 @@ class TransactionSerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "created_at", "updated_at"]
 
 
+# ── Tenant isolation utilities ────────────────────────────────────────────────
+
+def _get_request_user_tenant(user):
+    """
+    Return the Tenant bound to *user*.
+
+    - Superuser     → None        (no scoping; sees all data globally)
+    - Has profile   → Tenant      (scoped to their tenant)
+    - No profile    → None too    (callers must handle via _apply_tenant_filter)
+
+    Prefer _apply_tenant_filter() over calling this directly for queryset scoping.
+    """
+    if user.is_superuser:
+        return None
+    try:
+        profile = user.tenant_profile
+        if profile and profile.tenant:
+            return profile.tenant
+    except Exception:
+        pass
+    return None
+
+
+# Sentinel used by _apply_tenant_filter to signal "deny all" for non-superusers
+# without a TenantUserProfile.
+class _NoTenantProfile:
+    """
+    Returned by _resolve_user_tenant when the caller is authenticated but has
+    no TenantUserProfile linkage.  Views must treat this as "return qs.none()"
+    or "return 403", never as "global access".
+    """
+
+
+_NO_PROFILE = _NoTenantProfile()
+
+
+def _resolve_user_tenant(user):
+    """
+    Three-state tenant resolver for access-control decisions.
+
+    Returns:
+      None           — superuser (global access)
+      Tenant         — non-superuser with TenantUserProfile (scoped to tenant)
+      _NO_PROFILE    — non-superuser *without* TenantUserProfile (deny-all)
+    """
+    if user.is_superuser:
+        return None
+    try:
+        profile = user.tenant_profile
+        if profile and profile.tenant:
+            return profile.tenant
+    except Exception:
+        pass
+    return _NO_PROFILE
+
+
+def _apply_tenant_filter(qs, user, filter_field="tenant"):
+    """
+    Apply tenant filtering to a queryset.
+
+    - Superuser               → unfiltered  (global access)
+    - Non-superuser w/ profile → filtered by their tenant
+    - Non-superuser w/o profile → qs.none() (deny-all)
+    """
+    resolved = _resolve_user_tenant(user)
+    if resolved is None:          # superuser
+        return qs
+    if isinstance(resolved, _NoTenantProfile):
+        return qs.none()          # profileless non-superuser → deny-all
+    return qs.filter(**{filter_field: resolved})
+
+
+def _get_tenant_scoped_transaction(user, pk, select_related=None):
+    """
+    Fetch a Transaction by PK, scoped to the requesting user's tenant.
+
+    Raises Transaction.DoesNotExist if the PK is not in the database, belongs
+    to a different tenant, or the user is a profileless non-superuser — this
+    prevents cross-tenant IDOR without leaking object existence to the caller.
+    """
+    qs = Transaction.objects.all()
+    if select_related:
+        qs = qs.select_related(*select_related)
+    qs = _apply_tenant_filter(qs, user)
+    return qs.get(pk=pk)
+
+
 # ── Views ─────────────────────────────────────────────────────────────────────
 
 class WeighbridgeDashboardView(APIView):
@@ -115,7 +202,12 @@ class WeighbridgeDashboardView(APIView):
         today = timezone.now().date()
         month_start = today.replace(day=1)
 
-        qs = Transaction.objects.all()
+        # ── Tenant scoping ────────────────────────────────────────────────────
+        # Non-superusers only see dashboard metrics for their own tenant's
+        # transactions.  Superusers see the global picture.
+        # Profileless non-superusers get an empty queryset (deny-all).
+        qs = _apply_tenant_filter(Transaction.objects.all(), request.user)
+
         if branch_id := request.query_params.get("branch_id"):
             qs = qs.filter(branch_id=branch_id)
 
@@ -157,6 +249,19 @@ class TransactionListCreateView(generics.ListCreateAPIView):
             "branch", "customer", "vehicle", "item", "vehicle_type"
         ).order_by("-created_at")
         params = self.request.query_params
+
+        # ── Default tenant scoping ──────────────────────────────────────────
+        # - Superusers: unfiltered global access
+        # - Profiled non-superusers: scoped to their tenant + param checked
+        # - Profileless non-superusers: deny-all (qs.none())
+        resolved = _resolve_user_tenant(self.request.user)
+        if isinstance(resolved, _NoTenantProfile):
+            return qs.none()
+        if resolved is not None:   # Tenant object → scoped
+            tenant_code_param = params.get("tenant_code")
+            if tenant_code_param and tenant_code_param != resolved.code:
+                return qs.none()
+            qs = qs.filter(tenant=resolved)
 
         # ── Basic filters ──────────────────────────────────────────────────
         if branch_id := params.get("branch_id"):
@@ -215,11 +320,30 @@ class TransactionListCreateView(generics.ListCreateAPIView):
 
         return qs
 
+    def perform_create(self, serializer):
+        """Set the tenant FK from the requesting user's TenantUserProfile on create."""
+        # Use _get_request_user_tenant (superuser→None, profiled→Tenant, profileless→None)
+        # so that profileless non-superusers can still create without a tenant tag.
+        # The list/detail views will return qs.none() for these users anyway, so
+        # their records are effectively isolated at read time.
+        user_tenant = _get_request_user_tenant(self.request.user)
+        serializer.save(tenant=user_tenant)
+
 
 class TransactionDetailView(generics.RetrieveUpdateAPIView):
+    """
+    Retrieve or update a single transaction.
+
+    Non-superusers are scoped to their own tenant — DRF returns 404
+    automatically when the object is not in the scoped queryset, which
+    prevents cross-tenant IDOR without leaking object existence.
+    """
     serializer_class = TransactionSerializer
     permission_classes = [IsAuthenticated]
-    queryset = Transaction.objects.select_related("branch", "customer", "vehicle", "item", "vehicle_type")
+
+    def get_queryset(self):
+        qs = Transaction.objects.select_related("branch", "customer", "vehicle", "item", "vehicle_type")
+        return _apply_tenant_filter(qs, self.request.user)
 
 
 class WorkflowContextView(APIView):
@@ -257,9 +381,23 @@ class WorkflowContextView(APIView):
 
         age_cutoff = timezone.now() - timedelta(days=max_age_days)
 
-        # Most recent unpaired Pending First Weight for this vehicle within age window
+        # ── Tenant isolation for vehicle and transaction lookup ───────────────
+        # After resolving the vehicle, we verify it has at least one transaction
+        # belonging to the requesting user's tenant — this prevents cross-tenant
+        # vehicle/customer metadata disclosure even when no transaction is found.
+        tx_qs = _apply_tenant_filter(
+            Transaction.objects.select_related("branch", "customer", "vehicle", "item", "vehicle_type"),
+            request.user,
+        )
+        # Deny access to vehicles that have no transactions in the user's tenant
+        if not tx_qs.filter(vehicle=vehicle).exists():
+            # Return "not found" to avoid disclosing that a cross-tenant vehicle
+            # exists; a superuser can see any vehicle so this only applies to
+            # tenant-scoped users (including profileless non-superusers).
+            if not request.user.is_superuser:
+                return Response({"error": f"Vehicle {vehicle_id} not found."}, status=status.HTTP_404_NOT_FOUND)
         first_weight_tx = (
-            Transaction.objects.select_related("branch", "customer", "vehicle", "item", "vehicle_type")
+            tx_qs
             .filter(
                 vehicle=vehicle,
                 weight_type="First Weight",
@@ -319,10 +457,10 @@ class CaptureWeightView(APIView):
         tx = None
         branch = None
 
-        # Resolve transaction
+        # Resolve transaction (tenant-scoped to prevent cross-tenant IDOR)
         if transaction_id:
             try:
-                tx = Transaction.objects.select_related("branch").get(pk=transaction_id)
+                tx = _get_tenant_scoped_transaction(request.user, transaction_id, select_related=["branch"])
                 branch = tx.branch
             except Transaction.DoesNotExist:
                 return Response(
@@ -449,7 +587,7 @@ class TransactionApproveView(APIView):
 
     def post(self, request, pk):
         try:
-            tx = Transaction.objects.get(pk=pk)
+            tx = _get_tenant_scoped_transaction(request.user, pk)
         except Transaction.DoesNotExist:
             return Response({"error": f"Transaction {pk} not found."}, status=status.HTTP_404_NOT_FOUND)
 
@@ -481,7 +619,7 @@ class TransactionRecallView(APIView):
 
     def post(self, request, pk):
         try:
-            tx = Transaction.objects.get(pk=pk)
+            tx = _get_tenant_scoped_transaction(request.user, pk)
         except Transaction.DoesNotExist:
             return Response({"error": f"Transaction {pk} not found."}, status=status.HTTP_404_NOT_FOUND)
 
@@ -556,9 +694,10 @@ class TransactionEmailReceiptView(APIView):
 
     def post(self, request, pk):
         try:
-            tx = Transaction.objects.select_related(
-                "branch", "customer", "vehicle", "item", "vehicle_type"
-            ).get(pk=pk)
+            tx = _get_tenant_scoped_transaction(
+                request.user, pk,
+                select_related=["branch", "customer", "vehicle", "item", "vehicle_type"],
+            )
         except Transaction.DoesNotExist:
             return Response({"error": f"Transaction {pk} not found."}, status=status.HTTP_404_NOT_FOUND)
 
@@ -708,6 +847,13 @@ class TransactionExportCSVView(APIView):
         qs = Transaction.objects.select_related(
             "branch", "customer", "vehicle", "item", "vehicle_type"
         ).order_by("-created_at")
+
+        # ── Tenant scoping ────────────────────────────────────────────────────
+        # CSV exports are scoped identically to the list view:
+        # - Superusers export globally
+        # - Profiled non-superusers export only their tenant's transactions
+        # - Profileless non-superusers export nothing (deny-all)
+        qs = _apply_tenant_filter(qs, request.user)
 
         params = request.query_params
         from django.db.models import Q
@@ -1076,9 +1222,10 @@ class TransactionReceivePaymentView(APIView):
 
     def post(self, request, pk):
         try:
-            tx = Transaction.objects.select_related(
-                "customer", "vehicle", "vehicle_type", "auto_invoice"
-            ).get(pk=pk)
+            tx = _get_tenant_scoped_transaction(
+                request.user, pk,
+                select_related=["customer", "vehicle", "vehicle_type", "auto_invoice"],
+            )
         except Transaction.DoesNotExist:
             return Response({"error": f"Transaction {pk} not found."}, status=status.HTTP_404_NOT_FOUND)
 

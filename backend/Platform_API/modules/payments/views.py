@@ -165,6 +165,7 @@ def create_draft_invoice_for_transaction(tx):
             source_module='weighbridge',
             source_id=tx.id,
             notes=f"Auto-generated for transaction TX-{tx.id:05d}",
+            tenant=getattr(tx, 'tenant', None),   # inherit tenant from transaction
         )
         inv.transactions.add(tx)
 
@@ -196,10 +197,79 @@ def create_draft_invoice_for_transaction(tx):
 class InvoiceListView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @staticmethod
+    def _get_user_tenant(request):
+        """
+        Return the requesting user's Tenant, or None for superusers.
+
+        Returns None for both superusers (global access) and for profileless
+        non-superusers (callers must use _apply_invoice_tenant_filter for
+        proper deny-all behaviour in the profileless case).
+        """
+        if request.user.is_superuser:
+            return None
+        try:
+            profile = request.user.tenant_profile
+            if profile and profile.tenant:
+                return profile.tenant
+        except Exception:
+            pass
+        return None
+
+    @staticmethod
+    def _apply_invoice_tenant_filter(request, qs):
+        """
+        Three-state queryset filter for Invoice tables:
+        - Superuser               → unfiltered (global access)
+        - Non-superuser w/ profile → filtered by tenant FK
+        - Non-superuser w/o profile → qs.none() (deny-all)
+        """
+        if request.user.is_superuser:
+            return qs
+        try:
+            profile = request.user.tenant_profile
+            if profile and profile.tenant:
+                return qs.filter(tenant=profile.tenant)
+        except Exception:
+            pass
+        return qs.none()
+
+    @staticmethod
+    def _apply_transaction_tenant_filter(request, qs):
+        """
+        Three-state queryset filter for Transaction tables (payments context).
+        - Superuser               → unfiltered
+        - Non-superuser w/ profile → filtered by tenant FK
+        - Non-superuser w/o profile → qs.none() (deny-all)
+        """
+        if request.user.is_superuser:
+            return qs
+        try:
+            profile = request.user.tenant_profile
+            if profile and profile.tenant:
+                return qs.filter(tenant=profile.tenant)
+        except Exception:
+            pass
+        return qs.none()
+
     def get(self, request):
         if not HAS_PAYMENT_MODELS:
             return Response({"count": 0, "next": None, "previous": None, "results": []})
+
+        user_tenant = self._get_user_tenant(request)
+
+        # ── Default tenant scoping ────────────────────────────────────────────
+        # Profileless non-superusers: deny-all via _apply_invoice_tenant_filter.
+        # Profiled non-superusers: param check then tenant-scoped queryset.
+        # Superusers: unfiltered global access.
+        if user_tenant is not None:
+            tenant_code_param = request.query_params.get("tenant_code")
+            if tenant_code_param and tenant_code_param != user_tenant.code:
+                return Response({"count": 0, "next": None, "previous": None, "results": []})
+
         qs = Invoice.objects.select_related("customer").order_by("-issued_date")
+        qs = self._apply_invoice_tenant_filter(request, qs)
+
         if s := request.query_params.get("status"):
             qs = qs.filter(status=s)
         if q := request.query_params.get("search"):
@@ -246,6 +316,7 @@ class InvoiceListView(APIView):
             unit_price = float(item.get("unit_price", 0) or 0)
             total += qty * unit_price
 
+        user_tenant = self._get_user_tenant(request)
         inv = Invoice.objects.create(
             customer=customer,
             total_amount=total,
@@ -254,6 +325,7 @@ class InvoiceListView(APIView):
             status='draft',
             notes=notes,
             source_module=source_module,
+            tenant=user_tenant,
         )
 
         for item in line_items:
@@ -275,11 +347,24 @@ class InvoiceListView(APIView):
 class InvoiceDetailView(APIView):
     permission_classes = [IsAuthenticated]
 
+    def _get_invoice(self, request, pk):
+        """
+        Fetch an invoice by PK, enforcing tenant isolation.
+
+        - Superusers: access any invoice globally
+        - Profiled non-superusers: only invoices in their own tenant (others → 404)
+        - Profileless non-superusers: deny-all → qs.none() → always 404
+        """
+        qs = InvoiceListView._apply_invoice_tenant_filter(
+            request, Invoice.objects.select_related("customer")
+        )
+        return qs.get(pk=pk)
+
     def get(self, request, pk):
         if not HAS_PAYMENT_MODELS:
             return Response({"error": "Not found."}, status=status.HTTP_404_NOT_FOUND)
         try:
-            inv = Invoice.objects.select_related("customer").get(pk=pk)
+            inv = self._get_invoice(request, pk)
             return Response(_serialize_invoice(inv, with_lines=True, with_transactions=True))
         except Invoice.DoesNotExist:
             return Response({"error": "Invoice not found."}, status=status.HTTP_404_NOT_FOUND)
@@ -288,7 +373,7 @@ class InvoiceDetailView(APIView):
         if not HAS_PAYMENT_MODELS:
             return Response({"error": "Not found."}, status=status.HTTP_404_NOT_FOUND)
         try:
-            inv = Invoice.objects.get(pk=pk)
+            inv = self._get_invoice(request, pk)
         except Invoice.DoesNotExist:
             return Response({"error": "Invoice not found."}, status=status.HTTP_404_NOT_FOUND)
         allowed = ["notes", "due_date", "currency"]
@@ -307,7 +392,10 @@ class IssueInvoiceView(APIView):
         if not HAS_PAYMENT_MODELS:
             return Response({"error": "Not found."}, status=status.HTTP_404_NOT_FOUND)
         try:
-            inv = Invoice.objects.select_related("customer").get(pk=pk)
+            qs = InvoiceListView._apply_invoice_tenant_filter(
+                request, Invoice.objects.select_related("customer")
+            )
+            inv = qs.get(pk=pk)
         except Invoice.DoesNotExist:
             return Response({"error": "Invoice not found."}, status=status.HTTP_404_NOT_FOUND)
         if inv.status not in ("draft", "Draft", "Pending"):
@@ -421,7 +509,10 @@ class ReceivePaymentView(APIView):
         if not HAS_PAYMENT_MODELS:
             return Response({"error": "Not found."}, status=status.HTTP_404_NOT_FOUND)
         try:
-            inv = Invoice.objects.prefetch_related("transactions").get(pk=pk)
+            qs = InvoiceListView._apply_invoice_tenant_filter(
+                request, Invoice.objects.prefetch_related("transactions")
+            )
+            inv = qs.get(pk=pk)
         except Invoice.DoesNotExist:
             return Response({"error": "Invoice not found."}, status=status.HTTP_404_NOT_FOUND)
 
@@ -471,7 +562,8 @@ class ConfirmPaymentView(APIView):
         if not HAS_PAYMENT_MODELS:
             return Response({"error": "Not found."}, status=status.HTTP_404_NOT_FOUND)
         try:
-            inv        = Invoice.objects.get(pk=pk)
+            qs  = InvoiceListView._apply_invoice_tenant_filter(request, Invoice.objects.all())
+            inv = qs.get(pk=pk)
             inv.status = "paid"
             inv.save(update_fields=["status"])
             return Response({
@@ -513,7 +605,15 @@ class PaymentEntriesView(APIView):
         if HAS_PAYMENT_MODELS:
             try:
                 from SL_Weighbridge.models import Payment
-                qs = Payment.objects.select_related("invoice").order_by("-created_at")
+                # Scope to payments on invoices belonging to the requesting user's tenant.
+                # Profileless non-superusers: deny-all (resolved by _apply_invoice_tenant_filter
+                # on the invoice FK side).
+                invoice_qs = InvoiceListView._apply_invoice_tenant_filter(
+                    request, Invoice.objects.all()
+                )
+                qs = Payment.objects.filter(
+                    invoice__in=invoice_qs
+                ).select_related("invoice").order_by("-created_at")
                 data = [
                     {
                         "id":           p.id,
@@ -575,7 +675,7 @@ class PaymentSummaryView(APIView):
         }
         if HAS_PAYMENT_MODELS:
             try:
-                inv_qs = Invoice.objects.all()
+                inv_qs = InvoiceListView._apply_invoice_tenant_filter(request, Invoice.objects.all())
                 for row in summary["invoices_by_status"]:
                     matching = list(inv_qs.filter(status=row["status"]))
                     row["count"] = len(matching)
@@ -620,12 +720,19 @@ class GenerateInvoiceView(APIView):
         except Customer.DoesNotExist:
             return Response({"error": "Customer not found."}, status=status.HTTP_404_NOT_FOUND)
 
-        txns = Transaction.objects.filter(
-            id__in=transaction_ids,
-            customer=customer,
-            status="Completed",
-            invoiced=False,
-        ).select_related("vehicle_type")
+        # Scope the transaction lookup to the requesting user's tenant.
+        # This prevents a tenant user from referencing another tenant's
+        # transaction IDs to trigger cross-tenant invoicing mutations.
+        base_txns = InvoiceListView._apply_transaction_tenant_filter(
+            request,
+            Transaction.objects.filter(
+                id__in=transaction_ids,
+                customer=customer,
+                status="Completed",
+                invoiced=False,
+            ).select_related("vehicle_type"),
+        )
+        txns = base_txns
 
         found_ids = set(txns.values_list("id", flat=True))
         bad_ids   = [i for i in transaction_ids if i not in found_ids]
@@ -638,7 +745,8 @@ class GenerateInvoiceView(APIView):
         # Total from charges
         total = float(sum(t.charge or 0 for t in txns))
 
-        # Create invoice
+        # Create invoice (inherit tenant from requesting user)
+        user_tenant = InvoiceListView._get_user_tenant(request)
         inv = Invoice.objects.create(
             customer=customer,
             total_amount=total,
@@ -647,6 +755,7 @@ class GenerateInvoiceView(APIView):
             status='draft',
             notes=notes,
             source_module='weighbridge',
+            tenant=user_tenant,
         )
         inv.transactions.set(txns)
 
@@ -687,10 +796,13 @@ class UninvoicedTransactionsView(APIView):
     def get(self, request):
         if not HAS_PAYMENT_MODELS:
             return Response({"results": [], "count": 0})
-        qs = Transaction.objects.filter(
-            status="Completed",
-            invoiced=False,
-        ).select_related("customer", "vehicle", "vehicle_type")
+        qs = InvoiceListView._apply_transaction_tenant_filter(
+            request,
+            Transaction.objects.filter(
+                status="Completed",
+                invoiced=False,
+            ).select_related("customer", "vehicle", "vehicle_type"),
+        )
         if cust := request.query_params.get("customer_id"):
             qs = qs.filter(customer_id=cust)
         data = [
@@ -718,7 +830,22 @@ class CustomerListForInvoiceView(APIView):
     def get(self, request):
         if not HAS_PAYMENT_MODELS:
             return Response({"results": []})
-        qs = Customer.objects.all().order_by("name")
+        # NOTE: SL_Weighbridge.Customer has no tenant FK, so full row-level isolation
+        # requires adding one (tracked separately).  For now we scope the list to
+        # customers who have at least one transaction belonging to this tenant.
+        # Profileless non-superusers get qs.none() from _apply_transaction_tenant_filter,
+        # so their tenant_customer_ids will be empty and they see no customers.
+        if request.user.is_superuser:
+            qs = Customer.objects.all().order_by("name")
+        else:
+            tenant_customer_ids = (
+                InvoiceListView._apply_transaction_tenant_filter(
+                    request, Transaction.objects.all()
+                )
+                .values_list("customer_id", flat=True)
+                .distinct()
+            )
+            qs = Customer.objects.filter(pk__in=tenant_customer_ids).order_by("name")
         if q := request.query_params.get("search"):
             qs = qs.filter(name__icontains=q)
         data = [{"id": c.id, "name": c.name, "email": c.email or "", "phone": c.phone_number or ""} for c in qs[:200]]
@@ -739,10 +866,13 @@ class DebtSummaryView(APIView):
         from django.db.models import Sum, Min, Count
         from django.db.models import Q
 
-        qs = Transaction.objects.filter(
-            payment_mode="Debt",
-            payment_status="Pending",
-            status="Completed",
+        qs = InvoiceListView._apply_transaction_tenant_filter(
+            request,
+            Transaction.objects.filter(
+                payment_mode="Debt",
+                payment_status="Pending",
+                status="Completed",
+            ),
         ).select_related("customer").values(
             "customer__id", "customer__name", "customer__email", "customer__phone_number"
         ).annotate(
@@ -791,18 +921,24 @@ class DebtConsolidateView(APIView):
         except Customer.DoesNotExist:
             return Response({"error": "Customer not found."}, status=status.HTTP_404_NOT_FOUND)
 
-        txns = Transaction.objects.filter(
-            customer=customer,
-            payment_mode="Debt",
-            payment_status="Pending",
-            status="Completed",
-        ).select_related("vehicle_type")
+        # Scope to the requesting user's tenant — prevents cross-tenant
+        # consolidation of debt transactions belonging to another tenant.
+        txns = InvoiceListView._apply_transaction_tenant_filter(
+            request,
+            Transaction.objects.filter(
+                customer=customer,
+                payment_mode="Debt",
+                payment_status="Pending",
+                status="Completed",
+            ).select_related("vehicle_type"),
+        )
 
         if not txns.exists():
             return Response({"error": "No outstanding debt transactions for this customer."}, status=status.HTTP_400_BAD_REQUEST)
 
         total = float(sum(t.charge or 0 for t in txns))
 
+        user_tenant = InvoiceListView._get_user_tenant(request)
         inv = Invoice.objects.create(
             customer=customer,
             total_amount=total,
@@ -811,6 +947,7 @@ class DebtConsolidateView(APIView):
             status='draft',
             notes=notes or f"Debt consolidation invoice for {customer.name}",
             source_module='weighbridge',
+            tenant=user_tenant,
         )
         inv.transactions.set(txns)
 

@@ -229,6 +229,16 @@ class Item(models.Model):
 
 # Transaction Model
 class Transaction(models.Model):
+    # ── Tenant isolation ──────────────────────────────────────────────────────
+    # Nullable so that records created before multi-tenancy was introduced remain
+    # accessible to superusers without breaking existing functionality.  Non-
+    # superuser API access is scoped to this field automatically.
+    tenant = models.ForeignKey(
+        'Platform_Core.Tenant',
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='weighbridge_transactions',
+    )
     branch = models.ForeignKey(Branch, on_delete=models.CASCADE, default=1)  # Default branch to 1
     customer = models.ForeignKey(Customer, on_delete=models.CASCADE)
     vehicle = models.ForeignKey(Vehicle, on_delete=models.CASCADE)
@@ -511,6 +521,13 @@ class Invoice(models.Model):
         ('manual',       'Manual'),
     ]
 
+    # ── Tenant isolation ──────────────────────────────────────────────────────
+    tenant = models.ForeignKey(
+        'Platform_Core.Tenant',
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='invoices',
+    )
     transactions   = models.ManyToManyField('Transaction', blank=True)
     invoice_number = models.CharField(max_length=100, unique=True, blank=True)
     total_amount   = models.DecimalField(max_digits=12, decimal_places=2, default=0)
