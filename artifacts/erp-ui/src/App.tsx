@@ -32,6 +32,7 @@ import Roles from '@/pages/platform/roles';
 import Modules from '@/pages/platform/modules';
 import Plans from '@/pages/platform/plans';
 import Subscriptions from '@/pages/platform/subscriptions';
+import Licenses from '@/pages/platform/licenses';
 import Integrations from '@/pages/platform/integrations';
 import Workspace from '@/pages/platform/workspace';
 import CompanySettings from '@/pages/platform/company-settings';
@@ -144,6 +145,9 @@ function Router() {
       </Route>
       <Route path="/platform/subscriptions">
         <Shell><RoleGuard allowedRoles={['superadmin']}><Subscriptions /></RoleGuard></Shell>
+      </Route>
+      <Route path="/platform/licenses">
+        <Shell><RoleGuard allowedRoles={['superadmin']}><Licenses /></RoleGuard></Shell>
       </Route>
       <Route path="/platform/integrations">
         <Shell><RoleGuard allowedRoles={['superadmin']}><Integrations /></RoleGuard></Shell>

@@ -28,6 +28,7 @@ from Platform_Core.models import (
     IntegrationEndpoint,
     LicenseKey,
     ModuleDefinition,
+    PlanModule,
     SubscriptionPlan,
     Tenant,
     TenantBranch,
@@ -50,6 +51,7 @@ from .serializers import (
     LicenseValidationSerializer,
     ModuleDefinitionSerializer,
     PermissionSummarySerializer,
+    PlanModuleSerializer,
     SubscriptionModuleSyncSerializer,
     SubscriptionPlanSerializer,
     TenantBranchSerializer,
@@ -956,13 +958,7 @@ class PlatformUserUpdateAPIView(APIView):
 
 # ── Module toggle (super admin) ───────────────────────────────────────────────
 
-class ModuleDefinitionDetailUpdateAPIView(generics.RetrieveUpdateAPIView):
-    permission_classes = [IsSuperAdminPermission]
-    queryset = ModuleDefinition.objects.all()
-    serializer_class = ModuleDefinitionSerializer
-
-
-class ModuleDefinitionListAPIView(ModuleAPIViewMixin, generics.ListAPIView):
+class ModuleDefinitionListCreateAPIView(ModuleAPIViewMixin, generics.ListCreateAPIView):
     permission_classes = [IsSuperAdminPermission]
     queryset = ModuleDefinition.objects.all()
     serializer_class = ModuleDefinitionSerializer
@@ -971,10 +967,40 @@ class ModuleDefinitionListAPIView(ModuleAPIViewMixin, generics.ListAPIView):
     ordering_fields = ("category", "name", "created_at", "updated_at")
 
 
-class ModuleDefinitionDetailAPIView(generics.RetrieveAPIView):
+ModuleDefinitionListAPIView = ModuleDefinitionListCreateAPIView
+
+
+class ModuleDefinitionDetailAPIView(generics.RetrieveUpdateDestroyAPIView):
     permission_classes = [IsSuperAdminPermission]
     queryset = ModuleDefinition.objects.all()
     serializer_class = ModuleDefinitionSerializer
+
+
+class PlanModuleListCreateAPIView(ModuleAPIViewMixin, generics.ListCreateAPIView):
+    """List/add modules included in a specific subscription plan."""
+    permission_classes = [IsSuperAdminPermission]
+    serializer_class = PlanModuleSerializer
+
+    def get_queryset(self):
+        return PlanModule.objects.filter(
+            plan_id=self.kwargs["plan_pk"]
+        ).select_related("module")
+
+    def perform_create(self, serializer):
+        from django.shortcuts import get_object_or_404
+        plan = get_object_or_404(SubscriptionPlan, pk=self.kwargs["plan_pk"])
+        serializer.save(plan=plan)
+
+
+class PlanModuleDetailAPIView(generics.RetrieveUpdateDestroyAPIView):
+    """Retrieve/update/remove a single PlanModule assignment."""
+    permission_classes = [IsSuperAdminPermission]
+    serializer_class = PlanModuleSerializer
+
+    def get_queryset(self):
+        return PlanModule.objects.filter(
+            plan_id=self.kwargs["plan_pk"]
+        ).select_related("module")
 
 
 class SubscriptionPlanListCreateAPIView(ModuleAPIViewMixin, generics.ListCreateAPIView):
@@ -1252,6 +1278,61 @@ def subscription_sync_modules_action(request, pk):
             ],
         },
     )
+
+
+@api_view(["POST"])
+@permission_classes([IsSuperAdminPermission])
+def generate_license_action(request):
+    """POST /licenses/generate/ — auto-generate a new license key for a tenant."""
+    tenant_id = request.data.get("tenant_id")
+    if not tenant_id:
+        return error_response("tenant_id is required.", status_code=status.HTTP_400_BAD_REQUEST)
+    try:
+        tenant = Tenant.objects.get(pk=tenant_id)
+    except Tenant.DoesNotExist:
+        return error_response("Tenant not found.", status_code=status.HTTP_404_NOT_FOUND)
+
+    subscription_id = request.data.get("subscription_id")
+    subscription = None
+    if subscription_id:
+        try:
+            subscription = TenantSubscription.objects.get(pk=subscription_id, tenant=tenant)
+        except TenantSubscription.DoesNotExist:
+            return error_response(
+                "Subscription not found for this tenant.", status_code=status.HTTP_400_BAD_REQUEST
+            )
+
+    key = f"SL-{secrets.token_hex(4).upper()}-{secrets.token_hex(4).upper()}-{secrets.token_hex(4).upper()}"
+    while LicenseKey.objects.filter(license_key=key).exists():
+        key = f"SL-{secrets.token_hex(4).upper()}-{secrets.token_hex(4).upper()}-{secrets.token_hex(4).upper()}"
+
+    license_key = LicenseKey.objects.create(
+        tenant=tenant,
+        subscription=subscription,
+        license_key=key,
+        seats=int(request.data.get("seats", 1)),
+        device_limit=int(request.data.get("device_limit", 1)),
+        offline_grace_days=int(request.data.get("offline_grace_days", 3)),
+        notes=request.data.get("notes", ""),
+        status="pending",
+    )
+    return success_response(
+        "License key generated.",
+        data=LicenseKeySerializer(license_key).data,
+    )
+
+
+@api_view(["POST"])
+@permission_classes([IsSuperAdminPermission])
+def revoke_license_action(request, pk):
+    """POST /licenses/<pk>/revoke/ — immediately revoke an active or pending license."""
+    try:
+        license_key = LicenseKey.objects.select_related("tenant", "subscription").get(pk=pk)
+    except LicenseKey.DoesNotExist:
+        return error_response("License not found.", status_code=status.HTTP_404_NOT_FOUND)
+    license_key.status = "revoked"
+    license_key.save(update_fields=["status", "updated_at"])
+    return success_response("License revoked.", data=LicenseKeySerializer(license_key).data)
 
 
 @api_view(["POST"])

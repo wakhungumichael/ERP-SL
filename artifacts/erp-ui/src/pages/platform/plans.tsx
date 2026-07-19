@@ -5,24 +5,33 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from '@/components/ui/dialog';
 import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
-import { CreditCard, Plus, Pencil, RefreshCw, Users, GitBranch, Cpu, Activity } from 'lucide-react';
+import { Checkbox } from '@/components/ui/checkbox';
+import {
+  CreditCard, Plus, Pencil, RefreshCw, Users, GitBranch,
+  Cpu, Activity, Trash2, Package,
+} from 'lucide-react';
 
 const BASE = '/api/platform';
-
 function api(token: string, path: string, method = 'GET', body?: object) {
   return fetch(`${BASE}${path}`, {
     method,
     headers: { Authorization: `Token ${token}`, 'Content-Type': 'application/json' },
     body: body ? JSON.stringify(body) : undefined,
   }).then(async r => {
+    if (method === 'DELETE' && r.status === 204) return null;
     const j = await r.json();
     if (!r.ok) throw new Error(j?.detail || j?.error || JSON.stringify(j));
     return j;
@@ -33,12 +42,10 @@ const EMPTY_PLAN = {
   code: '', name: '', billing_period: 'monthly', price: '0',
   currency: 'KES', trial_days: '14',
   max_users: '10', max_branches: '2', max_devices: '2', max_monthly_transactions: '5000',
-  is_active: true, features: {},
+  is_active: true,
 };
 
-function PlanDialog({
-  open, onClose, plan,
-}: { open: boolean; onClose: () => void; plan?: any }) {
+function PlanDialog({ open, onClose, plan }: { open: boolean; onClose: () => void; plan?: any }) {
   const { token } = useAuth();
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -48,7 +55,7 @@ function PlanDialog({
     price: String(plan.price), currency: plan.currency, trial_days: String(plan.trial_days),
     max_users: String(plan.max_users), max_branches: String(plan.max_branches),
     max_devices: String(plan.max_devices), max_monthly_transactions: String(plan.max_monthly_transactions),
-    is_active: plan.is_active, features: plan.features ?? {},
+    is_active: plan.is_active,
   } : { ...EMPTY_PLAN });
 
   const mutation = useMutation({
@@ -63,7 +70,7 @@ function PlanDialog({
         max_monthly_transactions: Number(form.max_monthly_transactions),
       };
       return isEdit
-        ? api(token!, `/plans/${plan.id}/`, 'PUT', payload)
+        ? api(token!, `/plans/${plan.id}/`, 'PATCH', payload)
         : api(token!, '/plans/', 'POST', payload);
     },
     onSuccess: () => {
@@ -80,7 +87,7 @@ function PlanDialog({
     <Dialog open={open} onOpenChange={onClose}>
       <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>{isEdit ? 'Edit Plan' : 'New Subscription Plan'}</DialogTitle>
+          <DialogTitle>{isEdit ? `Edit — ${plan.name}` : 'New Subscription Plan'}</DialogTitle>
         </DialogHeader>
         <div className="space-y-4 py-2">
           <div className="grid grid-cols-2 gap-3">
@@ -91,7 +98,7 @@ function PlanDialog({
             {!isEdit && (
               <div className="space-y-1.5">
                 <Label>Code *</Label>
-                <Input value={form.code} onChange={f('code')} placeholder="starter" />
+                <Input value={form.code} onChange={f('code')} placeholder="starter" className="font-mono" />
               </div>
             )}
             <div className="space-y-1.5">
@@ -107,8 +114,16 @@ function PlanDialog({
               </Select>
             </div>
             <div className="space-y-1.5">
-              <Label>Price (KES)</Label>
-              <Input value={form.price} onChange={f('price')} type="number" min="0" />
+              <Label>Price</Label>
+              <div className="flex gap-1.5">
+                <Select value={form.currency} onValueChange={v => setForm(p => ({ ...p, currency: v }))}>
+                  <SelectTrigger className="w-20 shrink-0"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {['KES','USD','GBP','EUR','UGX','TZS','ZAR'].map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+                <Input value={form.price} onChange={f('price')} type="number" min="0" />
+              </div>
             </div>
             <div className="space-y-1.5">
               <Label>Trial Days</Label>
@@ -143,7 +158,7 @@ function PlanDialog({
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Cancel</Button>
-          <Button onClick={() => mutation.mutate()} disabled={mutation.isPending || !form.name}>
+          <Button onClick={() => mutation.mutate()} disabled={mutation.isPending || !form.name || (!isEdit && !form.code)}>
             {mutation.isPending ? 'Saving…' : isEdit ? 'Save Changes' : 'Create Plan'}
           </Button>
         </DialogFooter>
@@ -152,15 +167,130 @@ function PlanDialog({
   );
 }
 
+function PlanModulesDialog({ open, onClose, plan }: { open: boolean; onClose: () => void; plan: any }) {
+  const { token } = useAuth();
+  const { toast } = useToast();
+  const qc = useQueryClient();
+
+  const { data: allModulesData } = useQuery({
+    queryKey: ['modules'],
+    queryFn: () => api(token!, '/modules/?page_size=100'),
+    enabled: open && !!token,
+  });
+  const { data: planModulesData, refetch: refetchPlanModules } = useQuery({
+    queryKey: ['plan-modules', plan.id],
+    queryFn: () => api(token!, `/plans/${plan.id}/modules/?page_size=100`),
+    enabled: open && !!token,
+  });
+
+  const allModules: any[] = allModulesData?.results ?? [];
+  const planModules: any[] = planModulesData?.results ?? [];
+  const enabledIds = new Set(planModules.filter(pm => pm.is_enabled).map(pm => pm.module?.id ?? pm.module));
+
+  const addMutation = useMutation({
+    mutationFn: (module_id: number) =>
+      api(token!, `/plans/${plan.id}/modules/`, 'POST', { module_id, is_enabled: true }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['plan-modules', plan.id] }); refetchPlanModules(); },
+    onError: (e: any) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
+  });
+
+  const removeMutation = useMutation({
+    mutationFn: (pmId: number) => api(token!, `/plans/${plan.id}/modules/${pmId}/`, 'DELETE'),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['plan-modules', plan.id] }); refetchPlanModules(); },
+    onError: (e: any) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
+  });
+
+  const toggle = (mod: any) => {
+    const pm = planModules.find(p => (p.module?.id ?? p.module) === mod.id);
+    if (pm) {
+      removeMutation.mutate(pm.id);
+    } else {
+      addMutation.mutate(mod.id);
+    }
+  };
+
+  const grouped: Record<string, any[]> = {};
+  for (const m of allModules) (grouped[m.category] ??= []).push(m);
+  const catOrder = ['core', 'shared', 'vertical', 'integration'];
+  const catLabel: Record<string, string> = {
+    core: 'Core', shared: 'Shared Services', vertical: 'Industry Vertical', integration: 'Integration',
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onClose}>
+      <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Package className="h-4 w-4" />
+            Modules — {plan.name}
+          </DialogTitle>
+          <p className="text-xs text-muted-foreground">
+            Select which modules are included in this plan. Tenants on this plan can have these modules activated.
+          </p>
+        </DialogHeader>
+        <div className="space-y-4 py-2">
+          {catOrder.filter(c => grouped[c]?.length).map(cat => (
+            <div key={cat}>
+              <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-2">{catLabel[cat]}</p>
+              <div className="space-y-1">
+                {grouped[cat].map(mod => {
+                  const included = enabledIds.has(mod.id);
+                  const busy = addMutation.isPending || removeMutation.isPending;
+                  return (
+                    <label key={mod.id} className="flex items-start gap-3 p-2 rounded hover:bg-muted/50 cursor-pointer">
+                      <Checkbox
+                        checked={included}
+                        onCheckedChange={() => !busy && toggle(mod)}
+                        disabled={busy}
+                        className="mt-0.5"
+                      />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium leading-tight">{mod.name}</p>
+                        {mod.description && (
+                          <p className="text-xs text-muted-foreground leading-snug mt-0.5">{mod.description}</p>
+                        )}
+                      </div>
+                      {mod.is_core && (
+                        <Badge variant="secondary" className="text-[9px] shrink-0">Core</Badge>
+                      )}
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+        <DialogFooter>
+          <Button onClick={onClose}>Done</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export default function Plans() {
   const { token } = useAuth();
+  const { toast } = useToast();
+  const qc = useQueryClient();
   const [showNew, setShowNew] = useState(false);
   const [editing, setEditing] = useState<any>(null);
+  const [managingModules, setManagingModules] = useState<any>(null);
+  const [deleting, setDeleting] = useState<any>(null);
 
   const { data, isLoading, refetch } = useQuery({
     queryKey: ['plans'],
     queryFn: () => api(token!, '/plans/?page_size=50'),
     enabled: !!token,
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (p: any) => api(token!, `/plans/${p.id}/`, 'DELETE'),
+    onSuccess: () => {
+      toast({ title: 'Plan deleted' });
+      qc.invalidateQueries({ queryKey: ['plans'] });
+      setDeleting(null);
+    },
+    onError: (e: any) => toast({ title: 'Cannot delete', description: e.message, variant: 'destructive' }),
   });
 
   const plans: any[] = data?.results ?? [];
@@ -170,7 +300,7 @@ export default function Plans() {
       <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-4">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Subscription Plans</h1>
-          <p className="text-xs text-muted-foreground mt-0.5">Define pricing tiers and feature limits</p>
+          <p className="text-xs text-muted-foreground mt-0.5">Define pricing tiers, limits, and included modules</p>
         </div>
         <div className="flex gap-2">
           <Button size="sm" variant="outline" onClick={() => refetch()}><RefreshCw className="h-3.5 w-3.5" /></Button>
@@ -181,24 +311,25 @@ export default function Plans() {
       </div>
 
       {isLoading ? (
-        <p className="text-center text-muted-foreground text-sm py-12 font-mono animate-pulse">Loading…</p>
+        <p className="text-center text-muted-foreground text-sm py-12 animate-pulse">Loading…</p>
       ) : plans.length === 0 ? (
         <Card>
           <CardContent className="p-12 text-center text-muted-foreground text-sm">
+            <CreditCard className="h-10 w-10 mx-auto mb-3 opacity-20" />
             No plans defined yet. Create your first plan.
           </CardContent>
         </Card>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {plans.map(p => (
-            <Card key={p.id} className={`relative ${!p.is_active ? 'opacity-60' : ''}`}>
+            <Card key={p.id} className={`relative flex flex-col ${!p.is_active ? 'opacity-60' : ''}`}>
               <CardHeader className="pb-2">
                 <div className="flex items-start justify-between">
                   <div>
                     <CardTitle className="text-base">{p.name}</CardTitle>
                     <p className="text-xs text-muted-foreground font-mono mt-0.5">{p.code}</p>
                   </div>
-                  <div className="flex items-center gap-1.5">
+                  <div className="flex items-center gap-1">
                     {!p.is_active && (
                       <span className="px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest border rounded bg-gray-100 text-gray-500 border-gray-300">
                         Inactive
@@ -207,10 +338,13 @@ export default function Plans() {
                     <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => setEditing(p)}>
                       <Pencil className="h-3.5 w-3.5" />
                     </Button>
+                    <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-destructive hover:text-destructive hover:bg-destructive/10" onClick={() => setDeleting(p)}>
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
                   </div>
                 </div>
               </CardHeader>
-              <CardContent className="space-y-3">
+              <CardContent className="space-y-3 flex-1">
                 <div>
                   <p className="text-2xl font-black">
                     {p.currency} {Number(p.price).toLocaleString()}
@@ -232,9 +366,17 @@ export default function Plans() {
                     </div>
                   ))}
                 </div>
-                {p.modules?.length > 0 && (
-                  <p className="text-xs text-muted-foreground">{p.modules.length} module{p.modules.length !== 1 ? 's' : ''} included</p>
-                )}
+                <div className="pt-1">
+                  <Button
+                    size="sm" variant="outline" className="w-full gap-1.5 text-xs h-7"
+                    onClick={() => setManagingModules(p)}
+                  >
+                    <Package className="h-3 w-3" />
+                    {p.modules?.length > 0
+                      ? `${p.modules.length} module${p.modules.length !== 1 ? 's' : ''} included`
+                      : 'Assign modules'}
+                  </Button>
+                </div>
               </CardContent>
             </Card>
           ))}
@@ -243,6 +385,34 @@ export default function Plans() {
 
       <PlanDialog open={showNew} onClose={() => setShowNew(false)} />
       {editing && <PlanDialog open plan={editing} onClose={() => setEditing(null)} />}
+      {managingModules && (
+        <PlanModulesDialog
+          open
+          plan={managingModules}
+          onClose={() => { setManagingModules(null); qc.invalidateQueries({ queryKey: ['plans'] }); }}
+        />
+      )}
+
+      <AlertDialog open={!!deleting} onOpenChange={open => !open && setDeleting(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete "{deleting?.name}"?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This plan will be permanently removed. Existing subscriptions using this plan will be retained but you won't be able to create new ones.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-white hover:bg-destructive/90"
+              onClick={() => deleting && deleteMutation.mutate(deleting)}
+              disabled={deleteMutation.isPending}
+            >
+              {deleteMutation.isPending ? 'Deleting…' : 'Delete Plan'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

@@ -122,6 +122,7 @@ export const STATIC_NAV: NavSection[] = [
       { key: 'modules',          title: 'Modules',           path: '/platform/modules',           roles: SUPERADMIN_UP },
       { key: 'plans',            title: 'Plans',             path: '/platform/plans',             roles: SUPERADMIN_UP },
       { key: 'subscriptions',    title: 'Subscriptions',     path: '/platform/subscriptions',     roles: SUPERADMIN_UP },
+      { key: 'licenses',         title: 'Licenses',          path: '/platform/licenses',          roles: SUPERADMIN_UP },
       { key: 'integrations',     title: 'Integrations',      path: '/platform/integrations',      roles: SUPERADMIN_UP },
       { key: 'company-settings', title: 'Company Settings',  path: '/platform/company-settings',  roles: ['tenant_admin'] as AppRole[] },
     ],
