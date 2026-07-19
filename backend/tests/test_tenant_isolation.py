@@ -1218,3 +1218,145 @@ class InvoiceGenerationIDORTests(TestCase):
         # The tenant-scoped transaction query returns nothing → "no outstanding debt" → 400
         self.assertEqual(resp.status_code, 400,
             "Debt consolidation for a cross-tenant customer must return 400.")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 10. branch_id filter isolation on the weighbridge transactions endpoint
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class WeighbridgeBranchIdIsolationTests(TestCase):
+    """
+    Verify that passing ?branch_id=<x> to the weighbridge transactions endpoint
+    cannot expose another tenant's transactions.
+
+    Without an explicit tenant-membership check, a Tenant A user who knows
+    Tenant B's branch IDs could pass those IDs to retrieve Tenant B's
+    transactions.  The view must validate branch ownership and return an empty
+    result set when the requested branch does not belong to the user's tenant.
+
+    Cases covered:
+    a) cross-tenant branch_id  → empty list (no Tenant B transactions leaked)
+    b) own-tenant branch_id    → Tenant A's own transactions returned correctly
+    c) superuser branch_id     → global access (no restriction)
+    d) non-existent branch_id  → empty list (branch unknown to user's tenant)
+    """
+
+    def setUp(self):
+        self.client = APIClient()
+
+        self.tenant_a = _make_tenant("Alpha Branch Isolation", code="alpha-bri")
+        self.tenant_b = _make_tenant("Beta Branch Isolation",  code="beta-bri")
+        self.user_a   = _make_tenant_user("bri_user_a", self.tenant_a)
+
+        # Tenant A's objects and transaction
+        objs_a = _make_wb_base_objects()
+        self.branch_a = objs_a["branch"]
+        self.tx_a = _make_transaction(**objs_a, tenant=self.tenant_a)
+
+        # Tenant B's objects and transaction — branch_b belongs to a different company/tenant
+        objs_b = _make_wb_base_objects()
+        self.branch_b = objs_b["branch"]
+        self.tx_b = _make_transaction(**objs_b, tenant=self.tenant_b)
+
+        self.client.force_authenticate(user=self.user_a)
+
+    # ── a) cross-tenant branch_id must not leak Tenant B's data ───────────────
+
+    def test_cross_tenant_branch_id_returns_empty_list(self):
+        """
+        Tenant A passing ?branch_id=<branch_b.pk> must receive an empty result
+        set — not Tenant B's transactions.
+        """
+        resp = self.client.get(
+            reverse("wb-transactions"), {"branch_id": self.branch_b.pk}
+        )
+        self.assertEqual(resp.status_code, 200, resp.data)
+        results = resp.data.get("results", [])
+        self.assertEqual(
+            len(results), 0,
+            "Passing a cross-tenant branch_id must return an empty list.",
+        )
+
+    def test_cross_tenant_branch_id_does_not_include_tenant_b_transaction(self):
+        """
+        Tenant B's transaction must not appear in Tenant A's response when
+        Tenant A filters by Tenant B's branch ID.
+        """
+        resp = self.client.get(
+            reverse("wb-transactions"), {"branch_id": self.branch_b.pk}
+        )
+        self.assertEqual(resp.status_code, 200, resp.data)
+        ids = [r.get("id") for r in resp.data.get("results", [])]
+        self.assertNotIn(
+            self.tx_b.pk, ids,
+            "Cross-tenant branch_id filter must not expose Tenant B's transaction.",
+        )
+
+    # ── b) own-tenant branch_id must still work correctly ─────────────────────
+
+    def test_own_branch_id_returns_tenant_a_transactions(self):
+        """
+        Tenant A filtering by their own branch_id must receive their own
+        transactions and nothing else.
+        """
+        resp = self.client.get(
+            reverse("wb-transactions"), {"branch_id": self.branch_a.pk}
+        )
+        self.assertEqual(resp.status_code, 200, resp.data)
+        ids = [r.get("id") for r in resp.data.get("results", [])]
+        self.assertIn(
+            self.tx_a.pk, ids,
+            "Own branch_id filter must return Tenant A's own transactions.",
+        )
+
+    def test_own_branch_id_does_not_return_tenant_b_transaction(self):
+        """
+        Even when filtering by own branch_id, Tenant B's transactions must not
+        appear (sanity check: no cross-tenant leakage via valid branch filter).
+        """
+        resp = self.client.get(
+            reverse("wb-transactions"), {"branch_id": self.branch_a.pk}
+        )
+        self.assertEqual(resp.status_code, 200, resp.data)
+        ids = [r.get("id") for r in resp.data.get("results", [])]
+        self.assertNotIn(
+            self.tx_b.pk, ids,
+            "Own branch_id filter must not include Tenant B's transactions.",
+        )
+
+    # ── c) superuser with cross-tenant branch_id sees cross-tenant data ────────
+
+    def test_superuser_can_filter_by_any_branch_id(self):
+        """
+        A superuser passing ?branch_id=<branch_b.pk> must be able to see Tenant
+        B's transactions — superusers are not subject to tenant restrictions.
+        """
+        superuser = User.objects.create_superuser("bri_su", password="pass")
+        self.client.force_authenticate(user=superuser)
+
+        resp = self.client.get(
+            reverse("wb-transactions"), {"branch_id": self.branch_b.pk}
+        )
+        self.assertEqual(resp.status_code, 200, resp.data)
+        ids = [r.get("id") for r in resp.data.get("results", [])]
+        self.assertIn(
+            self.tx_b.pk, ids,
+            "Superuser must see cross-tenant transactions via branch_id filter.",
+        )
+
+    # ── d) non-existent branch_id returns empty list ───────────────────────────
+
+    def test_nonexistent_branch_id_returns_empty_list(self):
+        """
+        Passing a branch_id that does not exist in any transaction of the user's
+        tenant must return an empty result set, not a server error.
+        """
+        resp = self.client.get(
+            reverse("wb-transactions"), {"branch_id": 999999}
+        )
+        self.assertEqual(resp.status_code, 200, resp.data)
+        results = resp.data.get("results", [])
+        self.assertEqual(
+            len(results), 0,
+            "A non-existent branch_id must return an empty list.",
+        )

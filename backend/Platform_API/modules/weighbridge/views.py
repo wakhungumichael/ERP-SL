@@ -265,6 +265,17 @@ class TransactionListCreateView(generics.ListCreateAPIView):
 
         # ── Basic filters ──────────────────────────────────────────────────
         if branch_id := params.get("branch_id"):
+            # For non-superusers, verify the requested branch is associated
+            # with the user's own tenant before applying the filter.  Since
+            # Branch has no direct tenant FK we confirm membership via the
+            # already tenant-scoped transaction history.  An unknown or
+            # cross-tenant branch_id returns an empty result set rather than
+            # leaking the existence of that branch to the caller.
+            if resolved is not None:  # Tenant object — non-superuser
+                if not Transaction.objects.filter(
+                    tenant=resolved, branch_id=branch_id
+                ).exists():
+                    return qs.none()
             qs = qs.filter(branch_id=branch_id)
         if s := params.get("status"):
             qs = qs.filter(status=s)
