@@ -499,6 +499,7 @@ def _maybe_record_overweight_event(tx, user):
     event.save()
 
     # Attempt camera snapshot for any active camera attached to this branch
+    img_bytes = None
     try:
         cam = CameraConfig.objects.filter(
             branch=branch,
@@ -510,6 +511,103 @@ def _maybe_record_overweight_event(tx, user):
             if img_bytes:
                 fname = f"ow_{event.id}_{tz.now().strftime('%Y%m%d_%H%M%S')}.jpg"
                 event.camera_image.save(fname, ContentFile(img_bytes), save=True)
+    except Exception:
+        pass
+
+    # ── Email alert ───────────────────────────────────────────────────────────
+    # Silenced entirely — an email failure must never block the weighbridge flow.
+    try:
+        if not cfg.notify_on_overweight:
+            return
+
+        # Resolve recipient(s)
+        recipients = []
+        if cfg.notify_email:
+            recipients.append(cfg.notify_email)
+        else:
+            # Fall back to the branch email, then tenant admin users
+            branch_email = getattr(branch, "email", None)
+            if branch_email:
+                recipients.append(branch_email)
+            tenant = getattr(tx, "tenant", None)
+            if tenant:
+                try:
+                    from Platform_Core.models import TenantUserProfile
+                    admin_profiles = TenantUserProfile.objects.filter(
+                        tenant=tenant, is_tenant_admin=True
+                    ).select_related("user")
+                    for p in admin_profiles:
+                        email = getattr(p.user, "email", None)
+                        if email and email not in recipients:
+                            recipients.append(email)
+                except Exception:
+                    pass
+
+        if not recipients:
+            return
+
+        # Build alert content
+        plate = event.vehicle_plate or "—"
+        operator_name = (
+            f"{user.get_full_name() or user.username}" if user and user.is_authenticated else "—"
+        )
+        recorded_at_str = event.recorded_at.strftime("%d %b %Y %H:%M:%S") if event.recorded_at else "—"
+        branch_name = branch.name if branch else "—"
+
+        subject = f"⚠️ Overweight Alert — {plate} at {branch_name}"
+
+        plain_body = (
+            f"OVERWEIGHT VEHICLE ALERT\n"
+            f"{'=' * 40}\n"
+            f"Branch:     {branch_name}\n"
+            f"Plate:      {plate}\n"
+            f"Net Weight: {event.net_weight:,} kg\n"
+            f"Threshold:  {event.threshold_at_capture:,} kg\n"
+            f"Operator:   {operator_name}\n"
+            f"Time:       {recorded_at_str}\n"
+            f"{'=' * 40}\n"
+            f"Please review this incident in the SL-ERP weighbridge module.\n"
+        )
+
+        html_body = f"""<!DOCTYPE html>
+<html><body style="margin:0;padding:20px;background:#f9fafb;font-family:Arial,sans-serif;">
+<div style="max-width:480px;margin:0 auto;background:#fff;border:2px solid #dc2626;border-radius:6px;overflow:hidden;">
+  <div style="background:#dc2626;color:#fff;padding:16px 20px;">
+    <div style="font-size:20px;font-weight:bold;">⚠️ Overweight Vehicle Alert</div>
+    <div style="font-size:13px;margin-top:4px;opacity:0.9;">{branch_name}</div>
+  </div>
+  <div style="padding:20px;">
+    <table style="width:100%;font-size:14px;border-collapse:collapse;">
+      <tr style="background:#fef2f2;"><td style="padding:8px 10px;color:#555;width:40%;">Plate Number</td><td style="padding:8px 10px;font-weight:bold;">{plate}</td></tr>
+      <tr><td style="padding:8px 10px;color:#555;">Net Weight</td><td style="padding:8px 10px;font-weight:bold;color:#dc2626;">{event.net_weight:,} kg</td></tr>
+      <tr style="background:#fef2f2;"><td style="padding:8px 10px;color:#555;">Threshold</td><td style="padding:8px 10px;font-weight:bold;">{event.threshold_at_capture:,} kg</td></tr>
+      <tr><td style="padding:8px 10px;color:#555;">Operator</td><td style="padding:8px 10px;">{operator_name}</td></tr>
+      <tr style="background:#fef2f2;"><td style="padding:8px 10px;color:#555;">Time</td><td style="padding:8px 10px;">{recorded_at_str}</td></tr>
+    </table>
+    <p style="margin-top:16px;font-size:13px;color:#555;">
+      Please review this incident in the SL-ERP weighbridge module.
+    </p>
+  </div>
+</div>
+</body></html>"""
+
+        from django.core.mail import EmailMultiAlternatives
+        from django.conf import settings as dj_settings
+        from_email = getattr(dj_settings, "DEFAULT_FROM_EMAIL", "noreply@sl-erp.com")
+        msg = EmailMultiAlternatives(
+            subject=subject,
+            body=plain_body,
+            from_email=from_email,
+            to=recipients,
+        )
+        msg.attach_alternative(html_body, "text/html")
+
+        # Attach camera snapshot if available
+        if img_bytes:
+            snap_fname = f"overweight_{plate}_{tz.now().strftime('%Y%m%d_%H%M%S')}.jpg"
+            msg.attach(snap_fname, img_bytes, "image/jpeg")
+
+        msg.send(fail_silently=True)
     except Exception:
         pass
 

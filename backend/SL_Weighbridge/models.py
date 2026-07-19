@@ -532,6 +532,16 @@ class OverweightConfig(models.Model):
         default=True,
         help_text="Master switch — disabling this stops all overweight event creation for this branch.",
     )
+    notify_on_overweight = models.BooleanField(
+        default=True,
+        help_text="Send an email alert when an overweight event is created for this branch. "
+                  "Disable to opt out of email notifications.",
+    )
+    notify_email = models.EmailField(
+        blank=True, null=True,
+        help_text="Email address to notify when an overweight event is detected. "
+                  "Leave blank to fall back to tenant admin users.",
+    )
 
     def __str__(self):
         return f"Overweight config — {self.branch.name} (threshold: {self.threshold_kg} kg)"
