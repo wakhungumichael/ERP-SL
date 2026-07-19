@@ -11,8 +11,11 @@ from Platform_Core.models import (
     PlanModule,
     SubscriptionPlan,
     Tenant,
+    TenantBranch,
     TenantModuleActivation,
+    TenantSettings,
     TenantSubscription,
+    TenantUserProfile,
     WorkspaceMenuItem,
     WorkspaceMenuSection,
     WorkspaceRoleMenuItem,
@@ -313,6 +316,53 @@ class GroupDetailSerializer(serializers.ModelSerializer):
         fields = ("id", "name", "permissions", "permission_ids")
 
 
+class TenantBranchSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = TenantBranch
+        fields = ("id", "tenant", "name", "address", "email", "phone", "is_active", "created_at", "updated_at")
+        read_only_fields = ("id", "created_at", "updated_at")
+
+
+class TenantSettingsSerializer(serializers.ModelSerializer):
+    smtp_password = serializers.CharField(write_only=True, required=False, allow_blank=True)
+
+    class Meta:
+        model = TenantSettings
+        fields = (
+            "id", "tenant", "logo_url", "primary_color", "support_email",
+            "invoice_prefix", "footer_text",
+            "smtp_host", "smtp_port", "smtp_user", "smtp_password", "smtp_use_tls",
+            "default_payment_terms_days", "created_at", "updated_at",
+        )
+        read_only_fields = ("id", "tenant", "created_at", "updated_at")
+
+    def update(self, instance, validated_data):
+        password = validated_data.pop("smtp_password", None)
+        instance = super().update(instance, validated_data)
+        if password:
+            instance.smtp_password = password
+            instance.save(update_fields=["smtp_password"])
+        return instance
+
+
+class TenantUserProfileSerializer(serializers.ModelSerializer):
+    user_id = serializers.IntegerField(source="user.id", read_only=True)
+    username = serializers.CharField(source="user.username", read_only=True)
+    first_name = serializers.CharField(source="user.first_name", read_only=True)
+    last_name = serializers.CharField(source="user.last_name", read_only=True)
+    email = serializers.EmailField(source="user.email", read_only=True)
+    tenant_name = serializers.CharField(source="tenant.name", read_only=True)
+    branch_name = serializers.CharField(source="branch.name", read_only=True)
+
+    class Meta:
+        model = TenantUserProfile
+        fields = (
+            "id", "user_id", "username", "first_name", "last_name", "email",
+            "tenant", "tenant_name", "branch", "branch_name",
+            "is_tenant_admin", "job_title", "avatar_url", "created_at", "updated_at",
+        )
+
+
 class UserProfileSerializer(serializers.ModelSerializer):
     groups = GroupSummarySerializer(many=True, read_only=True)
     group_ids = serializers.PrimaryKeyRelatedField(
@@ -323,6 +373,12 @@ class UserProfileSerializer(serializers.ModelSerializer):
         required=False,
     )
     permissions = serializers.SerializerMethodField()
+    tenant_id = serializers.SerializerMethodField()
+    tenant_name = serializers.SerializerMethodField()
+    branch_id = serializers.SerializerMethodField()
+    branch_name = serializers.SerializerMethodField()
+    job_title = serializers.SerializerMethodField()
+    is_tenant_admin = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -340,10 +396,43 @@ class UserProfileSerializer(serializers.ModelSerializer):
             "permissions",
             "last_login",
             "date_joined",
+            "tenant_id",
+            "tenant_name",
+            "branch_id",
+            "branch_name",
+            "job_title",
+            "is_tenant_admin",
         )
 
     def get_permissions(self, obj):
         return sorted(obj.get_all_permissions())
+
+    def _profile(self, obj):
+        return getattr(obj, "tenant_profile", None)
+
+    def get_tenant_id(self, obj):
+        p = self._profile(obj)
+        return p.tenant_id if p else None
+
+    def get_tenant_name(self, obj):
+        p = self._profile(obj)
+        return p.tenant.name if p and p.tenant_id else None
+
+    def get_branch_id(self, obj):
+        p = self._profile(obj)
+        return p.branch_id if p else None
+
+    def get_branch_name(self, obj):
+        p = self._profile(obj)
+        return p.branch.name if p and p.branch_id else None
+
+    def get_job_title(self, obj):
+        p = self._profile(obj)
+        return p.job_title if p else ""
+
+    def get_is_tenant_admin(self, obj):
+        p = self._profile(obj)
+        return p.is_tenant_admin if p else False
 
 
 class TokenLoginSerializer(serializers.Serializer):

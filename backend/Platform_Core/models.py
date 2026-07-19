@@ -1,4 +1,4 @@
-from django.contrib.auth.models import Group
+from django.contrib.auth.models import Group, User
 from django.db import models
 from django.utils import timezone
 from django.utils.text import slugify
@@ -274,6 +274,69 @@ class TenantModuleActivation(TimeStampedModel):
 
     def __str__(self):
         return f"{self.tenant.name} - {self.module.name}"
+
+
+class TenantBranch(TimeStampedModel):
+    """Platform-level branch / office belonging to a tenant."""
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name="branches")
+    name = models.CharField(max_length=150)
+    address = models.TextField(blank=True)
+    email = models.EmailField(blank=True)
+    phone = models.CharField(max_length=50, blank=True)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ["tenant__name", "name"]
+        unique_together = ("tenant", "name")
+
+    def __str__(self):
+        return f"{self.tenant.name} — {self.name}"
+
+
+class TenantUserProfile(TimeStampedModel):
+    """Binds a Django User to a Tenant and optionally a Branch."""
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="tenant_profile")
+    tenant = models.ForeignKey(
+        Tenant, on_delete=models.CASCADE, related_name="user_profiles",
+        blank=True, null=True,
+    )
+    branch = models.ForeignKey(
+        TenantBranch, on_delete=models.SET_NULL, related_name="user_profiles",
+        blank=True, null=True,
+    )
+    is_tenant_admin = models.BooleanField(default=False)
+    job_title = models.CharField(max_length=150, blank=True)
+    avatar_url = models.CharField(max_length=500, blank=True)
+
+    class Meta:
+        ordering = ["user__username"]
+
+    def __str__(self):
+        return f"{self.user.username} @ {self.tenant.name if self.tenant else 'platform'}"
+
+
+class TenantSettings(TimeStampedModel):
+    """Per-tenant company configuration and SMTP settings."""
+    tenant = models.OneToOneField(Tenant, on_delete=models.CASCADE, related_name="settings")
+    logo_url = models.CharField(max_length=500, blank=True)
+    primary_color = models.CharField(max_length=20, blank=True, default="#E85D26")
+    support_email = models.EmailField(blank=True)
+    invoice_prefix = models.CharField(max_length=20, blank=True, default="INV")
+    footer_text = models.TextField(blank=True)
+    # SMTP
+    smtp_host = models.CharField(max_length=255, blank=True)
+    smtp_port = models.PositiveIntegerField(default=587)
+    smtp_user = models.CharField(max_length=255, blank=True)
+    smtp_password = models.CharField(max_length=255, blank=True)
+    smtp_use_tls = models.BooleanField(default=True)
+    # Invoicing
+    default_payment_terms_days = models.PositiveIntegerField(default=30)
+
+    class Meta:
+        ordering = ["tenant__name"]
+
+    def __str__(self):
+        return f"Settings for {self.tenant.name}"
 
 
 class IntegrationEndpoint(TimeStampedModel):

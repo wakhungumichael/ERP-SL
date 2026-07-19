@@ -5,6 +5,8 @@ import { Route, Switch, Router as WouterRouter } from 'wouter';
 import { Shell } from '@/components/shell';
 import { AuthProvider } from '@/context/auth-context';
 
+import { useAuth } from '@/context/use-auth';
+import type { AppRole } from '@/lib/roles';
 import Login from '@/pages/login';
 import Dashboard from '@/pages/dashboard';
 import TransactionsList from '@/pages/transactions/list';
@@ -32,6 +34,7 @@ import Plans from '@/pages/platform/plans';
 import Subscriptions from '@/pages/platform/subscriptions';
 import Integrations from '@/pages/platform/integrations';
 import Workspace from '@/pages/platform/workspace';
+import CompanySettings from '@/pages/platform/company-settings';
 import WeighbridgeSettings from '@/pages/weighbridge/settings';
 import ReportsDashboard from '@/pages/reports/dashboard';
 import HRStaff from '@/pages/hr/staff';
@@ -43,6 +46,21 @@ const queryClient = new QueryClient({
     queries: { retry: 1, staleTime: 30_000 },
   },
 });
+
+/** Route-level guard: renders children only if the user holds one of `allowedRoles`. */
+function RoleGuard({ allowedRoles, children }: { allowedRoles: AppRole[]; children: React.ReactNode }) {
+  const { role, isLoading } = useAuth();
+  if (isLoading) return null;
+  if (!allowedRoles.includes(role)) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full p-12 text-center gap-3">
+        <p className="text-lg font-semibold">Access Denied</p>
+        <p className="text-sm text-muted-foreground">You do not have permission to view this page.</p>
+      </div>
+    );
+  }
+  return <>{children}</>;
+}
 
 function Router() {
   return (
@@ -114,15 +132,39 @@ function Router() {
       {/* Procurement */}
       <Route path="/procurement/purchase-orders"><Shell><PurchaseOrders /></Shell></Route>
 
-      {/* Platform Admin */}
-      <Route path="/platform/tenants"><Shell><Tenants /></Shell></Route>
-      <Route path="/platform/users"><Shell><Users /></Shell></Route>
-      <Route path="/platform/roles"><Shell><Roles /></Shell></Route>
-      <Route path="/platform/modules"><Shell><Modules /></Shell></Route>
-      <Route path="/platform/plans"><Shell><Plans /></Shell></Route>
-      <Route path="/platform/subscriptions"><Shell><Subscriptions /></Shell></Route>
-      <Route path="/platform/integrations"><Shell><Integrations /></Shell></Route>
-      <Route path="/platform/workspace"><Shell><Workspace /></Shell></Route>
+      {/* Platform Admin — superadmin-only pages */}
+      <Route path="/platform/tenants">
+        <Shell><RoleGuard allowedRoles={['superadmin']}><Tenants /></RoleGuard></Shell>
+      </Route>
+      <Route path="/platform/modules">
+        <Shell><RoleGuard allowedRoles={['superadmin']}><Modules /></RoleGuard></Shell>
+      </Route>
+      <Route path="/platform/plans">
+        <Shell><RoleGuard allowedRoles={['superadmin']}><Plans /></RoleGuard></Shell>
+      </Route>
+      <Route path="/platform/subscriptions">
+        <Shell><RoleGuard allowedRoles={['superadmin']}><Subscriptions /></RoleGuard></Shell>
+      </Route>
+      <Route path="/platform/integrations">
+        <Shell><RoleGuard allowedRoles={['superadmin']}><Integrations /></RoleGuard></Shell>
+      </Route>
+
+      {/* Platform Admin — superadmin + tenant_admin pages */}
+      <Route path="/platform/users">
+        <Shell><RoleGuard allowedRoles={['superadmin', 'tenant_admin']}><Users /></RoleGuard></Shell>
+      </Route>
+      {/* Roles management is superadmin-only: backing API (/platform/roles/) is superadmin-gated */}
+      <Route path="/platform/roles">
+        <Shell><RoleGuard allowedRoles={['superadmin']}><Roles /></RoleGuard></Shell>
+      </Route>
+      {/* Workspace/menu-builder depends on /platform/roles/ and /platform/workspace/menu-* — all superadmin-only APIs */}
+      <Route path="/platform/workspace">
+        <Shell><RoleGuard allowedRoles={['superadmin']}><Workspace /></RoleGuard></Shell>
+      </Route>
+      {/* Company Settings: tenant admins manage their own company info; superadmins use the Tenants page */}
+      <Route path="/platform/company-settings">
+        <Shell><RoleGuard allowedRoles={['tenant_admin']}><CompanySettings /></RoleGuard></Shell>
+      </Route>
 
       <Route component={NotFound} />
     </Switch>

@@ -17,16 +17,19 @@ def success_response(message: str, data=None, status: int = 200, **kwargs) -> Re
     return Response(payload, status=status)
 
 
-def error_response(message: str, errors=None, status: int = 400, **kwargs) -> Response:
-    """Return a standard error envelope."""
+def error_response(message: str, errors=None, status: int = 400, status_code: int = None, **kwargs) -> Response:
+    """Return a standard error envelope.
+    ``status_code`` is an alias for ``status`` to match DRF convention at call sites.
+    """
+    http_status_code = status_code if status_code is not None else status
     payload = {
         "success": False,
         "message": message,
-        "status_code": status,
+        "status_code": http_status_code,
         "errors": errors or {},
     }
     payload.update(kwargs)
-    return Response(payload, status=status)
+    return Response(payload, status=http_status_code)
 
 
 def request_scope(request) -> dict:
