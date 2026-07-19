@@ -296,3 +296,119 @@ class ProvisionTenantDuplicateSubdomainTests(TestCase):
             tenant_count_after_first,
             "A duplicate-subdomain request must not create an additional Tenant row.",
         )
+
+
+# ── first-login end-to-end tests ───────────────────────────────────────────────
+
+class ProvisionTenantFirstLoginTests(TestCase):
+    """
+    End-to-end tests confirming that the credentials returned by
+    provision_tenant can immediately authenticate the new tenant admin without
+    any manual setup step.
+
+    Covers:
+    1. POST /api/platform/auth/token/ with the provisioned username + temp
+       password returns a token.
+    2. GET /api/platform/auth/me/ with that token returns the correct tenant
+       context (tenant_id matches the newly created tenant, is_tenant_admin=True).
+    """
+
+    def setUp(self):
+        self.client = APIClient()
+        self.superadmin = _superadmin()
+        self.client.force_authenticate(user=self.superadmin)
+        self.provision_url = reverse("tenant-provision")
+        self.token_url = reverse("platform-auth-token")
+        self.me_url = reverse("platform-auth-me")
+
+    def _provision(self):
+        """Provision a fresh tenant and return the response data dict."""
+        payload = {
+            "name": "Login Test Corp",
+            "contact_email": "contact@logintest.example",
+            "admin_first_name": "Tina",
+            "admin_last_name": "Tenant",
+            "admin_email": "tina@logintest.example",
+        }
+        response = self.client.post(self.provision_url, payload, format="json")
+        self.assertEqual(
+            response.status_code,
+            200,
+            f"Provisioning failed unexpectedly: {response.data}",
+        )
+        return response.data.get("data", response.data)
+
+    # ── token issuance ────────────────────────────────────────────────────────
+
+    def test_provisioned_credentials_return_a_token(self):
+        """
+        POSTing the provisioned username and temp password to auth/token/ must
+        return HTTP 200 with a non-empty token — no manual password reset or
+        account activation step required.
+        """
+        data = self._provision()
+        username = data["admin_username"]
+        password = data["admin_temp_password"]
+
+        # Use an unauthenticated client to simulate the new tenant's first request.
+        anon_client = APIClient()
+        response = anon_client.post(
+            self.token_url,
+            {"username": username, "password": password},
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            200,
+            f"Expected 200 from token endpoint, got {response.status_code}: {response.data}",
+        )
+        token_data = response.data.get("data", response.data)
+        self.assertIn("token", token_data, "Response must contain a 'token' key.")
+        self.assertTrue(token_data["token"], "Token must be a non-empty string.")
+
+    # ── /me/ tenant context ───────────────────────────────────────────────────
+
+    def test_me_endpoint_returns_correct_tenant_context(self):
+        """
+        After authenticating with the provisioned credentials, GET /auth/me/
+        must return:
+          - tenant_id matching the newly created tenant
+          - is_tenant_admin == True
+        """
+        data = self._provision()
+        username = data["admin_username"]
+        password = data["admin_temp_password"]
+        expected_tenant_id = data["tenant"]["id"]
+
+        # Obtain token
+        anon_client = APIClient()
+        token_response = anon_client.post(
+            self.token_url,
+            {"username": username, "password": password},
+            format="json",
+        )
+        self.assertEqual(token_response.status_code, 200, token_response.data)
+        token = token_response.data["data"]["token"]
+
+        # Call /me/ with the issued token
+        anon_client.credentials(HTTP_AUTHORIZATION=f"Token {token}")
+        me_response = anon_client.get(self.me_url)
+
+        self.assertEqual(
+            me_response.status_code,
+            200,
+            f"Expected 200 from /me/, got {me_response.status_code}: {me_response.data}",
+        )
+        me_data = me_response.data.get("data", me_response.data)
+
+        self.assertEqual(
+            me_data.get("tenant_id"),
+            expected_tenant_id,
+            f"tenant_id in /me/ response ({me_data.get('tenant_id')!r}) must match "
+            f"the provisioned tenant ({expected_tenant_id!r}).",
+        )
+        self.assertTrue(
+            me_data.get("is_tenant_admin"),
+            "/me/ response must report is_tenant_admin=True for the provisioned admin.",
+        )
