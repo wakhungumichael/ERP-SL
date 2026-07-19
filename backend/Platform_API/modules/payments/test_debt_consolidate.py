@@ -320,3 +320,62 @@ class DebtConsolidateEmailTests(TestCase):
         log_count = InvoiceEmailLog.objects.filter(invoice_id=invoice_id).count()
         self.assertEqual(log_count, 0,
                          "No InvoiceEmailLog should be written when customer has no email.")
+
+    # ── test 4: email failure is recorded ────────────────────────────────────
+
+    def test_email_failure_recorded_as_failure_log(self):
+        """
+        When send_mail raises an SMTPException the view must still create the
+        invoice (201) AND write an InvoiceEmailLog row with success=False and a
+        non-empty failure_reason.
+        """
+        from smtplib import SMTPException
+        from unittest.mock import patch
+        from SL_Weighbridge.models import InvoiceEmailLog
+
+        customer = _make_customer("Mary Auma", "mary@example.com")
+        vehicle = _make_vehicle(customer, self.vehicle_type)
+        _make_debt_transaction(customer, self.branch, vehicle, self.vehicle_type)
+
+        with patch(
+            "django.core.mail.EmailMultiAlternatives.send",
+            side_effect=SMTPException("Connection refused"),
+        ):
+            response = self._post_consolidate(customer.id)
+
+        # Invoice creation must succeed despite the email failure
+        self.assertEqual(response.status_code, 201, response.data)
+
+        invoice_id = response.data.get("id")
+        log = InvoiceEmailLog.objects.filter(invoice_id=invoice_id).first()
+
+        self.assertIsNotNone(log, "InvoiceEmailLog should be written even when email fails.")
+        self.assertFalse(log.success, "Log entry should record success=False for a failed send.")
+        self.assertTrue(
+            log.failure_reason,
+            "Log entry should record a non-empty failure_reason when email fails.",
+        )
+        self.assertEqual(log.recipient, "mary@example.com")
+
+    def test_api_returns_201_when_email_raises(self):
+        """
+        A broken SMTP backend must not surface as an API error — the response
+        must always be 201 so the invoice workflow is not interrupted.
+        """
+        from smtplib import SMTPException
+        from unittest.mock import patch
+
+        customer = _make_customer("Noah Kipchoge", "noah@example.com")
+        vehicle = _make_vehicle(customer, self.vehicle_type)
+        _make_debt_transaction(customer, self.branch, vehicle, self.vehicle_type)
+
+        with patch(
+            "django.core.mail.EmailMultiAlternatives.send",
+            side_effect=SMTPException("Relay access denied"),
+        ):
+            response = self._post_consolidate(customer.id)
+
+        self.assertEqual(
+            response.status_code, 201,
+            "API must return 201 even when the SMTP send raises an exception.",
+        )
