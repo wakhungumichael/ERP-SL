@@ -430,3 +430,40 @@ class DebtConsolidateEmailTests(TestCase):
             any("Could not write InvoiceEmailLog" in msg for msg in log_ctx.output),
             f"Expected a 'Could not write InvoiceEmailLog' warning in logs, got: {log_ctx.output}",
         )
+
+    # ── test 6: template rendering error is survivable ────────────────────────
+
+    def test_template_does_not_exist_returns_201_with_failure_log(self):
+        """
+        When render_to_string raises TemplateDoesNotExist the view must:
+        - still return 201 (invoice creation is not affected), AND
+        - write an InvoiceEmailLog row with success=False and a non-empty
+          failure_reason (so the missing template is diagnosable from the
+          audit trail without surfacing as an HTTP error).
+        """
+        from unittest.mock import patch
+        from django.template.exceptions import TemplateDoesNotExist
+        from SL_Weighbridge.models import InvoiceEmailLog
+
+        customer = _make_customer("Ruth Kamande", "ruth@example.com")
+        vehicle = _make_vehicle(customer, self.vehicle_type)
+        _make_debt_transaction(customer, self.branch, vehicle, self.vehicle_type)
+
+        with patch(
+            "django.template.loader.render_to_string",
+            side_effect=TemplateDoesNotExist("emails/debt_consolidation.html"),
+        ):
+            response = self._post_consolidate(customer.id)
+
+        # Invoice creation must succeed despite the template error
+        self.assertEqual(response.status_code, 201, response.data)
+
+        invoice_id = response.data.get("id")
+        log = InvoiceEmailLog.objects.filter(invoice_id=invoice_id).first()
+
+        self.assertIsNotNone(log, "InvoiceEmailLog should be written even when template rendering fails.")
+        self.assertFalse(log.success, "Log entry should record success=False when template is missing.")
+        self.assertTrue(
+            log.failure_reason,
+            "Log entry should record a non-empty failure_reason when template rendering fails.",
+        )
