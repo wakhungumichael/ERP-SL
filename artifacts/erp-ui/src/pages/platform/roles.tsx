@@ -652,7 +652,7 @@ export default function Roles() {
 
   const memberCount = (role: Role) =>
     allUsers.filter(u =>
-      (u.groups ?? []).some((g: any) => g.id === role.id || g.name === role.name)
+      (u.groups ?? []).some((g: any) => g != null && (g.id === role.id || g.name === role.name))
     ).length;
 
   return (
