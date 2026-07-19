@@ -1177,3 +1177,367 @@ class TenantBranchListIsolationTests(TestCase):
                 "Tenant A must not see Tenant B's 'Tenant B Head Office' branch "
                 "— cross-tenant data leak detected.",
             )
+
+
+# ── settings & indicator isolation tests ──────────────────────────────────────
+
+class TenantSettingsAndIndicatorIsolationTests(TestCase):
+    """
+    Confirm that a provisioned tenant admin cannot access another tenant's
+    settings endpoint or the platform indicator source registry.
+
+    Covers:
+    - GET /api/platform/tenants/<tenant_b_id>/settings/ as Tenant A's admin → 403
+    - PUT /api/platform/tenants/<tenant_b_id>/settings/ as Tenant A's admin → 403
+    - Tenant A's admin CAN read their own settings (200) — control check.
+    - GET /api/platform/indicators/source-registry/ as Tenant A's admin → 403
+      (the endpoint is restricted to platform superadmins only).
+
+    These tests prevent operational intelligence leaks: a freshly provisioned
+    admin must not be able to read a rival tenant's invoice prefix, SMTP config,
+    or indicator thresholds.
+    """
+
+    def setUp(self):
+        self.superadmin_client = APIClient()
+        self.superadmin = _superadmin()
+        self.superadmin_client.force_authenticate(user=self.superadmin)
+        self.provision_url = reverse("tenant-provision")
+        self.token_url = reverse("platform-auth-token")
+        self.indicator_url = reverse("indicator-source-registry-overview")
+
+    # ── helpers ───────────────────────────────────────────────────────────────
+
+    def _provision(self, name, contact_email, admin_first_name, admin_last_name, admin_email):
+        """Provision a tenant and return the response data dict."""
+        payload = {
+            "name": name,
+            "contact_email": contact_email,
+            "admin_first_name": admin_first_name,
+            "admin_last_name": admin_last_name,
+            "admin_email": admin_email,
+        }
+        response = self.superadmin_client.post(self.provision_url, payload, format="json")
+        self.assertEqual(
+            response.status_code,
+            200,
+            f"Provisioning '{name}' failed unexpectedly: {response.data}",
+        )
+        return response.data.get("data", response.data)
+
+    def _get_token_for(self, username, password):
+        """Obtain an auth token for the given credentials."""
+        anon_client = APIClient()
+        response = anon_client.post(
+            self.token_url,
+            {"username": username, "password": password},
+            format="json",
+        )
+        self.assertEqual(
+            response.status_code,
+            200,
+            f"Token request for '{username}' failed: {response.data}",
+        )
+        return response.data["data"]["token"]
+
+    def _settings_url(self, tenant_id):
+        return reverse("tenant-settings", kwargs={"pk": tenant_id})
+
+    # ── settings isolation — cross-tenant GET ─────────────────────────────────
+
+    def test_tenant_a_admin_gets_403_reading_tenant_b_settings(self):
+        """
+        GET /api/platform/tenants/<tenant_b_id>/settings/ authenticated as
+        Tenant A's admin must return HTTP 403, not the settings payload.
+        """
+        data_a = self._provision(
+            name="Settings Iso A",
+            contact_email="contact@settings-iso-a.example",
+            admin_first_name="Alice",
+            admin_last_name="SettingsA",
+            admin_email="alice@settings-iso-a.example",
+        )
+        data_b = self._provision(
+            name="Settings Iso B",
+            contact_email="contact@settings-iso-b.example",
+            admin_first_name="Bob",
+            admin_last_name="SettingsB",
+            admin_email="bob@settings-iso-b.example",
+        )
+
+        tenant_b_id = data_b["tenant"]["id"]
+        token_a = self._get_token_for(data_a["admin_username"], data_a["admin_temp_password"])
+
+        client_a = APIClient()
+        client_a.credentials(HTTP_AUTHORIZATION=f"Token {token_a}")
+        response = client_a.get(self._settings_url(tenant_b_id))
+
+        self.assertEqual(
+            response.status_code,
+            403,
+            f"Tenant A's admin must receive 403 when reading Tenant B's settings, "
+            f"got {response.status_code}: {response.data}",
+        )
+
+    # ── settings isolation — cross-tenant PATCH ───────────────────────────────
+
+    def test_tenant_a_admin_gets_403_patching_tenant_b_settings(self):
+        """
+        PUT /api/platform/tenants/<tenant_b_id>/settings/ authenticated as
+        Tenant A's admin must return HTTP 403 — the settings must not be
+        mutated by a cross-tenant request.
+        """
+        data_a = self._provision(
+            name="Settings Patch A",
+            contact_email="contact@settings-patch-a.example",
+            admin_first_name="Carol",
+            admin_last_name="PatchA",
+            admin_email="carol@settings-patch-a.example",
+        )
+        data_b = self._provision(
+            name="Settings Patch B",
+            contact_email="contact@settings-patch-b.example",
+            admin_first_name="Dave",
+            admin_last_name="PatchB",
+            admin_email="dave@settings-patch-b.example",
+        )
+
+        tenant_b_id = data_b["tenant"]["id"]
+        token_a = self._get_token_for(data_a["admin_username"], data_a["admin_temp_password"])
+
+        client_a = APIClient()
+        client_a.credentials(HTTP_AUTHORIZATION=f"Token {token_a}")
+        response = client_a.put(
+            self._settings_url(tenant_b_id),
+            {"invoice_prefix": "STOLEN"},
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            403,
+            f"Tenant A's admin must receive 403 when trying to update Tenant B's settings, "
+            f"got {response.status_code}: {response.data}",
+        )
+
+    def test_tenant_a_admin_gets_403_patching_tenant_b_settings_via_patch(self):
+        """
+        PATCH /api/platform/tenants/<tenant_b_id>/settings/ as Tenant A's
+        admin must also return 403 — both PATCH and PUT are blocked.
+        """
+        data_a = self._provision(
+            name="Settings Patch2 A",
+            contact_email="contact@settings-patch2-a.example",
+            admin_first_name="Eve",
+            admin_last_name="Patch2A",
+            admin_email="eve@settings-patch2-a.example",
+        )
+        data_b = self._provision(
+            name="Settings Patch2 B",
+            contact_email="contact@settings-patch2-b.example",
+            admin_first_name="Frank",
+            admin_last_name="Patch2B",
+            admin_email="frank@settings-patch2-b.example",
+        )
+
+        tenant_b_id = data_b["tenant"]["id"]
+        token_a = self._get_token_for(data_a["admin_username"], data_a["admin_temp_password"])
+
+        client_a = APIClient()
+        client_a.credentials(HTTP_AUTHORIZATION=f"Token {token_a}")
+        response = client_a.patch(
+            self._settings_url(tenant_b_id),
+            {"invoice_prefix": "STOLEN"},
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            403,
+            f"Tenant A's admin must receive 403 on PATCH to Tenant B's settings, "
+            f"got {response.status_code}: {response.data}",
+        )
+
+    # ── settings — own-tenant access control check ────────────────────────────
+
+    def test_tenant_a_admin_can_read_own_settings(self):
+        """
+        GET /api/platform/tenants/<tenant_a_id>/settings/ as Tenant A's admin
+        must return HTTP 200 — own-tenant settings must remain accessible.
+        This is the control check to confirm access control is not broken in
+        both directions.
+        """
+        data_a = self._provision(
+            name="Own Settings Corp A",
+            contact_email="contact@own-settings-a.example",
+            admin_first_name="Grace",
+            admin_last_name="OwnA",
+            admin_email="grace@own-settings-a.example",
+        )
+        # Provision a second tenant to confirm isolation is active.
+        self._provision(
+            name="Own Settings Corp B",
+            contact_email="contact@own-settings-b.example",
+            admin_first_name="Hank",
+            admin_last_name="OwnB",
+            admin_email="hank@own-settings-b.example",
+        )
+
+        tenant_a_id = data_a["tenant"]["id"]
+        token_a = self._get_token_for(data_a["admin_username"], data_a["admin_temp_password"])
+
+        client_a = APIClient()
+        client_a.credentials(HTTP_AUTHORIZATION=f"Token {token_a}")
+        response = client_a.get(self._settings_url(tenant_a_id))
+
+        self.assertEqual(
+            response.status_code,
+            200,
+            f"Tenant A's admin must receive 200 for their own settings, "
+            f"got {response.status_code}: {response.data}",
+        )
+
+    # ── settings — cross-tenant data not returned ─────────────────────────────
+
+    def test_tenant_b_settings_data_not_in_tenant_a_response(self):
+        """
+        Belt-and-suspenders: confirm that even if the status code check is
+        bypassed, Tenant B's settings data is not present in any 200 response
+        Tenant A receives when requesting Tenant B's settings endpoint.
+        Specifically, Tenant B's unique invoice_prefix must not appear.
+        """
+        data_a = self._provision(
+            name="Data Leak Settings A",
+            contact_email="contact@data-leak-settings-a.example",
+            admin_first_name="Iris",
+            admin_last_name="LeakA",
+            admin_email="iris@data-leak-settings-a.example",
+        )
+        data_b = self._provision(
+            name="Data Leak Settings B",
+            contact_email="contact@data-leak-settings-b.example",
+            admin_first_name="Jack",
+            admin_last_name="LeakB",
+            admin_email="jack@data-leak-settings-b.example",
+        )
+
+        # Give Tenant B a distinctive invoice prefix so we can detect a leak.
+        tenant_b = Tenant.objects.get(pk=data_b["tenant"]["id"])
+        tenant_b_settings, _ = TenantSettings.objects.get_or_create(tenant=tenant_b)
+        tenant_b_settings.invoice_prefix = "LEAKTEST-B"
+        tenant_b_settings.save(update_fields=["invoice_prefix"])
+
+        tenant_b_id = data_b["tenant"]["id"]
+        token_a = self._get_token_for(data_a["admin_username"], data_a["admin_temp_password"])
+
+        client_a = APIClient()
+        client_a.credentials(HTTP_AUTHORIZATION=f"Token {token_a}")
+        response = client_a.get(self._settings_url(tenant_b_id))
+
+        # Primary guard: must not be 200.
+        self.assertNotEqual(
+            response.status_code,
+            200,
+            "Tenant A's admin received HTTP 200 querying Tenant B's settings "
+            "— cross-tenant settings data could be exposed.",
+        )
+
+        # Secondary guard: if somehow 200, check the payload doesn't leak the prefix.
+        if response.status_code == 200:
+            response_body = str(response.data)
+            self.assertNotIn(
+                "LEAKTEST-B",
+                response_body,
+                "Tenant B's invoice_prefix 'LEAKTEST-B' must not appear in Tenant A's response "
+                "— cross-tenant settings data leak detected.",
+            )
+
+    # ── indicator source registry — tenant admin blocked ──────────────────────
+
+    def test_tenant_admin_cannot_access_indicator_source_registry(self):
+        """
+        GET /api/platform/indicators/source-registry/ authenticated as a
+        provisioned tenant admin must return HTTP 403.
+
+        The endpoint is decorated with @permission_classes([IsSuperAdminPermission])
+        so only platform superusers (is_superuser=True) may call it. A tenant
+        admin (is_superuser=False) must be denied, regardless of their tenant
+        membership.
+        """
+        data_a = self._provision(
+            name="Indicator Iso Corp A",
+            contact_email="contact@indicator-iso-a.example",
+            admin_first_name="Kate",
+            admin_last_name="IndicatorA",
+            admin_email="kate@indicator-iso-a.example",
+        )
+
+        token_a = self._get_token_for(data_a["admin_username"], data_a["admin_temp_password"])
+
+        client_a = APIClient()
+        client_a.credentials(HTTP_AUTHORIZATION=f"Token {token_a}")
+        response = client_a.get(self.indicator_url)
+
+        self.assertEqual(
+            response.status_code,
+            403,
+            f"A tenant admin must receive 403 on the indicator source registry endpoint, "
+            f"got {response.status_code}: {response.data}",
+        )
+
+    def test_tenant_admin_cannot_access_indicator_registry_with_tenant_id_param(self):
+        """
+        Passing ?tenant_id=<own_tenant_id> to the indicator source registry
+        endpoint must still return 403 for a tenant admin.
+
+        The query parameter does not bypass the IsSuperAdminPermission guard —
+        permission is checked before the view body executes.
+        """
+        data_a = self._provision(
+            name="Indicator Param Corp A",
+            contact_email="contact@indicator-param-a.example",
+            admin_first_name="Liam",
+            admin_last_name="ParamA",
+            admin_email="liam@indicator-param-a.example",
+        )
+
+        tenant_a_id = data_a["tenant"]["id"]
+        token_a = self._get_token_for(data_a["admin_username"], data_a["admin_temp_password"])
+
+        client_a = APIClient()
+        client_a.credentials(HTTP_AUTHORIZATION=f"Token {token_a}")
+        # Try to sneak past the guard by passing own tenant_id as a query param.
+        response = client_a.get(self.indicator_url, {"tenant_id": tenant_a_id})
+
+        self.assertEqual(
+            response.status_code,
+            403,
+            f"A tenant admin must still receive 403 on the indicator registry even with "
+            f"?tenant_id=<own_id>, got {response.status_code}: {response.data}",
+        )
+
+    def test_superadmin_can_access_indicator_source_registry(self):
+        """
+        GET /api/platform/indicators/source-registry/ authenticated as the
+        platform superadmin must return HTTP 200.
+
+        This is the control check — it confirms the IsSuperAdminPermission
+        guard allows legitimate superadmin access while the tests above confirm
+        it blocks tenant admins.
+
+        The indicator_source_registry integration helper is mocked to return
+        an empty list so the test stays self-contained without requiring a live
+        integration configuration.
+        """
+        with patch(
+            "Platform_API.modules.platform.views.indicator_source_registry",
+            return_value=[],
+        ):
+            response = self.superadmin_client.get(self.indicator_url)
+
+        self.assertEqual(
+            response.status_code,
+            200,
+            f"Platform superadmin must receive 200 on the indicator registry, "
+            f"got {response.status_code}: {response.data}",
+        )
