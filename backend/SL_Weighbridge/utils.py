@@ -239,6 +239,37 @@ def print_receipt(command):
 #Camera
 
 
+def capture_hikvision_snapshot(config):
+    """
+    Fetch a still image from a HikVision camera via ISAPI digest auth.
+
+    Uses /ISAPI/Streaming/channels/<channel>01/picture where <channel> is
+    zero-padded to 2 digits (e.g. channel=1 → 0101).
+
+    Returns raw image bytes on success, or None if the capture fails for
+    any reason.  Failures are logged but never raised — a camera failure
+    must never block the weighbridge flow.
+    """
+    try:
+        channel = int(getattr(config, "hikvision_channel", 1) or 1)
+        port = int(config.port or 80)
+        url = (
+            f"http://{config.ip_address}:{port}"
+            f"/ISAPI/Streaming/channels/{channel:02d}01/picture"
+        )
+        resp = requests.get(
+            url,
+            auth=HTTPDigestAuth(config.username or "", config.password or ""),
+            stream=True,
+            timeout=10,
+        )
+        resp.raise_for_status()
+        return resp.content
+    except Exception as exc:
+        logging.warning("HikVision snapshot failed for %s: %s", getattr(config, "ip_address", "?"), exc)
+        return None
+
+
 def save_image_from_camera(ip_address, username, password):
     url = f'http://{ip_address}:8181/ISAPI/Streaming/channels/02/picture'
         #url = f'http://{ip_address}:8181/ISAPI/Streaming/channels/01/picture'

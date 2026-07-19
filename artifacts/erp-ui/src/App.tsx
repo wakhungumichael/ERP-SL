@@ -37,6 +37,8 @@ import Integrations from '@/pages/platform/integrations';
 import Workspace from '@/pages/platform/workspace';
 import CompanySettings from '@/pages/platform/company-settings';
 import WeighbridgeSettings from '@/pages/weighbridge/settings';
+import OverweightLog from '@/pages/weighbridge/overweight-log';
+import Discrepancies from '@/pages/weighbridge/discrepancies';
 import ReportsDashboard from '@/pages/reports/dashboard';
 import HRStaff from '@/pages/hr/staff';
 import PurchaseOrders from '@/pages/procurement/purchase-orders';
@@ -98,6 +100,12 @@ function Router() {
       </Route>
       <Route path="/weighbridge/settings">
         <Shell><WeighbridgeSettings /></Shell>
+      </Route>
+      <Route path="/weighbridge/overweight-log">
+        <Shell><OverweightLog /></Shell>
+      </Route>
+      <Route path="/weighbridge/discrepancies">
+        <Shell><Discrepancies /></Shell>
       </Route>
 
       {/* Payments & Finance */}

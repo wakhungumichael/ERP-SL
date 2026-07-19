@@ -2,10 +2,11 @@
  * Weighbridge Settings — tenant-admin configuration surface.
  *
  * Tabs:
- *   1. Indicator Config   — per-branch indicator settings incl. max_first_weight_age_days
- *   2. Vehicle Types      — charge, weight limits
- *   3. Items              — weighed commodities
- *   4. Customer Discounts — per-customer per-vehicle-type override charges
+ *   1. Indicator Config      — per-branch indicator settings
+ *   2. Vehicle Types         — charge, weight limits
+ *   3. Items                 — weighed commodities
+ *   4. Customer Discounts    — per-customer per-vehicle-type override charges
+ *   5. Surveillance          — overweight threshold + HikVision camera config
  */
 import { useState, useCallback } from 'react';
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
@@ -31,7 +32,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import {
-  Plus, Pencil, Trash2, Settings2, Truck, Package, Tag,
+  Plus, Pencil, Trash2, Settings2, Truck, Package, Tag, ShieldAlert, Camera,
 } from 'lucide-react';
 
 // ── helpers ────────────────────────────────────────────────────────────────────
@@ -853,6 +854,361 @@ function DiscountsTab() {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
+// TAB 5 — Overweight Surveillance
+// ══════════════════════════════════════════════════════════════════════════════
+
+type OverweightConfig = {
+  id?: number;
+  branch: number;
+  threshold_kg: number | string;
+  grace_window_minutes: number | string;
+  surveillance_enabled: boolean;
+};
+
+type CameraConfig = {
+  id?: number;
+  branch: number | '';
+  name: string;
+  connection_type: string;
+  camera_type: string;
+  ip_address: string;
+  port: number | string;
+  hikvision_channel: number | string;
+  username: string;
+  other_parameters: string;
+  capture_on_overweight: boolean;
+  is_active: boolean;
+};
+
+const emptyCam = (branchId: number): CameraConfig => ({
+  branch: branchId,
+  name: '',
+  connection_type: 'IP',
+  camera_type: 'hikvision',
+  ip_address: '',
+  port: 80,
+  hikvision_channel: 1,
+  username: '',
+  other_parameters: '',
+  capture_on_overweight: false,
+  is_active: true,
+});
+
+function SurveillanceTab() {
+  const { token } = useAuth();
+  const { toast } = useToast();
+  const qc = useQueryClient();
+
+  const { data: _branchesRaw } = useFetch<any>('/api/commercial-weighbridge/branches/', token);
+  const branches: any[] = Array.isArray(_branchesRaw?.results)
+    ? _branchesRaw.results
+    : Array.isArray(_branchesRaw) ? _branchesRaw : [];
+
+  const [selectedBranch, setSelectedBranch] = useState<number | null>(null);
+  const branchId = selectedBranch ?? (branches[0]?.id ?? null);
+
+  // Overweight config
+  const configUrl = branchId ? `/api/commercial-weighbridge/overweight-config/${branchId}/` : null;
+  const { data: cfg, isLoading: cfgLoading } = useFetch<OverweightConfig>(
+    configUrl ?? '__disabled__',
+    configUrl ? token : null,
+  );
+  const [cfgForm, setCfgForm] = useState<Partial<OverweightConfig>>({});
+  const cfgMut = useApiMutation(
+    token,
+    () => { qc.invalidateQueries({ queryKey: [configUrl!] }); toast({ title: 'Surveillance settings saved' }); },
+    (msg) => toast({ title: 'Error', description: parseErrors(msg), variant: 'destructive' }),
+  );
+  function saveCfg() {
+    if (!branchId) return;
+    cfgMut.mutate({
+      url: `/api/commercial-weighbridge/overweight-config/${branchId}/`,
+      method: 'PUT',
+      body: { ...cfg, ...cfgForm, branch: branchId },
+    });
+  }
+
+  // Camera configs
+  const camUrl = branchId ? `/api/commercial-weighbridge/camera-configs/?branch_id=${branchId}` : null;
+  const { data: _camsRaw, isLoading: camsLoading } = useFetch<any>(
+    camUrl ?? '__disabled__',
+    camUrl ? token : null,
+  );
+  const cameras: CameraConfig[] = Array.isArray(_camsRaw?.results)
+    ? _camsRaw.results
+    : Array.isArray(_camsRaw) ? _camsRaw : [];
+
+  const [camOpen, setCamOpen] = useState(false);
+  const [camForm, setCamForm] = useState<CameraConfig>(emptyCam(branchId ?? 0));
+  const [camDelId, setCamDelId] = useState<number | null>(null);
+
+  const camMut = useApiMutation(
+    token,
+    () => {
+      qc.invalidateQueries({ queryKey: [camUrl!] });
+      setCamOpen(false);
+      toast({ title: camForm.id ? 'Camera updated' : 'Camera added' });
+    },
+    (msg) => toast({ title: 'Error', description: parseErrors(msg), variant: 'destructive' }),
+  );
+  const camDelMut = useApiMutation(
+    token,
+    () => { qc.invalidateQueries({ queryKey: [camUrl!] }); setCamDelId(null); toast({ title: 'Camera removed' }); },
+    (msg) => toast({ title: 'Error', description: parseErrors(msg), variant: 'destructive' }),
+  );
+
+  function openNewCam() { setCamForm(emptyCam(branchId ?? 0)); setCamOpen(true); }
+  function openEditCam(c: CameraConfig) { setCamForm({ ...c }); setCamOpen(true); }
+  function setC(k: keyof CameraConfig, v: any) { setCamForm(f => ({ ...f, [k]: v })); }
+
+  function saveCam() {
+    const { id, ...body } = camForm as any;
+    camMut.mutate({
+      url: id
+        ? `/api/commercial-weighbridge/camera-configs/${id}/`
+        : '/api/commercial-weighbridge/camera-configs/',
+      method: id ? 'PATCH' : 'POST',
+      body: { ...body, branch: branchId },
+    });
+  }
+
+  const cfgMerged: OverweightConfig = {
+    branch: branchId ?? 0,
+    threshold_kg: cfgForm.threshold_kg ?? cfg?.threshold_kg ?? 1000,
+    grace_window_minutes: cfgForm.grace_window_minutes ?? cfg?.grace_window_minutes ?? 30,
+    surveillance_enabled: cfgForm.surveillance_enabled ?? cfg?.surveillance_enabled ?? true,
+  };
+
+  if (!branchId) return (
+    <p className="text-sm text-muted-foreground py-8 text-center">No branches configured.</p>
+  );
+
+  return (
+    <div className="space-y-6">
+      {branches.length > 1 && (
+        <div className="flex items-center gap-3">
+          <label className="text-xs font-medium shrink-0">Branch</label>
+          <Select
+            value={String(branchId)}
+            onValueChange={v => { setSelectedBranch(Number(v)); setCfgForm({}); }}
+          >
+            <SelectTrigger className="h-8 text-sm w-52"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {branches.map((b: any) => (
+                <SelectItem key={b.id} value={String(b.id)}>{b.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      )}
+
+      {/* Threshold config */}
+      <div className="rounded-lg border p-5 space-y-4">
+        <div className="flex items-center gap-2">
+          <ShieldAlert className="h-4 w-4 text-amber-500" />
+          <h3 className="font-semibold text-sm">Overweight Threshold</h3>
+        </div>
+        {cfgLoading ? <p className="text-sm text-muted-foreground">Loading…</p> : (
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <Label>Threshold (kg)</Label>
+              <Input
+                type="number" min="0" step="1"
+                value={String(cfgMerged.threshold_kg)}
+                onChange={e => setCfgForm(f => ({ ...f, threshold_kg: e.target.value }))}
+                placeholder="1000"
+              />
+              <p className="text-xs text-muted-foreground">Events are created when net weight ≥ this value.</p>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Grace window (minutes)</Label>
+              <Input
+                type="number" min="0" step="1"
+                value={String(cfgMerged.grace_window_minutes)}
+                onChange={e => setCfgForm(f => ({ ...f, grace_window_minutes: e.target.value }))}
+                placeholder="30"
+              />
+              <p className="text-xs text-muted-foreground">Events without a linked transaction after this window become discrepancies.</p>
+            </div>
+            <div className="col-span-2 flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setCfgForm(f => ({ ...f, surveillance_enabled: !cfgMerged.surveillance_enabled }))}
+                className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors shrink-0
+                  ${cfgMerged.surveillance_enabled ? 'bg-primary' : 'bg-muted-foreground/30'}`}
+              >
+                <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform
+                  ${cfgMerged.surveillance_enabled ? 'translate-x-4' : 'translate-x-1'}`} />
+              </button>
+              <span className="text-sm">
+                Surveillance {cfgMerged.surveillance_enabled ? 'enabled' : 'disabled'}
+              </span>
+            </div>
+            <div className="col-span-2">
+              <Button size="sm" onClick={saveCfg} disabled={cfgMut.isPending}>
+                {cfgMut.isPending ? 'Saving…' : 'Save threshold settings'}
+              </Button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Cameras */}
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Camera className="h-4 w-4 text-muted-foreground" />
+            <h3 className="font-semibold text-sm">HikVision / Camera Configs</h3>
+          </div>
+          <Button size="sm" className="gap-1.5" onClick={openNewCam}>
+            <Plus className="h-3.5 w-3.5" /> Add Camera
+          </Button>
+        </div>
+
+        <div className="rounded-lg border overflow-hidden">
+          <Table>
+            <TableHeader>
+              <TableRow className="bg-muted/50">
+                <TableHead className="text-[10px] font-bold uppercase tracking-widest">Name</TableHead>
+                <TableHead className="text-[10px] font-bold uppercase tracking-widest">Type</TableHead>
+                <TableHead className="text-[10px] font-bold uppercase tracking-widest">IP : Port</TableHead>
+                <TableHead className="text-[10px] font-bold uppercase tracking-widest">OW Capture</TableHead>
+                <TableHead className="text-[10px] font-bold uppercase tracking-widest">Active</TableHead>
+                <TableHead className="w-20" />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {camsLoading ? (
+                <TableRow><TableCell colSpan={6} className="text-center text-sm text-muted-foreground py-6">Loading…</TableCell></TableRow>
+              ) : cameras.length === 0 ? (
+                <TableRow><TableCell colSpan={6} className="text-center text-sm text-muted-foreground py-6">No cameras configured for this branch.</TableCell></TableRow>
+              ) : cameras.map(cam => (
+                <TableRow key={cam.id}>
+                  <TableCell className="font-medium">{cam.name || '—'}</TableCell>
+                  <TableCell>
+                    <Badge variant="outline" className="text-[10px]">
+                      {cam.camera_type === 'hikvision' ? 'HikVision' : 'Generic HTTP'}
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="text-sm text-muted-foreground font-mono">{cam.ip_address}:{cam.port}</TableCell>
+                  <TableCell>
+                    {cam.capture_on_overweight
+                      ? <Badge className="text-[10px] bg-green-100 text-green-800 border-green-200 hover:bg-green-100">Yes</Badge>
+                      : <span className="text-muted-foreground text-xs">No</span>}
+                  </TableCell>
+                  <TableCell>
+                    {cam.is_active
+                      ? <Badge variant="secondary" className="text-[10px]">Active</Badge>
+                      : <span className="text-muted-foreground text-xs">Inactive</span>}
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex items-center gap-1 justify-end">
+                      <button onClick={() => openEditCam(cam)} className="h-7 w-7 inline-flex items-center justify-center rounded hover:bg-muted transition-colors">
+                        <Pencil className="h-3.5 w-3.5" />
+                      </button>
+                      <button onClick={() => setCamDelId(cam.id!)} className="h-7 w-7 inline-flex items-center justify-center rounded hover:bg-red-50 text-destructive transition-colors">
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      </div>
+
+      {/* Camera dialog */}
+      <Dialog open={camOpen} onOpenChange={setCamOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>{camForm.id ? 'Edit Camera' : 'Add Camera'}</DialogTitle>
+          </DialogHeader>
+          <div className="grid gap-3 py-2">
+            <div className="space-y-1.5">
+              <Label>Name</Label>
+              <Input value={camForm.name} onChange={e => setC('name', e.target.value)} placeholder="e.g. Entry Gate" />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label>Camera type</Label>
+                <Select value={camForm.camera_type} onValueChange={v => setC('camera_type', v)}>
+                  <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="hikvision">HikVision (ISAPI)</SelectItem>
+                    <SelectItem value="generic_http">Generic HTTP</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label>Connection</Label>
+                <Select value={camForm.connection_type} onValueChange={v => setC('connection_type', v)}>
+                  <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="IP">IP</SelectItem>
+                    <SelectItem value="Cable">Cable</SelectItem>
+                    <SelectItem value="Other">Other</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label>IP address</Label>
+                <Input value={camForm.ip_address} onChange={e => setC('ip_address', e.target.value)} placeholder="192.168.1.100" />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Port</Label>
+                <Input type="number" value={String(camForm.port)} onChange={e => setC('port', e.target.value)} placeholder="80" />
+              </div>
+            </div>
+            {camForm.camera_type === 'hikvision' && (
+              <div className="space-y-1.5">
+                <Label>Channel number</Label>
+                <Input type="number" min="1" value={String(camForm.hikvision_channel)} onChange={e => setC('hikvision_channel', e.target.value)} placeholder="1" />
+              </div>
+            )}
+            <div className="space-y-1.5">
+              <Label>Username</Label>
+              <Input value={camForm.username} onChange={e => setC('username', e.target.value)} />
+            </div>
+            <div className="flex flex-col gap-2">
+              {[
+                { key: 'capture_on_overweight', label: 'Capture snapshot on overweight event' },
+                { key: 'is_active', label: 'Camera active' },
+              ].map(({ key, label }) => (
+                <label key={key} className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={Boolean((camForm as any)[key])}
+                    onChange={e => setC(key as keyof CameraConfig, e.target.checked)}
+                    className="h-3.5 w-3.5"
+                  />
+                  <span className="text-sm">{label}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCamOpen(false)}>Cancel</Button>
+            <Button onClick={saveCam} disabled={camMut.isPending}>
+              {camMut.isPending ? 'Saving…' : camForm.id ? 'Save changes' : 'Add camera'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <ConfirmDelete
+        open={camDelId !== null}
+        label="camera"
+        onConfirm={() => camDelMut.mutate({ url: `/api/commercial-weighbridge/camera-configs/${camDelId}/`, method: 'DELETE' })}
+        onCancel={() => setCamDelId(null)}
+      />
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
 // Root page
 // ══════════════════════════════════════════════════════════════════════════════
 
@@ -880,12 +1236,16 @@ export default function WeighbridgeSettings() {
           <TabsTrigger value="discounts" className="gap-1.5">
             <Tag className="h-3.5 w-3.5" /> Customer Discounts
           </TabsTrigger>
+          <TabsTrigger value="surveillance" className="gap-1.5">
+            <ShieldAlert className="h-3.5 w-3.5" /> Surveillance
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="indicator"><IndicatorConfigTab /></TabsContent>
         <TabsContent value="vehicle-types"><VehicleTypesTab /></TabsContent>
         <TabsContent value="items"><ItemsTab /></TabsContent>
         <TabsContent value="discounts"><DiscountsTab /></TabsContent>
+        <TabsContent value="surveillance"><SurveillanceTab /></TabsContent>
       </Tabs>
     </div>
   );

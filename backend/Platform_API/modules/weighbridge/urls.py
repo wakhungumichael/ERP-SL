@@ -26,4 +26,12 @@ urlpatterns = [
     path("vehicles/",                               views.VehicleListCreateView.as_view(),       name="wb-vehicles"),
     path("vehicles/<int:pk>/",                      views.VehicleDetailView.as_view(),           name="wb-vehicle-detail"),
     path("live-weight/",                            views.LiveWeightView.as_view(),              name="wb-live-weight"),
+    # ── Overweight Surveillance ───────────────────────────────────────────────
+    path("overweight-events/",                      views.OverweightEventListView.as_view(),              name="wb-overweight-events"),
+    path("overweight-config/<int:branch_pk>/",      views.OverweightConfigView.as_view(),                 name="wb-overweight-config"),
+    path("camera-configs/",                         views.CameraConfigListCreateView.as_view(),           name="wb-camera-configs"),
+    path("camera-configs/<int:pk>/",                views.CameraConfigDetailView.as_view(),               name="wb-camera-config-detail"),
+    path("surveillance-discrepancies/check/",       views.CheckDiscrepanciesView.as_view(),               name="wb-discrepancies-check"),
+    path("surveillance-discrepancies/",             views.WeighbridgeDiscrepancyListView.as_view(),       name="wb-discrepancies"),
+    path("surveillance-discrepancies/<int:pk>/",    views.WeighbridgeDiscrepancyDetailView.as_view(),     name="wb-discrepancy-detail"),
 ]

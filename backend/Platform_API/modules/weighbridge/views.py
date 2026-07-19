@@ -12,7 +12,11 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from SL_Weighbridge.models import Branch, Customer, IndicatorConfig, Item, Transaction, Vehicle, VehicleType
+from SL_Weighbridge.models import (
+    Branch, CameraConfig, Customer, IndicatorConfig, Item,
+    OverweightConfig, OverweightEvent, Transaction, Vehicle, VehicleType,
+    WeighbridgeDiscrepancy,
+)
 
 
 # ── Pagination ────────────────────────────────────────────────────────────────
@@ -444,6 +448,72 @@ class WorkflowContextView(APIView):
         })
 
 
+def _maybe_record_overweight_event(tx, user):
+    """
+    Create an OverweightEvent when tx's weight meets or exceeds the branch threshold.
+
+    Called synchronously after tx.save() inside CaptureWeightView.post().
+    All exceptions are caught by the caller — a surveillance failure must
+    never block the weighbridge flow.
+    """
+    from django.core.files.base import ContentFile
+    from django.utils import timezone as tz
+    from SL_Weighbridge.utils import capture_hikvision_snapshot
+
+    branch = getattr(tx, "branch", None)
+    if not branch:
+        return
+
+    try:
+        cfg = OverweightConfig.objects.get(branch=branch)
+    except OverweightConfig.DoesNotExist:
+        return
+
+    if not cfg.surveillance_enabled:
+        return
+
+    gross = int(tx.gross_weight or 0)
+    tare  = int(tx.tare_weight  or 0)
+
+    if tx.weight_type == "Second Weight":
+        weight_to_check = abs(gross - tare)
+    else:
+        weight_to_check = gross  # First Weight — compare raw gross
+
+    threshold = int(cfg.threshold_kg)
+    if weight_to_check < threshold:
+        return
+
+    event = OverweightEvent(
+        tenant=getattr(tx, "tenant", None),
+        branch=branch,
+        vehicle_plate=tx.vehicle.number_plate if tx.vehicle else "",
+        gross_weight=gross or None,
+        tare_weight=tare or None,
+        net_weight=weight_to_check,
+        threshold_at_capture=threshold,
+        operator=user if user.is_authenticated else None,
+        linked_transaction=tx,
+        discrepancy_raised=False,
+    )
+    event.save()
+
+    # Attempt camera snapshot for any active camera attached to this branch
+    try:
+        cam = CameraConfig.objects.filter(
+            branch=branch,
+            capture_on_overweight=True,
+            is_active=True,
+        ).first()
+        if cam:
+            img_bytes = capture_hikvision_snapshot(cam)
+            if img_bytes:
+                fname = f"ow_{event.id}_{tz.now().strftime('%Y%m%d_%H%M%S')}.jpg"
+                event.camera_image.save(fname, ContentFile(img_bytes), save=True)
+    except Exception:
+        pass
+
+
 class CaptureWeightView(APIView):
     """
     POST /api/commercial-weighbridge/transactions/capture-weight/
@@ -547,6 +617,12 @@ class CaptureWeightView(APIView):
 
             tx.manual_weight_capture = False
             tx.save()
+
+            # ── Overweight surveillance hook ───────────────────────────────────
+            try:
+                _maybe_record_overweight_event(tx, request.user)
+            except Exception:
+                pass
 
             # ── Auto-create draft invoice when a charge-bearing transaction completes ──
             # Only invoice the transaction that carries the actual charge (charge > 0).
@@ -1356,3 +1432,364 @@ class TransactionReceivePaymentView(APIView):
             "invoice_id":     invoice_id,
             "transaction":    TransactionSerializer(tx).data,
         })
+
+
+# ── Overweight Surveillance ───────────────────────────────────────────────────
+
+
+class _OverweightEventSerializer(serializers.ModelSerializer):
+    operator_name    = serializers.SerializerMethodField()
+    branch_name      = serializers.SerializerMethodField()
+    has_discrepancy  = serializers.SerializerMethodField()
+    discrepancy_id   = serializers.SerializerMethodField()
+
+    class Meta:
+        model = OverweightEvent
+        fields = [
+            "id", "tenant", "branch", "branch_name",
+            "vehicle_plate", "gross_weight", "tare_weight", "net_weight",
+            "threshold_at_capture", "recorded_at",
+            "operator", "operator_name",
+            "linked_transaction", "camera_image",
+            "discrepancy_raised", "has_discrepancy", "discrepancy_id",
+        ]
+
+    def get_operator_name(self, obj):
+        return obj.operator.get_full_name() or obj.operator.username if obj.operator else None
+
+    def get_branch_name(self, obj):
+        return obj.branch.name if obj.branch else None
+
+    def get_has_discrepancy(self, obj):
+        return hasattr(obj, "discrepancy")
+
+    def get_discrepancy_id(self, obj):
+        return obj.discrepancy.id if hasattr(obj, "discrepancy") else None
+
+
+class _WeighbridgeDiscrepancySerializer(serializers.ModelSerializer):
+    resolved_by_name  = serializers.SerializerMethodField()
+    branch_name       = serializers.SerializerMethodField()
+    vehicle_plate     = serializers.SerializerMethodField()
+    net_weight        = serializers.SerializerMethodField()
+    recorded_at       = serializers.SerializerMethodField()
+    camera_image      = serializers.SerializerMethodField()
+    linked_transaction= serializers.SerializerMethodField()
+
+    class Meta:
+        model = WeighbridgeDiscrepancy
+        fields = [
+            "id", "overweight_event", "tenant", "branch", "branch_name",
+            "vehicle_plate", "net_weight", "recorded_at", "camera_image",
+            "linked_transaction",
+            "resolution_status", "resolution_note",
+            "resolved_by", "resolved_by_name", "resolved_at",
+            "created_at", "updated_at",
+        ]
+        read_only_fields = [
+            "id", "overweight_event", "tenant", "branch",
+            "vehicle_plate", "net_weight", "recorded_at", "camera_image",
+            "linked_transaction", "resolved_by", "resolved_at",
+            "created_at", "updated_at",
+        ]
+
+    def get_resolved_by_name(self, obj):
+        return obj.resolved_by.get_full_name() or obj.resolved_by.username if obj.resolved_by else None
+
+    def get_branch_name(self, obj):
+        return obj.branch.name if obj.branch else None
+
+    def get_vehicle_plate(self, obj):
+        return obj.overweight_event.vehicle_plate if obj.overweight_event else None
+
+    def get_net_weight(self, obj):
+        return obj.overweight_event.net_weight if obj.overweight_event else None
+
+    def get_recorded_at(self, obj):
+        return obj.overweight_event.recorded_at.isoformat() if obj.overweight_event else None
+
+    def get_camera_image(self, obj):
+        try:
+            req = self.context.get("request")
+            img = obj.overweight_event.camera_image
+            if img and req:
+                return req.build_absolute_uri(img.url)
+            return img.url if img else None
+        except Exception:
+            return None
+
+    def get_linked_transaction(self, obj):
+        return obj.overweight_event.linked_transaction_id if obj.overweight_event else None
+
+
+class _OverweightConfigSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = OverweightConfig
+        fields = ["id", "branch", "threshold_kg", "grace_window_minutes", "surveillance_enabled"]
+
+
+class _CameraConfigSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CameraConfig
+        fields = [
+            "id", "branch", "name", "connection_type", "camera_type",
+            "ip_address", "port", "hikvision_channel",
+            "username", "other_parameters",
+            "capture_on_overweight", "is_active",
+        ]
+        extra_kwargs = {"password": {"write_only": True}}
+
+
+def _allowed_branch_ids(user):
+    """
+    Return a list of Branch PKs that *user* is permitted to access.
+
+    - Superuser          → all branch IDs (None signals global; we return a QS)
+    - Tenant user        → only branches belonging to their tenant
+    - No-profile user    → empty list (deny-all)
+
+    Returns a QuerySet of Branch PKs (safe to pass to __in= filters).
+    """
+    qs = _apply_tenant_filter(Branch.objects.all(), user, filter_field="tenant")
+    return qs.values_list("id", flat=True)
+
+
+class OverweightEventListView(generics.ListAPIView):
+    """
+    GET /api/commercial-weighbridge/overweight-events/
+    Query params: branch_id, date_from, date_to, discrepancy_raised
+    """
+    serializer_class = _OverweightEventSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        qs = OverweightEvent.objects.select_related(
+            "branch", "operator", "linked_transaction",
+        ).prefetch_related("discrepancy").order_by("-recorded_at")
+
+        # Tenant isolation — use _apply_tenant_filter (handles _NO_PROFILE → none())
+        qs = _apply_tenant_filter(qs, self.request.user)
+
+        p = self.request.query_params
+        if bid := p.get("branch_id"):
+            qs = qs.filter(branch_id=bid)
+        if df := p.get("date_from"):
+            qs = qs.filter(recorded_at__date__gte=df)
+        if dt := p.get("date_to"):
+            qs = qs.filter(recorded_at__date__lte=dt)
+        if (dr := p.get("discrepancy_raised")) is not None:
+            qs = qs.filter(discrepancy_raised=(dr.lower() == "true"))
+        return qs
+
+
+class OverweightConfigView(generics.RetrieveUpdateAPIView):
+    """
+    GET / PUT  /api/commercial-weighbridge/overweight-config/<branch_pk>/
+    Creates the config automatically on first GET if it doesn't exist.
+    Enforces branch-ownership: tenant users may only access branches in their tenant.
+    """
+    serializer_class = _OverweightConfigSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_object(self):
+        from rest_framework.exceptions import NotFound
+        branch_pk = self.kwargs["branch_pk"]
+
+        # Validate that the branch belongs to this user's tenant
+        allowed = _allowed_branch_ids(self.request.user)
+        if not Branch.objects.filter(pk=branch_pk, id__in=allowed).exists():
+            raise NotFound("Branch not found or access denied.")
+
+        obj, _ = OverweightConfig.objects.get_or_create(
+            branch_id=branch_pk,
+            defaults={"threshold_kg": 1000, "grace_window_minutes": 30, "surveillance_enabled": True},
+        )
+        return obj
+
+
+class CameraConfigListCreateView(generics.ListCreateAPIView):
+    """
+    GET / POST  /api/commercial-weighbridge/camera-configs/
+    Supports ?branch_id= filter.
+    Tenant-scoped: only cameras attached to branches in the user's tenant are visible.
+    """
+    serializer_class = _CameraConfigSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        allowed = _allowed_branch_ids(self.request.user)
+        qs = CameraConfig.objects.select_related("branch").filter(
+            branch_id__in=allowed,
+        ).order_by("id")
+        if bid := self.request.query_params.get("branch_id"):
+            # Further narrow to requested branch (already restricted to allowed set)
+            qs = qs.filter(branch_id=bid)
+        return qs
+
+    def perform_create(self, serializer):
+        from rest_framework.exceptions import PermissionDenied
+        branch = serializer.validated_data.get("branch")
+        if branch:
+            allowed = _allowed_branch_ids(self.request.user)
+            if not Branch.objects.filter(pk=branch.pk, id__in=allowed).exists():
+                raise PermissionDenied("Branch not found or access denied.")
+        serializer.save()
+
+
+class CameraConfigDetailView(generics.RetrieveUpdateDestroyAPIView):
+    """
+    GET / PATCH / DELETE  /api/commercial-weighbridge/camera-configs/<pk>/
+    Tenant-scoped: users may only touch cameras for branches in their tenant.
+    """
+    serializer_class = _CameraConfigSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        allowed = _allowed_branch_ids(self.request.user)
+        return CameraConfig.objects.filter(branch_id__in=allowed)
+
+
+class WeighbridgeDiscrepancyListView(generics.ListAPIView):
+    """
+    GET /api/commercial-weighbridge/surveillance-discrepancies/
+    Query params: branch_id, resolution_status, date_from, date_to
+    """
+    serializer_class = _WeighbridgeDiscrepancySerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        qs = WeighbridgeDiscrepancy.objects.select_related(
+            "overweight_event__operator", "branch", "resolved_by",
+        ).order_by("-created_at")
+
+        # Tenant isolation — _apply_tenant_filter handles _NO_PROFILE → none()
+        qs = _apply_tenant_filter(qs, self.request.user)
+
+        p = self.request.query_params
+        if bid := p.get("branch_id"):
+            qs = qs.filter(branch_id=bid)
+        if rs := p.get("resolution_status"):
+            qs = qs.filter(resolution_status=rs)
+        if df := p.get("date_from"):
+            qs = qs.filter(created_at__date__gte=df)
+        if dt := p.get("date_to"):
+            qs = qs.filter(created_at__date__lte=dt)
+        return qs
+
+
+class WeighbridgeDiscrepancyDetailView(APIView):
+    """
+    GET / PATCH /api/commercial-weighbridge/surveillance-discrepancies/<pk>/
+    Body (PATCH): { resolution_status, resolution_note }
+    Resolving (status=resolved) stamps resolved_by and resolved_at.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def _get_obj(self, pk, user):
+        qs = WeighbridgeDiscrepancy.objects.select_related("overweight_event", "branch", "resolved_by")
+        qs = _apply_tenant_filter(qs, user)
+        try:
+            return qs.get(pk=pk)
+        except WeighbridgeDiscrepancy.DoesNotExist:
+            return None
+
+    def get(self, request, pk):
+        obj = self._get_obj(pk, request.user)
+        if not obj:
+            return Response({"error": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        return Response(_WeighbridgeDiscrepancySerializer(obj, context={"request": request}).data)
+
+    def patch(self, request, pk):
+        obj = self._get_obj(pk, request.user)
+        if not obj:
+            return Response({"error": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        new_status = request.data.get("resolution_status", obj.resolution_status)
+        note       = request.data.get("resolution_note", obj.resolution_note)
+
+        if new_status not in ("unresolved", "reviewed", "resolved"):
+            return Response({"error": "Invalid resolution_status."}, status=status.HTTP_400_BAD_REQUEST)
+
+        obj.resolution_status = new_status
+        obj.resolution_note   = note
+
+        if new_status == "resolved" and not obj.resolved_at:
+            obj.resolved_by = request.user
+            obj.resolved_at = timezone.now()
+
+        obj.save()
+        return Response(_WeighbridgeDiscrepancySerializer(obj, context={"request": request}).data)
+
+
+def _build_discrepancy_eligible_qs(user):
+    """
+    Return an OverweightEvent queryset of events eligible to be promoted to
+    discrepancies, scoped to *user*'s tenant.
+
+    An event is eligible when discrepancy_raised=False AND the event cannot be
+    accounted for by a completed, paid transaction — i.e.:
+      • linked_transaction is NULL  (no transaction at all), OR
+      • linked_transaction exists but is NOT (status=Completed AND payment_status=Paid)
+
+    Using exclude() for the "fully resolved" case is the clearest expression:
+    exclude everything that IS both Completed AND Paid.
+    """
+    qs = OverweightEvent.objects.filter(discrepancy_raised=False).exclude(
+        linked_transaction__status="Completed",
+        linked_transaction__payment_status="Paid",
+    )
+    return _apply_tenant_filter(qs, user)
+
+
+def _run_discrepancy_sweep(qs):
+    """
+    Shared sweep logic: iterate eligible OverweightEvents, check each event's
+    grace window, and create WeighbridgeDiscrepancy records for those that have
+    expired.  Returns the count of newly created discrepancy records.
+    """
+    from datetime import timedelta
+    from django.utils import timezone as tz
+
+    now     = tz.now()
+    created = 0
+
+    for event in qs.select_related("branch", "tenant"):
+        grace_minutes = 30
+        if event.branch_id:
+            try:
+                cfg = OverweightConfig.objects.get(branch_id=event.branch_id)
+                grace_minutes = cfg.grace_window_minutes
+            except OverweightConfig.DoesNotExist:
+                pass
+
+        if now < event.recorded_at + timedelta(minutes=grace_minutes):
+            continue  # Still within grace window
+
+        _, new = WeighbridgeDiscrepancy.objects.get_or_create(
+            overweight_event=event,
+            defaults={
+                "tenant": event.tenant,
+                "branch": event.branch,
+                "resolution_status": "unresolved",
+            },
+        )
+        event.discrepancy_raised = True
+        event.save(update_fields=["discrepancy_raised", "updated_at"])
+        if new:
+            created += 1
+
+    return created
+
+
+class CheckDiscrepanciesView(APIView):
+    """
+    POST /api/commercial-weighbridge/surveillance-discrepancies/check/
+    Runs the discrepancy sweep for the requesting user's tenant.
+    Returns { discrepancies_raised: <int> }.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        qs      = _build_discrepancy_eligible_qs(request.user)
+        created = _run_discrepancy_sweep(qs)
+        return Response({"discrepancies_raised": created})

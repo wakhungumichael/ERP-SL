@@ -60,7 +60,9 @@ export const STATIC_NAV: NavSection[] = [
       { key: 'customers',      title: 'Customers',        path: '/weighbridge/customers',          roles: OPS },
       { key: 'vehicles',       title: 'Vehicles',         path: '/weighbridge/vehicles',           roles: OPS },
       { key: 'live',           title: 'Live Weight',      path: '/weighbridge/live',               roles: OPS },
-      { key: 'settings',       title: 'Settings',         path: '/weighbridge/settings',           roles: ADMIN_UP },
+      { key: 'settings',        title: 'Settings',          path: '/weighbridge/settings',           roles: ADMIN_UP },
+      { key: 'overweight-log',  title: 'Overweight Log',    path: '/weighbridge/overweight-log',     roles: ADMIN_UP },
+      { key: 'discrepancies',   title: 'Discrepancies',     path: '/weighbridge/discrepancies',      roles: FINANCE_UP },
     ],
   },
   {

@@ -438,16 +438,29 @@ class CameraConfig(models.Model):
         ('Cable', 'Cable'),
         ('Other', 'Other'),
     ]
+    CAMERA_TYPES = [
+        ('hikvision', 'HikVision (ISAPI)'),
+        ('generic_http', 'Generic HTTP Snapshot'),
+    ]
 
+    branch = models.ForeignKey(
+        Branch, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='camera_configs',
+    )
+    name = models.CharField(max_length=100, blank=True, default='')
     connection_type = models.CharField(max_length=10, choices=CONNECTION_TYPES)
-    ip_address = models.CharField(max_length=15, blank=True, null=True)
-    port = models.IntegerField(blank=True, null=True)
+    camera_type = models.CharField(max_length=20, choices=CAMERA_TYPES, default='hikvision')
+    ip_address = models.CharField(max_length=64, blank=True, null=True)
+    port = models.IntegerField(blank=True, null=True, default=80)
+    hikvision_channel = models.IntegerField(default=1)
     other_parameters = models.TextField(blank=True, null=True)
     username = models.CharField(max_length=100, blank=True, null=True)
     password = models.CharField(max_length=100, blank=True, null=True)
+    capture_on_overweight = models.BooleanField(default=False)
+    is_active = models.BooleanField(default=True)
 
     def __str__(self):
-        return f"{self.connection_type} - {self.ip_address or 'No IP'}"
+        return f"{self.name or self.connection_type} - {self.ip_address or 'No IP'}"
     
 
 
@@ -485,8 +498,7 @@ class VehiclePresence(models.Model):
         super().save(*args, **kwargs)
 
 
-# DiscrepancyReport Model
-
+# DiscrepancyReport Model (legacy — kept for backward compat)
 
 
 class DiscrepancyReport(models.Model):
@@ -497,6 +509,121 @@ class DiscrepancyReport(models.Model):
 
     def __str__(self):
         return f"Discrepancy detected on {self.timestamp} with weight {self.detected_weight}"
+
+
+# ── Overweight Surveillance ──────────────────────────────────────────────────
+
+
+class OverweightConfig(models.Model):
+    """Per-branch configuration for overweight surveillance."""
+    branch = models.OneToOneField(
+        Branch, on_delete=models.CASCADE, related_name='overweight_config',
+    )
+    threshold_kg = models.DecimalField(
+        max_digits=10, decimal_places=2, default=1000,
+        help_text="Net weight (kg) at or above which an OverweightEvent is created.",
+    )
+    grace_window_minutes = models.IntegerField(
+        default=30,
+        help_text="Minutes after an OverweightEvent before it is promoted to a discrepancy "
+                  "if no matching transaction is found.",
+    )
+    surveillance_enabled = models.BooleanField(
+        default=True,
+        help_text="Master switch — disabling this stops all overweight event creation for this branch.",
+    )
+
+    def __str__(self):
+        return f"Overweight config — {self.branch.name} (threshold: {self.threshold_kg} kg)"
+
+
+class OverweightEvent(models.Model):
+    """Created whenever a weight reading meets or exceeds the branch threshold."""
+    tenant = models.ForeignKey(
+        'Platform_Core.Tenant', on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='overweight_events',
+    )
+    branch = models.ForeignKey(
+        Branch, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='overweight_events',
+    )
+    vehicle_plate = models.CharField(
+        max_length=20, blank=True, default='',
+        help_text="Number plate at the time of capture (may be blank if no transaction was open).",
+    )
+    gross_weight = models.IntegerField(null=True, blank=True)
+    tare_weight  = models.IntegerField(null=True, blank=True)
+    net_weight   = models.IntegerField(
+        help_text="The weight value that triggered this event.",
+    )
+    threshold_at_capture = models.IntegerField(
+        help_text="Branch threshold (kg) in force when this event was created.",
+    )
+    recorded_at = models.DateTimeField(auto_now_add=True)
+    operator = models.ForeignKey(
+        User, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='overweight_events_triggered',
+    )
+    linked_transaction = models.ForeignKey(
+        'Transaction', on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='overweight_events',
+    )
+    camera_image = models.ImageField(
+        upload_to='overweight_images/', blank=True, null=True,
+    )
+    discrepancy_raised = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-recorded_at']
+
+    def __str__(self):
+        return (
+            f"OverweightEvent {self.net_weight} kg "
+            f"(plate: {self.vehicle_plate or '?'}, {self.recorded_at})"
+        )
+
+
+class WeighbridgeDiscrepancy(models.Model):
+    """Raised when an OverweightEvent has no matching completed transaction after the grace window."""
+    STATUS_CHOICES = [
+        ('unresolved', 'Unresolved'),
+        ('reviewed',   'Reviewed'),
+        ('resolved',   'Resolved'),
+    ]
+    overweight_event = models.OneToOneField(
+        OverweightEvent, on_delete=models.CASCADE,
+        related_name='discrepancy',
+    )
+    tenant = models.ForeignKey(
+        'Platform_Core.Tenant', on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='weighbridge_discrepancies',
+    )
+    branch = models.ForeignKey(
+        Branch, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='weighbridge_discrepancies',
+    )
+    resolution_status = models.CharField(
+        max_length=20, choices=STATUS_CHOICES, default='unresolved',
+    )
+    resolution_note = models.TextField(blank=True, default='')
+    resolved_by = models.ForeignKey(
+        User, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='resolved_discrepancies',
+    )
+    resolved_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name_plural = 'Weighbridge discrepancies'
+
+    def __str__(self):
+        return (
+            f"Discrepancy — {self.overweight_event} [{self.resolution_status}]"
+        )
     
 
 # INVOICE MODULE.py
