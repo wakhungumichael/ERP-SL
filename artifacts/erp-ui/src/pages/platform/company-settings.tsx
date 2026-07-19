@@ -11,14 +11,22 @@ import { useToast } from '@/hooks/use-toast';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
-import { Building2, Mail, FileText, GitBranch, Plus, Pencil, RefreshCw } from 'lucide-react';
+import { Building2, Mail, FileText, GitBranch, Plus, Pencil, RefreshCw, Users, Copy, Eye, EyeOff, UserCheck, UserX } from 'lucide-react';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from '@/components/ui/dialog';
+import { Badge } from '@/components/ui/badge';
 
 const BASE = '/api/platform';
 const CURRENCIES = ['KES', 'USD', 'EUR', 'GBP', 'UGX', 'TZS'];
 const TIMEZONES = ['Africa/Nairobi', 'Africa/Kampala', 'Africa/Dar_es_Salaam', 'Africa/Kigali', 'UTC'];
+
+// Roles a tenant admin may assign (excludes privileged platform roles)
+const ASSIGNABLE_ROLES = [
+  { value: 'Tenant Admin', label: 'Tenant Admin' },
+  { value: 'Finance', label: 'Finance' },
+  { value: 'Operator', label: 'Operator' },
+];
 
 function api(token: string, path: string, method = 'GET', body?: object) {
   return fetch(`${BASE}${path}`, {
@@ -74,6 +82,292 @@ function BranchDialog({ tenantId, branch, open, onClose }: { tenantId: number; b
     </Dialog>
   );
 }
+
+// ── Invite Dialog ──────────────────────────────────────────────────────────────
+
+interface InviteResult {
+  user: any;
+  temp_password: string;
+}
+
+function InviteDialog({ tenantId, branches, open, onClose, onInvited }: {
+  tenantId: number;
+  branches: any[];
+  open: boolean;
+  onClose: () => void;
+  onInvited: (result: InviteResult) => void;
+}) {
+  const { token } = useAuth();
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const [form, setForm] = useState({
+    first_name: '',
+    last_name: '',
+    email: '',
+    role_group: '',
+    job_title: '',
+    branch_id: '',
+  });
+
+  const mutation = useMutation({
+    mutationFn: () => {
+      const payload: any = {
+        first_name: form.first_name,
+        last_name: form.last_name,
+        email: form.email,
+      };
+      if (form.role_group) payload.role_group = form.role_group;
+      if (form.job_title) payload.job_title = form.job_title;
+      if (form.branch_id) payload.branch_id = parseInt(form.branch_id);
+      return api(token!, `/tenants/${tenantId}/users/invite/`, 'POST', payload);
+    },
+    onSuccess: (r) => {
+      qc.invalidateQueries({ queryKey: ['my-team', tenantId] });
+      const data = r?.data ?? r;
+      onInvited({ user: data.user, temp_password: data.temp_password });
+      onClose();
+    },
+    onError: (e: any) => toast({ title: 'Invite failed', description: e.message, variant: 'destructive' }),
+  });
+
+  const f = (k: string) => (e: React.ChangeEvent<HTMLInputElement>) => setForm(p => ({ ...p, [k]: e.target.value }));
+  const valid = form.first_name.trim() && form.email.trim();
+
+  return (
+    <Dialog open={open} onOpenChange={onClose}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader><DialogTitle>Invite Team Member</DialogTitle></DialogHeader>
+        <div className="space-y-3 py-2">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label>First Name *</Label>
+              <Input value={form.first_name} onChange={f('first_name')} placeholder="Jane" />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Last Name</Label>
+              <Input value={form.last_name} onChange={f('last_name')} placeholder="Doe" />
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Email *</Label>
+            <Input value={form.email} onChange={f('email')} type="email" placeholder="jane@company.com" />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Role</Label>
+            <Select value={form.role_group} onValueChange={v => setForm(p => ({ ...p, role_group: v }))}>
+              <SelectTrigger><SelectValue placeholder="Select a role…" /></SelectTrigger>
+              <SelectContent>
+                {ASSIGNABLE_ROLES.map(r => (
+                  <SelectItem key={r.value} value={r.value}>{r.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Job Title</Label>
+            <Input value={form.job_title} onChange={f('job_title')} placeholder="e.g. Weighbridge Operator" />
+          </div>
+          {branches.length > 0 && (
+            <div className="space-y-1.5">
+              <Label>Branch</Label>
+              <Select value={form.branch_id} onValueChange={v => setForm(p => ({ ...p, branch_id: v }))}>
+                <SelectTrigger><SelectValue placeholder="Any branch" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="">Any branch</SelectItem>
+                  {branches.map((b: any) => (
+                    <SelectItem key={b.id} value={String(b.id)}>{b.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button onClick={() => mutation.mutate()} disabled={!valid || mutation.isPending}>
+            {mutation.isPending ? 'Inviting…' : 'Send Invite'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ── Temp Password Banner ───────────────────────────────────────────────────────
+
+function TempPasswordBanner({ result, onDismiss }: { result: InviteResult; onDismiss: () => void }) {
+  const [visible, setVisible] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const { toast } = useToast();
+
+  const copy = () => {
+    navigator.clipboard.writeText(result.temp_password).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
+
+  const name = [result.user?.first_name, result.user?.last_name].filter(Boolean).join(' ') || result.user?.username || 'User';
+
+  return (
+    <Card className="border-emerald-300 bg-emerald-50 dark:bg-emerald-950/20 dark:border-emerald-800">
+      <CardContent className="p-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold text-emerald-800 dark:text-emerald-300">
+              {name} invited — share their temporary password
+            </p>
+            <p className="text-xs text-emerald-700 dark:text-emerald-400 mt-0.5">
+              Username: <span className="font-mono font-semibold">{result.user?.username}</span>
+            </p>
+            <div className="flex items-center gap-2 mt-2">
+              <code className="flex-1 truncate rounded bg-emerald-100 dark:bg-emerald-900/40 px-2 py-1 text-sm font-mono text-emerald-900 dark:text-emerald-200 border border-emerald-200 dark:border-emerald-700">
+                {visible ? result.temp_password : '••••••••••••'}
+              </code>
+              <button
+                onClick={() => setVisible(v => !v)}
+                className="text-emerald-700 dark:text-emerald-400 hover:text-emerald-900 dark:hover:text-emerald-200 p-1"
+                title={visible ? 'Hide' : 'Show'}
+              >
+                {visible ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+              <button
+                onClick={copy}
+                className="text-emerald-700 dark:text-emerald-400 hover:text-emerald-900 dark:hover:text-emerald-200 p-1"
+                title="Copy password"
+              >
+                <Copy className="h-4 w-4" />
+              </button>
+            </div>
+            {copied && <p className="text-xs text-emerald-600 mt-1">Copied to clipboard!</p>}
+            <p className="text-xs text-muted-foreground mt-1.5">
+              This password is shown only once. Ask {name} to change it immediately after first login.
+            </p>
+          </div>
+          <Button size="sm" variant="ghost" className="h-6 w-6 p-0 shrink-0 text-emerald-700" onClick={onDismiss}>✕</Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ── Team Tab ───────────────────────────────────────────────────────────────────
+
+function TeamTab({ tenantId, branches }: { tenantId: number; branches: any[] }) {
+  const { token } = useAuth();
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const [inviteOpen, setInviteOpen] = useState(false);
+  const [lastInvite, setLastInvite] = useState<InviteResult | null>(null);
+
+  const { data: teamData, isLoading } = useQuery({
+    queryKey: ['my-team', tenantId],
+    queryFn: () => api(token!, `/tenants/${tenantId}/users/`),
+    enabled: !!tenantId,
+  });
+
+  const users: any[] = teamData?.data?.users ?? teamData?.users ?? [];
+
+  const toggleActive = useMutation({
+    mutationFn: ({ userId, isActive }: { userId: number; isActive: boolean }) =>
+      api(token!, `/users/${userId}/update/`, 'PATCH', { is_active: isActive }),
+    onSuccess: (_, vars) => {
+      toast({ title: vars.isActive ? 'User reactivated' : 'User deactivated' });
+      qc.invalidateQueries({ queryKey: ['my-team', tenantId] });
+    },
+    onError: (e: any) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
+  });
+
+  const getRoleLabel = (user: any) => {
+    const groups: any[] = user.groups ?? [];
+    if (!groups.length) return null;
+    return groups.map((g: any) => (typeof g === 'string' ? g : g.name)).join(', ');
+  };
+
+  return (
+    <div className="space-y-4">
+      {lastInvite && (
+        <TempPasswordBanner result={lastInvite} onDismiss={() => setLastInvite(null)} />
+      )}
+
+      <div className="flex justify-between items-center">
+        <p className="text-sm text-muted-foreground">
+          {isLoading ? 'Loading…' : `${users.length} team member${users.length !== 1 ? 's' : ''}`}
+        </p>
+        <Button size="sm" onClick={() => setInviteOpen(true)} className="gap-1.5">
+          <Plus className="h-3.5 w-3.5" /> Invite Member
+        </Button>
+      </div>
+
+      {isLoading ? (
+        <Card><CardContent className="p-8 text-center text-muted-foreground text-sm">Loading team…</CardContent></Card>
+      ) : users.length === 0 ? (
+        <Card><CardContent className="p-8 text-center text-muted-foreground text-sm">No team members yet. Invite your first member.</CardContent></Card>
+      ) : (
+        <div className="space-y-2">
+          {users.map((u: any) => {
+            const fullName = [u.first_name, u.last_name].filter(Boolean).join(' ') || u.username;
+            const roleLabel = getRoleLabel(u);
+            const isActive = u.is_active ?? true;
+            const isSelf = u.id === (token ? undefined : undefined); // we don't block self in UI, backend handles it
+            return (
+              <Card key={u.id}>
+                <CardContent className="p-4 flex items-center justify-between gap-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className="font-semibold text-sm">{fullName}</p>
+                      {roleLabel && (
+                        <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4">
+                          {roleLabel}
+                        </Badge>
+                      )}
+                      {!isActive && (
+                        <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 text-muted-foreground">
+                          Inactive
+                        </Badge>
+                      )}
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      {[u.email, u.username !== u.email ? `@${u.username}` : null, u.tenant_profile?.job_title].filter(Boolean).join(' · ')}
+                    </p>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className={`gap-1.5 text-xs shrink-0 ${isActive ? 'text-destructive hover:text-destructive' : 'text-emerald-600 hover:text-emerald-700'}`}
+                    disabled={toggleActive.isPending}
+                    onClick={() => toggleActive.mutate({ userId: u.id, isActive: !isActive })}
+                    title={isActive ? 'Deactivate user' : 'Reactivate user'}
+                  >
+                    {isActive
+                      ? <><UserX className="h-3.5 w-3.5" /> Deactivate</>
+                      : <><UserCheck className="h-3.5 w-3.5" /> Reactivate</>
+                    }
+                  </Button>
+                </CardContent>
+              </Card>
+            );
+          })}
+        </div>
+      )}
+
+      {inviteOpen && (
+        <InviteDialog
+          tenantId={tenantId}
+          branches={branches}
+          open={inviteOpen}
+          onClose={() => setInviteOpen(false)}
+          onInvited={(result) => {
+            setLastInvite(result);
+            setInviteOpen(false);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ── Main Page ──────────────────────────────────────────────────────────────────
 
 export default function CompanySettings() {
   const { token, user } = useAuth();
@@ -156,6 +450,7 @@ export default function CompanySettings() {
           <TabsTrigger value="email" className="gap-1.5"><Mail className="h-3.5 w-3.5" /> Email</TabsTrigger>
           <TabsTrigger value="invoicing" className="gap-1.5"><FileText className="h-3.5 w-3.5" /> Invoicing</TabsTrigger>
           <TabsTrigger value="branches" className="gap-1.5"><GitBranch className="h-3.5 w-3.5" /> Branches</TabsTrigger>
+          <TabsTrigger value="team" className="gap-1.5"><Users className="h-3.5 w-3.5" /> Team</TabsTrigger>
         </TabsList>
 
         {/* ── Company Tab ────────────────────────────────────────────────── */}
@@ -322,6 +617,11 @@ export default function CompanySettings() {
               ))}
             </div>
           )}
+        </TabsContent>
+
+        {/* ── Team Tab ──────────────────────────────────────────────────── */}
+        <TabsContent value="team" className="mt-6">
+          <TeamTab tenantId={tenantId} branches={branches} />
         </TabsContent>
       </Tabs>
 
