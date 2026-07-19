@@ -831,7 +831,7 @@ export default function Roles() {
           <AlertDialogHeader>
             <AlertDialogTitle>Delete "{deleteTarget?.name}"?</AlertDialogTitle>
             <AlertDialogDescription>
-              This will remove the role and revoke it from all {memberCount(deleteTarget!)} member{memberCount(deleteTarget!) !== 1 ? 's' : ''}.
+              This will remove the role and revoke it from all {deleteTarget ? memberCount(deleteTarget) : 0} member{deleteTarget && memberCount(deleteTarget) !== 1 ? 's' : ''}.
               This cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
