@@ -583,9 +583,17 @@ def provision_tenant(request):
         if not data.get(field):
             return error_response(f"'{field}' is required.", status_code=status.HTTP_400_BAD_REQUEST)
 
+    # Guard duplicate subdomain before entering the atomic block so that an
+    # IntegrityError from the unique constraint never surfaces as a 500.
+    subdomain = data.get("subdomain") or None  # treat "" the same as absent
+    if subdomain and Tenant.objects.filter(subdomain=subdomain).exists():
+        return error_response(
+            f"The subdomain '{subdomain}' is already taken. Please choose a different one.",
+            status_code=status.HTTP_400_BAD_REQUEST,
+        )
+
     with transaction.atomic():
         # Create tenant
-        subdomain = data.get("subdomain") or None  # never pass "" — unique constraint is on non-null values
         tenant_serializer = TenantSerializer(data={
             "name": data["name"],
             "legal_name": data.get("legal_name", ""),
