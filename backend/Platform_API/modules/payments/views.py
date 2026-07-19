@@ -306,7 +306,7 @@ class IssueInvoiceView(APIView):
         if not HAS_PAYMENT_MODELS:
             return Response({"error": "Not found."}, status=status.HTTP_404_NOT_FOUND)
         try:
-            inv = Invoice.objects.get(pk=pk)
+            inv = Invoice.objects.select_related("customer").get(pk=pk)
         except Invoice.DoesNotExist:
             return Response({"error": "Invoice not found."}, status=status.HTTP_404_NOT_FOUND)
         if inv.status not in ("draft", "Draft", "Pending"):
@@ -319,6 +319,78 @@ class IssueInvoiceView(APIView):
         if not inv.due_date:
             inv.due_date = (timezone.now() + timedelta(days=30)).date()
         inv.save(update_fields=["status", "issued_at", "due_date"])
+
+        # ── Email notification ────────────────────────────────────────────────
+        # Send only when the customer has an email address. A missing/
+        # misconfigured SMTP setup must never break invoice issuance.
+        customer = getattr(inv, "customer", None)
+        customer_email = getattr(customer, "email", None) if customer else None
+        if customer_email:
+            _email_success = False
+            _email_failure = None
+            try:
+                from django.core.mail import EmailMultiAlternatives
+                from django.template.loader import render_to_string
+                from django.conf import settings
+
+                invoice_number = inv.invoice_number or f"INV-{inv.id:04d}"
+                platform_name  = getattr(settings, "PLATFORM_NAME", "SL-ERP Platform")
+                inv_currency   = inv.currency or "KES"
+                due_date_str   = str(inv.due_date) if inv.due_date else "30 days from today"
+                customer_name  = getattr(customer, "name", "Customer")
+
+                subject = f"Invoice {invoice_number} — Payment Due"
+
+                plain_body = (
+                    f"Dear {customer_name},\n\n"
+                    f"Invoice {invoice_number} has been issued for your account.\n\n"
+                    f"Total amount due: {inv_currency} {float(inv.total_amount or 0):,.2f}\n"
+                    f"Due date: {due_date_str}\n\n"
+                    f"Please arrange payment by the due date. Contact us if you have any questions.\n\n"
+                    f"— {platform_name}"
+                )
+
+                html_body = render_to_string("emails/invoice_issued.html", {
+                    "customer_name":  customer_name,
+                    "invoice_number": invoice_number,
+                    "total_amount":   f"{float(inv.total_amount or 0):,.2f}",
+                    "currency":       inv_currency,
+                    "due_date":       due_date_str,
+                    "platform_name":  platform_name,
+                })
+
+                msg = EmailMultiAlternatives(
+                    subject=subject,
+                    body=plain_body,
+                    from_email=settings.DEFAULT_FROM_EMAIL,
+                    to=[customer_email],
+                )
+                msg.attach_alternative(html_body, "text/html")
+                msg.send(fail_silently=False)
+                _email_success = True
+                logger.info(
+                    "Invoice issued email sent to %s for invoice %s",
+                    customer_email, invoice_number,
+                )
+            except Exception as exc:
+                # Log the failure but never surface it as an API error
+                _email_failure = str(exc)
+                logger.warning(
+                    "Failed to send invoice issued email to %s for invoice %s: %s",
+                    customer_email, inv.invoice_number or inv.id, exc,
+                )
+            # ── Persist email send result ──────────────────────────────────────
+            try:
+                if InvoiceEmailLog is not None:
+                    InvoiceEmailLog.objects.create(
+                        invoice=inv,
+                        recipient=customer_email,
+                        success=_email_success,
+                        failure_reason=_email_failure,
+                    )
+            except Exception as log_exc:
+                logger.warning("Could not write InvoiceEmailLog for invoice %s: %s", inv.id, log_exc)
+
         return Response(_serialize_invoice(inv))
 
 
