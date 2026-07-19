@@ -365,3 +365,54 @@ class IssueInvoiceEmailTests(TestCase):
             response.status_code, 200,
             "API must return 200 even when render_to_string raises TemplateDoesNotExist.",
         )
+
+    # ── test 6: email log write failure is survivable ─────────────────────────
+
+    def test_api_returns_200_when_email_log_write_fails(self):
+        """
+        If InvoiceEmailLog.objects.create raises a DatabaseError (e.g. a DB
+        constraint violation), the API must still return 200.  The log-write
+        failure must never propagate as an HTTP error — the invoice is already
+        issued and the DatabaseError guard in the view must absorb it silently.
+        """
+        from unittest.mock import patch
+        from django.db import DatabaseError
+
+        customer = _make_customer("Patricia Ochieng", "patricia.ochieng@example.com")
+        inv = _make_draft_invoice(customer)
+
+        with patch(
+            "SL_Weighbridge.models.InvoiceEmailLog.objects.create",
+            side_effect=DatabaseError("DB constraint violation"),
+        ):
+            response = self._post_issue(inv.pk)
+
+        self.assertEqual(
+            response.status_code, 200,
+            "API must return 200 even when the email log write raises a DatabaseError.",
+        )
+
+    def test_warning_logged_when_email_log_write_fails(self):
+        """
+        When InvoiceEmailLog.objects.create raises a DatabaseError, the view
+        must emit a WARNING-level log message containing
+        'Could not write InvoiceEmailLog' so that operators can diagnose a
+        missing audit trail without the failure ever becoming an HTTP error.
+        """
+        from unittest.mock import patch
+        from django.db import DatabaseError
+
+        customer = _make_customer("Queen Wangui", "queen.wangui@example.com")
+        inv = _make_draft_invoice(customer)
+
+        with patch(
+            "SL_Weighbridge.models.InvoiceEmailLog.objects.create",
+            side_effect=DatabaseError("DB constraint violation"),
+        ), self.assertLogs("Platform_API.modules.payments.views", level="WARNING") as log_ctx:
+            response = self._post_issue(inv.pk)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(
+            any("Could not write InvoiceEmailLog" in msg for msg in log_ctx.output),
+            f"Expected a 'Could not write InvoiceEmailLog' warning in logs, got: {log_ctx.output}",
+        )
