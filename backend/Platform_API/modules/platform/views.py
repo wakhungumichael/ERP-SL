@@ -4,6 +4,7 @@ import string
 from django.contrib.auth.models import Group, Permission, User
 from django.contrib.auth import logout
 from django.conf import settings
+from django.db import transaction
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
 from rest_framework import generics
@@ -582,68 +583,69 @@ def provision_tenant(request):
         if not data.get(field):
             return error_response(f"'{field}' is required.", status_code=status.HTTP_400_BAD_REQUEST)
 
-    # Create tenant
-    subdomain = data.get("subdomain") or None  # never pass "" — unique constraint is on non-null values
-    tenant_serializer = TenantSerializer(data={
-        "name": data["name"],
-        "legal_name": data.get("legal_name", ""),
-        "subdomain": subdomain,
-        "contact_email": data["contact_email"],
-        "contact_phone": data.get("contact_phone", ""),
-        "status": "active",
-        "is_active": True,
-    })
-    tenant_serializer.is_valid(raise_exception=True)
-    tenant = tenant_serializer.save()
+    with transaction.atomic():
+        # Create tenant
+        subdomain = data.get("subdomain") or None  # never pass "" — unique constraint is on non-null values
+        tenant_serializer = TenantSerializer(data={
+            "name": data["name"],
+            "legal_name": data.get("legal_name", ""),
+            "subdomain": subdomain,
+            "contact_email": data["contact_email"],
+            "contact_phone": data.get("contact_phone", ""),
+            "status": "active",
+            "is_active": True,
+        })
+        tenant_serializer.is_valid(raise_exception=True)
+        tenant = tenant_serializer.save()
 
-    # Create admin user
-    base_username = data["admin_email"].split("@")[0].lower().replace(".", "_")
-    username = base_username
-    counter = 1
-    while User.objects.filter(username=username).exists():
-        username = f"{base_username}{counter}"
-        counter += 1
+        # Create admin user
+        base_username = data["admin_email"].split("@")[0].lower().replace(".", "_")
+        username = base_username
+        counter = 1
+        while User.objects.filter(username=username).exists():
+            username = f"{base_username}{counter}"
+            counter += 1
 
-    temp_password = _gen_password(12)
-    admin_user = User.objects.create_user(
-        username=username,
-        email=data["admin_email"],
-        first_name=data["admin_first_name"],
-        last_name=data["admin_last_name"],
-        password=temp_password,
-        is_active=True,
-        is_staff=False,   # Tenant admins are NOT platform/django-admin staff
-        is_superuser=False,
-    )
+        temp_password = _gen_password(12)
+        admin_user = User.objects.create_user(
+            username=username,
+            email=data["admin_email"],
+            first_name=data["admin_first_name"],
+            last_name=data["admin_last_name"],
+            password=temp_password,
+            is_active=True,
+            is_staff=False,   # Tenant admins are NOT platform/django-admin staff
+            is_superuser=False,
+        )
 
-    # Assign to Tenant Admin group
-    group, _ = Group.objects.get_or_create(name="Tenant Admin")
-    admin_user.groups.add(group)
+        # Assign to Tenant Admin group
+        group, _ = Group.objects.get_or_create(name="Tenant Admin")
+        admin_user.groups.add(group)
 
-    # Create profile
-    TenantUserProfile.objects.create(
-        user=admin_user,
-        tenant=tenant,
-        is_tenant_admin=True,
-        job_title="Tenant Administrator",
-    )
+        # Create profile
+        TenantUserProfile.objects.create(
+            user=admin_user,
+            tenant=tenant,
+            is_tenant_admin=True,
+            job_title="Tenant Administrator",
+        )
 
-    # Create default TenantSettings
-    TenantSettings.objects.get_or_create(tenant=tenant, defaults={"invoice_prefix": "INV"})
+        # Create default TenantSettings
+        TenantSettings.objects.get_or_create(tenant=tenant, defaults={"invoice_prefix": "INV"})
 
-    # Subscribe to plan if provided
-    plan_id = data.get("plan_id")
-    subscription = None
-    if plan_id:
-        try:
-            plan = SubscriptionPlan.objects.get(pk=plan_id)
-            subscription = TenantSubscription.objects.create(
-                tenant=tenant,
-                plan=plan,
-                status="active",
-            )
-        except SubscriptionPlan.DoesNotExist:
-            pass
+        # Subscribe to plan if provided
+        plan_id = data.get("plan_id")
+        subscription = None
+        if plan_id:
+            try:
+                plan = SubscriptionPlan.objects.get(pk=plan_id)
+                subscription = TenantSubscription.objects.create(
+                    tenant=tenant,
+                    plan=plan,
+                    status="active",
+                )
+            except SubscriptionPlan.DoesNotExist:
+                pass
 
     return success_response(
         "Tenant provisioned successfully.",
