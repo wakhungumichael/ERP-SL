@@ -48,6 +48,7 @@ export const CAN_RECEIVE_PAYMENT: AppRole[] = ['superadmin', 'tenant_admin', 'fi
 // ── Static navigation tree ────────────────────────────────────────────────────
 
 export const STATIC_NAV: NavSection[] = [
+  // ── Weighbridge ─────────────────────────────────────────────────────────────
   {
     key: 'weighbridge',
     title: 'Weighbridge',
@@ -65,6 +66,47 @@ export const STATIC_NAV: NavSection[] = [
       { key: 'discrepancies',   title: 'Discrepancies',     path: '/weighbridge/discrepancies',      roles: FINANCE_UP },
     ],
   },
+
+  // ── Sales & Payments ─────────────────────────────────────────────────────────
+  {
+    key: 'sales',
+    title: 'Sales & Payments',
+    roles: FINANCE_UP,
+    items: [
+      { key: 'sales-estimates',  title: 'Estimates',          path: '/sales/estimates',         roles: FINANCE_UP },
+      { key: 'sales-invoices',   title: 'Invoices',           path: '/sales/invoices',          roles: FINANCE_UP },
+      { key: 'sales-recurring',  title: 'Recurring Invoices', path: '/sales/recurring',         roles: FINANCE_UP },
+      { key: 'sales-statements', title: 'Customer Statements',path: '/sales/statements',        roles: FINANCE_UP },
+      { key: 'sales-customers',  title: 'Customers',          path: '/sales/customers',         roles: FINANCE_UP },
+      { key: 'sales-products',   title: 'Products & Services',path: '/sales/products',          roles: ADMIN_UP },
+    ],
+  },
+
+  // ── Purchases ────────────────────────────────────────────────────────────────
+  {
+    key: 'purchases',
+    title: 'Purchases',
+    roles: FINANCE_UP,
+    items: [
+      { key: 'purchases-bills',    title: 'Bills',               path: '/purchases/bills',    roles: FINANCE_UP },
+      { key: 'purchases-vendors',  title: 'Vendors',             path: '/purchases/vendors',  roles: FINANCE_UP },
+      { key: 'purchases-products', title: 'Products & Services', path: '/purchases/products', roles: FINANCE_UP },
+    ],
+  },
+
+  // ── Accounting ───────────────────────────────────────────────────────────────
+  {
+    key: 'accounting',
+    title: 'Accounting',
+    roles: FINANCE_UP,
+    items: [
+      { key: 'accounting-dashboard',  title: 'Overview',          path: '/accounting/dashboard',        roles: FINANCE_UP },
+      { key: 'accounting-coa',        title: 'Chart of Accounts', path: '/accounting/chart-of-accounts',roles: ADMIN_UP },
+      { key: 'accounting-ledger',     title: 'Transactions',      path: '/accounting/transactions',     roles: FINANCE_UP },
+    ],
+  },
+
+  // ── CRM ──────────────────────────────────────────────────────────────────────
   {
     key: 'crm',
     title: 'CRM',
@@ -78,16 +120,8 @@ export const STATIC_NAV: NavSection[] = [
       { key: 'follow-ups',   title: 'Follow-ups',     path: '/crm/follow-ups',     roles: ALL_ROLES },
     ],
   },
-  {
-    key: 'payments',
-    title: 'Payments & Finance',
-    roles: FINANCE_UP,
-    items: [
-      { key: 'invoices',       title: 'Invoices',         path: '/payments/invoices',              roles: FINANCE_UP },
-      { key: 'pay-methods',    title: 'Payment Methods',  path: '/payments/methods',               roles: FINANCE_UP },
-      { key: 'accounting',     title: 'Accounting',       path: '/accounting/dashboard',           roles: FINANCE_UP },
-    ],
-  },
+
+  // ── Reports ──────────────────────────────────────────────────────────────────
   {
     key: 'reports',
     title: 'Reports',
@@ -96,6 +130,8 @@ export const STATIC_NAV: NavSection[] = [
       { key: 'reports-dashboard', title: 'Analytics Dashboard', path: '/reports/dashboard', roles: FINANCE_UP },
     ],
   },
+
+  // ── HR ───────────────────────────────────────────────────────────────────────
   {
     key: 'hr',
     title: 'HR & Staff',
@@ -104,6 +140,8 @@ export const STATIC_NAV: NavSection[] = [
       { key: 'hr-staff', title: 'Staff Directory', path: '/hr/staff', roles: ADMIN_UP },
     ],
   },
+
+  // ── Procurement ──────────────────────────────────────────────────────────────
   {
     key: 'procurement',
     title: 'Procurement',
@@ -112,6 +150,8 @@ export const STATIC_NAV: NavSection[] = [
       { key: 'procurement-po', title: 'Purchase Orders', path: '/procurement/purchase-orders', roles: FINANCE_UP },
     ],
   },
+
+  // ── Platform Admin ───────────────────────────────────────────────────────────
   {
     key: 'platform',
     title: 'Platform Admin',

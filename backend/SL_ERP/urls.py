@@ -20,6 +20,10 @@ urlpatterns = [
     path("api/payments/", include("Platform_API.modules.payments.urls")),
     # Accounting API
     path("api/accounting/", include("Platform_API.modules.accounting.urls")),
+    # Sales API (Estimates, Products & Services, Recurring Invoices)
+    path("api/sales/", include("Platform_API.modules.sales.urls")),
+    # Purchases API (Bills, Vendors)
+    path("api/purchases/", include("Platform_API.modules.purchases.urls")),
     # CRM API
     path("api/crm/", include("Platform_API.modules.crm.urls")),
     # HR API

@@ -44,6 +44,23 @@ import HRStaff from '@/pages/hr/staff';
 import PurchaseOrders from '@/pages/procurement/purchase-orders';
 import NotFound from '@/pages/not-found';
 
+// ── Sales & Payments ──────────────────────────────────────────────────────────
+import SalesEstimates from '@/pages/sales/estimates';
+import SalesInvoices from '@/pages/sales/invoices';
+import SalesRecurring from '@/pages/sales/recurring';
+import SalesStatements from '@/pages/sales/statements';
+import SalesCustomers from '@/pages/sales/customers';
+import SalesProducts from '@/pages/sales/products';
+
+// ── Purchases ─────────────────────────────────────────────────────────────────
+import PurchaseBills from '@/pages/purchases/bills';
+import PurchaseVendors from '@/pages/purchases/vendors';
+import PurchaseProducts from '@/pages/purchases/products';
+
+// ── Accounting ────────────────────────────────────────────────────────────────
+import ChartOfAccounts from '@/pages/accounting/chart-of-accounts';
+import AccountingTransactions from '@/pages/accounting/transactions';
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: { retry: 1, staleTime: 30_000 },
@@ -108,7 +125,49 @@ function Router() {
         <Shell><Discrepancies /></Shell>
       </Route>
 
-      {/* Payments & Finance */}
+      {/* Sales & Payments */}
+      <Route path="/sales/estimates">
+        <Shell><SalesEstimates /></Shell>
+      </Route>
+      <Route path="/sales/invoices">
+        <Shell><SalesInvoices /></Shell>
+      </Route>
+      <Route path="/sales/recurring">
+        <Shell><SalesRecurring /></Shell>
+      </Route>
+      <Route path="/sales/statements">
+        <Shell><SalesStatements /></Shell>
+      </Route>
+      <Route path="/sales/customers">
+        <Shell><SalesCustomers /></Shell>
+      </Route>
+      <Route path="/sales/products">
+        <Shell><SalesProducts /></Shell>
+      </Route>
+
+      {/* Purchases */}
+      <Route path="/purchases/bills">
+        <Shell><PurchaseBills /></Shell>
+      </Route>
+      <Route path="/purchases/vendors">
+        <Shell><PurchaseVendors /></Shell>
+      </Route>
+      <Route path="/purchases/products">
+        <Shell><PurchaseProducts /></Shell>
+      </Route>
+
+      {/* Accounting */}
+      <Route path="/accounting/dashboard">
+        <Shell><AccountingDashboard /></Shell>
+      </Route>
+      <Route path="/accounting/chart-of-accounts">
+        <Shell><ChartOfAccounts /></Shell>
+      </Route>
+      <Route path="/accounting/transactions">
+        <Shell><AccountingTransactions /></Shell>
+      </Route>
+
+      {/* Legacy Payments & Finance routes — keep for backward compat */}
       <Route path="/payments/invoices">
         <Shell><InvoicesList /></Shell>
       </Route>
@@ -117,11 +176,6 @@ function Router() {
       </Route>
       <Route path="/payments/methods">
         <Shell><PaymentMethods /></Shell>
-      </Route>
-
-      {/* Accounting */}
-      <Route path="/accounting/dashboard">
-        <Shell><AccountingDashboard /></Shell>
       </Route>
 
       {/* CRM — Relationships */}
@@ -165,15 +219,12 @@ function Router() {
       <Route path="/platform/users">
         <Shell><RoleGuard allowedRoles={['superadmin', 'tenant_admin']}><Users /></RoleGuard></Shell>
       </Route>
-      {/* Roles management is superadmin-only: backing API (/platform/roles/) is superadmin-gated */}
       <Route path="/platform/roles">
         <Shell><RoleGuard allowedRoles={['superadmin']}><Roles /></RoleGuard></Shell>
       </Route>
-      {/* Workspace/menu-builder depends on /platform/roles/ and /platform/workspace/menu-* — all superadmin-only APIs */}
       <Route path="/platform/workspace">
         <Shell><RoleGuard allowedRoles={['superadmin']}><Workspace /></RoleGuard></Shell>
       </Route>
-      {/* Company Settings: tenant admins manage their own company info; superadmins use the Tenants page */}
       <Route path="/platform/company-settings">
         <Shell><RoleGuard allowedRoles={['tenant_admin']}><CompanySettings /></RoleGuard></Shell>
       </Route>

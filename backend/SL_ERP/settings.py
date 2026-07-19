@@ -63,6 +63,7 @@ INSTALLED_APPS = [
     "SL_HR",
     "SL_Procurement",
     "SL_CRM",
+    "SL_Sales",
     "rest_framework",
     "rest_framework.authtoken",
     "django_filters",
