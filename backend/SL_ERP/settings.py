@@ -215,6 +215,27 @@ EMAIL_HOST_USER  = os.environ.get("EMAIL_HOST_USER", "")
 EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_HOST_PASSWORD", "")
 DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", "noreply@sl-erp.com")
 
+# ── Celery ────────────────────────────────────────────────────────────────────
+# Broker: defaults to Redis on localhost; override via CELERY_BROKER_URL env var.
+# The in-process APScheduler-style thread (SL_Weighbridge.apps) handles the sweep
+# even when no external Celery worker is running, so the broker is optional.
+CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0")
+CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", "redis://localhost:6379/0")
+CELERY_TIMEZONE = TIME_ZONE
+CELERY_TASK_TRACK_STARTED = True
+
+# Periodic tasks (Celery beat).
+# The sweep task is also executed by the in-process background thread so events
+# are promoted to discrepancies even without a Celery worker or Redis.
+from celery.schedules import crontab  # noqa: E402
+CELERY_BEAT_SCHEDULE = {
+    "sweep-overweight-discrepancies": {
+        "task": "SL_Weighbridge.tasks.sweep_overweight_discrepancies",
+        # Every 10 minutes
+        "schedule": crontab(minute="*/10"),
+    },
+}
+
 # ── Logging ───────────────────────────────────────────────────────────────────
 LOGGING = {
     "version": 1,

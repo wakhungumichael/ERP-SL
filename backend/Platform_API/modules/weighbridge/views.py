@@ -1721,75 +1721,29 @@ class WeighbridgeDiscrepancyDetailView(APIView):
         return Response(_WeighbridgeDiscrepancySerializer(obj, context={"request": request}).data)
 
 
-def _build_discrepancy_eligible_qs(user):
-    """
-    Return an OverweightEvent queryset of events eligible to be promoted to
-    discrepancies, scoped to *user*'s tenant.
-
-    An event is eligible when discrepancy_raised=False AND the event cannot be
-    accounted for by a completed, paid transaction — i.e.:
-      • linked_transaction is NULL  (no transaction at all), OR
-      • linked_transaction exists but is NOT (status=Completed AND payment_status=Paid)
-
-    Using exclude() for the "fully resolved" case is the clearest expression:
-    exclude everything that IS both Completed AND Paid.
-    """
-    qs = OverweightEvent.objects.filter(discrepancy_raised=False).exclude(
-        linked_transaction__status="Completed",
-        linked_transaction__payment_status="Paid",
-    )
-    return _apply_tenant_filter(qs, user)
-
-
-def _run_discrepancy_sweep(qs):
-    """
-    Shared sweep logic: iterate eligible OverweightEvents, check each event's
-    grace window, and create WeighbridgeDiscrepancy records for those that have
-    expired.  Returns the count of newly created discrepancy records.
-    """
-    from datetime import timedelta
-    from django.utils import timezone as tz
-
-    now     = tz.now()
-    created = 0
-
-    for event in qs.select_related("branch", "tenant"):
-        grace_minutes = 30
-        if event.branch_id:
-            try:
-                cfg = OverweightConfig.objects.get(branch_id=event.branch_id)
-                grace_minutes = cfg.grace_window_minutes
-            except OverweightConfig.DoesNotExist:
-                pass
-
-        if now < event.recorded_at + timedelta(minutes=grace_minutes):
-            continue  # Still within grace window
-
-        _, new = WeighbridgeDiscrepancy.objects.get_or_create(
-            overweight_event=event,
-            defaults={
-                "tenant": event.tenant,
-                "branch": event.branch,
-                "resolution_status": "unresolved",
-            },
-        )
-        event.discrepancy_raised = True
-        event.save(update_fields=["discrepancy_raised", "updated_at"])
-        if new:
-            created += 1
-
-    return created
-
-
 class CheckDiscrepanciesView(APIView):
     """
     POST /api/commercial-weighbridge/surveillance-discrepancies/check/
-    Runs the discrepancy sweep for the requesting user's tenant.
+
+    On-demand manual trigger for the discrepancy sweep.
+    Runs the same logic as the automated background scheduler but scoped to the
+    requesting user's tenant (superusers sweep all tenants).
+
     Returns { discrepancies_raised: <int> }.
     """
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        qs      = _build_discrepancy_eligible_qs(request.user)
-        created = _run_discrepancy_sweep(qs)
-        return Response({"discrepancies_raised": created})
+        from SL_Weighbridge.sweep import run_sweep
+
+        # Resolve tenant scope:
+        #   - superuser        → tenant=None (global sweep across all tenants)
+        #   - profiled user    → tenant=<Tenant> (scoped to their tenant only)
+        #   - profileless user → deny-all; return 0 raised
+        resolved = _resolve_user_tenant(request.user)
+        if isinstance(resolved, _NoTenantProfile):
+            return Response({"discrepancies_raised": 0})
+
+        # resolved is either None (superuser → global) or a Tenant object (scoped)
+        result = run_sweep(tenant=resolved)
+        return Response({"discrepancies_raised": result["created"]})

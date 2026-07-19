@@ -4,8 +4,7 @@ import os
 from celery import shared_task
 from django.conf import settings
 from django.core.files import File
-from SL_Weighbridge.management.commands.monitor_vehicle_presence import Command
-from .models import VehiclePresence, Transaction, DiscrepancyReport
+from SL_Weighbridge.models import DiscrepancyReport, Transaction, VehiclePresence
 
 
 @shared_task
@@ -52,7 +51,21 @@ def generate_discrepancy_report():
 
 
 
-@shared_task
-def monitor_vehicle_presence_task():
-    command = Command()
-    command.handle()
+@shared_task(
+    name="SL_Weighbridge.tasks.sweep_overweight_discrepancies",
+    bind=True,
+    max_retries=3,
+    default_retry_delay=60,
+)
+def sweep_overweight_discrepancies(self, branch_id=None):
+    """
+    Celery periodic task: promote expired OverweightEvents to discrepancies.
+
+    Scheduled every 10 minutes via CELERY_BEAT_SCHEDULE.
+    Can also be called on-demand with an optional branch_id.
+    """
+    from SL_Weighbridge.sweep import run_sweep
+    try:
+        return run_sweep(branch_id=branch_id)
+    except Exception as exc:
+        raise self.retry(exc=exc)
