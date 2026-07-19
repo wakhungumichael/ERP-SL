@@ -437,6 +437,20 @@ class ReceivePaymentView(APIView):
         except Exception:
             pass
 
+        # ── Persist payment-received audit log ────────────────────────────────
+        # A DatabaseError here (e.g. DB constraint, connection drop) must never
+        # break the payment flow — the invoice is already marked paid above.
+        try:
+            if InvoiceEmailLog is not None:
+                InvoiceEmailLog.objects.create(
+                    invoice=inv,
+                    recipient="",
+                    success=True,
+                    failure_reason=None,
+                )
+        except DatabaseError as log_exc:
+            logger.warning("Could not write InvoiceEmailLog for invoice %s: %s", inv.id, log_exc)
+
         return Response({
             "success":        True,
             "message":        f"Payment of {amount} received for invoice {pk}.",
