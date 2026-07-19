@@ -600,6 +600,15 @@ def provision_tenant(request):
             status_code=status.HTTP_400_BAD_REQUEST,
         )
 
+    # Guard duplicate admin email before entering the atomic block so that an
+    # IntegrityError from the email unique constraint never surfaces as a 500.
+    admin_email = data["admin_email"]
+    if User.objects.filter(email=admin_email).exists():
+        return error_response(
+            "A user with this email already exists.",
+            status_code=status.HTTP_400_BAD_REQUEST,
+        )
+
     with transaction.atomic():
         # Create tenant
         tenant_serializer = TenantSerializer(data={

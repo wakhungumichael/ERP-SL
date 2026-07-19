@@ -493,3 +493,118 @@ class ProvisionTenantFirstLoginTests(TestCase):
             me_data.get("is_tenant_admin"),
             "/me/ response must report is_tenant_admin=True for the provisioned admin.",
         )
+
+
+# ── duplicate admin-email tests ────────────────────────────────────────────────
+
+class ProvisionTenantDuplicateAdminEmailTests(TestCase):
+    """
+    Tests that submitting an admin_email that already belongs to a Django User
+    returns HTTP 400 with a clear message instead of an unhandled IntegrityError / 500.
+    """
+
+    def setUp(self):
+        self.client = APIClient()
+        self.superadmin = _superadmin()
+        self.client.force_authenticate(user=self.superadmin)
+        self.url = reverse("tenant-provision")
+
+    def test_duplicate_admin_email_returns_400(self):
+        """
+        Submitting an admin_email that already belongs to a User must return
+        HTTP 400, not a 500 IntegrityError from the database unique constraint.
+        """
+        # First provision creates the admin user with this email.
+        response = self.client.post(self.url, _VALID_PAYLOAD, format="json")
+        self.assertEqual(response.status_code, 200, response.data)
+
+        # Second request reuses the same admin_email for a different tenant.
+        duplicate_payload = {
+            "name": "Beta Corp",
+            "contact_email": "contact@beta.example",
+            "admin_first_name": "Bob",
+            "admin_last_name": "Admin",
+            "admin_email": _VALID_PAYLOAD["admin_email"],
+        }
+        response = self.client.post(self.url, duplicate_payload, format="json")
+
+        self.assertEqual(
+            response.status_code,
+            400,
+            f"Expected 400 for duplicate admin_email, got {response.status_code}: {response.data}",
+        )
+
+    def test_duplicate_admin_email_returns_human_readable_message(self):
+        """
+        The 400 response for a duplicate admin_email must contain a message
+        that clearly identifies the problem (not a raw database error).
+        """
+        self.client.post(self.url, _VALID_PAYLOAD, format="json")
+
+        duplicate_payload = {
+            "name": "Beta Corp",
+            "contact_email": "contact@beta.example",
+            "admin_first_name": "Bob",
+            "admin_last_name": "Admin",
+            "admin_email": _VALID_PAYLOAD["admin_email"],
+        }
+        response = self.client.post(self.url, duplicate_payload, format="json")
+
+        message = response.data.get("message", "")
+        self.assertTrue(
+            any(
+                phrase in message.lower()
+                for phrase in ("already exists", "already", "exists", "duplicate")
+            ),
+            f"Error message should indicate an email conflict; got: {message!r}",
+        )
+
+    def test_duplicate_admin_email_does_not_create_new_tenant(self):
+        """
+        A rejected duplicate admin_email request must not leave a new Tenant row.
+        """
+        self.client.post(self.url, _VALID_PAYLOAD, format="json")
+        tenant_count_after_first = Tenant.objects.count()
+
+        duplicate_payload = {
+            "name": "Beta Corp",
+            "contact_email": "contact@beta.example",
+            "admin_first_name": "Bob",
+            "admin_last_name": "Admin",
+            "admin_email": _VALID_PAYLOAD["admin_email"],
+        }
+        self.client.post(self.url, duplicate_payload, format="json")
+
+        self.assertEqual(
+            Tenant.objects.count(),
+            tenant_count_after_first,
+            "A duplicate admin_email request must not create an additional Tenant row.",
+        )
+
+    def test_existing_user_email_also_rejected(self):
+        """
+        An admin_email that belongs to a pre-existing User (not created by
+        provision_tenant) must also be rejected with HTTP 400.
+        """
+        # Create a plain user outside of provisioning.
+        existing_user = User.objects.create_user(
+            username="existing_user",
+            email="existing@example.com",
+            password="pass",
+        )
+
+        payload = {
+            "name": "Gamma Corp",
+            "contact_email": "contact@gamma.example",
+            "admin_first_name": "Eve",
+            "admin_last_name": "Admin",
+            "admin_email": existing_user.email,
+        }
+        response = self.client.post(self.url, payload, format="json")
+
+        self.assertEqual(
+            response.status_code,
+            400,
+            f"Expected 400 when admin_email matches an existing user, "
+            f"got {response.status_code}: {response.data}",
+        )
