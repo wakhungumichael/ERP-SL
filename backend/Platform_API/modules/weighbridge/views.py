@@ -1680,6 +1680,94 @@ class OverweightEventListView(generics.ListAPIView):
         return qs
 
 
+class OverweightEventExportCSVView(APIView):
+    """
+    GET /api/commercial-weighbridge/overweight-events/export/csv/
+
+    Returns a downloadable CSV of all overweight events matching the same
+    date/branch filters as the list view.  Applies the same tenant isolation.
+
+    Query params: branch_id, date_from, date_to, discrepancy_raised
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        qs = OverweightEvent.objects.select_related(
+            "branch", "operator", "linked_transaction",
+        ).order_by("-recorded_at")
+
+        # Tenant isolation — same as OverweightEventListView
+        qs = _apply_tenant_filter(qs, request.user)
+
+        p = request.query_params
+        if bid := p.get("branch_id"):
+            qs = qs.filter(branch_id=bid)
+        if df := p.get("date_from"):
+            qs = qs.filter(recorded_at__date__gte=df)
+        if dt := p.get("date_to"):
+            qs = qs.filter(recorded_at__date__lte=dt)
+        if (dr := p.get("discrepancy_raised")) is not None:
+            qs = qs.filter(discrepancy_raised=(dr.lower() == "true"))
+
+        response = HttpResponse(content_type="text/csv")
+        response["Content-Disposition"] = 'attachment; filename="overweight_events.csv"'
+
+        writer = csv.writer(response)
+        writer.writerow([
+            "ID",
+            "Date/Time",
+            "Vehicle Plate",
+            "Branch",
+            "Gross Weight (kg)",
+            "Tare Weight (kg)",
+            "Net Weight (kg)",
+            "Threshold (kg)",
+            "Excess (kg)",
+            "Discrepancy Raised",
+            "Linked Transaction",
+            "Operator",
+        ])
+
+        for ev in qs:
+            branch_name = ev.branch.name if ev.branch else ""
+            operator_name = (
+                ev.operator.get_full_name() or ev.operator.username
+                if ev.operator else ""
+            )
+            gross = ev.gross_weight if ev.gross_weight is not None else ""
+            tare  = ev.tare_weight  if ev.tare_weight  is not None else ""
+            net   = ev.net_weight
+            threshold = ev.threshold_at_capture
+            try:
+                excess = int(net) - int(threshold)
+            except (TypeError, ValueError):
+                excess = ""
+            linked_tx = (
+                f"TX-{ev.linked_transaction_id:05d}"
+                if ev.linked_transaction_id else ""
+            )
+            recorded_at = (
+                ev.recorded_at.strftime("%Y-%m-%d %H:%M:%S")
+                if ev.recorded_at else ""
+            )
+            writer.writerow([
+                ev.id,
+                recorded_at,
+                ev.vehicle_plate or "",
+                branch_name,
+                gross,
+                tare,
+                net,
+                threshold,
+                excess,
+                "Yes" if ev.discrepancy_raised else "No",
+                linked_tx,
+                operator_name,
+            ])
+
+        return response
+
+
 class OverweightConfigView(generics.RetrieveUpdateAPIView):
     """
     GET / PUT  /api/commercial-weighbridge/overweight-config/<branch_pk>/

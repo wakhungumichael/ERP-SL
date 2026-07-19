@@ -19,7 +19,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
-import { AlertTriangle, Camera, Link2, RefreshCw } from 'lucide-react';
+import { AlertTriangle, Camera, Download, Link2, RefreshCw } from 'lucide-react';
 import { format } from 'date-fns';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -46,6 +46,15 @@ type OverweightEvent = {
 
 function buildUrl(params: Record<string, string>) {
   const base = '/api/commercial-weighbridge/overweight-events/';
+  const qs = Object.entries(params)
+    .filter(([, v]) => v)
+    .map(([k, v]) => `${k}=${encodeURIComponent(v)}`)
+    .join('&');
+  return qs ? `${base}?${qs}` : base;
+}
+
+function buildExportUrl(params: Record<string, string>) {
+  const base = '/api/commercial-weighbridge/overweight-events/export/csv/';
   const qs = Object.entries(params)
     .filter(([, v]) => v)
     .map(([k, v]) => `${k}=${encodeURIComponent(v)}`)
@@ -158,6 +167,28 @@ export default function OverweightLog() {
   const [filters, setFilters] = useState({ date_from: '', date_to: '' });
   const [applied, setApplied] = useState({ date_from: '', date_to: '' });
   const [selected, setSelected] = useState<OverweightEvent | null>(null);
+  const [exporting, setExporting] = useState(false);
+
+  async function handleExportCsv() {
+    if (!token) return;
+    setExporting(true);
+    try {
+      const exportUrl = buildExportUrl(applied);
+      const res = await fetch(exportUrl, { headers: { Authorization: `Token ${token}` } });
+      if (!res.ok) throw new Error(await res.text());
+      const blob = await res.blob();
+      const href = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = href;
+      a.download = 'overweight_events.csv';
+      a.click();
+      URL.revokeObjectURL(href);
+    } catch (err) {
+      console.error('CSV export failed', err);
+    } finally {
+      setExporting(false);
+    }
+  }
 
   const url = buildUrl(applied);
   const { data: raw, isLoading, error } = useFetch<any>(url, token);
@@ -178,9 +209,15 @@ export default function OverweightLog() {
             All weighbridge events where the recorded weight met or exceeded the branch threshold.
           </p>
         </div>
-        <Button variant="outline" size="sm" onClick={() => qc.invalidateQueries({ queryKey: [url] })}>
-          <RefreshCw className="h-3.5 w-3.5 mr-1.5" /> Refresh
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={handleExportCsv} disabled={exporting}>
+            <Download className="h-3.5 w-3.5 mr-1.5" />
+            {exporting ? 'Exporting…' : 'Export CSV'}
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => qc.invalidateQueries({ queryKey: [url] })}>
+            <RefreshCw className="h-3.5 w-3.5 mr-1.5" /> Refresh
+          </Button>
+        </div>
       </div>
 
       {/* Filters */}

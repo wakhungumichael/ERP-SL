@@ -28,6 +28,7 @@ urlpatterns = [
     path("live-weight/",                            views.LiveWeightView.as_view(),              name="wb-live-weight"),
     # ── Overweight Surveillance ───────────────────────────────────────────────
     path("overweight-events/",                      views.OverweightEventListView.as_view(),              name="wb-overweight-events"),
+    path("overweight-events/export/csv/",           views.OverweightEventExportCSVView.as_view(),         name="wb-overweight-events-export-csv"),
     path("overweight-config/<int:branch_pk>/",      views.OverweightConfigView.as_view(),                 name="wb-overweight-config"),
     path("camera-configs/",                         views.CameraConfigListCreateView.as_view(),           name="wb-camera-configs"),
     path("camera-configs/<int:pk>/",                views.CameraConfigDetailView.as_view(),               name="wb-camera-config-detail"),
