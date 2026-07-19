@@ -198,3 +198,101 @@ class ProvisionTenantAtomicityTests(TestCase):
             payload["admin_temp_password"],
             "admin_temp_password must be a non-empty string.",
         )
+
+
+class ProvisionTenantDuplicateSubdomainTests(TestCase):
+    """
+    Tests that a duplicate subdomain returns HTTP 400 with a clear message
+    instead of an unhandled IntegrityError / 500.
+    """
+
+    def setUp(self):
+        self.client = APIClient()
+        self.superadmin = _superadmin()
+        self.client.force_authenticate(user=self.superadmin)
+        self.url = reverse("tenant-provision")
+
+    def test_duplicate_subdomain_returns_400(self):
+        """
+        Submitting a subdomain that is already taken must return HTTP 400,
+        not a 500 IntegrityError from the database unique constraint.
+        """
+        # First provision creates the tenant with the subdomain.
+        first_payload = {**_VALID_PAYLOAD, "subdomain": "acme"}
+        response = self.client.post(self.url, first_payload, format="json")
+        self.assertEqual(response.status_code, 200, response.data)
+
+        # Second request with the same subdomain (different admin email to avoid
+        # conflicting on that unique constraint).
+        duplicate_payload = {
+            "name": "Acme Corp 2",
+            "contact_email": "contact2@acme.example",
+            "admin_first_name": "Bob",
+            "admin_last_name": "Admin",
+            "admin_email": "bob@acme.example",
+            "subdomain": "acme",
+        }
+        response = self.client.post(self.url, duplicate_payload, format="json")
+
+        self.assertEqual(
+            response.status_code,
+            400,
+            f"Expected 400 for duplicate subdomain, got {response.status_code}: {response.data}",
+        )
+
+    def test_duplicate_subdomain_returns_human_readable_message(self):
+        """
+        The 400 response for a duplicate subdomain must contain a message that
+        clearly identifies the problem (not a raw database constraint error).
+        """
+        first_payload = {**_VALID_PAYLOAD, "subdomain": "beta"}
+        self.client.post(self.url, first_payload, format="json")
+
+        duplicate_payload = {
+            "name": "Beta Corp",
+            "contact_email": "contact@beta.example",
+            "admin_first_name": "Carol",
+            "admin_last_name": "Admin",
+            "admin_email": "carol@beta.example",
+            "subdomain": "beta",
+        }
+        response = self.client.post(self.url, duplicate_payload, format="json")
+
+        message = response.data.get("message", "")
+        self.assertIn(
+            "beta",
+            message.lower(),
+            "Error message should mention the conflicting subdomain.",
+        )
+        self.assertTrue(
+            any(
+                phrase in message.lower()
+                for phrase in ("already", "taken", "exists", "duplicate")
+            ),
+            f"Error message should indicate a conflict; got: {message!r}",
+        )
+
+    def test_duplicate_subdomain_does_not_create_new_tenant(self):
+        """
+        A rejected duplicate-subdomain request must not leave a new Tenant row.
+        """
+        first_payload = {**_VALID_PAYLOAD, "subdomain": "gamma"}
+        self.client.post(self.url, first_payload, format="json")
+
+        tenant_count_after_first = Tenant.objects.count()
+
+        duplicate_payload = {
+            "name": "Gamma Corp 2",
+            "contact_email": "contact2@gamma.example",
+            "admin_first_name": "Dave",
+            "admin_last_name": "Admin",
+            "admin_email": "dave@gamma.example",
+            "subdomain": "gamma",
+        }
+        self.client.post(self.url, duplicate_payload, format="json")
+
+        self.assertEqual(
+            Tenant.objects.count(),
+            tenant_count_after_first,
+            "A duplicate-subdomain request must not create an additional Tenant row.",
+        )
