@@ -1,5 +1,6 @@
 from django.contrib.auth import authenticate
 from django.contrib.auth.models import Group, Permission, User
+from django.contrib.contenttypes.models import ContentType
 from rest_framework import serializers
 
 from Platform_Core.models import (
@@ -295,7 +296,15 @@ class GroupSummarySerializer(serializers.ModelSerializer):
         fields = ("id", "name")
 
 
+class ContentTypeSummarySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ContentType
+        fields = ("id", "app_label", "model")
+
+
 class PermissionSummarySerializer(serializers.ModelSerializer):
+    content_type = ContentTypeSummarySerializer(read_only=True)
+
     class Meta:
         model = Permission
         fields = ("id", "name", "codename", "content_type")

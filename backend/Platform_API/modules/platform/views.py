@@ -433,8 +433,16 @@ class PlatformRoleDetailAPIView(_SuperAdminRequired, generics.RetrieveUpdateDest
 
 class PlatformPermissionListAPIView(ModuleAPIViewMixin, generics.ListAPIView):
     permission_classes = [IsSuperAdminPermission]
-    queryset = Permission.objects.select_related("content_type").all()
+    # Return all ~200 permissions unpaginated — the Roles UI needs the full list at once
+    pagination_class = None
+    queryset = Permission.objects.select_related("content_type").order_by(
+        "content_type__app_label", "content_type__model", "codename"
+    )
     serializer_class = PermissionSummarySerializer
+    filterset_fields = {
+        "content_type__app_label": ["exact", "in"],
+        "content_type__model": ["exact", "in"],
+    }
     search_fields = ("name", "codename", "content_type__app_label", "content_type__model")
     ordering_fields = ("content_type__app_label", "content_type__model", "codename", "name")
 
