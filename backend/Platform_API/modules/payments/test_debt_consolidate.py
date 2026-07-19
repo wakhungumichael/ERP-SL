@@ -379,3 +379,54 @@ class DebtConsolidateEmailTests(TestCase):
             response.status_code, 201,
             "API must return 201 even when the SMTP send raises an exception.",
         )
+
+    # ── test 5: email log write failure is survivable ─────────────────────────
+
+    def test_api_returns_201_when_email_log_write_fails(self):
+        """
+        If InvoiceEmailLog.objects.create raises (e.g. a DB constraint error),
+        the API must still return 201.  The log-write failure must never
+        propagate as an HTTP error — the invoice is already created and the
+        bare-except guard in the view must absorb it silently.
+        """
+        from unittest.mock import patch
+
+        customer = _make_customer("Patricia Wanjala", "patricia@example.com")
+        vehicle = _make_vehicle(customer, self.vehicle_type)
+        _make_debt_transaction(customer, self.branch, vehicle, self.vehicle_type)
+
+        with patch(
+            "SL_Weighbridge.models.InvoiceEmailLog.objects.create",
+            side_effect=Exception("DB constraint violation"),
+        ):
+            response = self._post_consolidate(customer.id)
+
+        self.assertEqual(
+            response.status_code, 201,
+            "API must return 201 even when the email log write raises an exception.",
+        )
+
+    def test_warning_logged_when_email_log_write_fails(self):
+        """
+        When InvoiceEmailLog.objects.create raises, the view must emit a
+        WARNING-level log message containing 'Could not write InvoiceEmailLog'
+        so that operators can diagnose a missing audit trail without the failure
+        ever becoming an HTTP error.
+        """
+        from unittest.mock import patch
+
+        customer = _make_customer("Queen Adhiambo", "queen@example.com")
+        vehicle = _make_vehicle(customer, self.vehicle_type)
+        _make_debt_transaction(customer, self.branch, vehicle, self.vehicle_type)
+
+        with patch(
+            "SL_Weighbridge.models.InvoiceEmailLog.objects.create",
+            side_effect=Exception("DB constraint violation"),
+        ), self.assertLogs("Platform_API.modules.payments.views", level="WARNING") as log_ctx:
+            response = self._post_consolidate(customer.id)
+
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(
+            any("Could not write InvoiceEmailLog" in msg for msg in log_ctx.output),
+            f"Expected a 'Could not write InvoiceEmailLog' warning in logs, got: {log_ctx.output}",
+        )
