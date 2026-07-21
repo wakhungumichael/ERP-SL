@@ -4,3 +4,4 @@
 - [Django startup blockers](django-deps.md) — weasyprint import must stay try/except in SL_Weighbridge/utils.py; pyserial, requests, and all other deps installed in .pythonlibs.
 - [Missing Platform_API stubs](platform-api-stubs.md) — api.py, mixins.py, integrations.py, weighbridge/*, payments/* were not committed; stubs live in backend/Platform_API/modules/.
 - [HR and Procurement modules](hr-procurement-modules.md) — SL_HR and SL_Procurement Django apps with migrations; Platform_API modules at /api/hr/ and /api/procurement/.
+- [Artifact registration on import](artifact-registration.md) — imported repos have artifact.toml files but aren't registered; must back up, rm dir, createArtifact(), restore source.
