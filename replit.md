@@ -1,45 +1,81 @@
-# [Project name]
+# SL-ERP
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+A full-stack Enterprise Resource Planning (ERP) application covering Weighbridge operations, CRM, HR, Sales, Procurement, and Accounting.
 
 ## Run & Operate
 
-- `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
+### Starting the app
+- **Django API Backend** workflow — Django dev server on port 8080; runs migrations on start
+- **ERP Frontend** workflow — React + Vite dev server on port 5173
+
+Both workflows are pre-configured. Start them from the Workflows panel.
+
+### Useful shell commands
+- `cd backend && DJANGO_SETTINGS_MODULE=SL_ERP.settings python manage.py migrate` — run migrations manually
+- `cd backend && DJANGO_SETTINGS_MODULE=SL_ERP.settings python manage.py createsuperuser` — create an admin user
 - `pnpm run typecheck` — full typecheck across all packages
 - `pnpm run build` — typecheck + build all packages
-- `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
-- `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
-- Required env: `DATABASE_URL` — Postgres connection string
+- `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from OpenAPI spec
+
+### Required env (runtime-managed by Replit)
+- `DATABASE_URL` — Postgres connection string (auto-provided)
+
+### Optional env
+- `REDIS_URL` — needed for Celery background tasks (not required to run the app in dev)
 
 ## Stack
 
-- pnpm workspaces, Node.js 24, TypeScript 5.9
-- API: Express 5
-- DB: PostgreSQL + Drizzle ORM
-- Validation: Zod (`zod/v4`), `drizzle-zod`
-- API codegen: Orval (from OpenAPI spec)
-- Build: esbuild (CJS bundle)
+- **Backend**: Python 3.11, Django 5.2, Django REST Framework, PostgreSQL, Celery, Redis
+- **Frontend**: React 19, Vite, TypeScript 5.9, TanStack Query, Wouter, Radix UI / Shadcn UI, Tailwind CSS
+- **Node service**: Express 5, Drizzle ORM (auxiliary API server — `artifacts/api-server/`)
+- **Mobile**: Expo / React Native (`artifacts/mobile/`)
+- **Monorepo**: pnpm workspaces, `uv` for Python deps
 
 ## Where things live
 
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
+| Area | Path |
+|---|---|
+| Django project root | `backend/` |
+| Django settings | `backend/SL_ERP/settings.py` |
+| Django apps | `backend/SL_*/` and `backend/Platform_*/` |
+| React frontend | `artifacts/erp-ui/src/` |
+| Node API server | `artifacts/api-server/src/` |
+| Mobile app | `artifacts/mobile/` |
+| Shared DB schema (Drizzle) | `lib/db/` |
+| OpenAPI spec | `lib/api-spec/openapi.yaml` |
+| Generated API hooks | `lib/api-client-react/` |
+
+## Django apps
+
+| App | URL namespace | Purpose |
+|---|---|---|
+| `Platform_Core` | — | Tenants, users, workspace navigation |
+| `Platform_API` | `/api/` | API framework, mixins, integration health |
+| `SL_Weighbridge` | `/api/weighbridge/` | Weighbridge transactions, invoices, cameras |
+| `SL_CRM` | `/api/crm/` | CRM contacts, leads, activities |
+| `SL_HR` | `/api/hr/` | HR employees, leave, payroll |
+| `SL_Sales` | `/api/sales/` | Sales orders, estimates |
+| `SL_Procurement` | `/api/procurement/` | Purchase orders, bills |
 
 ## Architecture decisions
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
+- Django is the primary API; the Node `api-server` is an auxiliary service.
+- `weasyprint` (PDF generation) is wrapped in try/except — Cairo/Pango aren't available on Replit; PDF endpoints will raise RuntimeError if called.
+- `pyserial` (weighbridge indicator serial comms) is installed but serial ports don't exist in the Replit environment; those runtime paths fail gracefully.
+- Role-based access control lives in `artifacts/erp-ui/src/lib/roles.ts`; roles are detected from Django User groups after login.
+- The Vite config requires both `PORT` and `BASE_PATH` env vars at startup.
 
-## Product
+## Gotchas
 
-_Describe the high-level user-facing capabilities of this app once they exist._
+- Always export `DJANGO_SETTINGS_MODULE=SL_ERP.settings` before any `manage.py` call.
+- The Django workflow CWD is the workspace root — run commands use `cd backend && ...`.
+- Do not remove the try/except around `weasyprint` in `SL_Weighbridge/utils.py` — it causes Django admin autodiscovery to crash.
 
 ## User preferences
 
 _Populate as you build — explicit user instructions worth remembering across sessions._
 
-## Gotchas
-
-_Populate as you build — sharp edges, "always run X before Y" rules._
-
 ## Pointers
 
-- See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details
+- See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details.
+- See `.agents/memory/` for non-obvious decisions and environment quirks.
