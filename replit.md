@@ -5,10 +5,12 @@ A full-stack Enterprise Resource Planning (ERP) application covering Weighbridge
 ## Run & Operate
 
 ### Starting the app
-- **Django API Backend** workflow — Django dev server on port 8080; runs migrations on start
-- **ERP Frontend** workflow — React + Vite dev server on port 5173
+Two workflows in the Workflows panel (both auto-start):
+- **`artifacts/api-server: API Server`** — Django dev server on port 8080; runs migrations on start
+- **`artifacts/erp-ui: web`** — React + Vite dev server; shows in the preview pane at `/`
 
-Both workflows are pre-configured. Start them from the Workflows panel.
+### Full architecture & module guide
+→ **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — explains the two-layer API pattern, what "artifacts" means, all modules, and how to add new ones.
 
 ### Useful shell commands
 - `cd backend && DJANGO_SETTINGS_MODULE=SL_ERP.settings python manage.py migrate` — run migrations manually
