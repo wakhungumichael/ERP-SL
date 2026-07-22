@@ -1,0 +1,19 @@
+{
+  "recommendations": [
+    // Python / Django
+    "ms-python.python",
+    "ms-python.pylint",
+    "ms-python.black-formatter",
+    "ms-python.isort",
+    "batisteo.vscode-django",
+    // TypeScript / React
+    "dbaeumer.vscode-eslint",
+    "esbenp.prettier-vscode",
+    "bradlc.vscode-tailwindcss",
+    // Database
+    "cweijan.vscode-postgresql-client2",
+    // General
+    "eamodio.gitlens",
+    "usernamehw.errorlens"
+  ]
+}

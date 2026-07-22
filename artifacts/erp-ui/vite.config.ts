@@ -3,39 +3,22 @@ import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import { defineConfig } from 'vite';
 
-import runtimeErrorOverlay from '@replit/vite-plugin-runtime-error-modal';
+// PORT and BASE_PATH are injected by Replit's artifact system.
+// When running locally in VS Code they default to sensible values.
+const port = Number(process.env.PORT ?? '5173');
+const basePath = process.env.BASE_PATH ?? '/';
 
-const rawPort = process.env.PORT;
-
-if (!rawPort) {
-  throw new Error(
-    'PORT environment variable is required but was not provided.',
-  );
-}
-
-const port = Number(rawPort);
-
-if (Number.isNaN(port) || port <= 0) {
-  throw new Error(`Invalid PORT value: "${rawPort}"`);
-}
-
-const basePath = process.env.BASE_PATH;
-
-if (!basePath) {
-  throw new Error(
-    'BASE_PATH environment variable is required but was not provided.',
-  );
-}
+const isReplit = process.env.REPL_ID !== undefined;
 
 export default defineConfig({
   base: basePath,
   plugins: [
     react(),
     tailwindcss(),
-    runtimeErrorOverlay(),
-    ...(process.env.NODE_ENV !== 'production' &&
-    process.env.REPL_ID !== undefined
+    // Replit-only plugins: error overlay, code cartographer, dev banner
+    ...(isReplit && process.env.NODE_ENV !== 'production'
       ? [
+          (await import('@replit/vite-plugin-runtime-error-modal')).default(),
           await import('@replit/vite-plugin-cartographer').then((m) =>
             m.cartographer({
               root: path.resolve(import.meta.dirname, '..'),
@@ -71,6 +54,14 @@ export default defineConfig({
     allowedHosts: true,
     fs: {
       strict: true,
+    },
+    // Proxy /api calls to Django in local dev.
+    // On Replit this is handled by the platform router, so it's a no-op there.
+    proxy: {
+      '/api': {
+        target: process.env.VITE_API_BASE_URL ?? 'http://localhost:8080',
+        changeOrigin: true,
+      },
     },
   },
   preview: {

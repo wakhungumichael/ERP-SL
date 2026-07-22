@@ -1,0 +1,39 @@
+{
+  // Python
+  "python.defaultInterpreterPath": "${workspaceFolder}/.pythonlibs/bin/python3",
+  "python.envFile": "${workspaceFolder}/backend/.env",
+  "[python]": {
+    "editor.defaultFormatter": "ms-python.black-formatter",
+    "editor.formatOnSave": true
+  },
+  "python.analysis.extraPaths": ["${workspaceFolder}/backend"],
+  "python.analysis.autoImportCompletions": true,
+
+  // TypeScript / React
+  "[typescript]": { "editor.defaultFormatter": "esbenp.prettier-vscode", "editor.formatOnSave": true },
+  "[typescriptreact]": { "editor.defaultFormatter": "esbenp.prettier-vscode", "editor.formatOnSave": true },
+  "typescript.tsdk": "node_modules/typescript/lib",
+
+  // Tailwind
+  "tailwindCSS.experimental.classRegex": [
+    ["cn\\(([^)]*)\\)", "'([^']*)'"]
+  ],
+
+  // File exclusions (keep explorer clean)
+  "files.exclude": {
+    "**/__pycache__": true,
+    "**/*.pyc": true,
+    "**/.pytest_cache": true,
+    "**/node_modules": true,
+    "**/.pythonlibs": true,
+    "**/dist": true,
+    "backend/staticfiles": true
+  },
+
+  // Editor
+  "editor.rulers": [100],
+  "editor.tabSize": 2,
+  "[python]": {
+    "editor.tabSize": 4
+  }
+}
