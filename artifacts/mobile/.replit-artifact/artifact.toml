@@ -1,6 +1,6 @@
 kind = "mobile"
 previewPath = "/mobile/"
-title = "SL-ERP Mobile"
+title = "mobile"
 version = "1.0.0"
 id = "artifacts/mobile"
 router = "expo-domain"

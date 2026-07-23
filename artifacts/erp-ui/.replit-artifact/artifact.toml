@@ -1,6 +1,6 @@
 kind = "web"
 previewPath = "/"
-title = "SL-ERP Workspace"
+title = "web"
 version = "1.0.0"
 id = "artifacts/erp-ui"
 router = "path"
