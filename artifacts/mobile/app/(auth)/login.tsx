@@ -58,7 +58,7 @@ export default function LoginScreen() {
               <Feather name="sliders" size={32} color={colors.light.primaryForeground} />
             </View>
             <Text style={styles.appName}>SL-ERP</Text>
-            <Text style={styles.appTagline}>Commercial Weighbridge Platform</Text>
+            <Text style={styles.appTagline}>Operations Platform</Text>
           </View>
 
           {/* Card */}
