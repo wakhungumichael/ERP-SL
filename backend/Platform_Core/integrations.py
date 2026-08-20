@@ -3,6 +3,10 @@ Platform integration helpers stub.
 Provides build_integration_health_snapshot and indicator_source_registry
 used by Platform_API views.
 """
+from typing import List, Optional
+
+from django.db.models import Q
+
 from Platform_Core.models import IntegrationEndpoint
 
 
@@ -32,6 +36,122 @@ indicator_source_registry: dict = {
         "config_schema": {},
     },
 }
+
+
+PAYMENT_PROVIDER_CATALOG: dict = {
+    "manual": {
+        "label": "Manual",
+        "rails": ["cash", "bank_transfer"],
+        "supports_callback": False,
+        "supports_initiation": False,
+    },
+    "cash": {
+        "label": "Cash",
+        "rails": ["cash"],
+        "supports_callback": False,
+        "supports_initiation": False,
+    },
+    "bank": {
+        "label": "Bank API",
+        "rails": ["bank_transfer"],
+        "supports_callback": False,
+        "supports_initiation": False,
+    },
+    "mpesa": {
+        "label": "M-Pesa",
+        "rails": ["mobile_money"],
+        "supports_callback": True,
+        "supports_initiation": True,
+    },
+    "pesapal": {
+        "label": "Pesapal",
+        "rails": ["card", "mobile_money", "bank_transfer"],
+        "supports_callback": True,
+        "supports_initiation": True,
+    },
+    "flutterwave": {
+        "label": "Flutterwave",
+        "rails": ["card", "mobile_money", "bank_transfer"],
+        "supports_callback": True,
+        "supports_initiation": True,
+    },
+    "stripe": {
+        "label": "Stripe",
+        "rails": ["card", "bank_transfer"],
+        "supports_callback": True,
+        "supports_initiation": True,
+    },
+}
+
+
+def _normalize_payment_scope(value: Optional[str]) -> str:
+    return value if value in {"saas_billing", "tenant_operations"} else "tenant_operations"
+
+
+def get_payment_provider_definition(provider: Optional[str]) -> dict:
+    key = (provider or "").strip().lower()
+    return PAYMENT_PROVIDER_CATALOG.get(
+        key,
+        {
+            "label": provider or "Custom Gateway",
+            "rails": ["custom"],
+            "supports_callback": True,
+            "supports_initiation": True,
+        },
+    )
+
+
+def list_payment_gateway_capabilities(*, tenant=None, payment_scope: Optional[str] = None) -> List[dict]:
+    """
+    Return normalized payment gateway capabilities for a tenant.
+
+    `payment_scope` values:
+    - saas_billing: provider used to collect subscription/license payments
+    - tenant_operations: provider used by the tenant inside their own workspace
+    """
+    queryset = IntegrationEndpoint.objects.filter(
+        Q(integration_type="payment") | Q(integration_type="payment_gateway"),
+        is_active=True,
+    ).select_related("tenant")
+
+    if tenant is not None:
+        queryset = queryset.filter(tenant=tenant)
+
+    normalized_scope = _normalize_payment_scope(payment_scope)
+    filter_by_scope = payment_scope in {"saas_billing", "tenant_operations"}
+
+    capabilities = []
+    for endpoint in queryset.order_by("-is_primary", "name"):
+        settings = endpoint.connection_settings or {}
+        scope = _normalize_payment_scope(settings.get("payment_scope"))
+        if filter_by_scope and scope != normalized_scope:
+            continue
+
+        definition = get_payment_provider_definition(endpoint.provider)
+        enabled_rails = settings.get("enabled_rails") or definition["rails"]
+        checkout_mode = settings.get("checkout_mode") or (
+            "hosted" if "card" in enabled_rails else "direct"
+        )
+
+        capabilities.append(
+            {
+                "id": endpoint.id,
+                "tenant_id": endpoint.tenant_id,
+                "tenant_name": getattr(endpoint.tenant, "name", ""),
+                "name": endpoint.name,
+                "provider": endpoint.provider,
+                "transport": endpoint.transport,
+                "is_primary": endpoint.is_primary,
+                "payment_scope": scope,
+                "enabled_rails": enabled_rails,
+                "checkout_mode": checkout_mode,
+                "supports_callback": bool(definition["supports_callback"]),
+                "supports_initiation": bool(definition["supports_initiation"]),
+                "base_url": endpoint.base_url,
+            }
+        )
+
+    return capabilities
 
 
 def resolve_indicator_for_branch(branch) -> dict:

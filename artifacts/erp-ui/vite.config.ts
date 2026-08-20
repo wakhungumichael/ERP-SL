@@ -9,6 +9,9 @@ const port = Number(process.env.PORT ?? '5173');
 const basePath = process.env.BASE_PATH ?? '/';
 
 const isReplit = process.env.REPL_ID !== undefined;
+const usePolling =
+  process.env.VITE_USE_POLLING === '1' ||
+  (!isReplit && process.platform === 'linux');
 
 export default defineConfig({
   base: basePath,
@@ -52,6 +55,16 @@ export default defineConfig({
     strictPort: true,
     host: '0.0.0.0',
     allowedHosts: true,
+    watch: {
+      usePolling,
+      interval: Number(process.env.VITE_POLL_INTERVAL ?? '1000'),
+      ignored: [
+        '**/.git/**',
+        '**/node_modules/**',
+        '**/dist/**',
+        '**/.turbo/**',
+      ],
+    },
     fs: {
       strict: true,
     },

@@ -9,7 +9,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Scale, Pencil, Trash2 } from 'lucide-react';
+import { Scale, Pencil, Trash2, RefreshCw, WandSparkles } from 'lucide-react';
 
 const BASE_URL = import.meta.env.BASE_URL?.replace(/\/$/, '') ?? '';
 
@@ -23,6 +23,9 @@ type Account = {
   is_active: boolean;
   allow_posting: boolean;
   children_count: number;
+  debit_total?: number;
+  credit_total?: number;
+  balance?: number;
 };
 
 const TYPE_LABELS: Record<string, string> = {
@@ -62,6 +65,8 @@ export default function ChartOfAccounts() {
   const [saving, setSaving] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Account | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [bootstrapping, setBootstrapping] = useState(false);
+  const [resyncing, setResyncing] = useState(false);
 
   const { data, isLoading, refetch } = useQuery({
     queryKey: ['chart-of-accounts', token, filterType, filterActive],
@@ -71,7 +76,7 @@ export default function ChartOfAccounts() {
       if (filterType) params.set('account_type', filterType);
       if (filterActive) params.set('is_active', filterActive);
       const r = await fetch(BASE_URL + '/api/accounting/chart-of-accounts/?' + params.toString(), {
-        headers: { Authorization: 'Bearer ' + token },
+        headers: { Authorization: 'Token ' + token },
       });
       if (!r.ok) throw new Error('fetch failed');
       return r.json() as Promise<Account[]>;
@@ -121,7 +126,7 @@ export default function ChartOfAccounts() {
       const method = editAccount ? 'PATCH' : 'POST';
       const r = await fetch(url, {
         method,
-        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+        headers: { 'Content-Type': 'application/json', Authorization: 'Token ' + token },
         body: JSON.stringify(body),
       });
       if (!r.ok) throw new Error('Failed');
@@ -141,7 +146,7 @@ export default function ChartOfAccounts() {
     try {
       const r = await fetch(BASE_URL + `/api/accounting/chart-of-accounts/${deleteTarget.id}/`, {
         method: 'DELETE',
-        headers: { Authorization: 'Bearer ' + token },
+        headers: { Authorization: 'Token ' + token },
       });
       if (!r.ok) {
         let msg = 'Cannot delete account';
@@ -164,6 +169,42 @@ export default function ChartOfAccounts() {
     }
   }
 
+  async function handleBootstrap() {
+    setBootstrapping(true);
+    try {
+      const r = await fetch(BASE_URL + '/api/accounting/setup/bootstrap/', {
+        method: 'POST',
+        headers: { Authorization: 'Token ' + token },
+      });
+      const response = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(response?.error || 'Failed to prepare accounting setup');
+      toast({ title: 'Accounting structure prepared', description: response.message });
+      refetch();
+    } catch (error: any) {
+      toast({ title: 'Setup failed', description: error.message, variant: 'destructive' });
+    } finally {
+      setBootstrapping(false);
+    }
+  }
+
+  async function handleResync() {
+    setResyncing(true);
+    try {
+      const r = await fetch(BASE_URL + '/api/accounting/resync/', {
+        method: 'POST',
+        headers: { Authorization: 'Token ' + token },
+      });
+      const response = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(response?.error || 'Failed to resync postings');
+      toast({ title: 'Accounting postings refreshed', description: response.message });
+      refetch();
+    } catch (error: any) {
+      toast({ title: 'Resync failed', description: error.message, variant: 'destructive' });
+    } finally {
+      setResyncing(false);
+    }
+  }
+
   const parentOptions = accounts.filter((a) => !editAccount || a.id !== editAccount.id);
 
   return (
@@ -171,7 +212,15 @@ export default function ChartOfAccounts() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold">Chart of Accounts</h1>
-        <Button onClick={openCreate}>+ New Account</Button>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={handleBootstrap} disabled={bootstrapping}>
+            <WandSparkles className="mr-1 h-4 w-4" /> {bootstrapping ? 'Preparing…' : 'Prepare Structure'}
+          </Button>
+          <Button variant="outline" onClick={handleResync} disabled={resyncing}>
+            <RefreshCw className="mr-1 h-4 w-4" /> {resyncing ? 'Re-syncing…' : 'Re-sync Postings'}
+          </Button>
+          <Button onClick={openCreate}>+ New Account</Button>
+        </div>
       </div>
 
       {/* Stats strip */}
@@ -234,6 +283,7 @@ export default function ChartOfAccounts() {
                 <TableHead className="text-center">Post</TableHead>
                 <TableHead className="text-center">Active</TableHead>
                 <TableHead className="text-center">Children</TableHead>
+                <TableHead className="text-right">Balance</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
@@ -251,6 +301,7 @@ export default function ChartOfAccounts() {
                   <TableCell className="text-center">{a.allow_posting ? '✓' : '—'}</TableCell>
                   <TableCell className="text-center">{a.is_active ? '✓' : '—'}</TableCell>
                   <TableCell className="text-center">{a.children_count}</TableCell>
+                  <TableCell className="text-right font-mono text-sm">{Number(a.balance ?? 0).toLocaleString('en-KE', { minimumFractionDigits: 2 })}</TableCell>
                   <TableCell className="text-right">
                     <div className="flex items-center justify-end gap-1">
                       <Button variant="ghost" size="icon" onClick={() => openEdit(a)} title="Edit">

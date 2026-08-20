@@ -7,6 +7,7 @@ import {
 } from '@workspace/api-client-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@/context/use-auth';
+import { RecordAuditTrail } from '@/components/audit/record-audit-trail';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -187,6 +188,28 @@ export default function InvoiceDetail({ id }: { id: string }) {
 
   const issueInvoice = useIssueInvoice();
 
+  const openInvoiceDocument = async () => {
+    if (!token || Number.isNaN(numericId)) return;
+    try {
+      const res = await fetch(`/api/payments/invoices/${numericId}/document/`, {
+        headers: { Authorization: `Token ${token}` },
+      });
+      if (!res.ok) throw new Error(`Failed to open document (${res.status})`);
+      const html = await res.text();
+      const blob = new Blob([html], { type: 'text/html' });
+      const url = URL.createObjectURL(blob);
+      const win = window.open(url, '_blank', 'noopener,noreferrer');
+      if (!win) throw new Error('Popup was blocked by the browser');
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (err: any) {
+      toast({
+        title: 'Unable to open invoice document',
+        description: err?.message ?? 'Request failed',
+        variant: 'destructive',
+      });
+    }
+  };
+
   const handleIssue = () => {
     issueInvoice.mutate({ id: numericId }, {
       onSuccess: () => {
@@ -251,7 +274,7 @@ export default function InvoiceDetail({ id }: { id: string }) {
               disabled={issueInvoice.isPending}
             >
               <Send className="h-4 w-4" />
-              {issueInvoice.isPending ? 'Issuing…' : 'Issue Invoice'}
+              {issueInvoice.isPending ? 'Issuing…' : 'Issue'}
             </Button>
           )}
           {canPay && (
@@ -267,7 +290,7 @@ export default function InvoiceDetail({ id }: { id: string }) {
               <CheckCircle2 className="h-3.5 w-3.5" /> Fully Paid
             </Badge>
           )}
-          <Button variant="ghost" size="icon" title="Print (coming soon)" disabled>
+          <Button variant="ghost" size="icon" title="Open printable invoice" onClick={openInvoiceDocument}>
             <Printer className="h-4 w-4" />
           </Button>
         </div>
@@ -279,7 +302,7 @@ export default function InvoiceDetail({ id }: { id: string }) {
         <Card>
           <CardHeader className="pb-2 bg-muted/20 border-b">
             <CardTitle className="text-xs font-bold uppercase tracking-widest flex items-center gap-1.5">
-              <Building2 className="h-3.5 w-3.5" /> Billed To
+              <Building2 className="h-3.5 w-3.5" /> Customer
             </CardTitle>
           </CardHeader>
           <CardContent className="p-4 space-y-1.5">
@@ -293,7 +316,7 @@ export default function InvoiceDetail({ id }: { id: string }) {
         <Card>
           <CardHeader className="pb-2 bg-muted/20 border-b">
             <CardTitle className="text-xs font-bold uppercase tracking-widest flex items-center gap-1.5">
-              <Hash className="h-3.5 w-3.5" /> Reference
+              <Hash className="h-3.5 w-3.5" /> Details
             </CardTitle>
           </CardHeader>
           <CardContent className="p-4 space-y-2">
@@ -338,24 +361,26 @@ export default function InvoiceDetail({ id }: { id: string }) {
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-xs font-bold uppercase tracking-widest text-muted-foreground">
-            Line Items {lines.length > 0 && `(${lines.length})`}
+            Items {lines.length > 0 && `(${lines.length})`}
           </CardTitle>
         </CardHeader>
         <CardContent className="p-0">
           <Table>
             <TableHeader>
               <TableRow className="bg-muted/50 hover:bg-muted/50">
-                <TableHead className="text-[10px] font-bold uppercase tracking-widest">Vehicle Type</TableHead>
-                <TableHead className="text-[10px] font-bold uppercase tracking-widest text-right">Qty</TableHead>
-                <TableHead className="text-[10px] font-bold uppercase tracking-widest text-right">Amount</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
+                  <TableHead className="text-[10px] font-bold uppercase tracking-widest">Vehicle Type</TableHead>
+                  <TableHead className="text-[10px] font-bold uppercase tracking-widest">Item</TableHead>
+                  <TableHead className="text-[10px] font-bold uppercase tracking-widest text-right">Qty</TableHead>
+                  <TableHead className="text-[10px] font-bold uppercase tracking-widest text-right">Amount</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
               {lines.length === 0 ? (
-                <TableRow><TableCell colSpan={3} className="py-6 text-center text-sm text-muted-foreground">No line items.</TableCell></TableRow>
+                <TableRow><TableCell colSpan={4} className="py-6 text-center text-sm text-muted-foreground">No items.</TableCell></TableRow>
               ) : lines.map((line: any) => (
                 <TableRow key={line.id} className="hover:bg-muted/30">
                   <TableCell className="py-2 text-sm font-medium">{line.vehicle_type || 'General'}</TableCell>
+                  <TableCell className="py-2 text-sm">{line.description || line.product_name || 'General item'}</TableCell>
                   <TableCell className="py-2 text-right font-mono text-sm">{line.quantity}</TableCell>
                   <TableCell className="py-2 text-right font-mono font-bold text-sm">
                     {kes(line.total, inv.currency)}
@@ -377,7 +402,7 @@ export default function InvoiceDetail({ id }: { id: string }) {
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-xs font-bold uppercase tracking-widest text-muted-foreground">
-              Linked Transactions ({txns.length})
+              Linked Records ({txns.length})
             </CardTitle>
           </CardHeader>
           <CardContent className="p-0">
@@ -479,6 +504,8 @@ export default function InvoiceDetail({ id }: { id: string }) {
           <CardContent className="text-sm text-muted-foreground">{inv.notes}</CardContent>
         </Card>
       )}
+
+      <RecordAuditTrail modelLabel="SL_Weighbridge.Invoice" objectPk={numericId} />
 
       {/* Payment dialog */}
       <ReceivePaymentDialog

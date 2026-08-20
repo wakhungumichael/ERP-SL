@@ -27,7 +27,7 @@ class TransactionSerializer(serializers.ModelSerializer):
             'gross_weight_date', 'tare_weight_date', 'status', 'gross_weight', 'tare_weight', 'net_weight',
             'manual_weight_capture', 'discounted', 'weight_date', 'created_by', 'created_by_username',
             'last_modified_by', 'last_modified_by_username', 'created_at', 'updated_at', 'paired', 'charge',
-            'destination', 'weight_type', 'payment_mode', 'payment_status', 'invoiced', 'workflow_step',
+            'destination', 'weight_type', 'payment_mode', 'payment_status', 'payment_reference', 'payment_received_at', 'invoiced', 'workflow_step',
             'workflow_step_name', 'approval_status', 'weight_reason', 'manual_receipt',
         ]
 

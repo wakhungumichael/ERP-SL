@@ -6,7 +6,7 @@
  *   2. Vehicle Types         — charge, weight limits
  *   3. Items                 — weighed commodities
  *   4. Customer Discounts    — per-customer per-vehicle-type override charges
- *   5. Surveillance          — overweight threshold + HikVision camera config
+ *   5. Surveillance          — vehicle presence threshold + HikVision camera config
  */
 import { useState, useCallback } from 'react';
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
@@ -16,9 +16,6 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import {
-  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
-} from '@/components/ui/table';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from '@/components/ui/dialog';
@@ -31,24 +28,29 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
+import { Switch } from '@/components/ui/switch';
+import { ERP_BRANCHES_ENDPOINT, ERP_BRANCHES_QUERY_KEY, normalizeBranchList } from '@/lib/branches';
 import {
-  Plus, Pencil, Trash2, Settings2, Truck, Package, Tag, ShieldAlert, Camera,
+  Plus, Pencil, Trash2, Settings2, Truck, Package, Tag, ShieldAlert, Camera, PlugZap,
 } from 'lucide-react';
+import { ERPDataTable, type ERPTableColumn } from '@/components/erp/listing/data-table';
 
 // ── helpers ────────────────────────────────────────────────────────────────────
 
 function useFetch<T>(url: string, token: string | null) {
   return useQuery<T>({
-    queryKey: [url],
+    queryKey: url === ERP_BRANCHES_ENDPOINT ? ERP_BRANCHES_QUERY_KEY : [url],
     queryFn: async () => {
       const res = await fetch(url, { headers: { Authorization: `Token ${token}` } });
       if (!res.ok) throw new Error(`${res.status}`);
       const json = await res.json();
       // Handle paginated or direct list
+      if (url === ERP_BRANCHES_ENDPOINT) return normalizeBranchList(json) as T;
       return (json?.results ?? json) as T;
     },
     enabled: !!token,
     staleTime: 30_000,
+    refetchOnMount: 'always',
   });
 }
 
@@ -146,6 +148,7 @@ type IndicatorCfg = {
   mode?: number | string;
   node_number?: number | '';
 };
+type IndicatorCfgRow = IndicatorCfg & { id: number };
 
 const emptyIndicator = (): IndicatorCfg => ({
   branch: '',
@@ -170,7 +173,7 @@ function IndicatorConfigTab() {
   const invalidate = useCallback(() => qc.invalidateQueries({ queryKey: ['/api/commercial-weighbridge/indicator-configs/'] }), [qc]);
 
   const { data: _configsRaw, isLoading } = useFetch<any>('/api/commercial-weighbridge/indicator-configs/', token);
-  const { data: _branchesRaw } = useFetch<any>('/api/commercial-weighbridge/branches/', token);
+  const { data: _branchesRaw } = useFetch<any>(ERP_BRANCHES_ENDPOINT, token);
   const configs: IndicatorCfg[] = Array.isArray(_configsRaw?.results) ? _configsRaw.results : Array.isArray(_configsRaw) ? _configsRaw : [];
   const branches: any[] = Array.isArray(_branchesRaw?.results) ? _branchesRaw.results : Array.isArray(_branchesRaw) ? _branchesRaw : [];
 
@@ -189,9 +192,95 @@ function IndicatorConfigTab() {
     () => { invalidate(); setDelId(null); toast({ title: 'Indicator deleted' }); },
     (msg) => toast({ title: 'Error', description: parseErrors(msg), variant: 'destructive' }),
   );
+  const [testingId, setTestingId] = useState<number | null>(null);
+
+  const configRows: IndicatorCfgRow[] = configs.filter((cfg): cfg is IndicatorCfgRow => typeof cfg.id === 'number');
+  const columns: ERPTableColumn<IndicatorCfgRow>[] = [
+    {
+      key: 'branch',
+      label: 'Branch',
+      headerClassName: 'text-[10px] font-bold uppercase tracking-widest',
+      cellClassName: 'font-medium',
+      render: (cfg) => cfg.branch_name ?? String(cfg.branch),
+    },
+    {
+      key: 'indicator_name',
+      label: 'Indicator',
+      headerClassName: 'text-[10px] font-bold uppercase tracking-widest',
+      render: (cfg) => cfg.indicator_name,
+    },
+    {
+      key: 'connection_type',
+      label: 'Connection',
+      headerClassName: 'text-[10px] font-bold uppercase tracking-widest',
+      render: (cfg) => <Badge variant="outline" className="text-[10px]">{cfg.connection_type}</Badge>,
+    },
+    {
+      key: 'live_weight_url',
+      label: 'Live URL',
+      headerClassName: 'text-[10px] font-bold uppercase tracking-widest',
+      cellClassName: 'max-w-[200px] truncate text-xs text-muted-foreground font-mono',
+      render: (cfg) => cfg.live_weight_url || '—',
+    },
+    {
+      key: 'max_first_weight_age_days',
+      label: 'Max Age (days)',
+      headerClassName: 'text-center text-[10px] font-bold uppercase tracking-widest',
+      cellClassName: 'text-center font-mono font-bold',
+      render: (cfg) => cfg.max_first_weight_age_days,
+    },
+  ];
 
   function openNew() { setForm(emptyIndicator()); setOpen(true); }
   function openEdit(cfg: IndicatorCfg) { setForm({ ...cfg }); setOpen(true); }
+
+  async function testConnection(cfg: IndicatorCfg) {
+    if (!cfg.id || !token) return;
+    setTestingId(cfg.id);
+    try {
+      const res = await fetch(`/api/commercial-weighbridge/indicator-configs/${cfg.id}/test/`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Token ${token}`,
+          'Content-Type': 'application/json',
+        },
+      });
+      const payload = await res.json().catch(() => ({}));
+      const results = Array.isArray(payload?.results) ? payload.results : [];
+      const summary = results.length
+        ? results.map((row: any) => (
+            row?.reachable
+              ? `${row.label}: OK${row.weight != null ? ` (${row.weight})` : ''}`
+              : `${row.label}: ${row?.error || row?.technical_error || 'Failed'}`
+          )).join(' | ')
+        : 'Indicator responded successfully.';
+
+      if (!res.ok) {
+        throw new Error(
+          [payload?.message, summary]
+            .filter(Boolean)
+            .join(' | ')
+          || payload?.error
+          || parseErrors(JSON.stringify(payload))
+          || 'Connection test failed.',
+        );
+      }
+
+      toast({
+        title: payload?.ok ? 'Indicator connection ok' : 'Indicator test completed',
+        description: summary,
+        variant: payload?.ok ? 'default' : 'destructive',
+      });
+    } catch (error: any) {
+      toast({
+        title: 'Connection test failed',
+        description: error?.message || 'Could not reach the configured indicator.',
+        variant: 'destructive',
+      });
+    } finally {
+      setTestingId(null);
+    }
+  }
 
   function save() {
     const body = {
@@ -222,50 +311,33 @@ function IndicatorConfigTab() {
         </Button>
       </div>
 
-      <div className="rounded-lg border overflow-hidden">
-        <Table>
-          <TableHeader>
-            <TableRow className="bg-muted/50">
-              <TableHead className="text-[10px] font-bold uppercase tracking-widest">Branch</TableHead>
-              <TableHead className="text-[10px] font-bold uppercase tracking-widest">Indicator</TableHead>
-              <TableHead className="text-[10px] font-bold uppercase tracking-widest">Connection</TableHead>
-              <TableHead className="text-[10px] font-bold uppercase tracking-widest">Live URL</TableHead>
-              <TableHead className="text-center text-[10px] font-bold uppercase tracking-widest">Max Age (days)</TableHead>
-              <TableHead className="w-20" />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {isLoading ? (
-              <TableRow><TableCell colSpan={6} className="text-center text-sm text-muted-foreground py-8">Loading…</TableCell></TableRow>
-            ) : configs.length === 0 ? (
-              <TableRow><TableCell colSpan={6} className="text-center text-sm text-muted-foreground py-8">No indicator configs yet.</TableCell></TableRow>
-            ) : configs.map((cfg) => (
-              <TableRow key={cfg.id}>
-                <TableCell className="font-medium">{cfg.branch_name ?? cfg.branch}</TableCell>
-                <TableCell>{cfg.indicator_name}</TableCell>
-                <TableCell>
-                  <Badge variant="outline" className="text-[10px]">{cfg.connection_type}</Badge>
-                </TableCell>
-                <TableCell className="max-w-[200px] truncate text-xs text-muted-foreground font-mono">
-                  {cfg.live_weight_url || '—'}
-                </TableCell>
-                <TableCell className="text-center font-mono font-bold">
-                  {cfg.max_first_weight_age_days}
-                </TableCell>
-                <TableCell>
-                  <div className="flex items-center gap-1 justify-end">
-                    <button onClick={() => openEdit(cfg)} className="h-7 w-7 inline-flex items-center justify-center rounded hover:bg-muted transition-colors">
-                      <Pencil className="h-3.5 w-3.5" />
-                    </button>
-                    <button onClick={() => setDelId(cfg.id!)} className="h-7 w-7 inline-flex items-center justify-center rounded hover:bg-red-50 text-destructive transition-colors">
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+      <div className="rounded-lg border overflow-hidden bg-card">
+        <ERPDataTable<IndicatorCfgRow>
+          columns={columns}
+          rows={configRows}
+          loading={isLoading}
+          emptyState="No indicator configs yet."
+          onRowClick={openEdit}
+          rowActions={(cfg) => (
+            <div className="flex items-center gap-1 justify-end">
+              <button
+                onClick={() => testConnection(cfg)}
+                disabled={testingId === cfg.id}
+                title="Test connection"
+                className="h-7 px-2 inline-flex items-center gap-1 justify-center rounded border hover:bg-muted transition-colors disabled:opacity-60 text-xs"
+              >
+                <PlugZap className="h-3.5 w-3.5" />
+                <span>{testingId === cfg.id ? 'Testing…' : 'Test'}</span>
+              </button>
+              <button onClick={() => openEdit(cfg)} className="h-7 w-7 inline-flex items-center justify-center rounded hover:bg-muted transition-colors">
+                <Pencil className="h-3.5 w-3.5" />
+              </button>
+              <button onClick={() => setDelId(cfg.id)} className="h-7 w-7 inline-flex items-center justify-center rounded hover:bg-red-50 text-destructive transition-colors">
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          )}
+        />
       </div>
 
       {/* Add / Edit dialog */}
@@ -398,7 +470,11 @@ type VehicleType = {
   charge: number | '';
   max_gross_weight?: number | '';
   max_tare_weight?: number | '';
+  linked_product_id?: number | null;
+  linked_product_name?: string;
+  linked_product_code?: string;
 };
+type VehicleTypeRow = VehicleType & { id: number };
 
 const emptyVehicleType = (): VehicleType => ({
   name: '', description: '', charge: '', max_gross_weight: '', max_tare_weight: '',
@@ -429,6 +505,58 @@ function VehicleTypesTab() {
     (msg) => toast({ title: 'Error', description: parseErrors(msg), variant: 'destructive' }),
   );
 
+  const vehicleTypeRows: VehicleTypeRow[] = types.filter((vt): vt is VehicleTypeRow => typeof vt.id === 'number');
+  const columns: ERPTableColumn<VehicleTypeRow>[] = [
+    {
+      key: 'name',
+      label: 'Name',
+      headerClassName: 'text-[10px] font-bold uppercase tracking-widest',
+      cellClassName: 'font-medium',
+      render: (vt) => vt.name,
+    },
+    {
+      key: 'description',
+      label: 'Description',
+      headerClassName: 'text-[10px] font-bold uppercase tracking-widest',
+      cellClassName: 'text-muted-foreground text-sm',
+      render: (vt) => vt.description || '—',
+    },
+    {
+      key: 'charge',
+      label: 'Charge',
+      headerClassName: 'text-right text-[10px] font-bold uppercase tracking-widest',
+      cellClassName: 'text-right font-mono',
+      render: (vt) => vt.charge,
+    },
+    {
+      key: 'linked_product',
+      label: 'ERP Service',
+      headerClassName: 'text-[10px] font-bold uppercase tracking-widest',
+      render: (vt) => vt.linked_product_name ? (
+        <div className="flex flex-col gap-1">
+          <span className="text-sm font-medium">{vt.linked_product_name}</span>
+          <Badge variant="secondary" className="w-fit">{vt.linked_product_code || 'Service linked'}</Badge>
+        </div>
+      ) : (
+        <Badge variant="outline">Will sync on save</Badge>
+      ),
+    },
+    {
+      key: 'max_gross_weight',
+      label: 'Max Gross (kg)',
+      headerClassName: 'text-right text-[10px] font-bold uppercase tracking-widest',
+      cellClassName: 'text-right font-mono',
+      render: (vt) => vt.max_gross_weight ?? '—',
+    },
+    {
+      key: 'max_tare_weight',
+      label: 'Max Tare (kg)',
+      headerClassName: 'text-right text-[10px] font-bold uppercase tracking-widest',
+      cellClassName: 'text-right font-mono',
+      render: (vt) => vt.max_tare_weight ?? '—',
+    },
+  ];
+
   function openNew() { setForm(emptyVehicleType()); setOpen(true); }
   function openEdit(vt: VehicleType) { setForm({ ...vt }); setOpen(true); }
 
@@ -452,51 +580,31 @@ function VehicleTypesTab() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <p className="text-sm text-muted-foreground">
-          Vehicle types determine the default weighing charge and weight limits per vehicle class.
+          Vehicle types are managed per organization. They determine the default weighing charge and weight limits per vehicle class, and each saved vehicle type also syncs to the active organization&apos;s Products &amp; Services catalog as a service item.
         </p>
         <Button size="sm" className="gap-1.5 shrink-0" onClick={openNew}>
           <Plus className="h-3.5 w-3.5" /> Add Vehicle Type
         </Button>
       </div>
 
-      <div className="rounded-lg border overflow-hidden">
-        <Table>
-          <TableHeader>
-            <TableRow className="bg-muted/50">
-              <TableHead className="text-[10px] font-bold uppercase tracking-widest">Name</TableHead>
-              <TableHead className="text-[10px] font-bold uppercase tracking-widest">Description</TableHead>
-              <TableHead className="text-right text-[10px] font-bold uppercase tracking-widest">Charge</TableHead>
-              <TableHead className="text-right text-[10px] font-bold uppercase tracking-widest">Max Gross (kg)</TableHead>
-              <TableHead className="text-right text-[10px] font-bold uppercase tracking-widest">Max Tare (kg)</TableHead>
-              <TableHead className="w-20" />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {isLoading ? (
-              <TableRow><TableCell colSpan={6} className="text-center text-sm text-muted-foreground py-8">Loading…</TableCell></TableRow>
-            ) : (types as VehicleType[]).length === 0 ? (
-              <TableRow><TableCell colSpan={6} className="text-center text-sm text-muted-foreground py-8">No vehicle types defined.</TableCell></TableRow>
-            ) : (types as VehicleType[]).map((vt) => (
-              <TableRow key={vt.id}>
-                <TableCell className="font-medium">{vt.name}</TableCell>
-                <TableCell className="text-muted-foreground text-sm">{vt.description || '—'}</TableCell>
-                <TableCell className="text-right font-mono">{vt.charge}</TableCell>
-                <TableCell className="text-right font-mono">{vt.max_gross_weight ?? '—'}</TableCell>
-                <TableCell className="text-right font-mono">{vt.max_tare_weight ?? '—'}</TableCell>
-                <TableCell>
-                  <div className="flex items-center gap-1 justify-end">
-                    <button onClick={() => openEdit(vt)} className="h-7 w-7 inline-flex items-center justify-center rounded hover:bg-muted transition-colors">
-                      <Pencil className="h-3.5 w-3.5" />
-                    </button>
-                    <button onClick={() => setDelId(vt.id!)} className="h-7 w-7 inline-flex items-center justify-center rounded hover:bg-red-50 text-destructive transition-colors">
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+      <div className="rounded-lg border overflow-hidden bg-card">
+        <ERPDataTable<VehicleTypeRow>
+          columns={columns}
+          rows={vehicleTypeRows}
+          loading={isLoading}
+          emptyState="No vehicle types defined."
+          onRowClick={openEdit}
+          rowActions={(vt) => (
+            <div className="flex items-center gap-1 justify-end">
+              <button onClick={() => openEdit(vt)} className="h-7 w-7 inline-flex items-center justify-center rounded hover:bg-muted transition-colors">
+                <Pencil className="h-3.5 w-3.5" />
+              </button>
+              <button onClick={() => setDelId(vt.id)} className="h-7 w-7 inline-flex items-center justify-center rounded hover:bg-red-50 text-destructive transition-colors">
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          )}
+        />
       </div>
 
       <Dialog open={open} onOpenChange={setOpen}>
@@ -516,7 +624,7 @@ function VehicleTypesTab() {
             <div className="space-y-1.5">
               <Label>Default charge *</Label>
               <Input type="number" step="0.01" min="0" value={form.charge} onChange={e => set('charge', e.target.value)} placeholder="0.00" />
-              <p className="text-xs text-muted-foreground">Standard weighing fee for this vehicle class. Can be overridden per customer via Discounts tab.</p>
+              <p className="text-xs text-muted-foreground">Standard weighing fee for this vehicle class. This amount also becomes the linked ERP service price and can still be overridden per customer via Discounts.</p>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
@@ -527,6 +635,9 @@ function VehicleTypesTab() {
                 <Label>Max tare weight (kg)</Label>
                 <Input type="number" min="0" value={form.max_tare_weight ?? ''} onChange={e => set('max_tare_weight', e.target.value)} placeholder="e.g. 8000" />
               </div>
+            </div>
+            <div className="rounded-md border bg-muted/30 p-3 text-xs text-muted-foreground">
+              Saving this vehicle type creates or updates a matching service in <span className="font-medium text-foreground">Sales &amp; Payments → Products &amp; Services</span> for the active tenant.
             </div>
           </div>
           <DialogFooter>
@@ -553,6 +664,7 @@ function VehicleTypesTab() {
 // ══════════════════════════════════════════════════════════════════════════════
 
 type Item = { id?: number; name: string; description?: string };
+type ItemRow = Item & { id: number };
 const emptyItem = (): Item => ({ name: '', description: '' });
 
 function ItemsTab() {
@@ -580,6 +692,24 @@ function ItemsTab() {
     (msg) => toast({ title: 'Error', description: parseErrors(msg), variant: 'destructive' }),
   );
 
+  const itemRows: ItemRow[] = items.filter((item): item is ItemRow => typeof item.id === 'number');
+  const columns: ERPTableColumn<ItemRow>[] = [
+    {
+      key: 'name',
+      label: 'Name',
+      headerClassName: 'text-[10px] font-bold uppercase tracking-widest',
+      cellClassName: 'font-medium',
+      render: (item) => item.name,
+    },
+    {
+      key: 'description',
+      label: 'Description',
+      headerClassName: 'text-[10px] font-bold uppercase tracking-widest',
+      cellClassName: 'text-muted-foreground text-sm',
+      render: (item) => item.description || '—',
+    },
+  ];
+
   function openNew() { setForm(emptyItem()); setOpen(true); }
   function openEdit(item: Item) { setForm({ ...item }); setOpen(true); }
 
@@ -604,38 +734,24 @@ function ItemsTab() {
         </Button>
       </div>
 
-      <div className="rounded-lg border overflow-hidden">
-        <Table>
-          <TableHeader>
-            <TableRow className="bg-muted/50">
-              <TableHead className="text-[10px] font-bold uppercase tracking-widest">Name</TableHead>
-              <TableHead className="text-[10px] font-bold uppercase tracking-widest">Description</TableHead>
-              <TableHead className="w-20" />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {isLoading ? (
-              <TableRow><TableCell colSpan={3} className="text-center text-sm text-muted-foreground py-8">Loading…</TableCell></TableRow>
-            ) : (items as Item[]).length === 0 ? (
-              <TableRow><TableCell colSpan={3} className="text-center text-sm text-muted-foreground py-8">No items defined.</TableCell></TableRow>
-            ) : (items as Item[]).map((item) => (
-              <TableRow key={item.id}>
-                <TableCell className="font-medium">{item.name}</TableCell>
-                <TableCell className="text-muted-foreground text-sm">{item.description || '—'}</TableCell>
-                <TableCell>
-                  <div className="flex items-center gap-1 justify-end">
-                    <button onClick={() => openEdit(item)} className="h-7 w-7 inline-flex items-center justify-center rounded hover:bg-muted transition-colors">
-                      <Pencil className="h-3.5 w-3.5" />
-                    </button>
-                    <button onClick={() => setDelId(item.id!)} className="h-7 w-7 inline-flex items-center justify-center rounded hover:bg-red-50 text-destructive transition-colors">
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+      <div className="rounded-lg border overflow-hidden bg-card">
+        <ERPDataTable<ItemRow>
+          columns={columns}
+          rows={itemRows}
+          loading={isLoading}
+          emptyState="No items defined."
+          onRowClick={openEdit}
+          rowActions={(item) => (
+            <div className="flex items-center gap-1 justify-end">
+              <button onClick={() => openEdit(item)} className="h-7 w-7 inline-flex items-center justify-center rounded hover:bg-muted transition-colors">
+                <Pencil className="h-3.5 w-3.5" />
+              </button>
+              <button onClick={() => setDelId(item.id)} className="h-7 w-7 inline-flex items-center justify-center rounded hover:bg-red-50 text-destructive transition-colors">
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          )}
+        />
       </div>
 
       <Dialog open={open} onOpenChange={setOpen}>
@@ -672,172 +788,486 @@ function ItemsTab() {
   );
 }
 
+type OperationType = {
+  id?: number;
+  code: string;
+  name: string;
+  description?: string;
+  flow_kind: 'first' | 'second' | 'single' | 'axle';
+  is_active: boolean;
+  display_order: number | string;
+  is_default: boolean;
+};
+type OperationTypeRow = OperationType & { id: number };
+
+const emptyOperationType = (): OperationType => ({
+  code: '',
+  name: '',
+  description: '',
+  flow_kind: 'first',
+  is_active: true,
+  display_order: 10,
+  is_default: false,
+});
+
+function OperationTypesTab() {
+  const { token } = useAuth();
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const invalidate = useCallback(() => qc.invalidateQueries({ queryKey: ['/api/commercial-weighbridge/weighing-operation-types/'] }), [qc]);
+  const { data: _rowsRaw, isLoading } = useFetch<any>('/api/commercial-weighbridge/weighing-operation-types/', token);
+  const rows: OperationType[] = Array.isArray(_rowsRaw?.results) ? _rowsRaw.results : Array.isArray(_rowsRaw) ? _rowsRaw : [];
+  const [open, setOpen] = useState(false);
+  const [form, setForm] = useState<OperationType>(emptyOperationType());
+  const [delId, setDelId] = useState<number | null>(null);
+
+  const mut = useApiMutation(
+    token,
+    () => { invalidate(); setOpen(false); toast({ title: form.id ? 'Operation type updated' : 'Operation type added' }); },
+    (msg) => toast({ title: 'Error', description: parseErrors(msg), variant: 'destructive' }),
+  );
+  const delMut = useApiMutation(
+    token,
+    () => { invalidate(); setDelId(null); toast({ title: 'Operation type deleted' }); },
+    (msg) => toast({ title: 'Error', description: parseErrors(msg), variant: 'destructive' }),
+  );
+
+  const operationTypeRows: OperationTypeRow[] = rows.filter((row): row is OperationTypeRow => typeof row.id === 'number');
+  const columns: ERPTableColumn<OperationTypeRow>[] = [
+    {
+      key: 'name',
+      label: 'Type',
+      cellClassName: 'align-top',
+      render: (row) => (
+        <div>
+          <div className="font-medium">{row.name}</div>
+          <div className="text-xs text-muted-foreground">{row.description || '—'}</div>
+        </div>
+      ),
+    },
+    {
+      key: 'flow_kind',
+      label: 'Flow',
+      cellClassName: 'uppercase text-xs',
+      render: (row) => row.flow_kind,
+    },
+    {
+      key: 'code',
+      label: 'Code',
+      cellClassName: 'font-mono text-xs',
+      render: (row) => row.code,
+    },
+    {
+      key: 'is_active',
+      label: 'Active',
+      render: (row) => <Badge variant={row.is_active ? 'secondary' : 'outline'}>{row.is_active ? 'Active' : 'Inactive'}</Badge>,
+    },
+    {
+      key: 'display_order',
+      label: 'Order',
+      headerClassName: 'text-right',
+      cellClassName: 'text-right font-mono',
+      render: (row) => row.display_order,
+    },
+  ];
+
+  const save = () => {
+    const body = { ...form, display_order: Number(form.display_order) || 10 };
+    if (form.id) mut.mutate({ url: `/api/commercial-weighbridge/weighing-operation-types/${form.id}/`, method: 'PATCH', body });
+    else mut.mutate({ url: '/api/commercial-weighbridge/weighing-operation-types/', method: 'POST', body });
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-muted-foreground">Control which weighing workflows this organization can use. Default system types can be activated, deactivated, or reordered, while organization-specific custom types can still be fully edited.</p>
+        <Button size="sm" className="gap-1.5 shrink-0" onClick={() => { setForm(emptyOperationType()); setOpen(true); }}>
+          <Plus className="h-3.5 w-3.5" /> Add Operation Type
+        </Button>
+      </div>
+
+      <div className="rounded-lg border overflow-hidden bg-card">
+        <ERPDataTable<OperationTypeRow>
+          columns={columns}
+          rows={operationTypeRows}
+          loading={isLoading}
+          emptyState="No operation types configured."
+          onRowClick={(row) => { setForm({ ...row }); setOpen(true); }}
+          rowActions={(row) => (
+            <div className="flex items-center gap-1 justify-end">
+              <button onClick={() => { setForm({ ...row }); setOpen(true); }} className="h-7 w-7 inline-flex items-center justify-center rounded hover:bg-muted transition-colors">
+                <Pencil className="h-3.5 w-3.5" />
+              </button>
+              {!row.is_default ? (
+                <button onClick={() => setDelId(row.id)} className="h-7 w-7 inline-flex items-center justify-center rounded hover:bg-red-50 text-destructive transition-colors">
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              ) : null}
+            </div>
+          )}
+        />
+      </div>
+
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle>{form.id ? 'Edit Operation Type' : 'Add Operation Type'}</DialogTitle></DialogHeader>
+          <div className="grid gap-4 py-2">
+            <div className="space-y-1.5">
+              <Label>Name *</Label>
+              <Input value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} disabled={Boolean(form.is_default)} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Code *</Label>
+              <Input value={form.code} onChange={e => setForm(p => ({ ...p, code: e.target.value.toUpperCase().replace(/\s+/g, '_') }))} disabled={Boolean(form.is_default)} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Flow Kind</Label>
+              <Select value={form.flow_kind} onValueChange={(v: any) => setForm(p => ({ ...p, flow_kind: v }))} disabled={Boolean(form.is_default)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="first">First Weight</SelectItem>
+                  <SelectItem value="second">Second Weight</SelectItem>
+                  <SelectItem value="single">Single Weight</SelectItem>
+                  <SelectItem value="axle">Axle Weight</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Description</Label>
+              <Textarea value={form.description ?? ''} onChange={e => setForm(p => ({ ...p, description: e.target.value }))} rows={2} disabled={Boolean(form.is_default)} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Display Order</Label>
+              <Input type="number" min="1" value={form.display_order} onChange={e => setForm(p => ({ ...p, display_order: e.target.value }))} />
+            </div>
+            {form.is_default ? (
+              <div className="rounded-md border bg-muted/30 p-3 text-xs text-muted-foreground">
+                This is a default system operation type. Your organization can switch it on or off and change its display order, but the core definition stays shared.
+              </div>
+            ) : null}
+            <div className="flex items-center justify-between rounded-md border p-3">
+              <div>
+                <div className="text-sm font-medium">Active</div>
+                <div className="text-xs text-muted-foreground">Inactive types are hidden from operators.</div>
+              </div>
+              <Switch checked={form.is_active} onCheckedChange={v => setForm(p => ({ ...p, is_active: v }))} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
+            <Button onClick={save} disabled={mut.isPending}>{mut.isPending ? 'Saving…' : 'Save type'}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <ConfirmDelete
+        open={delId !== null}
+        label="operation type"
+        onConfirm={() => delMut.mutate({ url: `/api/commercial-weighbridge/weighing-operation-types/${delId}/`, method: 'DELETE' })}
+        onCancel={() => setDelId(null)}
+      />
+    </div>
+  );
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
 // TAB 4 — Customer Discounts
 // ══════════════════════════════════════════════════════════════════════════════
 
-type Discount = {
+type PricingRule = {
   id?: number;
-  customer: number | '';
-  customer_name?: string;
-  vehicle_type: number | '';
-  vehicle_type_name?: string;
-  discounted_charge: number | '';
+  name: string;
+  priority: number | string;
+  rule_type?: { id: number; name: string; slug: string };
+  module?: { id: number; slug: string };
+  rule_type_id: string;
+  adjustment_mode: 'override' | 'fixed_discount' | 'percentage_discount';
+  amount: number | string;
+  conditions: Record<string, any>;
+  is_active: boolean;
 };
+type PricingRuleRow = PricingRule & { id: number };
 
-const emptyDiscount = (): Discount => ({
-  customer: '', vehicle_type: '', discounted_charge: '',
+const emptyPricingRule = (): PricingRule => ({
+  name: '',
+  priority: 100,
+  rule_type_id: '',
+  adjustment_mode: 'override',
+  amount: '',
+  conditions: {},
+  is_active: true,
 });
 
 function DiscountsTab() {
   const { token } = useAuth();
   const { toast } = useToast();
   const qc = useQueryClient();
-  const invalidate = useCallback(() => qc.invalidateQueries({ queryKey: ['/api/commercial-weighbridge/discounts/'] }), [qc]);
+  const invalidate = useCallback(() => qc.invalidateQueries({ queryKey: ['/api/platform/pricing-rules/?module_slug=weighbridge'] }), [qc]);
 
-  const { data: _discountsRaw, isLoading } = useFetch<any>('/api/commercial-weighbridge/discounts/', token);
+  const { data: _rulesRaw, isLoading } = useFetch<any>('/api/platform/pricing-rules/?module_slug=weighbridge', token);
+  const { data: _ruleTypesRaw } = useFetch<any>('/api/platform/pricing-rule-types/?module_slug=weighbridge', token);
   const { data: _customersRaw } = useFetch<any>('/api/commercial-weighbridge/customers/', token);
   const { data: _vtRaw } = useFetch<any>('/api/commercial-weighbridge/vehicle-types/', token);
-  const discounts: Discount[]  = Array.isArray(_discountsRaw?.results) ? _discountsRaw.results : Array.isArray(_discountsRaw) ? _discountsRaw : [];
-  const customerList: any[]    = Array.isArray(_customersRaw?.results) ? _customersRaw.results : Array.isArray(_customersRaw) ? _customersRaw : [];
-  const vtList: any[]          = Array.isArray(_vtRaw?.results) ? _vtRaw.results : Array.isArray(_vtRaw) ? _vtRaw : [];
+  const rules: PricingRule[] = Array.isArray(_rulesRaw?.results) ? _rulesRaw.results : Array.isArray(_rulesRaw) ? _rulesRaw : [];
+  const ruleTypes: any[] = Array.isArray(_ruleTypesRaw?.results) ? _ruleTypesRaw.results : Array.isArray(_ruleTypesRaw) ? _ruleTypesRaw : [];
+  const customerList: any[] = Array.isArray(_customersRaw?.results) ? _customersRaw.results : Array.isArray(_customersRaw) ? _customersRaw : [];
+  const vtList: any[] = Array.isArray(_vtRaw?.results) ? _vtRaw.results : Array.isArray(_vtRaw) ? _vtRaw : [];
 
-  const [open, setOpen]   = useState(false);
-  const [form, setForm]   = useState<Discount>(emptyDiscount());
+  const [open, setOpen] = useState(false);
+  const [form, setForm] = useState<any>({
+    ...emptyPricingRule(),
+    customer_id: '',
+    vehicle_type_id: '',
+    min_weight_kg: '',
+    max_weight_kg: '',
+  });
   const [delId, setDelId] = useState<number | null>(null);
+  const moduleId =
+    ruleTypes.find((rt: any) => rt.module?.slug === 'weighbridge' || rt.module?.slug === 'commercial-weighbridge')?.module?.id
+    ?? rules.find((r: any) => r.module?.slug === 'weighbridge' || r.module?.slug === 'commercial-weighbridge')?.module?.id
+    ?? 2;
 
   const mut = useApiMutation(
     token,
-    () => { invalidate(); setOpen(false); toast({ title: form.id ? 'Discount updated' : 'Discount added' }); },
+    () => { invalidate(); setOpen(false); toast({ title: form.id ? 'Pricing rule updated' : 'Pricing rule added' }); },
     (msg) => toast({ title: 'Error', description: parseErrors(msg), variant: 'destructive' }),
   );
 
   const delMut = useApiMutation(
     token,
-    () => { invalidate(); setDelId(null); toast({ title: 'Discount removed' }); },
+    () => { invalidate(); setDelId(null); toast({ title: 'Pricing rule removed' }); },
     (msg) => toast({ title: 'Error', description: parseErrors(msg), variant: 'destructive' }),
   );
 
-  function openNew() { setForm(emptyDiscount()); setOpen(true); }
-  function openEdit(d: Discount) { setForm({ ...d }); setOpen(true); }
+  function openNew() {
+    setForm({
+      ...emptyPricingRule(),
+      customer_id: '',
+      vehicle_type_id: '',
+      min_weight_kg: '',
+      max_weight_kg: '',
+    });
+    setOpen(true);
+  }
+
+  function openEdit(rule: PricingRule) {
+    const conditions = rule.conditions ?? {};
+    setForm({
+      id: rule.id,
+      name: rule.name,
+      priority: rule.priority,
+      rule_type_id: String(rule.rule_type?.id ?? ''),
+      adjustment_mode: rule.adjustment_mode,
+      amount: rule.amount,
+      is_active: rule.is_active,
+      customer_id: conditions.customer_id ? String(conditions.customer_id) : '',
+      vehicle_type_id: conditions.vehicle_type_id ? String(conditions.vehicle_type_id) : '',
+      min_weight_kg: conditions.min_weight_kg ?? '',
+      max_weight_kg: conditions.max_weight_kg ?? '',
+    });
+    setOpen(true);
+  }
 
   function save() {
+    const conditions: Record<string, any> = { weight_type: 'First Weight' };
+    if (form.customer_id) conditions.customer_id = Number(form.customer_id);
+    if (form.vehicle_type_id) conditions.vehicle_type_id = Number(form.vehicle_type_id);
+    if (form.min_weight_kg !== '') conditions.min_weight_kg = Number(form.min_weight_kg);
+    if (form.max_weight_kg !== '') conditions.max_weight_kg = Number(form.max_weight_kg);
+
     const body = {
-      customer: Number(form.customer),
-      vehicle_type: Number(form.vehicle_type),
-      discounted_charge: Number(form.discounted_charge),
+      name: form.name,
+      rule_type_id: Number(form.rule_type_id),
+      module_id: moduleId,
+      priority: Number(form.priority || 100),
+      adjustment_mode: form.adjustment_mode,
+      amount: Number(form.amount),
+      conditions,
+      is_active: Boolean(form.is_active),
     };
     if (form.id) {
-      mut.mutate({ url: `/api/commercial-weighbridge/discounts/${form.id}/`, method: 'PATCH', body });
+      mut.mutate({ url: `/api/platform/pricing-rules/${form.id}/`, method: 'PATCH', body });
     } else {
-      mut.mutate({ url: '/api/commercial-weighbridge/discounts/', method: 'POST', body });
+      mut.mutate({ url: '/api/platform/pricing-rules/', method: 'POST', body });
     }
   }
 
-  const set = (k: keyof Discount, v: any) => setForm(f => ({ ...f, [k]: v }));
+  const set = (k: string, v: any) => setForm((f: any) => ({ ...f, [k]: v }));
 
-  // Group by customer for a cleaner table
-  const byCustomer: Record<string, Discount[]> = {};
-  (discounts as Discount[]).forEach(d => {
-    const key = d.customer_name ?? String(d.customer);
-    if (!byCustomer[key]) byCustomer[key] = [];
-    byCustomer[key].push(d);
-  });
+  function describeRule(rule: PricingRule) {
+    const conditions = rule.conditions ?? {};
+    const customer = customerList.find((c: any) => c.id === conditions.customer_id);
+    const vehicleType = vtList.find((vt: any) => vt.id === conditions.vehicle_type_id);
+    const bits = [];
+    if (customer) bits.push(customer.name);
+    if (vehicleType) bits.push(vehicleType.name);
+    if (conditions.min_weight_kg !== undefined || conditions.max_weight_kg !== undefined) {
+      bits.push(`weight ${conditions.min_weight_kg ?? 0} - ${conditions.max_weight_kg ?? 'any'} kg`);
+    }
+    return bits.length ? bits.join(' · ') : 'General rule';
+  }
+
+  function describeAmount(rule: PricingRule) {
+    if (rule.adjustment_mode === 'override') return `Charge = ${rule.amount}`;
+    if (rule.adjustment_mode === 'fixed_discount') return `Less ${rule.amount}`;
+    return `${rule.amount}% off`;
+  }
+
+  const pricingRuleRows: PricingRuleRow[] = rules.filter((rule): rule is PricingRuleRow => typeof rule.id === 'number');
+  const columns: ERPTableColumn<PricingRuleRow>[] = [
+    {
+      key: 'rule',
+      label: 'Rule',
+      headerClassName: 'text-[10px] font-bold uppercase tracking-widest',
+      cellClassName: 'font-medium',
+      render: (rule) => (
+        <div>
+          <div>{rule.name}</div>
+          <div className="text-[11px] text-muted-foreground">Priority {rule.priority}</div>
+        </div>
+      ),
+    },
+    {
+      key: 'type',
+      label: 'Type',
+      headerClassName: 'text-[10px] font-bold uppercase tracking-widest',
+      render: (rule) => <Badge variant="outline" className="text-[10px]">{rule.rule_type?.name ?? 'Rule'}</Badge>,
+    },
+    {
+      key: 'conditions',
+      label: 'Conditions',
+      headerClassName: 'text-[10px] font-bold uppercase tracking-widest',
+      cellClassName: 'text-sm text-muted-foreground',
+      render: (rule) => describeRule(rule),
+    },
+    {
+      key: 'adjustment',
+      label: 'Adjustment',
+      headerClassName: 'text-right text-[10px] font-bold uppercase tracking-widest',
+      cellClassName: 'text-right font-mono font-bold',
+      render: (rule) => describeAmount(rule),
+    },
+  ];
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-3">
         <p className="text-sm text-muted-foreground">
-          Override the standard vehicle-type charge for a specific customer. The discounted charge is used when that customer's vehicle arrives at the weighbridge.
+          Configure reusable pricing rules for weighbridge charges. You can target customer-only, customer plus vehicle type, or weight-band rules from one central pricing engine.
         </p>
         <Button size="sm" className="gap-1.5 shrink-0" onClick={openNew}>
-          <Plus className="h-3.5 w-3.5" /> Add Discount
+          <Plus className="h-3.5 w-3.5" /> Add Rule
         </Button>
       </div>
 
-      <div className="rounded-lg border overflow-hidden">
-        <Table>
-          <TableHeader>
-            <TableRow className="bg-muted/50">
-              <TableHead className="text-[10px] font-bold uppercase tracking-widest">Customer</TableHead>
-              <TableHead className="text-[10px] font-bold uppercase tracking-widest">Vehicle Type</TableHead>
-              <TableHead className="text-right text-[10px] font-bold uppercase tracking-widest">Discounted Charge</TableHead>
-              <TableHead className="w-20" />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {isLoading ? (
-              <TableRow><TableCell colSpan={4} className="text-center text-sm text-muted-foreground py-8">Loading…</TableCell></TableRow>
-            ) : (discounts as Discount[]).length === 0 ? (
-              <TableRow><TableCell colSpan={4} className="text-center text-sm text-muted-foreground py-8">No customer discounts configured.</TableCell></TableRow>
-            ) : (discounts as Discount[]).map((d) => (
-              <TableRow key={d.id}>
-                <TableCell className="font-medium">{d.customer_name ?? d.customer}</TableCell>
-                <TableCell>
-                  <Badge variant="outline" className="text-[10px]">{d.vehicle_type_name ?? d.vehicle_type}</Badge>
-                </TableCell>
-                <TableCell className="text-right font-mono font-bold">{d.discounted_charge}</TableCell>
-                <TableCell>
-                  <div className="flex items-center gap-1 justify-end">
-                    <button onClick={() => openEdit(d)} className="h-7 w-7 inline-flex items-center justify-center rounded hover:bg-muted transition-colors">
-                      <Pencil className="h-3.5 w-3.5" />
-                    </button>
-                    <button onClick={() => setDelId(d.id!)} className="h-7 w-7 inline-flex items-center justify-center rounded hover:bg-red-50 text-destructive transition-colors">
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+      <div className="rounded-lg border overflow-hidden bg-card">
+        <ERPDataTable<PricingRuleRow>
+          columns={columns}
+          rows={pricingRuleRows}
+          loading={isLoading}
+          emptyState="No pricing rules configured."
+          onRowClick={openEdit}
+          rowActions={(rule) => (
+            <div className="flex items-center gap-1 justify-end">
+              <button onClick={() => openEdit(rule)} className="h-7 w-7 inline-flex items-center justify-center rounded hover:bg-muted transition-colors">
+                <Pencil className="h-3.5 w-3.5" />
+              </button>
+              <button onClick={() => setDelId(rule.id)} className="h-7 w-7 inline-flex items-center justify-center rounded hover:bg-red-50 text-destructive transition-colors">
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          )}
+        />
       </div>
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle>{form.id ? 'Edit Discount' : 'Add Customer Discount'}</DialogTitle>
+            <DialogTitle>{form.id ? 'Edit Pricing Rule' : 'Add Pricing Rule'}</DialogTitle>
           </DialogHeader>
           <div className="grid gap-4 py-2">
             <div className="space-y-1.5">
-              <Label>Customer *</Label>
-              <Select value={String(form.customer)} onValueChange={v => set('customer', v)}>
-                <SelectTrigger><SelectValue placeholder="Select customer" /></SelectTrigger>
-                <SelectContent>
-                  {customerList.map((c: any) => (
-                    <SelectItem key={c.id} value={String(c.id)}>{c.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <Label>Rule name *</Label>
+              <Input value={form.name} onChange={e => set('name', e.target.value)} placeholder="VIP 10 wheeler override" />
             </div>
-            <div className="space-y-1.5">
-              <Label>Vehicle type *</Label>
-              <Select value={String(form.vehicle_type)} onValueChange={v => set('vehicle_type', v)}>
-                <SelectTrigger><SelectValue placeholder="Select vehicle type" /></SelectTrigger>
-                <SelectContent>
-                  {vtList.map((vt: any) => (
-                    <SelectItem key={vt.id} value={String(vt.id)}>{vt.name} (standard: {vt.charge})</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label>Rule type *</Label>
+                <Select value={String(form.rule_type_id)} onValueChange={v => set('rule_type_id', v)}>
+                  <SelectTrigger><SelectValue placeholder="Select rule type" /></SelectTrigger>
+                  <SelectContent>
+                    {ruleTypes.map((rt: any) => (
+                      <SelectItem key={rt.id} value={String(rt.id)}>{rt.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label>Priority</Label>
+                <Input type="number" value={form.priority} onChange={e => set('priority', e.target.value)} />
+              </div>
             </div>
-            <div className="space-y-1.5">
-              <Label>Discounted charge *</Label>
-              <Input
-                type="number"
-                step="0.01"
-                min="0"
-                value={form.discounted_charge}
-                onChange={e => set('discounted_charge', e.target.value)}
-                placeholder="0.00"
-              />
-              <p className="text-xs text-muted-foreground">This replaces the vehicle type's standard charge for this customer only.</p>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label>Customer</Label>
+                <Select value={String(form.customer_id || 'all')} onValueChange={v => set('customer_id', v === 'all' ? '' : v)}>
+                  <SelectTrigger><SelectValue placeholder="Any customer" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Any customer</SelectItem>
+                    {customerList.map((c: any) => (
+                      <SelectItem key={c.id} value={String(c.id)}>{c.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label>Vehicle type</Label>
+                <Select value={String(form.vehicle_type_id || 'all')} onValueChange={v => set('vehicle_type_id', v === 'all' ? '' : v)}>
+                  <SelectTrigger><SelectValue placeholder="Any vehicle type" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Any vehicle type</SelectItem>
+                    {vtList.map((vt: any) => (
+                      <SelectItem key={vt.id} value={String(vt.id)}>{vt.name} (standard: {vt.charge})</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label>Minimum weight (kg)</Label>
+                <Input type="number" min="0" value={form.min_weight_kg} onChange={e => set('min_weight_kg', e.target.value)} placeholder="Optional" />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Maximum weight (kg)</Label>
+                <Input type="number" min="0" value={form.max_weight_kg} onChange={e => set('max_weight_kg', e.target.value)} placeholder="Optional" />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label>Adjustment mode *</Label>
+                <Select value={form.adjustment_mode} onValueChange={v => set('adjustment_mode', v)}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="override">Override charge</SelectItem>
+                    <SelectItem value="fixed_discount">Fixed discount</SelectItem>
+                    <SelectItem value="percentage_discount">Percentage discount</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label>Amount *</Label>
+                <Input type="number" step="0.01" min="0" value={form.amount} onChange={e => set('amount', e.target.value)} placeholder="0.00" />
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Overrides set the final charge directly. Fixed and percentage discounts are applied against the selected vehicle type's standard charge.
+            </p>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
-            <Button onClick={save} disabled={mut.isPending}>
-              {mut.isPending ? 'Saving…' : form.id ? 'Save changes' : 'Add discount'}
+            <Button onClick={save} disabled={mut.isPending || !form.name || !form.rule_type_id || form.amount === ''}>
+              {mut.isPending ? 'Saving…' : form.id ? 'Save changes' : 'Add rule'}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -845,8 +1275,8 @@ function DiscountsTab() {
 
       <ConfirmDelete
         open={delId !== null}
-        label="discount"
-        onConfirm={() => delMut.mutate({ url: `/api/commercial-weighbridge/discounts/${delId}/`, method: 'DELETE' })}
+        label="pricing rule"
+        onConfirm={() => delMut.mutate({ url: `/api/platform/pricing-rules/${delId}/`, method: 'DELETE' })}
         onCancel={() => setDelId(null)}
       />
     </div>
@@ -862,6 +1292,7 @@ type OverweightConfig = {
   branch: number;
   threshold_kg: number | string;
   grace_window_minutes: number | string;
+  capture_interval_seconds: number | string;
   surveillance_enabled: boolean;
 };
 
@@ -878,6 +1309,48 @@ type CameraConfig = {
   other_parameters: string;
   capture_on_overweight: boolean;
   is_active: boolean;
+};
+type CameraConfigRow = CameraConfig & { id: number };
+
+type SurveillanceMonitor = {
+  service_name: string;
+  running: boolean;
+  branch?: {
+    id: number;
+    name: string;
+    company_name?: string | null;
+  } | null;
+  owner_id?: string | null;
+  heartbeat_at?: string | null;
+  lease_until?: string | null;
+  lease_seconds: number;
+  presence_interval_seconds: number;
+  sweep_interval_seconds: number;
+  last_presence_run_at?: string | null;
+  last_presence_captured: number;
+  last_presence_results: Array<{
+    branch_id?: number;
+    branch_name?: string | null;
+    company_name?: string | null;
+    tenant_id?: number | null;
+    tenant_name?: string | null;
+    captured?: boolean;
+    reason?: string;
+    error?: string;
+    technical_error?: string;
+    weight?: number;
+    threshold?: number;
+    capture_interval_seconds?: number;
+    source?: string;
+  }>;
+  last_sweep_run_at?: string | null;
+  last_sweep_created: number;
+  last_sweep_skipped: number;
+  last_error_at?: string | null;
+  last_error?: string | null;
+  tenant?: { id: number; name: string; code: string } | null;
+  tenant_has_weighbridge: boolean;
+  active_module_slugs: string[];
 };
 
 const emptyCam = (branchId: number): CameraConfig => ({
@@ -899,13 +1372,18 @@ function SurveillanceTab() {
   const { toast } = useToast();
   const qc = useQueryClient();
 
-  const { data: _branchesRaw } = useFetch<any>('/api/commercial-weighbridge/branches/', token);
+  const { data: _branchesRaw } = useFetch<any>(ERP_BRANCHES_ENDPOINT, token);
   const branches: any[] = Array.isArray(_branchesRaw?.results)
     ? _branchesRaw.results
     : Array.isArray(_branchesRaw) ? _branchesRaw : [];
 
   const [selectedBranch, setSelectedBranch] = useState<number | null>(null);
   const branchId = selectedBranch ?? (branches[0]?.id ?? null);
+  const branchLabel = branches.find((b: any) => b.id === branchId)?.name ?? 'Selected branch';
+  const monitorUrl = branchId
+    ? `/api/commercial-weighbridge/surveillance-monitor/?branch_id=${branchId}`
+    : '/api/commercial-weighbridge/surveillance-monitor/';
+  const { data: monitor, isLoading: monitorLoading } = useFetch<SurveillanceMonitor>(monitorUrl, token);
 
   // Overweight config
   const configUrl = branchId ? `/api/commercial-weighbridge/overweight-config/${branchId}/` : null;
@@ -956,6 +1434,51 @@ function SurveillanceTab() {
     () => { qc.invalidateQueries({ queryKey: [camUrl!] }); setCamDelId(null); toast({ title: 'Camera removed' }); },
     (msg) => toast({ title: 'Error', description: parseErrors(msg), variant: 'destructive' }),
   );
+  const [testingMonitor, setTestingMonitor] = useState(false);
+
+  const cameraRows: CameraConfigRow[] = cameras.filter((cam): cam is CameraConfigRow => typeof cam.id === 'number');
+  const cameraColumns: ERPTableColumn<CameraConfigRow>[] = [
+    {
+      key: 'name',
+      label: 'Name',
+      headerClassName: 'text-[10px] font-bold uppercase tracking-widest',
+      cellClassName: 'font-medium',
+      render: (cam) => cam.name || '—',
+    },
+    {
+      key: 'camera_type',
+      label: 'Type',
+      headerClassName: 'text-[10px] font-bold uppercase tracking-widest',
+      render: (cam) => (
+        <Badge variant="outline" className="text-[10px]">
+          {cam.camera_type === 'hikvision' ? 'HikVision' : 'Generic HTTP'}
+        </Badge>
+      ),
+    },
+    {
+      key: 'ip_port',
+      label: 'IP : Port',
+      headerClassName: 'text-[10px] font-bold uppercase tracking-widest',
+      cellClassName: 'text-sm text-muted-foreground font-mono',
+      render: (cam) => `${cam.ip_address}:${cam.port}`,
+    },
+    {
+      key: 'capture_on_overweight',
+      label: 'Threshold Capture',
+      headerClassName: 'text-[10px] font-bold uppercase tracking-widest',
+      render: (cam) => cam.capture_on_overweight
+        ? <Badge className="text-[10px] bg-green-100 text-green-800 border-green-200 hover:bg-green-100">Yes</Badge>
+        : <span className="text-muted-foreground text-xs">No</span>,
+    },
+    {
+      key: 'is_active',
+      label: 'Active',
+      headerClassName: 'text-[10px] font-bold uppercase tracking-widest',
+      render: (cam) => cam.is_active
+        ? <Badge variant="secondary" className="text-[10px]">Active</Badge>
+        : <span className="text-muted-foreground text-xs">Inactive</span>,
+    },
+  ];
 
   function openNewCam() { setCamForm(emptyCam(branchId ?? 0)); setCamOpen(true); }
   function openEditCam(c: CameraConfig) { setCamForm({ ...c }); setCamOpen(true); }
@@ -976,15 +1499,132 @@ function SurveillanceTab() {
     branch: branchId ?? 0,
     threshold_kg: cfgForm.threshold_kg ?? cfg?.threshold_kg ?? 1000,
     grace_window_minutes: cfgForm.grace_window_minutes ?? cfg?.grace_window_minutes ?? 30,
+    capture_interval_seconds: cfgForm.capture_interval_seconds ?? cfg?.capture_interval_seconds ?? 45,
     surveillance_enabled: cfgForm.surveillance_enabled ?? cfg?.surveillance_enabled ?? true,
   };
+  const scopedPresenceResults = (monitor?.last_presence_results ?? []).filter(
+    (row) => row?.branch_id == null || Number(row.branch_id) === Number(branchId),
+  );
 
   if (!branchId) return (
     <p className="text-sm text-muted-foreground py-8 text-center">No branches configured.</p>
   );
 
+  async function testSelectedBranch() {
+    if (!token || !branchId) return;
+    setTestingMonitor(true);
+    try {
+      const res = await fetch('/api/commercial-weighbridge/surveillance-monitor/test/', {
+        method: 'POST',
+        headers: {
+          Authorization: `Token ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ branch_id: branchId }),
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(payload?.error || payload?.message || `HTTP ${res.status}`);
+      }
+      const reason = payload?.reason
+        ? (payload.captured
+            ? `Captured ${payload.weight ?? '—'} kg`
+            : `${payload.reason}${payload.error ? `: ${payload.error}` : ''}`)
+        : 'Test completed';
+      toast({
+        title: payload.captured ? 'Test capture succeeded' : 'Test completed',
+        description: `${branchLabel}: ${reason}`,
+        variant: payload.captured ? 'default' : 'destructive',
+      });
+      qc.invalidateQueries({ queryKey: [monitorUrl] });
+    } catch (error: any) {
+      toast({
+        title: 'Branch test failed',
+        description: error?.message || 'Could not run the branch test.',
+        variant: 'destructive',
+      });
+    } finally {
+      setTestingMonitor(false);
+    }
+  }
+
   return (
     <div className="space-y-6">
+      <div className="rounded-lg border p-5 space-y-4">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h3 className="font-semibold text-sm">Surveillance Monitor</h3>
+            <p className="text-xs text-muted-foreground">Shows whether the main background runner is active for vehicle presence and discrepancy checks.</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={testSelectedBranch} disabled={testingMonitor || !branchId}>
+              {testingMonitor ? 'Testing…' : 'Test branch'}
+            </Button>
+            {monitorLoading ? (
+              <Badge variant="outline">Loading…</Badge>
+            ) : monitor?.running ? (
+              <Badge className="bg-green-100 text-green-800 border-green-200 hover:bg-green-100">Running</Badge>
+            ) : (
+              <Badge variant="destructive">Not running</Badge>
+            )}
+          </div>
+        </div>
+        {monitor && (
+          <div className="grid grid-cols-2 gap-4 text-sm">
+            <div className="space-y-1">
+              <div><span className="text-muted-foreground">Branch:</span> {monitor.branch?.name || branchLabel}</div>
+              <div><span className="text-muted-foreground">Company:</span> {monitor.branch?.company_name || '—'}</div>
+              <div><span className="text-muted-foreground">Tenant:</span> {monitor.tenant?.name || 'Global'}</div>
+              <div><span className="text-muted-foreground">Subscription:</span> {monitor.tenant_has_weighbridge ? 'Weighbridge active' : 'Weighbridge not active'}</div>
+              <div><span className="text-muted-foreground">Runner:</span> {monitor.owner_id || '—'}</div>
+              <div><span className="text-muted-foreground">Heartbeat:</span> {monitor.heartbeat_at ? new Date(monitor.heartbeat_at).toLocaleString() : '—'}</div>
+            </div>
+            <div className="space-y-1">
+              <div><span className="text-muted-foreground">Presence interval:</span> {monitor.presence_interval_seconds}s</div>
+              <div><span className="text-muted-foreground">Sweep interval:</span> {monitor.sweep_interval_seconds}s</div>
+              <div><span className="text-muted-foreground">Last presence run:</span> {monitor.last_presence_run_at ? new Date(monitor.last_presence_run_at).toLocaleString() : '—'}</div>
+              <div><span className="text-muted-foreground">Last sweep run:</span> {monitor.last_sweep_run_at ? new Date(monitor.last_sweep_run_at).toLocaleString() : '—'}</div>
+            </div>
+            <div className="col-span-2 grid grid-cols-3 gap-3">
+              <div className="rounded-md border bg-muted/20 p-3">
+                <div className="text-xs text-muted-foreground">Presence Captured</div>
+                <div className="text-lg font-semibold">{monitor.last_presence_captured ?? 0}</div>
+              </div>
+              <div className="rounded-md border bg-muted/20 p-3">
+                <div className="text-xs text-muted-foreground">Discrepancies Raised</div>
+                <div className="text-lg font-semibold">{monitor.last_sweep_created ?? 0}</div>
+              </div>
+              <div className="rounded-md border bg-muted/20 p-3">
+                <div className="text-xs text-muted-foreground">Sweep Skipped</div>
+                <div className="text-lg font-semibold">{monitor.last_sweep_skipped ?? 0}</div>
+              </div>
+            </div>
+            {!!monitor.last_error && (
+              <div className="col-span-2 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+                <div className="font-medium">Last runner error</div>
+                <div>{monitor.last_error}</div>
+                <div className="text-xs mt-1">{monitor.last_error_at ? new Date(monitor.last_error_at).toLocaleString() : ''}</div>
+              </div>
+            )}
+            {!!scopedPresenceResults.length && (
+              <div className="col-span-2 rounded-md border p-3 space-y-2">
+                <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Recent result for selected branch</div>
+                <div className="space-y-1">
+                  {scopedPresenceResults.slice(0, 5).map((row, idx) => (
+                    <div key={idx} className="text-sm">
+                      <span className="font-medium">{row.branch_name || branchLabel}:</span>{' '}
+                      {row.captured
+                        ? `Captured ${row.weight ?? '—'} kg`
+                        : `${row.reason || 'No capture'}${row.reason === 'tenant_not_resolved' && row.company_name ? ` (company ${row.company_name})` : ''}${row.weight != null ? ` (${row.weight} / ${row.threshold ?? '—'} kg)` : ''}${row.capture_interval_seconds ? `, interval ${row.capture_interval_seconds}s` : ''}${row.source ? ` via ${row.source}` : ''}`}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
       {branches.length > 1 && (
         <div className="flex items-center gap-3">
           <label className="text-xs font-medium shrink-0">Branch</label>
@@ -1006,31 +1646,41 @@ function SurveillanceTab() {
       <div className="rounded-lg border p-5 space-y-4">
         <div className="flex items-center gap-2">
           <ShieldAlert className="h-4 w-4 text-amber-500" />
-          <h3 className="font-semibold text-sm">Overweight Threshold</h3>
+          <h3 className="font-semibold text-sm">Vehicle Presence Threshold</h3>
         </div>
         {cfgLoading ? <p className="text-sm text-muted-foreground">Loading…</p> : (
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-1.5">
-              <Label>Threshold (kg)</Label>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <Label>Threshold (kg)</Label>
               <Input
-                type="number" min="0" step="1"
+                type="number" min="-1" step="1"
                 value={String(cfgMerged.threshold_kg)}
                 onChange={e => setCfgForm(f => ({ ...f, threshold_kg: e.target.value }))}
                 placeholder="1000"
               />
-              <p className="text-xs text-muted-foreground">Events are created when net weight ≥ this value.</p>
+              <p className="text-xs text-muted-foreground">Vehicle presence events are created when the scale reading meets or exceeds this value.</p>
             </div>
-            <div className="space-y-1.5">
-              <Label>Grace window (minutes)</Label>
-              <Input
+              <div className="space-y-1.5">
+                <Label>Grace window (minutes)</Label>
+                <Input
                 type="number" min="0" step="1"
                 value={String(cfgMerged.grace_window_minutes)}
                 onChange={e => setCfgForm(f => ({ ...f, grace_window_minutes: e.target.value }))}
                 placeholder="30"
               />
-              <p className="text-xs text-muted-foreground">Events without a linked transaction after this window become discrepancies.</p>
-            </div>
-            <div className="col-span-2 flex items-center gap-3">
+              <p className="text-xs text-muted-foreground">A captured presence event becomes a discrepancy if no matching transaction is found after this window.</p>
+              </div>
+              <div className="space-y-1.5">
+                <Label>Capture interval (seconds)</Label>
+                <Input
+                  type="number" min="1" step="1"
+                  value={String(cfgMerged.capture_interval_seconds)}
+                  onChange={e => setCfgForm(f => ({ ...f, capture_interval_seconds: e.target.value }))}
+                  placeholder="45"
+                />
+                <p className="text-xs text-muted-foreground">Minimum time before the same branch can record another repeated vehicle-presence reading. Example: `5` for every 5 seconds, `300` for every 5 minutes.</p>
+              </div>
+              <div className="col-span-2 flex items-center gap-3">
               <button
                 type="button"
                 onClick={() => setCfgForm(f => ({ ...f, surveillance_enabled: !cfgMerged.surveillance_enabled }))}
@@ -1046,7 +1696,7 @@ function SurveillanceTab() {
             </div>
             <div className="col-span-2">
               <Button size="sm" onClick={saveCfg} disabled={cfgMut.isPending}>
-                {cfgMut.isPending ? 'Saving…' : 'Save threshold settings'}
+                {cfgMut.isPending ? 'Saving…' : 'Save surveillance settings'}
               </Button>
             </div>
           </div>
@@ -1065,56 +1715,24 @@ function SurveillanceTab() {
           </Button>
         </div>
 
-        <div className="rounded-lg border overflow-hidden">
-          <Table>
-            <TableHeader>
-              <TableRow className="bg-muted/50">
-                <TableHead className="text-[10px] font-bold uppercase tracking-widest">Name</TableHead>
-                <TableHead className="text-[10px] font-bold uppercase tracking-widest">Type</TableHead>
-                <TableHead className="text-[10px] font-bold uppercase tracking-widest">IP : Port</TableHead>
-                <TableHead className="text-[10px] font-bold uppercase tracking-widest">OW Capture</TableHead>
-                <TableHead className="text-[10px] font-bold uppercase tracking-widest">Active</TableHead>
-                <TableHead className="w-20" />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {camsLoading ? (
-                <TableRow><TableCell colSpan={6} className="text-center text-sm text-muted-foreground py-6">Loading…</TableCell></TableRow>
-              ) : cameras.length === 0 ? (
-                <TableRow><TableCell colSpan={6} className="text-center text-sm text-muted-foreground py-6">No cameras configured for this branch.</TableCell></TableRow>
-              ) : cameras.map(cam => (
-                <TableRow key={cam.id}>
-                  <TableCell className="font-medium">{cam.name || '—'}</TableCell>
-                  <TableCell>
-                    <Badge variant="outline" className="text-[10px]">
-                      {cam.camera_type === 'hikvision' ? 'HikVision' : 'Generic HTTP'}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="text-sm text-muted-foreground font-mono">{cam.ip_address}:{cam.port}</TableCell>
-                  <TableCell>
-                    {cam.capture_on_overweight
-                      ? <Badge className="text-[10px] bg-green-100 text-green-800 border-green-200 hover:bg-green-100">Yes</Badge>
-                      : <span className="text-muted-foreground text-xs">No</span>}
-                  </TableCell>
-                  <TableCell>
-                    {cam.is_active
-                      ? <Badge variant="secondary" className="text-[10px]">Active</Badge>
-                      : <span className="text-muted-foreground text-xs">Inactive</span>}
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex items-center gap-1 justify-end">
-                      <button onClick={() => openEditCam(cam)} className="h-7 w-7 inline-flex items-center justify-center rounded hover:bg-muted transition-colors">
-                        <Pencil className="h-3.5 w-3.5" />
-                      </button>
-                      <button onClick={() => setCamDelId(cam.id!)} className="h-7 w-7 inline-flex items-center justify-center rounded hover:bg-red-50 text-destructive transition-colors">
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+        <div className="rounded-lg border overflow-hidden bg-card">
+          <ERPDataTable<CameraConfigRow>
+            columns={cameraColumns}
+            rows={cameraRows}
+            loading={camsLoading}
+            emptyState="No cameras configured for this branch."
+            onRowClick={openEditCam}
+            rowActions={(cam) => (
+              <div className="flex items-center gap-1 justify-end">
+                <button onClick={() => openEditCam(cam)} className="h-7 w-7 inline-flex items-center justify-center rounded hover:bg-muted transition-colors">
+                  <Pencil className="h-3.5 w-3.5" />
+                </button>
+                <button onClick={() => setCamDelId(cam.id)} className="h-7 w-7 inline-flex items-center justify-center rounded hover:bg-red-50 text-destructive transition-colors">
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            )}
+          />
         </div>
       </div>
 
@@ -1174,7 +1792,7 @@ function SurveillanceTab() {
             </div>
             <div className="flex flex-col gap-2">
               {[
-                { key: 'capture_on_overweight', label: 'Capture snapshot on overweight event' },
+                { key: 'capture_on_overweight', label: 'Capture snapshot on threshold event' },
                 { key: 'is_active', label: 'Camera active' },
               ].map(({ key, label }) => (
                 <label key={key} className="flex items-center gap-2 cursor-pointer">
@@ -1227,6 +1845,9 @@ export default function WeighbridgeSettings() {
           <TabsTrigger value="indicator" className="gap-1.5">
             <Settings2 className="h-3.5 w-3.5" /> Indicator Config
           </TabsTrigger>
+          <TabsTrigger value="operation-types" className="gap-1.5">
+            <Tag className="h-3.5 w-3.5" /> Operation Types
+          </TabsTrigger>
           <TabsTrigger value="vehicle-types" className="gap-1.5">
             <Truck className="h-3.5 w-3.5" /> Vehicle Types
           </TabsTrigger>
@@ -1242,6 +1863,7 @@ export default function WeighbridgeSettings() {
         </TabsList>
 
         <TabsContent value="indicator"><IndicatorConfigTab /></TabsContent>
+        <TabsContent value="operation-types"><OperationTypesTab /></TabsContent>
         <TabsContent value="vehicle-types"><VehicleTypesTab /></TabsContent>
         <TabsContent value="items"><ItemsTab /></TabsContent>
         <TabsContent value="discounts"><DiscountsTab /></TabsContent>

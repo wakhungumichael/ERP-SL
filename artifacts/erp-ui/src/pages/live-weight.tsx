@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useAuth } from '@/context/use-auth';
+import { fetchErpBranches } from '@/lib/branches';
 import { Scale, Wifi, WifiOff, RefreshCw, Radio } from 'lucide-react';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -36,17 +37,15 @@ function WeightDisplay({ weight, unit, stable, animating }: {
       <div
         className={`font-mono font-black tabular-nums tracking-tight transition-colors duration-300 ${
           weight == null
-            ? 'text-muted-foreground/30'
-            : stable
-              ? 'text-emerald-500 dark:text-emerald-400'
-              : 'text-foreground'
+            ? 'text-primary/30'
+            : 'text-primary'
         } ${animating ? 'opacity-80' : 'opacity-100'}`}
         style={{ fontSize: 'clamp(72px, 14vw, 140px)', lineHeight: 1, letterSpacing: '-0.02em' }}
       >
         {text}
       </div>
       <div className={`text-2xl font-bold tracking-[0.3em] uppercase mt-1 ${
-        weight == null ? 'text-muted-foreground/30' : 'text-muted-foreground'
+        weight == null ? 'text-primary/30' : 'text-primary'
       }`}>
         {unit || 'KG'}
       </div>
@@ -122,15 +121,11 @@ export default function LiveWeight() {
   const prevWeight = useRef<number | null>(null);
   const pollRef    = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
 
-  // Load branches once
+  // Load branches from the tenant-maintained SaaS branch list each time the page opens
   useEffect(() => {
     if (!token) return;
-    fetch('/api/commercial-weighbridge/branches/', {
-      headers: { Authorization: `Token ${token}` },
-    })
-      .then(r => r.json())
-      .then(json => {
-        const list: Branch[] = Array.isArray(json) ? json : json?.results ?? [];
+    fetchErpBranches(token)
+      .then((list: Branch[]) => {
         setBranches(list);
         if (list.length > 0) setBranchId(list[0].id);
       })
@@ -190,7 +185,7 @@ export default function LiveWeight() {
   const maxW = validWeights.length ? Math.max(...validWeights) : null;
 
   return (
-    <div className="space-y-6 max-w-4xl mx-auto">
+    <div className="w-full space-y-6">
       {/* Header */}
       <div className="flex items-start justify-between border-b pb-4">
         <div>
@@ -198,9 +193,6 @@ export default function LiveWeight() {
             <Radio className="h-6 w-6 text-primary" />
             Live Weight Monitor
           </h1>
-          <p className="text-xs text-muted-foreground mt-0.5 font-mono">
-            Auto-polling every {POLL_MS / 1000}s · {pollCount} reads
-          </p>
         </div>
         <div className="flex items-center gap-2">
           {/* Connection badge */}
@@ -237,12 +229,12 @@ export default function LiveWeight() {
       )}
 
       {/* Main weight card */}
-      <div className={`relative rounded-2xl border-2 overflow-hidden transition-colors duration-500 ${
+      <div className={`relative overflow-hidden rounded-2xl border-2 bg-black text-primary transition-colors duration-500 ${
         isOnline && reading?.stable
-          ? 'border-emerald-400/60 bg-gradient-to-b from-emerald-950/5 to-card dark:from-emerald-950/20'
+          ? 'border-emerald-400/60'
           : isOnline
-            ? 'border-orange-300/60 bg-card'
-            : 'border-border bg-card'
+            ? 'border-orange-300/60'
+            : 'border-border'
       }`}>
 
         {/* Indicator bar at top */}
@@ -254,10 +246,10 @@ export default function LiveWeight() {
 
         {/* Source / branch label */}
         <div className="flex items-center justify-between px-6 pt-4 pb-2">
-          <div className="text-xs font-mono text-muted-foreground/60 uppercase tracking-widest">
+          <div className="text-xs font-mono uppercase tracking-widest text-primary/70">
             {activeBranch?.name ?? 'All Branches'}
           </div>
-          <div className="text-xs font-mono text-muted-foreground/60 uppercase tracking-widest">
+          <div className="text-xs font-mono uppercase tracking-widest text-primary/70">
             {reading?.source ? `SRC: ${reading.source}` : ''}
           </div>
         </div>

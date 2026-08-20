@@ -1,9 +1,17 @@
 from django.conf import settings
 from django.db import models
+from Platform_Core.models import AuditMetadataMixin
 
 
-class PayPeriod(models.Model):
+class PayPeriod(AuditMetadataMixin, models.Model):
     """A payroll period (e.g. July 2026)."""
+    tenant = models.ForeignKey(
+        "Platform_Core.Tenant",
+        on_delete=models.CASCADE,
+        related_name="pay_periods",
+        null=True,
+        blank=True,
+    )
     name = models.CharField(max_length=100)          # "July 2026"
     period_start = models.DateField()
     period_end = models.DateField()
@@ -19,12 +27,13 @@ class PayPeriod(models.Model):
 
     class Meta:
         ordering = ["-period_start"]
+        unique_together = [("tenant", "name", "period_start", "period_end")]
 
     def __str__(self):
         return f"{self.name} ({self.status})"
 
 
-class PayRecord(models.Model):
+class PayRecord(AuditMetadataMixin, models.Model):
     """One employee's pay entry for a given period."""
     period     = models.ForeignKey(PayPeriod, on_delete=models.CASCADE, related_name="records")
     employee   = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="pay_records")

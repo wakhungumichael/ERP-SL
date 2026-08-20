@@ -270,7 +270,7 @@ function ManageDialog({ sub, onClose }: { sub: any; onClose: () => void }) {
                 </p>
                 {syncResult && (
                   <p className="text-xs text-emerald-600 mt-1 font-medium">
-                    ✓ {syncResult.created} provisioned · {syncResult.updated} updated · status: {syncResult.status}
+                    ✓ {syncResult.created} provisioned · {syncResult.updated} updated · {syncResult.disabled ?? 0} disabled · status: {syncResult.status}
                   </p>
                 )}
               </div>
@@ -301,6 +301,8 @@ export default function Subscriptions() {
     queryKey: ['subscriptions'],
     queryFn: () => api(token!, '/subscriptions/?page_size=200'),
     enabled: !!token,
+    refetchInterval: 15000,
+    refetchOnWindowFocus: true,
   });
   const allSubs: any[] = data?.results ?? [];
   const subs = statusFilter === 'all' ? allSubs : allSubs.filter(s => s.status === statusFilter);

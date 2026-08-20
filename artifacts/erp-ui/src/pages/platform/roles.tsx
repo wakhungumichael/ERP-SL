@@ -42,7 +42,16 @@ function api(token: string, path: string, method = 'GET', body?: object) {
 
 interface ContentType { id: number; app_label: string; model: string; }
 interface Perm { id: number; name: string; codename: string; content_type: ContentType; }
-interface Role { id: number; name: string; permissions: Perm[]; }
+interface Role {
+  id: number;
+  name: string;
+  display_name?: string;
+  scope?: 'system' | 'tenant';
+  is_system?: boolean;
+  is_editable?: boolean;
+  is_assignable?: boolean;
+  permissions: Perm[];
+}
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -174,6 +183,10 @@ function buildSections(allPerms: Perm[]): ModuleSection[] {
   return sections;
 }
 
+function roleLabel(role: Role) {
+  return role.display_name || role.name;
+}
+
 // ── Sub-components ────────────────────────────────────────────────────────────
 
 function CreateRoleDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
@@ -237,7 +250,7 @@ function AddMemberDialog({
       replace_existing: false,
     }),
     onSuccess: () => {
-      toast({ title: `User added to ${role.name}` });
+      toast({ title: `User added to ${roleLabel(role)}` });
       qc.invalidateQueries({ queryKey: ['users-for-roles'] });
       setUserId('');
       onClose();
@@ -248,7 +261,7 @@ function AddMemberDialog({
   return (
     <Dialog open={open} onOpenChange={onClose}>
       <DialogContent className="max-w-sm">
-        <DialogHeader><DialogTitle>Add Member to {role.name}</DialogTitle></DialogHeader>
+        <DialogHeader><DialogTitle>Add Member to {roleLabel(role)}</DialogTitle></DialogHeader>
         <div className="space-y-1.5 py-2">
           <Label>User</Label>
           <Select value={userId} onValueChange={setUserId}>
@@ -280,6 +293,7 @@ function PermissionMatrix({
 }: { role: Role; allPerms: Perm[]; onSaved: () => void }) {
   const { token } = useAuth();
   const { toast } = useToast();
+  const editable = role.is_editable !== false;
 
   const sections = useMemo(() => buildSections(allPerms), [allPerms]);
 
@@ -350,6 +364,11 @@ function PermissionMatrix({
 
   return (
     <div className="space-y-6">
+      {!editable && (
+        <div className="rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          This shared role can be assigned inside the tenant, but only a super admin can change its permissions.
+        </div>
+      )}
       {sections.map(section => {
         const sectionIds: number[] = [];
         section.models.forEach(g => {
@@ -372,7 +391,7 @@ function PermissionMatrix({
             <div className="flex items-center gap-2 mb-2">
               <button
                 type="button"
-                onClick={() => toggleModule(section)}
+                onClick={() => editable && toggleModule(section)}
                 className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-widest text-muted-foreground hover:text-foreground transition-colors"
               >
                 <Checkbox
@@ -416,8 +435,9 @@ function PermissionMatrix({
                         <td key={p.id} className="text-center px-2 py-2">
                           <Checkbox
                             checked={selected.has(p.id)}
-                            onCheckedChange={() => toggle(p.id)}
+                            onCheckedChange={() => editable && toggle(p.id)}
                             className="h-4 w-4"
+                            disabled={!editable}
                           />
                         </td>
                       ))}
@@ -434,7 +454,7 @@ function PermissionMatrix({
                         <td className="px-3 py-2">
                           <button
                             type="button"
-                            onClick={() => toggleModel(group)}
+                            onClick={() => editable && toggleModel(group)}
                             className="flex items-center gap-1.5 text-left hover:text-primary transition-colors"
                           >
                             <Checkbox
@@ -457,8 +477,9 @@ function PermissionMatrix({
                               {perm ? (
                                 <Checkbox
                                   checked={selected.has(perm.id)}
-                                  onCheckedChange={() => toggle(perm.id)}
+                                  onCheckedChange={() => editable && toggle(perm.id)}
                                   className="h-4 w-4"
+                                  disabled={!editable}
                                 />
                               ) : (
                                 <span className="text-muted-foreground/30 text-xs">—</span>
@@ -473,8 +494,9 @@ function PermissionMatrix({
                               {perm ? (
                                 <Checkbox
                                   checked={selected.has(perm.id)}
-                                  onCheckedChange={() => toggle(perm.id)}
+                                  onCheckedChange={() => editable && toggle(perm.id)}
                                   className="h-4 w-4 border-amber-400 data-[state=checked]:bg-amber-500 data-[state=checked]:border-amber-500"
+                                  disabled={!editable}
                                 />
                               ) : (
                                 <span className="text-muted-foreground/30 text-xs">—</span>
@@ -502,7 +524,7 @@ function PermissionMatrix({
           size="sm"
           className="gap-1.5"
           onClick={() => saveMutation.mutate()}
-          disabled={!dirty || saveMutation.isPending}
+          disabled={!editable || !dirty || saveMutation.isPending}
         >
           <Save className="h-3.5 w-3.5" />
           {saveMutation.isPending ? 'Saving…' : 'Save Permissions'}
@@ -519,6 +541,7 @@ function MembersPanel({ role, allUsers }: { role: Role; allUsers: any[] }) {
   const { toast } = useToast();
   const qc = useQueryClient();
   const [showAdd, setShowAdd] = useState(false);
+  const assignable = role.is_assignable !== false;
 
   const members = allUsers.filter(u =>
     (u.groups ?? []).some((g: any) => g.id === role.id || g.name === role.name)
@@ -544,7 +567,7 @@ function MembersPanel({ role, allUsers }: { role: Role; allUsers: any[] }) {
         <p className="text-sm text-muted-foreground">
           {members.length} member{members.length !== 1 ? 's' : ''} in this role
         </p>
-        <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setShowAdd(true)}>
+        <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setShowAdd(true)} disabled={!assignable}>
           <Plus className="h-3.5 w-3.5" /> Add Member
         </Button>
       </div>
@@ -569,7 +592,7 @@ function MembersPanel({ role, allUsers }: { role: Role; allUsers: any[] }) {
                 variant="ghost"
                 className="h-7 gap-1 text-xs text-destructive hover:text-destructive hover:bg-destructive/10"
                 onClick={() => removeFromRole.mutate(u.id)}
-                disabled={removeFromRole.isPending}
+                disabled={!assignable || removeFromRole.isPending}
               >
                 <UserMinus className="h-3.5 w-3.5" /> Remove
               </Button>
@@ -714,26 +737,28 @@ export default function Roles() {
                       <div className="flex items-center gap-2 min-w-0">
                         <ShieldCheck className={`h-3.5 w-3.5 shrink-0 ${isSelected ? 'text-primary' : 'text-muted-foreground'}`} />
                         <div className="min-w-0">
-                          <p className="text-xs font-medium truncate">{role.name}</p>
+                          <p className="text-xs font-medium truncate">{roleLabel(role)}</p>
                           <p className="text-[10px] text-muted-foreground">{count} member{count !== 1 ? 's' : ''}</p>
                         </div>
                       </div>
                       <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
                         <button
                           title="Rename"
-                          className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground"
+                          className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground disabled:opacity-40"
                           onClick={e => {
                             e.stopPropagation();
                             setRenaming(role.id);
-                            setRenameValue(role.name);
+                            setRenameValue(roleLabel(role));
                           }}
+                          disabled={role.is_editable === false}
                         >
                           <Pencil className="h-3 w-3" />
                         </button>
                         <button
                           title="Delete"
-                          className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive"
+                          className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive disabled:opacity-40"
                           onClick={e => { e.stopPropagation(); setDeleteTarget(role); }}
+                          disabled={role.is_editable === false}
                         >
                           <Trash2 className="h-3 w-3" />
                         </button>
@@ -774,10 +799,13 @@ export default function Roles() {
                 <span className={`px-2.5 py-1 rounded text-sm font-bold border ${
                   ROLE_COLORS[selectedRole.name] ?? 'bg-slate-100 text-slate-800 border-slate-300'
                 }`}>
-                  {selectedRole.name}
+                  {roleLabel(selectedRole)}
                 </span>
                 <Badge variant="secondary" className="text-xs">
                   {memberCount(selectedRole)} member{memberCount(selectedRole) !== 1 ? 's' : ''}
+                </Badge>
+                <Badge variant="outline" className="text-xs">
+                  {selectedRole.scope === 'tenant' ? 'Tenant role' : 'Shared role'}
                 </Badge>
               </div>
               <Button
@@ -785,6 +813,7 @@ export default function Roles() {
                 variant="ghost"
                 className="gap-1.5 text-destructive hover:text-destructive hover:bg-destructive/10"
                 onClick={() => setDeleteTarget(selectedRole)}
+                disabled={selectedRole.is_editable === false}
               >
                 <Trash2 className="h-3.5 w-3.5" /> Delete Role
               </Button>
@@ -829,7 +858,7 @@ export default function Roles() {
       <AlertDialog open={!!deleteTarget} onOpenChange={open => !open && setDeleteTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete "{deleteTarget?.name}"?</AlertDialogTitle>
+            <AlertDialogTitle>Delete "{deleteTarget ? roleLabel(deleteTarget) : ''}"?</AlertDialogTitle>
             <AlertDialogDescription>
               This will remove the role and revoke it from all {deleteTarget ? memberCount(deleteTarget) : 0} member{deleteTarget && memberCount(deleteTarget) !== 1 ? 's' : ''}.
               This cannot be undone.

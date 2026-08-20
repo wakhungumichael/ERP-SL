@@ -55,6 +55,9 @@ Current phase on July 16, 2026: `API and workspace alignment`
 - [ ] Expand payment provider execution flow beyond initiation/callback simulation
 - [ ] Add quotation and broader accounting domain expansion
 - [ ] Add audit/event trail endpoints for platform and transactional actions
+- [ ] Add tenant-scoped export workflow for customer-owned data
+- [ ] Add tenant offboarding state machine with retention window and approval flow
+- [ ] Add coordinated tenant purge service for row data and stored files
 
 
 ## UI Checklist

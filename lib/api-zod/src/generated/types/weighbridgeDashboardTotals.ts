@@ -7,6 +7,8 @@
  */
 
 export type WeighbridgeDashboardTotals = {
+  all_transactions?: number;
+  pending_transactions?: number;
   transactions_today?: number;
   transactions_this_month?: number;
   net_weight_today?: number;

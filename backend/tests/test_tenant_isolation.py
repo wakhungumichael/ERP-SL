@@ -275,6 +275,151 @@ class TenantScopedMixinIsolationTests(TestCase):
             self.assertIn(sub_a.pk, ids)
 
 
+class PaymentProviderCapabilitiesIsolationTests(TestCase):
+    def setUp(self):
+        from Platform_Core.models import IntegrationEndpoint
+
+        self.client = APIClient()
+        self.tenant_a = _make_tenant("Tenant A", code="tenant-a")
+        self.tenant_b = _make_tenant("Tenant B", code="tenant-b")
+        self.user_a = _make_tenant_user("pay_user_a", self.tenant_a, password="pass")
+        self.user_b = _make_tenant_user("pay_user_b", self.tenant_b, password="pass")
+        self.superuser = User.objects.create_superuser("pay_su", password="pass")
+
+        self.gateway_a = IntegrationEndpoint.objects.create(
+            tenant=self.tenant_a,
+            name="Tenant A M-Pesa",
+            integration_type="payment",
+            provider="mpesa",
+            transport="http",
+            is_active=True,
+            is_primary=True,
+            connection_settings={"payment_scope": "tenant_operations"},
+        )
+        self.gateway_b = IntegrationEndpoint.objects.create(
+            tenant=self.tenant_b,
+            name="Tenant B Stripe",
+            integration_type="payment",
+            provider="stripe",
+            transport="http",
+            is_active=True,
+            is_primary=True,
+            connection_settings={"payment_scope": "saas_billing"},
+        )
+
+    def test_tenant_user_sees_only_own_payment_providers(self):
+        self.client.force_authenticate(user=self.user_a)
+        response = self.client.get(reverse("payment-provider-capabilities"))
+
+        self.assertEqual(response.status_code, 200, response.data)
+        payload = response.data
+        self.assertTrue(payload["segregated"])
+        self.assertEqual(payload["tenant"]["id"], self.tenant_a.id)
+
+        provider_ids = [item["id"] for item in payload["capabilities"]]
+        self.assertIn(self.gateway_a.id, provider_ids)
+        self.assertNotIn(self.gateway_b.id, provider_ids)
+        self.assertEqual(payload["capabilities"][0]["payment_scope"], "tenant_operations")
+
+    def test_superuser_must_choose_tenant_or_see_no_cross_tenant_gateways(self):
+        self.client.force_authenticate(user=self.superuser)
+        response = self.client.get(reverse("payment-provider-capabilities"))
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["capabilities"], [])
+        self.assertIn("Select a tenant", response.data["message"])
+
+    def test_superuser_can_scope_payment_providers_to_single_tenant(self):
+        self.client.force_authenticate(user=self.superuser)
+        response = self.client.get(
+            reverse("payment-provider-capabilities"),
+            {"tenant_id": self.tenant_b.id},
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        payload = response.data
+        self.assertEqual(payload["tenant"]["id"], self.tenant_b.id)
+        provider_ids = [item["id"] for item in payload["capabilities"]]
+        self.assertEqual(provider_ids, [self.gateway_b.id])
+        self.assertEqual(payload["capabilities"][0]["payment_scope"], "saas_billing")
+
+
+class PaymentIntegrationScopeGuardTests(TestCase):
+    def setUp(self):
+        from Platform_Core.models import TenantUserProfile
+
+        self.client = APIClient()
+        self.owner_tenant = _make_tenant("Siakora Labs Limited", code="siakora-labs")
+        self.regular_tenant = _make_tenant("Acme Logistics", code="acme-logistics")
+
+        self.superuser = User.objects.create_superuser("scope_su", password="pass")
+        self.owner_admin = User.objects.create_user("owner_admin", password="pass", is_staff=True)
+        self.tenant_admin = User.objects.create_user("tenant_admin", password="pass", is_staff=True)
+
+        TenantUserProfile.objects.create(
+            user=self.owner_admin,
+            tenant=self.owner_tenant,
+            is_tenant_admin=True,
+        )
+        TenantUserProfile.objects.create(
+            user=self.tenant_admin,
+            tenant=self.regular_tenant,
+            is_tenant_admin=True,
+        )
+
+    def test_owner_tenant_admin_can_create_saas_billing_gateway(self):
+        self.client.force_authenticate(user=self.owner_admin)
+        response = self.client.post(
+            reverse("integration-list"),
+            {
+                "tenant_id": self.owner_tenant.id,
+                "name": "Owner Stripe",
+                "integration_type": "payment",
+                "provider": "stripe",
+                "transport": "http",
+                "connection_settings": {"payment_scope": "saas_billing"},
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 201, response.data)
+
+    def test_regular_tenant_admin_cannot_create_saas_billing_gateway(self):
+        self.client.force_authenticate(user=self.tenant_admin)
+        response = self.client.post(
+            reverse("integration-list"),
+            {
+                "tenant_id": self.regular_tenant.id,
+                "name": "Tenant Stripe",
+                "integration_type": "payment",
+                "provider": "stripe",
+                "transport": "http",
+                "connection_settings": {"payment_scope": "saas_billing"},
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 403, response.data)
+        self.assertIn("Only the SaaS owner tenant", str(response.data))
+
+    def test_superuser_cannot_assign_saas_billing_to_non_owner_tenant(self):
+        self.client.force_authenticate(user=self.superuser)
+        response = self.client.post(
+            reverse("integration-list"),
+            {
+                "tenant_id": self.regular_tenant.id,
+                "name": "Superuser Stripe",
+                "integration_type": "payment",
+                "provider": "stripe",
+                "transport": "http",
+                "connection_settings": {"payment_scope": "saas_billing"},
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 403, response.data)
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # 2. Weighbridge transaction isolation
 # ═══════════════════════════════════════════════════════════════════════════════

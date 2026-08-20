@@ -7,11 +7,12 @@ so that Products & Services live in one place rather than scattered per-module.
 from django.conf import settings
 from django.db import models
 from django.utils import timezone
+from Platform_Core.models import AuditMetadataMixin
 
 
 # ── Product / Service catalogue ───────────────────────────────────────────────
 
-class Product(models.Model):
+class Product(AuditMetadataMixin, models.Model):
     PRODUCT_TYPE_CHOICES = [
         ("product", "Product"),
         ("service", "Service"),
@@ -31,6 +32,10 @@ class Product(models.Model):
     tax_rate    = models.DecimalField(max_digits=5, decimal_places=2, default=0,
                                       help_text="Percentage, e.g. 16 for 16%")
     is_active   = models.BooleanField(default=True)
+    is_sales_item = models.BooleanField(default=True)
+    is_purchase_item = models.BooleanField(default=True)
+    is_stock_item = models.BooleanField(default=False)
+    is_service = models.BooleanField(default=False)
 
     # Optional chart-of-accounts linkage
     income_account  = models.ForeignKey(
@@ -55,7 +60,7 @@ class Product(models.Model):
 
 # ── Estimates / Quotes ────────────────────────────────────────────────────────
 
-class Estimate(models.Model):
+class Estimate(AuditMetadataMixin, models.Model):
     STATUS_CHOICES = [
         ("draft",    "Draft"),
         ("sent",     "Sent"),
@@ -91,6 +96,10 @@ class Estimate(models.Model):
         "SL_Weighbridge.Invoice", on_delete=models.SET_NULL,
         null=True, blank=True, related_name="source_estimate",
     )
+    converted_to_sales_order = models.ForeignKey(
+        "SL_Sales.SalesOrder", on_delete=models.SET_NULL,
+        null=True, blank=True, related_name="source_estimate",
+    )
 
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
@@ -122,7 +131,7 @@ class Estimate(models.Model):
         return self.estimate_number or f"Estimate #{self.pk}"
 
 
-class EstimateLineItem(models.Model):
+class EstimateLineItem(AuditMetadataMixin, models.Model):
     estimate    = models.ForeignKey(Estimate, on_delete=models.CASCADE,
                                      related_name="line_items")
     product     = models.ForeignKey(Product, on_delete=models.SET_NULL,
@@ -146,9 +155,91 @@ class EstimateLineItem(models.Model):
         return f"{self.estimate} — {self.description}"
 
 
+class SalesOrder(AuditMetadataMixin, models.Model):
+    STATUS_CHOICES = [
+        ("draft", "Draft"),
+        ("confirmed", "Confirmed"),
+        ("fulfilled", "Fulfilled"),
+        ("cancelled", "Cancelled"),
+        ("invoiced", "Invoiced"),
+    ]
+
+    tenant = models.ForeignKey("Platform_Core.Tenant", on_delete=models.CASCADE, related_name="sales_orders")
+    branch = models.ForeignKey("SL_Weighbridge.Branch", on_delete=models.SET_NULL, null=True, blank=True, related_name="sales_orders")
+    customer = models.ForeignKey("SL_Weighbridge.Customer", on_delete=models.SET_NULL, null=True, blank=True, related_name="sales_orders")
+    customer_name = models.CharField(max_length=200, blank=True)
+    estimate = models.ForeignKey(Estimate, on_delete=models.SET_NULL, null=True, blank=True, related_name="sales_orders")
+
+    order_number = models.CharField(max_length=50, blank=True)
+    order_date = models.DateField(default=timezone.now)
+    expected_delivery_date = models.DateField(null=True, blank=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="draft")
+
+    subtotal = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    discount_total = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    tax_total = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    total = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+
+    notes = models.TextField(blank=True)
+    terms = models.TextField(blank=True)
+    converted_to_invoice = models.ForeignKey(
+        "SL_Weighbridge.Invoice", on_delete=models.SET_NULL,
+        null=True, blank=True, related_name="source_sales_order",
+    )
+
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name="created_sales_orders",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        unique_together = ("tenant", "order_number")
+
+    def save(self, *args, **kwargs):
+        if not self.order_number:
+            ts = timezone.now().strftime("%Y%m%d%H%M%S")
+            self.order_number = f"SO-{ts}-{self.tenant_id or 'X'}"
+        super().save(*args, **kwargs)
+
+    def recalculate(self):
+        lines = self.line_items.all()
+        self.subtotal = sum(li.line_total for li in lines)
+        self.tax_total = sum(li.line_total * (li.tax_rate / 100) for li in lines)
+        self.total = self.subtotal + self.tax_total - self.discount_total
+        self.save(update_fields=["subtotal", "tax_total", "total", "updated_at"])
+
+    def __str__(self):
+        return self.order_number or f"Sales Order #{self.pk}"
+
+
+class SalesOrderLineItem(AuditMetadataMixin, models.Model):
+    sales_order = models.ForeignKey(SalesOrder, on_delete=models.CASCADE, related_name="line_items")
+    product = models.ForeignKey(Product, on_delete=models.SET_NULL, null=True, blank=True, related_name="sales_order_lines")
+    description = models.CharField(max_length=300, blank=True)
+    quantity = models.DecimalField(max_digits=10, decimal_places=3, default=1)
+    unit_price = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    tax_rate = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    discount_amount = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    line_total = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    sort_order = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ["sort_order", "id"]
+
+    def save(self, *args, **kwargs):
+        self.line_total = (self.quantity * self.unit_price) - self.discount_amount
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.sales_order} — {self.description}"
+
+
 # ── Recurring Invoices ────────────────────────────────────────────────────────
 
-class RecurringInvoice(models.Model):
+class RecurringInvoice(AuditMetadataMixin, models.Model):
     FREQUENCY_CHOICES = [
         ("weekly",    "Weekly"),
         ("monthly",   "Monthly"),
@@ -196,7 +287,7 @@ class RecurringInvoice(models.Model):
         return f"Recurring {self.frequency} — {cname}"
 
 
-class RecurringInvoiceLineItem(models.Model):
+class RecurringInvoiceLineItem(AuditMetadataMixin, models.Model):
     recurring_invoice = models.ForeignKey(RecurringInvoice, on_delete=models.CASCADE,
                                            related_name="line_items")
     product     = models.ForeignKey(Product, on_delete=models.SET_NULL,

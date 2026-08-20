@@ -1,18 +1,20 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useAuth } from '@/context/use-auth';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useGetTransaction, getGetTransactionQueryKey } from '@workspace/api-client-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
+import { ERP_BRANCHES_QUERY_KEY, fetchErpBranches } from '@/lib/branches';
 import {
-  ArrowLeft, CheckCircle2, RotateCcw, Download, Printer, AlertTriangle,
-  Scale, DollarSign, FileText,
+  ArrowLeft, CheckCircle2, BadgeCheck, RotateCcw, Download, Printer, AlertTriangle,
+  Scale, Wallet, FileText,
 } from 'lucide-react';
 import { Link } from 'wouter';
 import { ReceiptDialog } from '@/components/weighbridge/receipt';
+import { RecordAuditTrail } from '@/components/audit/record-audit-trail';
 import { CAN_APPROVE, CAN_RECALL, CAN_EXPORT } from '@/lib/roles';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
@@ -24,7 +26,9 @@ import {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 const STATUS_STYLE: Record<string, string> = {
-  Pending:   'bg-orange-100 text-orange-800 border-orange-300 dark:bg-orange-900/30 dark:text-orange-400',
+  Draft:     'bg-slate-100 text-slate-800 border-slate-300 dark:bg-slate-900/30 dark:text-slate-300',
+  Recalled:  'bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-900/30 dark:text-amber-400',
+  Rejected:  'bg-rose-100 text-rose-800 border-rose-300 dark:bg-rose-900/30 dark:text-rose-400',
   Completed: 'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-900/30 dark:text-emerald-400',
 };
 const PAY_STYLE: Record<string, string> = {
@@ -55,6 +59,173 @@ interface ReceivePaymentDialogProps {
   onSuccess: (invoiceId: number | null) => void;
 }
 
+interface EditTransactionDialogProps {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  transaction: any;
+  token: string | null;
+  onSaved: () => void;
+}
+
+function EditTransactionDialog({ open, onOpenChange, transaction, token, onSaved }: EditTransactionDialogProps) {
+  const { toast } = useToast();
+  const [form, setForm] = useState({
+    branch: '',
+    customer: '',
+    vehicle: '',
+    vehicle_type: '',
+    operation_type: '',
+    item: '',
+    destination: '',
+  });
+
+  useEffect(() => {
+    if (!transaction) return;
+    setForm({
+      branch: transaction.branch ? String(transaction.branch) : '',
+      customer: transaction.customer ? String(transaction.customer) : '',
+      vehicle: transaction.vehicle ? String(transaction.vehicle) : '',
+      vehicle_type: transaction.vehicle_type ? String(transaction.vehicle_type) : '',
+      operation_type: transaction.operation_type ? String(transaction.operation_type) : '',
+      item: transaction.item ? String(transaction.item) : '',
+      destination: transaction.destination ?? '',
+    });
+  }, [transaction]);
+
+  const fetchList = async (url: string) => {
+    const res = await fetch(url, { headers: { Authorization: `Token ${token}` } });
+    if (!res.ok) throw new Error(`${res.status}`);
+    return res.json();
+  };
+
+  const { data: branches = [] } = useQuery({
+    queryKey: ERP_BRANCHES_QUERY_KEY,
+    queryFn: () => fetchErpBranches(token!),
+    enabled: open && !!token,
+  });
+  const { data: customers = [] } = useQuery({
+    queryKey: ['edit-tx-customers'],
+    queryFn: () => fetchList('/api/commercial-weighbridge/customers/?search='),
+    enabled: open && !!token,
+  });
+  const { data: vehicles = [] } = useQuery({
+    queryKey: ['edit-tx-vehicles', form.customer],
+    queryFn: () => fetchList(`/api/commercial-weighbridge/vehicles/?customer_id=${form.customer}`),
+    enabled: open && !!token && !!form.customer,
+  });
+  const { data: items = [] } = useQuery({
+    queryKey: ['edit-tx-items'],
+    queryFn: () => fetchList('/api/commercial-weighbridge/items/'),
+    enabled: open && !!token,
+  });
+  const { data: vehicleTypes = [] } = useQuery({
+    queryKey: ['edit-tx-vehicle-types'],
+    queryFn: () => fetchList('/api/commercial-weighbridge/vehicle-types/'),
+    enabled: open && !!token,
+  });
+  const { data: operationTypes = [] } = useQuery({
+    queryKey: ['edit-tx-operation-types'],
+    queryFn: () => fetchList('/api/commercial-weighbridge/weighing-operation-types/'),
+    enabled: open && !!token,
+  });
+
+  const [saving, setSaving] = useState(false);
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      const payload: Record<string, unknown> = {
+        branch: Number(form.branch),
+        customer: Number(form.customer),
+        vehicle: Number(form.vehicle),
+        vehicle_type: Number(form.vehicle_type),
+        destination: form.destination,
+      };
+      if (form.item) payload.item = Number(form.item);
+      if (form.operation_type) payload.operation_type = Number(form.operation_type);
+      const res = await fetch(`/api/commercial-weighbridge/transactions/${transaction.id}/`, {
+        method: 'PATCH',
+        headers: { Authorization: `Token ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body?.detail ?? body?.error ?? res.statusText);
+      toast({ title: 'Transaction updated' });
+      onOpenChange(false);
+      onSaved();
+    } catch (err: any) {
+      toast({ title: 'Update failed', description: err?.message, variant: 'destructive' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>Edit Transaction</DialogTitle>
+        </DialogHeader>
+        <div className="grid gap-4 py-2 md:grid-cols-2">
+          <div className="space-y-1.5">
+            <Label>Branch</Label>
+            <Select value={form.branch} onValueChange={v => setForm(p => ({ ...p, branch: v }))}>
+              <SelectTrigger><SelectValue placeholder="Select branch…" /></SelectTrigger>
+              <SelectContent>{(branches as any[]).map((b: any) => <SelectItem key={b.id} value={String(b.id)}>{b.name}</SelectItem>)}</SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Operation Type</Label>
+            <Select value={form.operation_type} onValueChange={v => setForm(p => ({ ...p, operation_type: v }))}>
+              <SelectTrigger><SelectValue placeholder="Select operation type…" /></SelectTrigger>
+              <SelectContent>{(operationTypes as any[]).filter((row: any) => row.is_active).map((row: any) => <SelectItem key={row.id} value={String(row.id)}>{row.name}</SelectItem>)}</SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Customer</Label>
+            <Select value={form.customer} onValueChange={v => setForm(p => ({ ...p, customer: v, vehicle: '' }))}>
+              <SelectTrigger><SelectValue placeholder="Select customer…" /></SelectTrigger>
+              <SelectContent>{(customers as any[]).map((c: any) => <SelectItem key={c.id} value={String(c.id)}>{c.name}</SelectItem>)}</SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Vehicle</Label>
+            <Select value={form.vehicle} onValueChange={v => setForm(p => ({ ...p, vehicle: v }))} disabled={!form.customer}>
+              <SelectTrigger><SelectValue placeholder="Select vehicle…" /></SelectTrigger>
+              <SelectContent>{(vehicles as any[]).map((v: any) => <SelectItem key={v.id} value={String(v.id)}>{v.number_plate}</SelectItem>)}</SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Vehicle Type</Label>
+            <Select value={form.vehicle_type} onValueChange={v => setForm(p => ({ ...p, vehicle_type: v }))}>
+              <SelectTrigger><SelectValue placeholder="Select vehicle type…" /></SelectTrigger>
+              <SelectContent>{(vehicleTypes as any[]).map((v: any) => <SelectItem key={v.id} value={String(v.id)}>{v.name}</SelectItem>)}</SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Item</Label>
+            <Select value={form.item || '__none__'} onValueChange={v => setForm(p => ({ ...p, item: v === '__none__' ? '' : v }))}>
+              <SelectTrigger><SelectValue placeholder="Optional" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__none__">Optional</SelectItem>
+                {(items as any[]).map((i: any) => <SelectItem key={i.id} value={String(i.id)}>{i.name}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5 md:col-span-2">
+            <Label>Destination</Label>
+            <Input value={form.destination} onChange={e => setForm(p => ({ ...p, destination: e.target.value }))} />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button onClick={handleSave} disabled={saving}>{saving ? 'Saving…' : 'Save Changes'}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function ReceivePaymentDialog({ open, onOpenChange, transactionId, token, onSuccess }: ReceivePaymentDialogProps) {
   const { toast } = useToast();
   const [method, setMethod] = useState('Cash');
@@ -71,7 +242,7 @@ function ReceivePaymentDialog({ open, onOpenChange, transactionId, token, onSucc
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body?.error ?? res.statusText);
-      toast({ title: 'Payment recorded', description: 'Transaction marked as Paid.' });
+      toast({ title: 'Payment updated', description: body?.message ?? 'Transaction payment updated.' });
       onSuccess(body.invoice_id ?? null);
       onOpenChange(false);
     } catch (err: any) {
@@ -88,7 +259,7 @@ function ReceivePaymentDialog({ open, onOpenChange, transactionId, token, onSucc
       <DialogContent className="sm:max-w-sm">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <DollarSign className="h-4 w-4" /> Receive Payment
+            <Wallet className="h-4 w-4" /> Receive Payment
           </DialogTitle>
         </DialogHeader>
         <div className="space-y-4 pt-2">
@@ -139,9 +310,10 @@ export default function TransactionDetail({ id }: { id: string }) {
     query: { enabled: !isNaN(numericId), queryKey: getGetTransactionQueryKey(numericId) },
   });
 
-  const [acting, setActing]         = useState<'approve' | 'recall' | null>(null);
+  const [acting, setActing]         = useState<'approve' | 'recall' | 'reject' | null>(null);
   const [receiptOpen, setReceiptOpen] = useState(false);
   const [payOpen, setPayOpen]       = useState(false);
+  const [editOpen, setEditOpen]     = useState(false);
   const [invoiceId, setInvoiceId]   = useState<number | null>(null);
 
   if (isLoading) return (
@@ -159,15 +331,18 @@ export default function TransactionDetail({ id }: { id: string }) {
 
   // ── Actions ─────────────────────────────────────────────────────────────────
 
-  const canApprove       = CAN_APPROVE.includes(role) && !tx.approval_status;
+  const canApprove       = CAN_APPROVE.includes(role) && ['Draft', 'Recalled'].includes(tx.status) && !tx.approval_status && !!tx.manual_weight_capture;
   const canRecall        = CAN_RECALL.includes(role) && tx.status === 'Completed';
+  const canReject        = CAN_APPROVE.includes(role) && tx.status !== 'Completed';
   const canExport        = CAN_EXPORT.includes(role);
-  const canReceivePayment = tx.status === 'Completed' && tx.payment_status !== 'Paid';
+  const canEdit          = tx.status !== 'Completed';
+  const canReceivePayment = tx.payment_status !== 'Paid' && tx.status !== 'Rejected';
   const isPaid           = tx.payment_status === 'Paid';
+  const canPrintReceipt  = isPaid || tx.payment_mode === 'Debt';
   // auto_invoice_id from API, or an invoice returned after receive-payment
   const linkedInvoiceId  = invoiceId ?? tx.auto_invoice_id ?? null;
 
-  const postAction = async (action: 'approve' | 'recall') => {
+  const postAction = async (action: 'approve' | 'recall' | 'reject') => {
     setActing(action);
     try {
       const res = await fetch(`/api/commercial-weighbridge/transactions/${numericId}/${action}/`, {
@@ -177,10 +352,12 @@ export default function TransactionDetail({ id }: { id: string }) {
       const body = await res.json();
       if (!res.ok) throw new Error(body?.error ?? res.statusText);
       toast({
-        title: action === 'approve' ? 'Transaction approved' : 'Transaction recalled',
+        title: action === 'approve' ? 'Transaction approved' : action === 'recall' ? 'Transaction recalled' : 'Transaction rejected',
         description: action === 'approve'
-          ? 'The record has been marked as approved.'
-          : 'Transaction set back to Pending. First weight un-paired.',
+          ? 'The record has been approved and moved to Completed.'
+          : action === 'recall'
+            ? 'Transaction moved to Recalled for editing. First weight un-paired.'
+            : 'Transaction moved to Rejected.',
       });
       queryClient.invalidateQueries({ queryKey: getGetTransactionQueryKey(numericId) });
       queryClient.invalidateQueries({ queryKey: ['transactions'] });
@@ -219,7 +396,7 @@ export default function TransactionDetail({ id }: { id: string }) {
               </span>
               {tx.approval_status && (
                 <span className="px-2.5 py-0.5 rounded text-[10px] font-bold tracking-widest uppercase border bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-900/30 dark:text-emerald-400 flex items-center gap-1">
-                  <CheckCircle2 className="h-3 w-3" /> Approved
+                  <BadgeCheck className="h-3 w-3" /> Approved
                 </span>
               )}
               {tx.manual_weight_capture && (
@@ -244,7 +421,7 @@ export default function TransactionDetail({ id }: { id: string }) {
               disabled={acting !== null}
               onClick={() => postAction('approve')}
             >
-              <CheckCircle2 className="h-3.5 w-3.5" />
+              <BadgeCheck className="h-3.5 w-3.5" />
               {acting === 'approve' ? 'Approving…' : 'Approve'}
             </Button>
           )}
@@ -260,20 +437,41 @@ export default function TransactionDetail({ id }: { id: string }) {
               {acting === 'recall' ? 'Recalling…' : 'Recall'}
             </Button>
           )}
+          {canReject && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="gap-1.5 text-xs font-bold uppercase tracking-wide border-rose-400 text-rose-700 hover:bg-rose-50 dark:text-rose-400 dark:hover:bg-rose-900/20"
+              disabled={acting !== null}
+              onClick={() => postAction('reject')}
+            >
+              {acting === 'reject' ? 'Rejecting…' : 'Reject'}
+            </Button>
+          )}
+          {canEdit && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="gap-1.5 text-xs font-bold uppercase tracking-wide"
+              onClick={() => setEditOpen(true)}
+            >
+              Edit
+            </Button>
+          )}
           {canReceivePayment && (
             <Button
               size="sm"
               className="gap-1.5 text-xs font-bold uppercase tracking-wide bg-emerald-600 hover:bg-emerald-700 text-white"
               onClick={() => setPayOpen(true)}
             >
-              <DollarSign className="h-3.5 w-3.5" /> Receive Payment
+              <Wallet className="h-3.5 w-3.5" /> Receive Payment
             </Button>
           )}
           <Button
             size="sm"
             variant="outline"
             className="gap-1.5 text-xs font-bold uppercase tracking-wide"
-            disabled={!isPaid}
+            disabled={!canPrintReceipt}
             onClick={() => setReceiptOpen(true)}
           >
             <Printer className="h-3.5 w-3.5" /> Receipt
@@ -299,7 +497,7 @@ export default function TransactionDetail({ id }: { id: string }) {
             <div className="text-sm font-bold text-amber-800 dark:text-amber-400">Manual weight capture</div>
             <div className="text-xs text-amber-700 dark:text-amber-500 mt-0.5">
               {tx.weight_reason ? `Reason: ${tx.weight_reason}` : 'No reason recorded.'}
-              {!tx.approval_status && canApprove && ' — Review and approve below.'}
+              {!tx.approval_status && canApprove && ' — Receive payment if needed, then approve to move it to Completed.'}
             </div>
           </div>
         </div>
@@ -378,6 +576,8 @@ export default function TransactionDetail({ id }: { id: string }) {
                   </span>
                 }
               />
+              <Field label="Reference" value={tx.payment_reference || null} mono />
+              <Field label="Paid At" value={tx.payment_received_at ? new Date(tx.payment_received_at).toLocaleString('en-KE') : null} mono />
               <Field label="Invoiced" value={tx.invoiced ? 'Yes' : 'No'} />
               {linkedInvoiceId && (
                 <Field
@@ -416,7 +616,7 @@ export default function TransactionDetail({ id }: { id: string }) {
               <Field label="Approved"
                 value={
                   tx.approval_status
-                    ? <span className="text-emerald-600 dark:text-emerald-400 font-bold text-xs flex items-center gap-1"><CheckCircle2 className="h-3.5 w-3.5" /> Yes</span>
+                    ? <span className="text-emerald-600 dark:text-emerald-400 font-bold text-xs flex items-center gap-1"><BadgeCheck className="h-3.5 w-3.5" /> Yes</span>
                     : <span className="text-muted-foreground text-xs">No</span>
                 }
               />
@@ -431,8 +631,21 @@ export default function TransactionDetail({ id }: { id: string }) {
         </CardContent>
       </Card>
 
+      <RecordAuditTrail modelLabel="SL_Weighbridge.Transaction" objectPk={numericId} />
+
+      <EditTransactionDialog
+        open={editOpen}
+        onOpenChange={setEditOpen}
+        transaction={tx}
+        token={token}
+        onSaved={() => {
+          queryClient.invalidateQueries({ queryKey: getGetTransactionQueryKey(numericId) });
+          queryClient.invalidateQueries({ queryKey: ['transactions'] });
+        }}
+      />
+
       {/* Receipt dialog */}
-      <ReceiptDialog transaction={tx} open={receiptOpen} onOpenChange={setReceiptOpen} />
+      <ReceiptDialog transaction={tx} open={receiptOpen} onOpenChange={setReceiptOpen} token={token} />
 
       {/* Receive Payment dialog */}
       <ReceivePaymentDialog

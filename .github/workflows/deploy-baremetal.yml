@@ -1,0 +1,39 @@
+name: Deploy Bare Metal
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: Branch to deploy
+        required: true
+        default: main
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Start SSH agent
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.PROD_SSH_KEY }}
+
+      - name: Add server to known_hosts
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -p "${{ secrets.PROD_PORT || '22' }}" -H "${{ secrets.PROD_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Run bare-metal deployment
+        env:
+          PROD_HOST: ${{ secrets.PROD_HOST }}
+          PROD_PORT: ${{ secrets.PROD_PORT || '22' }}
+          PROD_USER: ${{ secrets.PROD_USER }}
+          APP_DIR: ${{ secrets.PROD_APP_DIR || '/srv/sl-erp' }}
+          BRANCH: ${{ github.event.inputs.branch || 'main' }}
+        run: |
+          ssh -p "$PROD_PORT" "$PROD_USER@$PROD_HOST" \
+            "cd '$APP_DIR' && APP_DIR='$APP_DIR' BRANCH='$BRANCH' bash scripts/deploy-baremetal.sh"

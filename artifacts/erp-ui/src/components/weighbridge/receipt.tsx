@@ -1,8 +1,10 @@
 import { useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Printer, Mail, Send, CheckCircle2 } from 'lucide-react';
+import { useAuth } from '@/context/use-auth';
 
 export interface ReceiptTransaction {
   id: number;
@@ -39,6 +41,12 @@ interface ReceiptDialogProps {
   token?: string | null;
 }
 
+type ReceiptBranding = {
+  logo_url?: string;
+  primary_color?: string;
+  footer_text?: string;
+};
+
 function fmt(dt?: string | null) {
   if (!dt) return '—';
   const d = new Date(dt);
@@ -62,6 +70,19 @@ function kes(v?: number | string | null) {
 
 export function ReceiptDialog({ transaction: t, open, onOpenChange, token }: ReceiptDialogProps) {
   const printRef = useRef<HTMLDivElement>(null);
+  const { user } = useAuth();
+  const tenantId = (user as any)?.tenant_id;
+  const { data: settingsData } = useQuery({
+    queryKey: ['receipt-tenant-settings', tenantId],
+    enabled: open && !!token && !!tenantId,
+    queryFn: async () => {
+      const res = await fetch(`/api/platform/tenants/${tenantId}/settings/`, {
+        headers: { Authorization: `Token ${token}` },
+      });
+      if (!res.ok) throw new Error(`${res.status}`);
+      return res.json();
+    },
+  });
 
   // Email state
   const [emailOpen, setEmailOpen]     = useState(false);
@@ -70,44 +91,59 @@ export function ReceiptDialog({ transaction: t, open, onOpenChange, token }: Rec
   const [emailResult, setEmailResult] = useState<{ ok: boolean; msg: string } | null>(null);
 
   const handlePrint = () => {
-    if (!printRef.current) return;
-    const content = printRef.current.innerHTML;
-    const win = window.open('', '_blank', 'width=720,height=900');
-    if (!win) return;
-    win.document.write(`
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <title>Weighbridge Receipt — TX${String(t?.id ?? '').padStart(5, '0')}</title>
-          <style>
-            * { box-sizing: border-box; margin: 0; padding: 0; }
-            body { font-family: 'Courier New', monospace; font-size: 12px; color: #000; background: #fff; padding: 20px; }
-            .receipt { max-width: 400px; margin: 0 auto; border: 2px solid #000; padding: 16px; }
-            .header { text-align: center; border-bottom: 2px dashed #000; padding-bottom: 10px; margin-bottom: 10px; }
-            .header h1 { font-size: 18px; font-weight: bold; letter-spacing: 2px; }
-            .header h2 { font-size: 13px; font-weight: normal; margin-top: 2px; }
-            .txid { font-size: 22px; font-weight: bold; text-align: center; margin: 8px 0; letter-spacing: 4px; }
-            .section { margin-bottom: 10px; }
-            .section-title { font-size: 10px; text-transform: uppercase; letter-spacing: 2px; border-bottom: 1px solid #000; margin-bottom: 6px; padding-bottom: 2px; }
-            .row { display: flex; justify-content: space-between; margin-bottom: 3px; }
-            .label { color: #444; }
-            .value { font-weight: bold; text-align: right; max-width: 55%; word-break: break-word; }
-            .weights { background: #f5f5f5; border: 1px solid #000; padding: 8px; margin: 10px 0; }
-            .net-weight { font-size: 20px; font-weight: bold; text-align: center; margin: 4px 0; }
-            .net-label { font-size: 10px; text-align: center; text-transform: uppercase; letter-spacing: 2px; }
-            .divider { border-top: 1px dashed #000; margin: 8px 0; }
-            .footer { text-align: center; font-size: 10px; margin-top: 10px; color: #555; }
-            .charge-row { font-size: 14px; font-weight: bold; border-top: 2px solid #000; padding-top: 6px; margin-top: 6px; display: flex; justify-content: space-between; }
-            .manual-note { background: #fff3cd; border: 1px solid #ffc107; padding: 4px 6px; font-size: 10px; margin-top: 4px; }
-            @media print { body { padding: 0; } }
-          </style>
-        </head>
-        <body>${content}</body>
-      </html>
-    `);
-    win.document.close();
-    win.focus();
-    setTimeout(() => { win.print(); win.close(); }, 300);
+    if (!t || !token || !canPrintReceipt) return;
+    fetch(`/api/commercial-weighbridge/transactions/${t.id}/receipt/`, {
+      headers: { Authorization: `Token ${token}` },
+    })
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`Failed to open receipt (${res.status})`);
+        const html = await res.text();
+        const blob = new Blob([html], { type: 'text/html' });
+        const url = URL.createObjectURL(blob);
+        const win = window.open(url, '_blank', 'noopener,noreferrer');
+        if (!win) throw new Error('Popup was blocked by the browser');
+        setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      })
+      .catch(() => {
+        if (!printRef.current) return;
+        const content = printRef.current.innerHTML;
+        const win = window.open('', '_blank', 'width=720,height=900');
+        if (!win) return;
+        win.document.write(`
+          <!DOCTYPE html>
+          <html>
+            <head>
+              <title>Weighbridge Receipt — TX${String(t?.id ?? '').padStart(5, '0')}</title>
+              <style>
+                * { box-sizing: border-box; margin: 0; padding: 0; }
+                body { font-family: 'Courier New', monospace; font-size: 12px; color: #000; background: #fff; padding: 20px; }
+                .receipt { max-width: 400px; margin: 0 auto; border: 2px solid #000; padding: 16px; }
+                .header { text-align: center; border-bottom: 2px dashed #000; padding-bottom: 10px; margin-bottom: 10px; }
+                .header h1 { font-size: 18px; font-weight: bold; letter-spacing: 2px; }
+                .header h2 { font-size: 13px; font-weight: normal; margin-top: 2px; }
+                .txid { font-size: 22px; font-weight: bold; text-align: center; margin: 8px 0; letter-spacing: 4px; }
+                .section { margin-bottom: 10px; }
+                .section-title { font-size: 10px; text-transform: uppercase; letter-spacing: 2px; border-bottom: 1px solid #000; margin-bottom: 6px; padding-bottom: 2px; }
+                .row { display: flex; justify-content: space-between; margin-bottom: 3px; }
+                .label { color: #444; }
+                .value { font-weight: bold; text-align: right; max-width: 55%; word-break: break-word; }
+                .weights { background: #f5f5f5; border: 1px solid #000; padding: 8px; margin: 10px 0; }
+                .net-weight { font-size: 20px; font-weight: bold; text-align: center; margin: 4px 0; }
+                .net-label { font-size: 10px; text-align: center; text-transform: uppercase; letter-spacing: 2px; }
+                .divider { border-top: 1px dashed #000; margin: 8px 0; }
+                .footer { text-align: center; font-size: 10px; margin-top: 10px; color: #555; }
+                .charge-row { font-size: 14px; font-weight: bold; border-top: 2px solid #000; padding-top: 6px; margin-top: 6px; display: flex; justify-content: space-between; }
+                .manual-note { background: #fff3cd; border: 1px solid #ffc107; padding: 4px 6px; font-size: 10px; margin-top: 4px; }
+                @media print { body { padding: 0; } }
+              </style>
+            </head>
+            <body>${content}</body>
+          </html>
+        `);
+        win.document.close();
+        win.focus();
+        setTimeout(() => { win.print(); win.close(); }, 300);
+      });
   };
 
   const openEmail = () => {
@@ -141,8 +177,17 @@ export function ReceiptDialog({ transaction: t, open, onOpenChange, token }: Rec
 
   if (!t) return null;
 
-  const isCompleted = t.status === 'Completed';
+  const canPrintReceipt = t.payment_status === 'Paid' || t.payment_mode === 'Debt';
+  const receiptStatusLabel = t.payment_status || 'Pending';
   const txNum = String(t.id).padStart(5, '0');
+  const settings = settingsData?.data ?? settingsData ?? {};
+  const tenantCompanyName = (user as any)?.tenant_name || 'SL-ERP';
+  const branding: ReceiptBranding = {
+    logo_url: settings.logo_url || '',
+    primary_color: settings.primary_color || '#E85D26',
+    footer_text: settings.footer_text || '',
+  };
+  const footerText = branding.footer_text || tenantCompanyName;
 
   return (
     <Dialog open={open} onOpenChange={v => { onOpenChange(v); if (!v) { setEmailOpen(false); setEmailResult(null); } }}>
@@ -160,12 +205,19 @@ export function ReceiptDialog({ transaction: t, open, onOpenChange, token }: Rec
             <Button
               size="sm" variant="outline"
               onClick={emailOpen ? undefined : openEmail}
-              className="gap-2 font-bold uppercase tracking-wide"
-            >
+            className="gap-2 font-bold uppercase tracking-wide"
+            disabled={!canPrintReceipt}
+          >
               <Mail className="h-4 w-4" /> Email Receipt
             </Button>
           )}
         </div>
+
+      {!canPrintReceipt && (
+        <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">
+          Receipt printing is locked until payment is received. Debt transactions can still print with a payment pending mark.
+        </div>
+      )}
 
         {/* Email panel */}
         {emailOpen && (
@@ -204,12 +256,17 @@ export function ReceiptDialog({ transaction: t, open, onOpenChange, token }: Rec
 
         {/* Receipt preview */}
         <div ref={printRef}>
-          <div className="receipt" style={{ fontFamily: "'Courier New', monospace", border: '2px solid #000', padding: 16, fontSize: 12, color: '#000', background: '#fff' }}>
+          <div className="receipt" style={{ fontFamily: "'Courier New', monospace", border: `2px solid ${branding.primary_color}`, padding: 16, fontSize: 12, color: '#000', background: '#fff' }}>
             {/* Header */}
-            <div className="header" style={{ textAlign: 'center', borderBottom: '2px dashed #000', paddingBottom: 10, marginBottom: 10 }}>
-              <div style={{ fontSize: 18, fontWeight: 'bold', letterSpacing: 2 }}>SL-ERP</div>
+            <div className="header" style={{ textAlign: 'center', borderBottom: `2px dashed ${branding.primary_color}`, paddingBottom: 10, marginBottom: 10 }}>
+              {branding.logo_url && (
+                <div style={{ marginBottom: 8 }}>
+                  <img src={branding.logo_url} alt="Tenant logo" style={{ maxWidth: 88, maxHeight: 72, objectFit: 'contain', margin: '0 auto' }} />
+                </div>
+              )}
+              <div style={{ fontSize: 18, fontWeight: 'bold', letterSpacing: 2 }}>{t.branch_name ?? 'SL-ERP'}</div>
               <div style={{ fontSize: 13 }}>WEIGHBRIDGE TICKET</div>
-              <div style={{ fontSize: 10, color: '#555', marginTop: 2 }}>{t.branch_name ?? 'Main Branch'}</div>
+              <div style={{ fontSize: 10, color: '#555', marginTop: 2 }}>{t.branch_name ?? ''}</div>
             </div>
 
             <div className="txid" style={{ fontSize: 22, fontWeight: 'bold', textAlign: 'center', letterSpacing: 4, margin: '8px 0' }}>
@@ -220,11 +277,11 @@ export function ReceiptDialog({ transaction: t, open, onOpenChange, token }: Rec
             <div style={{ textAlign: 'center', marginBottom: 10 }}>
               <span style={{
                 display: 'inline-block', padding: '2px 12px',
-                border: `2px solid ${isCompleted ? '#16a34a' : '#d97706'}`,
-                color: isCompleted ? '#16a34a' : '#d97706',
+                border: `2px solid ${t.payment_status === 'Paid' ? '#16a34a' : '#d97706'}`,
+                color: t.payment_status === 'Paid' ? '#16a34a' : '#d97706',
                 fontWeight: 'bold', fontSize: 11, letterSpacing: 2, textTransform: 'uppercase',
               }}>
-                {t.status ?? 'PENDING'}
+                {receiptStatusLabel}
               </span>
             </div>
 
@@ -284,6 +341,11 @@ export function ReceiptDialog({ transaction: t, open, onOpenChange, token }: Rec
                 <span>CHARGE</span>
                 <span>{kes(t.charge)}</span>
               </div>
+              {t.payment_status !== 'Paid' && (
+                <div style={{ marginTop: 6, padding: '6px 8px', border: '1px solid #d97706', background: '#fff7ed', color: '#b45309', fontSize: 10, fontWeight: 'bold', textAlign: 'center', letterSpacing: 1 }}>
+                  PAYMENT PENDING
+                </div>
+              )}
             </div>
 
             {/* Timestamps */}
@@ -298,17 +360,9 @@ export function ReceiptDialog({ transaction: t, open, onOpenChange, token }: Rec
               )}
             </div>
 
-            {t.manual_weight_capture && (
-              <div style={{ background: '#fff3cd', border: '1px solid #ffc107', padding: '4px 6px', fontSize: 10, marginTop: 4 }}>
-                ⚠ MANUAL CAPTURE — {t.weight_reason ?? 'No reason provided'}
-              </div>
-            )}
-
             {/* Footer */}
-            <div style={{ textAlign: 'center', fontSize: 10, marginTop: 12, color: '#555', borderTop: '1px dashed #000', paddingTop: 8 }}>
-              <div>Thank you for using our weighbridge</div>
-              <div style={{ marginTop: 2, fontWeight: 'bold', letterSpacing: 1 }}>SL-ERP OPERATIONS PLATFORM</div>
-              <div style={{ marginTop: 4, fontSize: 9 }}>Printed: {new Date().toLocaleString('en-KE')}</div>
+            <div style={{ textAlign: 'center', fontSize: 10, marginTop: 12, color: '#555', borderTop: `1px dashed ${branding.primary_color}`, paddingTop: 8 }}>
+              <div>{footerText}</div>
             </div>
           </div>
         </div>

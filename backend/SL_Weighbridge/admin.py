@@ -112,6 +112,7 @@ from django.contrib.admin import AdminSite
 from django.shortcuts import redirect
 from django.urls import reverse
 
+from Platform_API.modules.mixins import NO_TENANT_ACCESS, resolve_user_tenant
 
 
 
@@ -125,6 +126,23 @@ class MetrixWeighbridgeAdminSite(AdminSite):
         if request.user.has_perm('SL_Weighbridge.add_transaction'):
             return redirect(reverse('admin:SL_Weighbridge_transaction_add'))
         return super().index(request, extra_context)
+
+
+def _scope_admin_queryset(request, qs, filter_field="tenant"):
+    resolved = resolve_user_tenant(request.user)
+    if resolved is NO_TENANT_ACCESS:
+        return qs.none()
+    if resolved is None:
+        return qs
+    return qs.filter(**{filter_field: resolved})
+
+
+class TenantScopedAdminMixin:
+    tenant_filter_field = "tenant"
+
+    def get_queryset(self, request):
+        qs = super().get_queryset(request)
+        return _scope_admin_queryset(request, qs, self.tenant_filter_field)
 
 metrix_admin_site = MetrixWeighbridgeAdminSite(name='metrix_weighbridge')
 
@@ -286,7 +304,10 @@ class TransactionAdmin(UnfoldModelAdmin) :
         import requests
 
         try:
-            response = requests.get(get_indicator_stable_weight_url(), timeout=5)
+            stable_url = get_indicator_stable_weight_url()
+            if not stable_url:
+                return 0
+            response = requests.get(stable_url, timeout=5)
             response.raise_for_status()
             data = parse_indicator_response(response)
             return data.get('value') or data.get('weight', 0)
@@ -1549,7 +1570,8 @@ class DiscrepancyReportAdmin(UnfoldModelAdmin):
 # Company
 
 @admin.register(Company)
-class CompanyAdmin(UnfoldModelAdmin):
+class CompanyAdmin(TenantScopedAdminMixin, UnfoldModelAdmin):
+    tenant_filter_field = 'tenant'
     list_display = ('name', 'address', 'email', 'phone')
     search_fields = ('name', 'address', 'email', 'phone')
     list_filter = ('name', 'address', 'email', 'phone')
@@ -1558,7 +1580,8 @@ class CompanyAdmin(UnfoldModelAdmin):
 # PrinterConfig
 
 @admin.register(PrinterConfig)
-class PrinterConfigAdmin(UnfoldModelAdmin):
+class PrinterConfigAdmin(TenantScopedAdminMixin, UnfoldModelAdmin):
+    tenant_filter_field = 'branch__tenant'
     list_display = ('branch', 'name', 'printer_type')
     search_fields = ('branch', 'name', 'printer_type')
     list_filter = ('branch', 'name', 'printer_type')
@@ -1567,7 +1590,8 @@ class PrinterConfigAdmin(UnfoldModelAdmin):
 # Branch
 
 @admin.register(Branch)
-class BranchAdmin(UnfoldModelAdmin):
+class BranchAdmin(TenantScopedAdminMixin, UnfoldModelAdmin):
+    tenant_filter_field = 'tenant'
     list_display = ('company', 'name', 'address')
     search_fields = ('company', 'name', 'address')
     list_filter = ('company', 'name', 'address')
@@ -1576,7 +1600,8 @@ class BranchAdmin(UnfoldModelAdmin):
 # IndicatorConfig
 
 @admin.register(IndicatorConfig)
-class IndicatorConfigAdmin(UnfoldModelAdmin):
+class IndicatorConfigAdmin(TenantScopedAdminMixin, UnfoldModelAdmin):
+    tenant_filter_field = 'branch__tenant'
     list_display = ('indicator_name', 'connection_type', 'port')
     search_fields = ('indicator_name', 'connection_type', 'port')
     list_filter = ('indicator_name', 'connection_type', 'port')
@@ -1585,7 +1610,8 @@ class IndicatorConfigAdmin(UnfoldModelAdmin):
 # Customer
 
 @admin.register(Customer)
-class CustomerAdmin(UnfoldModelAdmin):
+class CustomerAdmin(TenantScopedAdminMixin, UnfoldModelAdmin):
+    tenant_filter_field = 'tenant'
     list_display = ('name', 'phone_number', 'email','discounted','address')
     search_fields = ['name','phone_number']  # Assuming 'name' is a field in your Customer model
     list_filter = ('discounted','charge')
@@ -1607,7 +1633,8 @@ class CustomerAdmin(UnfoldModelAdmin):
 # Vehicle type
 
 @admin.register(VehicleType)
-class VehicleTypeAdmin(UnfoldModelAdmin):
+class VehicleTypeAdmin(TenantScopedAdminMixin, UnfoldModelAdmin):
+    tenant_filter_field = 'tenant'
     list_display = ('name', 'description', 'charge', 'currency','max_gross_weight','max_tare_weight')
     search_fields = ('name', 'charge')
     list_filter = ('name', 'charge')
@@ -1630,7 +1657,8 @@ class VehicleTypeAdmin(UnfoldModelAdmin):
 # Vehicle
 
 @admin.register(Vehicle)
-class VehicleAdmin(UnfoldModelAdmin):
+class VehicleAdmin(TenantScopedAdminMixin, UnfoldModelAdmin):
+    tenant_filter_field = 'tenant'
     list_display = ('customer', 'vehicle_type', 'number_plate')
     search_fields = ['number_plate']  # Assuming 'name' is a field in your Customer model
     list_filter = ('customer', 'vehicle_type', 'number_plate')
@@ -1639,7 +1667,8 @@ class VehicleAdmin(UnfoldModelAdmin):
 # Currency
 
 @admin.register(Currency)
-class CurrencyAdmin(UnfoldModelAdmin):
+class CurrencyAdmin(TenantScopedAdminMixin, UnfoldModelAdmin):
+    tenant_filter_field = 'tenant'
     list_display = ('name', 'code', 'symbol')
     list_filter = ('name', 'code', 'symbol')
     search_fields = ('name', 'code', 'symbol')
@@ -1648,7 +1677,8 @@ class CurrencyAdmin(UnfoldModelAdmin):
 # Item
 
 @admin.register(Item)
-class ItemAdmin(UnfoldModelAdmin):
+class ItemAdmin(TenantScopedAdminMixin, UnfoldModelAdmin):
+    tenant_filter_field = 'tenant'
     list_display = ('name', 'description', 'currency')
     list_filter = ('name', 'currency')
     search_fields = ('name', 'currency')
@@ -1670,7 +1700,8 @@ class ItemAdmin(UnfoldModelAdmin):
 # Camera Config
 
 @admin.register(CameraConfig)
-class CameraConfigAdmin(UnfoldModelAdmin):
+class CameraConfigAdmin(TenantScopedAdminMixin, UnfoldModelAdmin):
+    tenant_filter_field = 'branch__tenant'
     list_display = ('connection_type', 'ip_address', 'port')
     list_filter = ('connection_type', 'ip_address', 'port')
     search_fields = ('connection_type', 'ip_address', 'port')
@@ -1679,7 +1710,8 @@ class CameraConfigAdmin(UnfoldModelAdmin):
 from .models import CustomerVehicleTypeDiscount
 
 @admin.register(CustomerVehicleTypeDiscount)
-class CustomerVehicleTypeDiscountAdmin(UnfoldModelAdmin):
+class CustomerVehicleTypeDiscountAdmin(TenantScopedAdminMixin, UnfoldModelAdmin):
+    tenant_filter_field = 'customer__tenant'
     list_display = ('customer', 'vehicle_type', 'discounted_charge')  # Display these fields in the list view
     search_fields = ('customer__name', 'vehicle_type__name')  # Add search fields for easier navigation
     list_filter = ('vehicle_type',)  # Allow filtering by vehicle type

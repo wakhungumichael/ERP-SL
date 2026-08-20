@@ -16,7 +16,7 @@ import {
 } from '@/components/ui/select';
 import {
   Smartphone, Landmark, Mail, MessageSquare,
-  Cpu, Globe, RefreshCw, CheckCircle2, XCircle, AlertTriangle,
+  Cpu, Globe, RefreshCw, CheckCircle2, XCircle, AlertTriangle, CreditCard,
 } from 'lucide-react';
 
 const BASE = '/api/platform';
@@ -36,14 +36,26 @@ function api(token: string, path: string, method = 'GET', body?: object) {
 const CATALOG = [
   {
     id: 'mpesa', name: 'M-Pesa', description: 'Safaricom Daraja API for mobile money payments and STK Push.', icon: <Smartphone className="h-6 w-6 text-emerald-600" />, type: 'payment', configured: false,
-    fields: [{ key: 'base_url', label: 'Daraja Base URL', placeholder: 'https://sandbox.safaricom.co.ke' }, { key: 'consumer_key', label: 'Consumer Key' }, { key: 'consumer_secret', label: 'Consumer Secret', secret: true }],
+    fields: [{ key: 'base_url', label: 'Daraja Base URL', placeholder: 'https://sandbox.safaricom.co.ke', target: 'root' }, { key: 'consumer_key', label: 'Consumer Key' }, { key: 'consumer_secret', label: 'Consumer Secret', secret: true }, { key: 'payment_scope', label: 'Use For', input: 'select', options: [{ value: 'tenant_operations', label: 'Tenant Collections' }, { value: 'saas_billing', label: 'SaaS Billing' }] }],
   },
   {
     id: 'bank', name: 'Bank API', description: 'Bank integration for automated payment reconciliation.', icon: <Landmark className="h-6 w-6 text-blue-600" />, type: 'payment', configured: false,
-    fields: [{ key: 'base_url', label: 'API Base URL' }, { key: 'api_key', label: 'API Key', secret: true }],
+    fields: [{ key: 'base_url', label: 'API Base URL', target: 'root' }, { key: 'api_key', label: 'API Key', secret: true }, { key: 'payment_scope', label: 'Use For', input: 'select', options: [{ value: 'tenant_operations', label: 'Tenant Collections' }, { value: 'saas_billing', label: 'SaaS Billing' }] }],
   },
   {
-    id: 'smtp', name: 'Email (SMTP)', description: 'Custom SMTP server for transactional emails. Configure per-tenant in Company Settings.', icon: <Mail className="h-6 w-6 text-amber-600" />, type: 'messaging', configured: true,
+    id: 'stripe', name: 'Stripe', description: 'Card checkout, subscription billing, and webhook-driven reconciliation.', icon: <CreditCard className="h-6 w-6 text-sky-600" />, type: 'payment', configured: false,
+    fields: [{ key: 'base_url', label: 'API Base URL', placeholder: 'https://api.stripe.com', target: 'root' }, { key: 'secret_key', label: 'Secret Key', secret: true }, { key: 'webhook_secret', label: 'Webhook Secret', secret: true }, { key: 'payment_scope', label: 'Use For', input: 'select', options: [{ value: 'saas_billing', label: 'SaaS Billing' }, { value: 'tenant_operations', label: 'Tenant Collections' }] }],
+  },
+  {
+    id: 'flutterwave', name: 'Flutterwave', description: 'Cards, bank transfers, and mobile money across multiple African markets.', icon: <CreditCard className="h-6 w-6 text-fuchsia-600" />, type: 'payment', configured: false,
+    fields: [{ key: 'base_url', label: 'API Base URL', placeholder: 'https://api.flutterwave.com', target: 'root' }, { key: 'secret_key', label: 'Secret Key', secret: true }, { key: 'public_key', label: 'Public Key', secret: true }, { key: 'payment_scope', label: 'Use For', input: 'select', options: [{ value: 'saas_billing', label: 'SaaS Billing' }, { value: 'tenant_operations', label: 'Tenant Collections' }] }],
+  },
+  {
+    id: 'pesapal', name: 'Pesapal', description: 'East Africa checkout for cards, mobile money, and bank-backed payment flows.', icon: <CreditCard className="h-6 w-6 text-rose-600" />, type: 'payment', configured: false,
+    fields: [{ key: 'base_url', label: 'API Base URL', placeholder: 'https://pay.pesapal.com', target: 'root' }, { key: 'consumer_key', label: 'Consumer Key' }, { key: 'consumer_secret', label: 'Consumer Secret', secret: true }, { key: 'payment_scope', label: 'Use For', input: 'select', options: [{ value: 'saas_billing', label: 'SaaS Billing' }, { value: 'tenant_operations', label: 'Tenant Collections' }] }],
+  },
+  {
+    id: 'smtp', name: 'Email (SMTP)', description: 'Custom SMTP server for transactional emails. Configure per organization in Organization Settings.', icon: <Mail className="h-6 w-6 text-amber-600" />, type: 'messaging', configured: true,
     fields: [],
   },
   {
@@ -61,20 +73,30 @@ const CATALOG = [
 ];
 
 function IntegrationSheet({
-  item, existing, tenantId, onClose,
-}: { item: typeof CATALOG[0]; existing?: any; tenantId: number | null; onClose: () => void }) {
+  item, existing, tenantId, tenantCode, onClose,
+}: { item: typeof CATALOG[0]; existing?: any; tenantId: number | null; tenantCode?: string | null; onClose: () => void }) {
   const { token } = useAuth();
   const { toast } = useToast();
   const qc = useQueryClient();
-  const [form, setForm] = useState<Record<string, string>>(
-    existing ? (existing.connection_settings ?? {}) : {}
-  );
+  const [form, setForm] = useState<Record<string, string>>(() => ({
+    ...(existing?.connection_settings ?? {}),
+    base_url: existing?.base_url ?? '',
+    payment_scope: existing?.connection_settings?.payment_scope ?? 'tenant_operations',
+  }));
   const [active, setActive] = useState(existing?.is_active ?? false);
+  const isOwnerTenant = tenantCode === 'siakora-labs';
 
   const saveMutation = useMutation({
     mutationFn: () => {
+      const payload = {
+        base_url: form.base_url ?? '',
+        connection_settings: Object.fromEntries(
+          Object.entries(form).filter(([key]) => key !== 'base_url')
+        ),
+        is_active: active,
+      };
       if (existing) {
-        return api(token!, `/integrations/${existing.id}/`, 'PATCH', { connection_settings: form, is_active: active });
+        return api(token!, `/integrations/${existing.id}/`, 'PATCH', payload);
       }
       if (!tenantId) throw new Error('Select a tenant before saving an integration.');
       return api(token!, '/integrations/', 'POST', {
@@ -82,8 +104,7 @@ function IntegrationSheet({
         integration_type: item.type,
         transport: 'http',
         provider: item.id,
-        connection_settings: form,
-        is_active: active,
+        ...payload,
         tenant_id: tenantId,
       });
     },
@@ -117,7 +138,7 @@ function IntegrationSheet({
             <div className="rounded-lg border border-amber-200 bg-amber-50 dark:bg-amber-950/20 p-4">
               <p className="text-sm font-medium text-amber-800 dark:text-amber-400">Configured per tenant</p>
               <p className="text-xs text-amber-700 dark:text-amber-500 mt-1">
-                Each tenant configures their own SMTP settings in Platform Admin → Company Settings → Email tab.
+                Each organization configures its own SMTP settings in Platform Admin → Organization Settings → Email tab.
               </p>
             </div>
           ) : item.fields.length === 0 ? (
@@ -129,18 +150,43 @@ function IntegrationSheet({
               {item.fields.map(f => (
                 <div key={f.key} className="space-y-1.5">
                   <Label>{f.label}</Label>
-                  <Input
-                    type={(f as any).secret ? 'password' : 'text'}
-                    placeholder={(f as any).placeholder}
-                    value={form[f.key] ?? ''}
-                    onChange={e => setForm(p => ({ ...p, [f.key]: e.target.value }))}
-                  />
+                  {(f as any).input === 'select' ? (
+                    <Select
+                      value={form[f.key] ?? ''}
+                      onValueChange={value => setForm(p => ({ ...p, [f.key]: value }))}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select an option" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {(((f as any).options ?? []).filter((option: any) =>
+                          f.key !== 'payment_scope' || isOwnerTenant || option.value === 'tenant_operations'
+                        )).map((option: any) => (
+                          <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <Input
+                      type={(f as any).secret ? 'password' : 'text'}
+                      placeholder={(f as any).placeholder}
+                      value={form[f.key] ?? ''}
+                      onChange={e => setForm(p => ({ ...p, [f.key]: e.target.value }))}
+                    />
+                  )}
                 </div>
               ))}
               <div className="flex items-center gap-3">
                 <Switch checked={active} onCheckedChange={setActive} />
                 <Label>Active</Label>
               </div>
+              {item.type === 'payment' && (
+                <p className="text-xs text-muted-foreground">
+                  {isOwnerTenant
+                    ? 'Owner tenant can configure either SaaS billing or tenant collections.'
+                    : 'This tenant can only configure payment providers for tenant collections.'}
+                </p>
+              )}
               <Button
                 onClick={() => saveMutation.mutate()}
                 disabled={saveMutation.isPending || (!existing && !tenantId)}
@@ -159,6 +205,7 @@ function IntegrationSheet({
 export default function Integrations() {
   const { token, user, role } = useAuth();
   const [selected, setSelected] = useState<typeof CATALOG[0] | null>(null);
+  const [paymentsOpen, setPaymentsOpen] = useState(false);
 
   // Use canonical role from AuthContext (detectRole) — never rely on is_staff directly
   const isSuperAdmin = role === 'superadmin';
@@ -176,6 +223,9 @@ export default function Integrations() {
   const tenants: any[] = tenantsData?.results ?? [];
 
   const activeTenantId: number | null = selectedTenantId ? Number(selectedTenantId) : null;
+  const activeTenantCode: string | null = isSuperAdmin
+    ? (tenants.find((t: any) => String(t.id) === selectedTenantId)?.code ?? null)
+    : ((user as any)?.tenant_code as string | null) ?? null;
 
   const { data, refetch } = useQuery({
     queryKey: ['integrations', activeTenantId],
@@ -234,42 +284,141 @@ export default function Integrations() {
       {Object.entries(grouped).map(([type, items]) => (
         <div key={type} className="space-y-3">
           <h2 className="text-xs font-bold uppercase tracking-widest text-muted-foreground">{TYPE_LABEL[type]}</h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {items.map(item => {
-              const existing = existingMap[item.id];
-              const isLive = existing?.is_active || item.configured;
-              return (
-                <Card key={item.id} className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => setSelected(item)}>
-                  <CardHeader className="pb-2">
-                    <div className="flex items-start justify-between">
-                      <div className="p-2 rounded-lg bg-muted/30">{item.icon}</div>
-                      <span className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold border ${
-                        isLive
-                          ? 'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-900/30 dark:text-emerald-400'
-                          : 'bg-gray-100 text-gray-500 border-gray-300'
-                      }`}>
-                        {isLive ? <CheckCircle2 className="h-2.5 w-2.5" /> : <XCircle className="h-2.5 w-2.5" />}
-                        {isLive ? 'Configured' : 'Not set up'}
+          {type === 'payment' ? (
+            <Card className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => setPaymentsOpen(true)}>
+              <CardHeader className="pb-2">
+                <div className="flex items-start justify-between">
+                  <div className="p-2 rounded-lg bg-muted/30">
+                    <CreditCard className="h-6 w-6 text-sky-600" />
+                  </div>
+                  <span className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold border ${
+                    items.some(item => existingMap[item.id]?.is_active)
+                      ? 'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-900/30 dark:text-emerald-400'
+                      : 'bg-gray-100 text-gray-500 border-gray-300'
+                  }`}>
+                    {items.some(item => existingMap[item.id]?.is_active)
+                      ? <CheckCircle2 className="h-2.5 w-2.5" />
+                      : <XCircle className="h-2.5 w-2.5" />}
+                    {items.some(item => existingMap[item.id]?.is_active) ? 'Configured' : 'Not set up'}
+                  </span>
+                </div>
+                <CardTitle className="text-sm mt-2">Payments Hub</CardTitle>
+              </CardHeader>
+              <CardContent className="pt-0">
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  Manage all payment providers in one place. Configure your SaaS billing gateway separately from each tenant&apos;s own collection gateway.
+                </p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {items.map(item => {
+                    const existing = existingMap[item.id];
+                    const scope = existing?.connection_settings?.payment_scope;
+                    return (
+                      <span key={item.id} className="rounded border px-2 py-1 text-[11px] text-muted-foreground">
+                        {item.name}
+                        {scope ? ` · ${scope === 'saas_billing' ? 'SaaS' : 'Tenant'}` : ''}
                       </span>
-                    </div>
-                    <CardTitle className="text-sm mt-2">{item.name}</CardTitle>
-                  </CardHeader>
-                  <CardContent className="pt-0">
-                    <p className="text-xs text-muted-foreground leading-relaxed">{item.description}</p>
-                    <Button size="sm" variant="outline" className="w-full mt-3 text-xs">Configure</Button>
-                  </CardContent>
-                </Card>
-              );
-            })}
-          </div>
+                    );
+                  })}
+                </div>
+                <Button size="sm" variant="outline" className="w-full mt-3 text-xs">Open Payments</Button>
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {items.map(item => {
+                const existing = existingMap[item.id];
+                const isLive = existing?.is_active || item.configured;
+                return (
+                  <Card key={item.id} className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => setSelected(item)}>
+                    <CardHeader className="pb-2">
+                      <div className="flex items-start justify-between">
+                        <div className="p-2 rounded-lg bg-muted/30">{item.icon}</div>
+                        <span className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold border ${
+                          isLive
+                            ? 'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-900/30 dark:text-emerald-400'
+                            : 'bg-gray-100 text-gray-500 border-gray-300'
+                        }`}>
+                          {isLive ? <CheckCircle2 className="h-2.5 w-2.5" /> : <XCircle className="h-2.5 w-2.5" />}
+                          {isLive ? 'Configured' : 'Not set up'}
+                        </span>
+                      </div>
+                      <CardTitle className="text-sm mt-2">{item.name}</CardTitle>
+                    </CardHeader>
+                    <CardContent className="pt-0">
+                      <p className="text-xs text-muted-foreground leading-relaxed">{item.description}</p>
+                      <Button size="sm" variant="outline" className="w-full mt-3 text-xs">Configure</Button>
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
+          )}
         </div>
       ))}
+
+      {paymentsOpen && (
+        <Sheet open onOpenChange={setPaymentsOpen}>
+          <SheetContent className="w-full sm:max-w-2xl overflow-y-auto">
+            <SheetHeader>
+              <SheetTitle>Payments Hub</SheetTitle>
+            </SheetHeader>
+            <div className="mt-6 space-y-4">
+              <div className="rounded-lg border p-4 bg-muted/20">
+                <p className="text-sm font-medium">Segregation model</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Use <strong>SaaS Billing</strong> for Siakora Labs subscription collection. Use <strong>Tenant Collections</strong> for a tenant&apos;s own customer payments.
+                </p>
+              </div>
+              <div className="grid grid-cols-1 gap-4">
+                {CATALOG.filter(item => item.type === 'payment').map(item => {
+                  const existing = existingMap[item.id];
+                  const scope = existing?.connection_settings?.payment_scope;
+                  return (
+                    <Card key={item.id}>
+                      <CardHeader className="pb-2">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex items-center gap-3">
+                            <div className="p-2 rounded-lg bg-muted/30">{item.icon}</div>
+                            <div>
+                              <CardTitle className="text-sm">{item.name}</CardTitle>
+                              <p className="text-xs text-muted-foreground mt-1">{item.description}</p>
+                            </div>
+                          </div>
+                          <span className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold border ${
+                            existing?.is_active
+                              ? 'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-900/30 dark:text-emerald-400'
+                              : 'bg-gray-100 text-gray-500 border-gray-300'
+                          }`}>
+                            {existing?.is_active ? <CheckCircle2 className="h-2.5 w-2.5" /> : <XCircle className="h-2.5 w-2.5" />}
+                            {existing?.is_active ? 'Configured' : 'Not set up'}
+                          </span>
+                        </div>
+                      </CardHeader>
+                      <CardContent className="pt-0">
+                        {scope && (
+                          <p className="text-[11px] font-medium text-muted-foreground mb-3">
+                            {scope === 'saas_billing' ? 'Dedicated to SaaS billing' : 'Dedicated to tenant collections'}
+                          </p>
+                        )}
+                        <Button size="sm" variant="outline" onClick={() => { setSelected(item); setPaymentsOpen(false); }}>
+                          Configure {item.name}
+                        </Button>
+                      </CardContent>
+                    </Card>
+                  );
+                })}
+              </div>
+            </div>
+          </SheetContent>
+        </Sheet>
+      )}
 
       {selected && (
         <IntegrationSheet
           item={selected}
           existing={existingMap[selected.id]}
           tenantId={activeTenantId}
+          tenantCode={activeTenantCode}
           onClose={() => setSelected(null)}
         />
       )}

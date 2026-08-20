@@ -1,0 +1,15 @@
+[Unit]
+Description=SL-ERP Django application
+After=network.target postgresql.service redis-server.service
+
+[Service]
+User=www-data
+Group=www-data
+WorkingDirectory=/srv/sl-erp/backend
+Environment=DJANGO_SETTINGS_MODULE=SL_ERP.settings
+ExecStart=/srv/sl-erp/.venv/bin/gunicorn SL_ERP.wsgi:application --bind 127.0.0.1:8080 --workers 3 --timeout 120
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

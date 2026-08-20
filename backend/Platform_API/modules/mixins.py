@@ -2,11 +2,96 @@
 Shared DRF mixins for Platform_API module views.
 """
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.exceptions import PermissionDenied
+from Platform_Core.models import OrganizationMembership
 
 
 class ModuleAPIViewMixin:
     """Base mixin for all Platform API module views."""
     permission_classes = [IsAuthenticated]
+
+
+class _NoTenantAccess:
+    """Sentinel for authenticated users with no active organization access."""
+
+
+NO_TENANT_ACCESS = _NoTenantAccess()
+
+
+def resolve_user_tenant(user):
+    """
+    Resolve the user's active tenant from organization membership first,
+    falling back to the legacy tenant profile during migration.
+
+    Returns:
+      None               -> superuser/global access
+      Tenant instance    -> scoped tenant
+      NO_TENANT_ACCESS   -> authenticated but not linked to an active tenant
+    """
+    if not getattr(user, "is_authenticated", False):
+        return NO_TENANT_ACCESS
+    if getattr(user, "is_superuser", False):
+        return None
+
+    try:
+        membership = (
+            OrganizationMembership.objects.select_related("tenant")
+            .filter(user=user, is_active=True)
+            .order_by("-is_default", "tenant__name")
+            .first()
+        )
+        if membership and membership.tenant:
+            return membership.tenant
+    except Exception:
+        pass
+
+    try:
+        profile = user.tenant_profile
+        if profile and profile.tenant:
+            return profile.tenant
+    except Exception:
+        pass
+
+    return NO_TENANT_ACCESS
+
+
+def apply_tenant_filter(qs, user, filter_field="tenant"):
+    resolved = resolve_user_tenant(user)
+    if resolved is None:
+        return qs
+    if resolved is NO_TENANT_ACCESS:
+        return qs.none()
+    return qs.filter(**{filter_field: resolved})
+
+
+def tenant_or_403(user, message="No organization linked to this account."):
+    resolved = resolve_user_tenant(user)
+    if resolved is NO_TENANT_ACCESS:
+        raise PermissionDenied(message)
+    return resolved
+
+
+def user_belongs_to_tenant(user, tenant):
+    if tenant is None:
+        return False
+    if getattr(user, "is_superuser", False):
+        return True
+
+    try:
+        if OrganizationMembership.objects.filter(
+            user=user,
+            tenant=tenant,
+            is_active=True,
+        ).exists():
+            return True
+    except Exception:
+        pass
+
+    try:
+        profile = user.tenant_profile
+        return bool(profile and profile.tenant_id == tenant.id)
+    except Exception:
+        return False
 
 
 class TenantScopedQuerysetMixin:
@@ -25,15 +110,11 @@ class TenantScopedQuerysetMixin:
     branch_filter_field: str = "branch_id"
 
     def _get_user_tenant_code(self):
-        """Return the tenant code from the requesting user's profile, or None."""
-        user = self.request.user
-        try:
-            profile = user.tenant_profile
-            if profile and profile.tenant:
-                return profile.tenant.code
-        except Exception:
-            pass
-        return None
+        """Return the tenant code from the requesting user's active access path."""
+        tenant = resolve_user_tenant(self.request.user)
+        if tenant in (None, NO_TENANT_ACCESS):
+            return None
+        return tenant.code
 
     def get_queryset(self):
         qs = super().get_queryset()

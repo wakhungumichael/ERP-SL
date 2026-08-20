@@ -227,6 +227,8 @@ export interface IntegrationEndpointInput {
 }
 
 export type WeighbridgeDashboardTotals = {
+  all_transactions?: number;
+  pending_transactions?: number;
   transactions_today?: number;
   transactions_this_month?: number;
   net_weight_today?: number;
@@ -246,6 +248,9 @@ export interface Transaction {
   customer_name?: string;
   vehicle?: number;
   vehicle_plate?: string;
+  actor_user_id?: number;
+  actor_display_name?: string;
+  actor_username?: string;
   operator?: string;
   /** @nullable */
   item?: number | null;
@@ -430,4 +435,3 @@ page?: number;
 export type GetPaymentSummaryParams = {
 tenant_code?: string;
 };
-

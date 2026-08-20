@@ -49,18 +49,31 @@ from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from .models import Transaction
+from Platform_API.modules.mixins import NO_TENANT_ACCESS, resolve_user_tenant
 
 
 logger = logging.getLogger(__name__)
 
 
+def _legacy_scope_queryset(request, qs, filter_field="tenant"):
+    resolved = resolve_user_tenant(request.user)
+    if resolved is NO_TENANT_ACCESS:
+        return qs.none()
+    if resolved is None:
+        return qs
+    return qs.filter(**{filter_field: resolved})
+
+
 class TransactionListAPI(generics.ListAPIView):
     queryset = Transaction.objects.all().select_related(
         'branch', 'customer', 'vehicle', 'item', 'vehicle_type', 'workflow_step', 'created_by', 'last_modified_by'
-    )
+    ).order_by('-created_at', '-id')
     serializer_class = TransactionSerializer
     filter_backends = [DjangoFilterBackend]
     filterset_class = TransactionFilter
+
+    def get_queryset(self):
+        return _legacy_scope_queryset(self.request, super().get_queryset())
 
 
 
@@ -71,7 +84,7 @@ class RecentTransactionAPIView(APIView):
             return Response([])
 
         tx = (
-            Transaction.objects.filter(vehicle_id=vehicle_id)
+            _legacy_scope_queryset(request, Transaction.objects.filter(vehicle_id=vehicle_id))
             .order_by('-created_at')
             .first()
         )
@@ -131,7 +144,7 @@ def admin_live_weight(request):
 
     if not live_weight_url:
         return JsonResponse(
-            {"error": "Live weight URL is not configured."},
+            {"error": "Live weight URL is not configured in Indicator Settings."},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
         )
 
@@ -242,7 +255,7 @@ def capture_weight_api(request):
 @api_view(['GET'])
 def get_indicator_data_api(request):
     try:
-        indicators = IndicatorConfig.objects.all()
+        indicators = _legacy_scope_queryset(request, IndicatorConfig.objects.all(), filter_field="branch__tenant")
         serializer = IndicatorConfigSerializer(indicators, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
     except Exception as e:
@@ -369,14 +382,14 @@ def dashboard(request):
     
     # Common stats for all users
     context.update({
-        'total_transactions': Transaction.objects.count(),
+        'total_transactions': _legacy_scope_queryset(request, Transaction.objects.all()).count(),
         'pending_invoices': Invoice.objects.filter(status='Pending').count(),
-        'total_customers': Customer.objects.count(),
-        'total_vehicles': Vehicle.objects.count(),
+        'total_customers': _legacy_scope_queryset(request, Customer.objects.all()).count(),
+        'total_vehicles': _legacy_scope_queryset(request, Vehicle.objects.all()).count(),
     })
     
     # Today's stats
-    today_transactions = Transaction.objects.filter(created_at__date=today)
+    today_transactions = _legacy_scope_queryset(request, Transaction.objects.filter(created_at__date=today))
     context.update({
         'today_transactions': today_transactions.count(),
         'today_revenue': today_transactions.aggregate(Sum('charge'))['charge__sum'] or 0,
@@ -384,14 +397,14 @@ def dashboard(request):
     })
     
     # Week stats
-    week_transactions = Transaction.objects.filter(created_at__date__gte=week_ago)
+    week_transactions = _legacy_scope_queryset(request, Transaction.objects.filter(created_at__date__gte=week_ago))
     context.update({
         'week_transactions': week_transactions.count(),
         'week_revenue': week_transactions.aggregate(Sum('charge'))['charge__sum'] or 0,
     })
     
     # Month stats
-    month_transactions = Transaction.objects.filter(created_at__date__gte=month_ago)
+    month_transactions = _legacy_scope_queryset(request, Transaction.objects.filter(created_at__date__gte=month_ago))
     context.update({
         'month_transactions': month_transactions.count(),
         'month_revenue': month_transactions.aggregate(Sum('charge'))['charge__sum'] or 0,
@@ -407,9 +420,9 @@ def dashboard(request):
         context.update(get_teller_reports(user, today, week_ago, month_ago))
     
     # Recent transactions for all
-    context['recent_transactions'] = Transaction.objects.select_related(
+    context['recent_transactions'] = _legacy_scope_queryset(request, Transaction.objects.select_related(
         'vehicle', 'item'
-    ).order_by('-created_at')[:10]
+    )).order_by('-created_at')[:10]
     
     return render(request, 'reports/dashboard.html', context)
 
@@ -1032,13 +1045,22 @@ class LiveDashboardView(UnfoldModelAdminViewMixin, TemplateView):
 
 from django.template.loader import render_to_string
 from django.http import HttpResponse
-from weasyprint import HTML
 from .models import Transaction
-from weasyprint import HTML
+
+try:
+    from weasyprint import HTML
+except ImportError:
+    HTML = None
 
 import datetime
 
 def export_transaction_report_pdf(request):
+    if HTML is None:
+        return HttpResponse(
+            "PDF generation is unavailable because WeasyPrint is not installed on this server.",
+            status=503,
+        )
+
     transactions = Transaction.objects.all().order_by('-weight_date')  # ✅ use a valid date field like 'weight_date'
 
     # Optional: Filter by date range from GET params

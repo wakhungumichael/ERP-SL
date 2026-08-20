@@ -416,7 +416,7 @@ export default function HRStaff() {
         <div className="flex items-center gap-2">
           {tab === 'staff' && (
             <Button size="sm" className="gap-1.5 font-bold uppercase tracking-wide text-xs" asChild>
-              <a href="/platform/users"><UserPlus className="h-3.5 w-3.5" /> Manage Users</a>
+              <a href="/platform/organization-settings"><UserPlus className="h-3.5 w-3.5" /> Manage Team</a>
             </Button>
           )}
           {tab === 'payroll' && !selectedPeriodId && (

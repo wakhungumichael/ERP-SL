@@ -72,11 +72,23 @@ export default function SecondWeightPage() {
   const [tareWeight, setTareWeight]       = useState<number | null>(null);
   const [manualWeight, setManualWeight]   = useState('');
   const [weightReason, setWeightReason]   = useState('');
+  const [operationTypeId, setOperationTypeId] = useState('');
 
   const plateInputRef = useRef<HTMLInputElement>(null);
 
   const { data: searchData, isFetching: searching } = useVehicleSearch(plateInput);
+  const { data: operationTypesRaw } = useQuery({
+    queryKey: ['wb-operation-types-second'],
+    queryFn: async () => {
+      const res = await fetch('/api/commercial-weighbridge/weighing-operation-types/', {
+        headers: { Authorization: `Token ${token()}` },
+      });
+      return res.json();
+    },
+  });
   const vehicles = Array.isArray(searchData) ? searchData : searchData?.results ?? [];
+  const operationTypeList = (Array.isArray(operationTypesRaw) ? operationTypesRaw : operationTypesRaw?.results ?? []).filter((row: any) => row.is_active && row.flow_kind === 'second');
+  const selectedOperationType = operationTypeList.find((row: any) => String(row.id) === operationTypeId) ?? operationTypeList[0];
 
   const vehicleId = selectedVehicle?.id ?? '';
   const { data: ctx, isLoading: ctxLoading } = useWorkflowContext(vehicleId);
@@ -115,7 +127,7 @@ export default function SecondWeightPage() {
       vehicle: selectedVehicle.id,
       vehicle_type: firstTx.vehicle_type,
       item: firstTx.item,
-      weight_type: 'Second Weight',
+      weight_type: selectedOperationType?.legacy_weight_type ?? 'Second Weight',
       tare_weight: effectiveTare,
       net_weight: netWt ?? 0,
       destination: firstTx.destination ?? '',
@@ -125,6 +137,7 @@ export default function SecondWeightPage() {
       paired_first_transaction: firstTx.id,
       manual_weight_capture: manualMode,
     };
+    if (selectedOperationType?.id) payload.operation_type = selectedOperationType.id;
     if (manualMode && weightReason) payload.weight_reason = weightReason;
 
     create.mutate({ data: payload as any }, {
@@ -154,10 +167,24 @@ export default function SecondWeightPage() {
         {/* ── Step 1: Plate search ──────────────────────────────── */}
         <Card className="shadow-sm">
           <CardHeader className="bg-muted/20 border-b py-3">
-            <CardTitle className="text-sm font-bold uppercase tracking-widest">1 · Number Plate</CardTitle>
+            <CardTitle className="text-sm font-bold uppercase tracking-widest">1 · Operation & Number Plate</CardTitle>
           </CardHeader>
           <CardContent className="p-5">
-            <div className="relative">
+            <div className="space-y-4">
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Operation Type *</label>
+                <select
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  value={operationTypeId || (selectedOperationType ? String(selectedOperationType.id) : '')}
+                  onChange={e => setOperationTypeId(e.target.value)}
+                >
+                  <option value="">Select operation type…</option>
+                  {operationTypeList.map((row: any) => (
+                    <option key={row.id} value={String(row.id)}>{row.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="relative">
               <div className="flex items-center gap-2 border rounded-lg px-3 py-2 bg-background focus-within:ring-2 focus-within:ring-primary">
                 <Search className="h-4 w-4 text-muted-foreground shrink-0" />
                 <input
@@ -189,6 +216,7 @@ export default function SecondWeightPage() {
                   ))}
                 </div>
               )}
+            </div>
             </div>
           </CardContent>
         </Card>

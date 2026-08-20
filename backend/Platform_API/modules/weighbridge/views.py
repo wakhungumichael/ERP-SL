@@ -1,22 +1,44 @@
 import csv
+import base64
 import json as _json
+import socket
 import urllib.request
 import urllib.error
 from datetime import timedelta
+from decimal import Decimal
 
 from django.http import HttpResponse
+from django.db.models import Q
 from django.utils import timezone
 from rest_framework import generics, serializers, status
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from Platform_Core.documents import render_business_document, render_transaction_receipt
+from Platform_Core.branch_sync import get_operational_branches_for_tenant
+from Platform_Core.accounting import assert_posting_allowed, sync_transaction_posting
+from Platform_Core.models import OrganizationMembership, TenantUserProfile
+from Platform_API.modules.mixins import (
+    NO_TENANT_ACCESS,
+    apply_tenant_filter as _shared_apply_tenant_filter,
+    resolve_user_tenant as _shared_resolve_user_tenant,
+)
+from SL_Weighbridge.sync import (
+    sync_vehicle_type_product_for_tenant,
+    sync_vehicle_type_products_for_tenant,
+    vehicle_type_product_code,
+)
 from SL_Weighbridge.models import (
     Branch, CameraConfig, Customer, IndicatorConfig, Item,
     OverweightConfig, OverweightEvent, Transaction, Vehicle, VehicleType,
+    WeighingOperationType,
     WeighbridgeDiscrepancy,
 )
+from SL_Sales.models import Product
+from SL_Weighbridge.utils import capture_hikvision_snapshot
 
 
 # ── Pagination ────────────────────────────────────────────────────────────────
@@ -36,27 +58,81 @@ class BranchSerializer(serializers.ModelSerializer):
 
 
 class VehicleTypeSerializer(serializers.ModelSerializer):
+    linked_product_id = serializers.SerializerMethodField()
+    linked_product_name = serializers.SerializerMethodField()
+    linked_product_code = serializers.SerializerMethodField()
+
     class Meta:
         model = VehicleType
-        fields = ["id", "name", "description", "charge", "max_gross_weight", "max_tare_weight"]
+        fields = [
+            "id", "name", "description", "charge", "max_gross_weight", "max_tare_weight",
+            "currency", "linked_product_id", "linked_product_name", "linked_product_code",
+        ]
+
+    def _get_linked_product(self, obj):
+        request = self.context.get("request")
+        if request is None:
+            return None
+        resolved = _resolve_user_tenant(request.user)
+        if resolved is None or isinstance(resolved, _NoTenantProfile):
+            return None
+        code = vehicle_type_product_code(obj.name)
+        return Product.objects.filter(tenant=resolved, code=code).only("id", "name", "code").first()
+
+    def get_linked_product_id(self, obj):
+        product = self._get_linked_product(obj)
+        return product.id if product else None
+
+    def get_linked_product_name(self, obj):
+        product = self._get_linked_product(obj)
+        return product.name if product else ""
+
+    def get_linked_product_code(self, obj):
+        product = self._get_linked_product(obj)
+        return product.code if product else ""
+
+
+def _sync_vehicle_type_product(vehicle_type, user):
+    resolved = _resolve_user_tenant(user)
+    if resolved is None or isinstance(resolved, _NoTenantProfile):
+        return vehicle_type
+    sync_vehicle_type_product_for_tenant(vehicle_type, resolved)
+    return vehicle_type
+
+
+def _tenant_scoped_reference_queryset(qs, user):
+    resolved = _resolve_user_tenant(user)
+    if isinstance(resolved, _NoTenantProfile):
+        return qs.none()
+    if resolved is None:
+        return qs
+    return qs.filter(tenant=resolved)
 
 
 class ItemSerializer(serializers.ModelSerializer):
     class Meta:
         model = Item
-        fields = ["id", "name", "description"]
+        fields = ["id", "name", "description", "currency"]
 
 
 class CustomerSerializer(serializers.ModelSerializer):
     class Meta:
         model = Customer
-        fields = ["id", "name", "address", "phone_number", "email", "discounted", "charge"]
+        fields = ["id", "name", "address", "phone_number", "email", "discounted", "charge", "is_active", "is_deleted"]
 
 
 class CustomerInputSerializer(serializers.ModelSerializer):
     class Meta:
         model = Customer
-        fields = ["name", "address", "phone_number", "email", "discounted", "charge"]
+        fields = ["name", "address", "phone_number", "email", "discounted", "charge", "is_active"]
+
+
+class CustomerBulkActionSerializer(serializers.Serializer):
+    ids = serializers.ListField(
+        child=serializers.IntegerField(min_value=1),
+        allow_empty=False,
+    )
+    action = serializers.ChoiceField(choices=["activate", "deactivate", "soft_delete"])
 
 
 class VehicleSerializer(serializers.ModelSerializer):
@@ -68,17 +144,23 @@ class VehicleSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Vehicle
-        fields = ["id", "number_plate", "customer", "customer_name", "vehicle_type", "vehicle_type_name"]
+        fields = ["id", "number_plate", "customer", "customer_name", "vehicle_type", "vehicle_type_name", "is_active"]
 
 
 class TransactionSerializer(serializers.ModelSerializer):
+    status = serializers.CharField(required=False, allow_blank=False)
     branch_name = serializers.CharField(source="branch.name", read_only=True)
     customer_name = serializers.CharField(source="customer.name", read_only=True)
     customer_email = serializers.CharField(source="customer.email", read_only=True, default=None)
     vehicle_plate = serializers.CharField(source="vehicle.number_plate", read_only=True)
     item_name = serializers.SerializerMethodField()
     vehicle_type_name = serializers.SerializerMethodField()
+    operation_type_name = serializers.CharField(source="operation_type.name", read_only=True)
+    operation_type_flow_kind = serializers.CharField(source="operation_type.flow_kind", read_only=True)
     auto_invoice_id = serializers.SerializerMethodField()
+    actor_user_id = serializers.SerializerMethodField()
+    actor_display_name = serializers.SerializerMethodField()
+    actor_username = serializers.SerializerMethodField()
 
     def get_item_name(self, obj):
         return getattr(getattr(obj, "item", None), "name", "")
@@ -89,6 +171,29 @@ class TransactionSerializer(serializers.ModelSerializer):
     def get_auto_invoice_id(self, obj):
         return getattr(obj, "auto_invoice_id", None)
 
+    def _get_actor(self, obj):
+        return getattr(obj, "created_by", None) or getattr(obj, "last_modified_by", None)
+
+    def get_actor_user_id(self, obj):
+        actor = self._get_actor(obj)
+        return actor.id if actor else None
+
+    def get_actor_display_name(self, obj):
+        actor = self._get_actor(obj)
+        if not actor:
+            return ""
+        return actor.get_full_name() or actor.username
+
+    def get_actor_username(self, obj):
+        actor = self._get_actor(obj)
+        return actor.username if actor else ""
+
+    def validate_status(self, value):
+        normalized = (value or "").strip()
+        if normalized == "Pending":
+            return "Draft"
+        return normalized or "Draft"
+
 
     class Meta:
         model = Transaction
@@ -97,10 +202,12 @@ class TransactionSerializer(serializers.ModelSerializer):
             "customer", "customer_name", "customer_email",
             "vehicle", "vehicle_plate",
             "vehicle_type", "vehicle_type_name",
-            "operator", "item", "item_name",
+            "operation_type", "operation_type_name", "operation_type_flow_kind",
+            "actor_user_id", "actor_display_name", "actor_username",
+            "operator", "driver_name", "driver_phone", "item", "item_name",
             "gross_weight", "tare_weight", "net_weight",
             "gross_weight_date", "tare_weight_date",
-            "status", "weight_type", "payment_mode", "payment_status",
+            "status", "weight_type", "payment_mode", "payment_status", "payment_reference", "payment_received_at",
             "charge", "destination", "invoiced", "approval_status",
             "manual_weight_capture", "weight_reason",
             "paired", "paired_first_transaction",
@@ -110,76 +217,416 @@ class TransactionSerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "created_at", "updated_at"]
 
 
+class WeighingOperationTypeSerializer(serializers.ModelSerializer):
+    legacy_weight_type = serializers.SerializerMethodField()
+
+    class Meta:
+        model = WeighingOperationType
+        fields = [
+            "id", "code", "name", "description", "flow_kind",
+            "is_active", "display_order", "is_default", "legacy_weight_type",
+        ]
+
+    def get_legacy_weight_type(self, obj):
+        mapping = {
+            "first": "First Weight",
+            "second": "Second Weight",
+            "single": "First Weight",
+            "axle": "First Weight",
+        }
+        return mapping.get(obj.flow_kind, "First Weight")
+
+
+class ReportColumnInputSerializer(serializers.Serializer):
+    key = serializers.CharField()
+    label = serializers.CharField()
+    align = serializers.ChoiceField(choices=["left", "right", "center"], required=False, default="left")
+
+
+class ReportSummaryInputSerializer(serializers.Serializer):
+    label = serializers.CharField()
+    value = serializers.CharField()
+
+
+class ReportRenderRequestSerializer(serializers.Serializer):
+    report_id = serializers.CharField(required=False, allow_blank=True)
+    title = serializers.CharField()
+    category = serializers.ChoiceField(choices=["operations", "financial"])
+    columns = ReportColumnInputSerializer(many=True)
+    rows = serializers.ListField(child=serializers.DictField(), required=False, allow_empty=True)
+    filters = serializers.DictField(required=False)
+    summary_items = ReportSummaryInputSerializer(many=True, required=False)
+
+
+def _format_report_filter_value(value):
+    if value in (None, "", "all"):
+        return "All"
+    if isinstance(value, bool):
+        return "Yes" if value else "No"
+    if isinstance(value, (int, float, Decimal)):
+        return str(value)
+    return str(value).replace("_", " ").strip() or "All"
+
+
+def _report_context_from_payload(payload, user, tenant):
+    category = payload.get("category") or "operations"
+    title = payload.get("title") or "Report"
+    columns = payload.get("columns") or []
+    rows = payload.get("rows") or []
+    filter_map = payload.get("filters") or {}
+    summary_items = payload.get("summary_items") or []
+    currency = getattr(tenant, "default_currency", "KES") if tenant else "KES"
+    try:
+        tenant_settings = tenant.settings if tenant else None
+    except Exception:
+        tenant_settings = None
+
+    display_rows = []
+    for raw_row in rows:
+        rendered_row = []
+        for column in columns:
+            key = column.get("key")
+            value = raw_row.get(key, "—") if key else "—"
+            rendered_row.append(
+                {
+                    "value": "—" if value in (None, "") else str(value),
+                    "align": column.get("align", "left"),
+                }
+            )
+        display_rows.append(rendered_row)
+
+    filter_labels = {
+        "branchId": "Branch",
+        "operator": "Operator",
+        "status": "Status",
+        "paymentStatus": "Payment",
+        "weightType": "Weight Type",
+        "search": "Search",
+        "dateFrom": "From",
+        "dateTo": "To",
+    }
+    visible_filters = []
+    for key, label in filter_labels.items():
+        value = filter_map.get(key)
+        if key == "search" and not value:
+            continue
+        visible_filters.append({"label": label, "value": _format_report_filter_value(value)})
+
+    prepared_by = user.get_full_name() or user.username or "System User"
+    issue_date = timezone.localtime(timezone.now()).strftime("%d %b %Y %H:%M")
+    date_from = _format_report_filter_value(filter_map.get("dateFrom"))
+    date_to = _format_report_filter_value(filter_map.get("dateTo"))
+    date_range = f"{date_from} to {date_to}" if date_from != "All" or date_to != "All" else "Current selection"
+    company_name = getattr(tenant, "legal_name", "") or getattr(tenant, "name", "") or "SL-ERP"
+
+    return {
+        "branding": {
+            "logo_url": "",
+            "primary_color": getattr(tenant_settings, "primary_color", "") if tenant_settings else "",
+            "footer_text": getattr(tenant_settings, "footer_text", "") if tenant_settings else "",
+        },
+        "company": {
+            "name": company_name,
+            "email": getattr(tenant, "contact_email", "") if tenant else "",
+            "phone": getattr(tenant, "contact_phone", "") if tenant else "",
+            "currency": currency,
+            "prepared_by": prepared_by,
+        },
+        "customer": {"name": "", "email": "", "phone": ""},
+        "document": {
+            "number": payload.get("report_id") or f"RPT-{timezone.localtime(timezone.now()).strftime('%Y%m%d-%H%M')}",
+            "status": "generated",
+            "issue_date": issue_date,
+            "due_date": date_range,
+            "currency": currency,
+            "notes": f"{title} generated from the weighbridge reporting workspace.",
+            "terms": "",
+        },
+        "report": {
+            "title": title,
+            "category": category,
+            "category_label": "Operations Report" if category == "operations" else "Financial Report",
+            "date_range": date_range,
+            "row_count": len(rows),
+            "summary": summary_items,
+            "filters": visible_filters,
+            "columns": columns,
+            "display_rows": display_rows,
+        },
+        "lines": [],
+        "totals": {
+            "subtotal": Decimal("0.00"),
+            "subtotal_display": "",
+            "tax": Decimal("0.00"),
+            "tax_display": "",
+            "discount": Decimal("0.00"),
+            "discount_display": "",
+            "total": Decimal("0.00"),
+            "total_display": "",
+        },
+        "generated_at": timezone.now(),
+    }
+
+
 # ── Tenant isolation utilities ────────────────────────────────────────────────
 
+_NoTenantProfile = type(NO_TENANT_ACCESS)
+_NO_PROFILE = NO_TENANT_ACCESS
+
+
 def _get_request_user_tenant(user):
-    """
-    Return the Tenant bound to *user*.
-
-    - Superuser     → None        (no scoping; sees all data globally)
-    - Has profile   → Tenant      (scoped to their tenant)
-    - No profile    → None too    (callers must handle via _apply_tenant_filter)
-
-    Prefer _apply_tenant_filter() over calling this directly for queryset scoping.
-    """
-    if user.is_superuser:
+    resolved = _shared_resolve_user_tenant(user)
+    if resolved is NO_TENANT_ACCESS:
         return None
-    try:
-        profile = user.tenant_profile
-        if profile and profile.tenant:
-            return profile.tenant
-    except Exception:
-        pass
-    return None
-
-
-# Sentinel used by _apply_tenant_filter to signal "deny all" for non-superusers
-# without a TenantUserProfile.
-class _NoTenantProfile:
-    """
-    Returned by _resolve_user_tenant when the caller is authenticated but has
-    no TenantUserProfile linkage.  Views must treat this as "return qs.none()"
-    or "return 403", never as "global access".
-    """
-
-
-_NO_PROFILE = _NoTenantProfile()
+    return resolved
 
 
 def _resolve_user_tenant(user):
-    """
-    Three-state tenant resolver for access-control decisions.
-
-    Returns:
-      None           — superuser (global access)
-      Tenant         — non-superuser with TenantUserProfile (scoped to tenant)
-      _NO_PROFILE    — non-superuser *without* TenantUserProfile (deny-all)
-    """
-    if user.is_superuser:
-        return None
-    try:
-        profile = user.tenant_profile
-        if profile and profile.tenant:
-            return profile.tenant
-    except Exception:
-        pass
-    return _NO_PROFILE
+    return _shared_resolve_user_tenant(user)
 
 
 def _apply_tenant_filter(qs, user, filter_field="tenant"):
-    """
-    Apply tenant filtering to a queryset.
+    return _shared_apply_tenant_filter(qs, user, filter_field=filter_field)
 
-    - Superuser               → unfiltered  (global access)
-    - Non-superuser w/ profile → filtered by their tenant
-    - Non-superuser w/o profile → qs.none() (deny-all)
-    """
-    resolved = _resolve_user_tenant(user)
-    if resolved is None:          # superuser
-        return qs
-    if isinstance(resolved, _NoTenantProfile):
-        return qs.none()          # profileless non-superuser → deny-all
-    return qs.filter(**{filter_field: resolved})
+
+
+DEFAULT_WEIGHING_OPERATION_TYPES = [
+    {
+        "code": "FIRST_WEIGHT",
+        "name": "First Weight",
+        "description": "Capture gross weight and open a new weighbridge transaction.",
+        "flow_kind": "first",
+        "display_order": 10,
+        "is_default": True,
+    },
+    {
+        "code": "SECOND_WEIGHT",
+        "name": "Second Weight",
+        "description": "Capture tare weight and complete a pending first-weight transaction.",
+        "flow_kind": "second",
+        "display_order": 20,
+        "is_default": True,
+    },
+    {
+        "code": "SINGLE_WEIGHT",
+        "name": "Single Weight",
+        "description": "Capture a one-step weighing transaction without pairing.",
+        "flow_kind": "single",
+        "display_order": 30,
+        "is_default": False,
+    },
+    {
+        "code": "AXLE_WEIGHT",
+        "name": "Axle Weight",
+        "description": "Capture axle-based weighing as a configurable operational mode.",
+        "flow_kind": "axle",
+        "display_order": 40,
+        "is_default": False,
+    },
+]
+
+OPEN_TRANSACTION_STATUSES = ["Draft", "Recalled"]
+REVIEWABLE_TRANSACTION_STATUSES = ["Draft", "Recalled", "Rejected"]
+
+
+def _ensure_default_weighing_operation_types(tenant):
+    if tenant is None:
+        return []
+    created = []
+    for row in DEFAULT_WEIGHING_OPERATION_TYPES:
+        obj, _ = WeighingOperationType.objects.get_or_create(
+            tenant=tenant,
+            code=row["code"],
+            defaults=row,
+        )
+        created.append(obj)
+    return created
+
+
+def _resolve_transaction_flow(transaction):
+    flow_kind = getattr(getattr(transaction, "operation_type", None), "flow_kind", None)
+    if flow_kind:
+        return flow_kind
+    if transaction.weight_type == "Second Weight":
+        return "second"
+    return "first"
+
+
+def _resolve_payload_flow_kind(*, operation_type=None, weight_type=""):
+    flow_kind = getattr(operation_type, "flow_kind", None)
+    if flow_kind:
+        return flow_kind
+    return "second" if weight_type == "Second Weight" else "first"
+
+
+def _flow_filter_q(flow_kind):
+    if flow_kind == "second":
+        return Q(operation_type__flow_kind="second") | Q(weight_type="Second Weight")
+    if flow_kind == "first":
+        return Q(operation_type__flow_kind="first") | Q(weight_type="First Weight")
+    return Q(operation_type__flow_kind=flow_kind)
+
+
+def _find_open_transaction_duplicate(*, tenant, vehicle, flow_kind, exclude_pk=None):
+    qs = Transaction.objects.filter(
+        vehicle=vehicle,
+        status__in=OPEN_TRANSACTION_STATUSES,
+    )
+    if tenant is None:
+        qs = qs.filter(tenant__isnull=True)
+    else:
+        qs = qs.filter(tenant=tenant)
+    if exclude_pk is not None:
+        qs = qs.exclude(pk=exclude_pk)
+    if flow_kind == "second":
+        qs = qs.filter(_flow_filter_q(flow_kind))
+    return qs.select_related("operation_type", "item").order_by("-updated_at", "-created_at", "-id").first()
+
+
+def _transaction_prefill_defaults(transaction):
+    if not transaction:
+        return None
+    return {
+        "transaction_id": transaction.id,
+        "item_id": getattr(transaction, "item_id", None),
+        "item_name": getattr(getattr(transaction, "item", None), "name", "") or "",
+        "destination": getattr(transaction, "destination", "") or "",
+        "driver_name": getattr(transaction, "driver_name", "") or "",
+        "driver_phone": getattr(transaction, "driver_phone", "") or "",
+        "vehicle_type_id": getattr(transaction, "vehicle_type_id", None),
+        "payment_mode": getattr(transaction, "payment_mode", "") or "",
+        "payment_status": getattr(transaction, "payment_status", "") or "",
+        "flow_kind": _resolve_transaction_flow(transaction),
+    }
+
+
+def _finalize_transaction_workflow(transaction):
+    now = timezone.now()
+    flow_kind = _resolve_transaction_flow(transaction)
+    requires_approval = bool(transaction.manual_weight_capture)
+    finalized_status = "Draft" if requires_approval else "Completed"
+
+    if flow_kind == "second" and transaction.paired_first_transaction_id:
+        first = transaction.paired_first_transaction
+        if first:
+            if not transaction.gross_weight:
+                transaction.gross_weight = first.gross_weight
+            transaction.status = finalized_status
+            transaction.approval_status = not requires_approval
+            transaction.paired = True
+            transaction.gross_weight_date = first.gross_weight_date or first.created_at or now
+            transaction.tare_weight_date = transaction.tare_weight_date or now
+            transaction.save()
+
+            first.tare_weight = transaction.tare_weight
+            first.net_weight = transaction.net_weight
+            first.status = finalized_status
+            first.paired = True
+            first.tare_weight_date = transaction.tare_weight_date
+            first.payment_mode = transaction.payment_mode or first.payment_mode
+            first.payment_status = transaction.payment_status or first.payment_status
+            first.approval_status = not requires_approval
+            first.manual_weight_capture = transaction.manual_weight_capture
+            first.save()
+            return transaction, first
+
+    if flow_kind in {"single", "axle"}:
+        transaction.status = finalized_status
+        transaction.approval_status = not requires_approval
+        if transaction.gross_weight and transaction.tare_weight and not transaction.net_weight:
+            transaction.net_weight = abs(int(transaction.gross_weight) - int(transaction.tare_weight))
+        if transaction.gross_weight and not transaction.gross_weight_date:
+            transaction.gross_weight_date = now
+        if transaction.tare_weight and not transaction.tare_weight_date:
+            transaction.tare_weight_date = now
+        transaction.save()
+        return transaction, transaction
+
+    transaction.status = finalized_status
+    transaction.approval_status = not requires_approval
+    if transaction.gross_weight and not transaction.gross_weight_date:
+        transaction.gross_weight_date = now
+    transaction.save()
+    return transaction, transaction
+
+
+def _maybe_create_transaction_invoice(transaction):
+    try:
+        from Platform_API.modules.payments.views import create_draft_invoice_for_transaction
+    except Exception:
+        return None
+
+    charge_tx = transaction
+    if _resolve_transaction_flow(transaction) == "second" and transaction.paired_first_transaction_id:
+        first = transaction.paired_first_transaction
+        if first and float(first.charge or 0) > 0:
+            charge_tx = first
+        elif float(transaction.charge or 0) <= 0:
+            charge_tx = None
+
+    if charge_tx and charge_tx.status == "Completed" and float(charge_tx.charge or 0) > 0:
+        return create_draft_invoice_for_transaction(charge_tx)
+    return None
+
+
+def _transaction_requires_approval(transaction):
+    return transaction.status in OPEN_TRANSACTION_STATUSES and bool(transaction.manual_weight_capture)
+
+
+def _approve_transaction(transaction):
+    now = timezone.now()
+    flow_kind = _resolve_transaction_flow(transaction)
+
+    transaction.approval_status = True
+    transaction.status = "Completed"
+    transaction.manual_weight_capture = False
+
+    if transaction.gross_weight and not transaction.gross_weight_date:
+        transaction.gross_weight_date = now
+    if transaction.tare_weight and not transaction.tare_weight_date:
+        transaction.tare_weight_date = now
+    if transaction.gross_weight and transaction.tare_weight and not transaction.net_weight:
+        transaction.net_weight = abs(int(transaction.gross_weight) - int(transaction.tare_weight))
+
+    if flow_kind == "second" and transaction.paired_first_transaction_id:
+        first = transaction.paired_first_transaction
+        if first:
+            if not transaction.gross_weight:
+                transaction.gross_weight = first.gross_weight
+            transaction.paired = True
+            transaction.gross_weight_date = transaction.gross_weight_date or first.gross_weight_date or first.created_at or now
+            transaction.tare_weight_date = transaction.tare_weight_date or now
+
+            first.tare_weight = transaction.tare_weight
+            first.net_weight = transaction.net_weight
+            first.status = "Completed"
+            first.paired = True
+            first.approval_status = True
+            first.manual_weight_capture = False
+            first.tare_weight_date = transaction.tare_weight_date
+            first.payment_mode = transaction.payment_mode or first.payment_mode
+            first.payment_status = transaction.payment_status or first.payment_status
+            first.save()
+
+    transaction.save()
+
+    try:
+        _maybe_record_overweight_event(transaction, getattr(transaction, "last_modified_by", None) or getattr(transaction, "created_by", None))
+    except Exception:
+        pass
+
+    try:
+        _maybe_create_transaction_invoice(transaction)
+    except Exception:
+        pass
+
+    return transaction
+
+
+def _receipt_allowed(transaction):
+    payment_mode = (getattr(transaction, "payment_mode", "") or "").strip()
+    payment_status = (getattr(transaction, "payment_status", "") or "").strip()
+    return payment_status == "Paid" or payment_mode == "Debt"
 
 
 def _get_tenant_scoped_transaction(user, pk, select_related=None):
@@ -195,6 +642,39 @@ def _get_tenant_scoped_transaction(user, pk, select_related=None):
         qs = qs.select_related(*select_related)
     qs = _apply_tenant_filter(qs, user)
     return qs.get(pk=pk)
+
+
+def _is_weighbridge_tenant_admin(user):
+    if not getattr(user, "is_authenticated", False):
+        return False
+    try:
+        if OrganizationMembership.objects.filter(
+            user=user,
+            is_active=True,
+            is_org_admin=True,
+        ).exists():
+            return True
+    except Exception:
+        pass
+    try:
+        profile = user.tenant_profile
+    except TenantUserProfile.DoesNotExist:
+        return False
+    except Exception:
+        return False
+    return bool(profile and profile.is_tenant_admin and profile.tenant_id)
+
+
+def _can_view_weighbridge_team_dashboard(user):
+    if not getattr(user, "is_authenticated", False):
+        return False
+    if getattr(user, "is_superuser", False) or _is_weighbridge_tenant_admin(user):
+        return True
+    return any([
+        user.has_perm("SL_Weighbridge.can_export_transaction"),
+        user.has_perm("SL_Weighbridge.can_approve_pending_transactions"),
+        user.has_perm("SL_Weighbridge.can_recall_completed_transactions"),
+    ])
 
 
 # ── Views ─────────────────────────────────────────────────────────────────────
@@ -217,16 +697,19 @@ class WeighbridgeDashboardView(APIView):
 
         today_qs = qs.filter(created_at__date=today)
         month_qs = qs.filter(created_at__date__gte=month_start)
+        pending_qs = qs.exclude(status="Completed")
 
         status_breakdown = [
             {"status": s, "count": qs.filter(status=s).count()}
-            for s in ["Pending", "Completed"]
+            for s in ["Draft", "Recalled", "Rejected", "Completed"]
         ]
 
         recent = TransactionSerializer(qs.order_by("-created_at")[:10], many=True).data
 
         return Response({
             "totals": {
+                "all_transactions": qs.count(),
+                "pending_transactions": pending_qs.count(),
                 "transactions_today": today_qs.count(),
                 "transactions_this_month": month_qs.count(),
                 "net_weight_today": float(
@@ -250,7 +733,7 @@ class TransactionListCreateView(generics.ListCreateAPIView):
     def get_queryset(self):
         from django.db.models import Q
         qs = Transaction.objects.select_related(
-            "branch", "customer", "vehicle", "item", "vehicle_type"
+            "branch", "customer", "vehicle", "item", "vehicle_type", "created_by", "last_modified_by"
         ).order_by("-created_at")
         params = self.request.query_params
 
@@ -267,7 +750,6 @@ class TransactionListCreateView(generics.ListCreateAPIView):
                 return qs.none()
             qs = qs.filter(tenant=resolved)
 
-        # ── Basic filters ──────────────────────────────────────────────────
         if branch_id := params.get("branch_id"):
             # For non-superusers, verify the requested branch is associated
             # with the user's own tenant before applying the filter.  Since
@@ -287,13 +769,17 @@ class TransactionListCreateView(generics.ListCreateAPIView):
             qs = qs.filter(payment_status=ps)
         if customer_id := params.get("customer_id"):
             qs = qs.filter(customer_id=customer_id)
+        if actor_user_id := params.get("actor_user_id"):
+            qs = qs.filter(Q(created_by_id=actor_user_id) | Q(last_modified_by_id=actor_user_id))
         if weight_type := params.get("weight_type"):
             qs = qs.filter(weight_type=weight_type)
         if search := params.get("search"):
             qs = qs.filter(
                 Q(vehicle__number_plate__icontains=search) |
                 Q(customer__name__icontains=search) |
-                Q(operator__icontains=search)
+                Q(operator__icontains=search) |
+                Q(driver_name__icontains=search) |
+                Q(driver_phone__icontains=search)
             )
 
         # ── Date / time range filter ────────────────────────────────────────
@@ -336,13 +822,39 @@ class TransactionListCreateView(generics.ListCreateAPIView):
         return qs
 
     def perform_create(self, serializer):
-        """Set the tenant FK from the requesting user's TenantUserProfile on create."""
-        # Use _get_request_user_tenant (superuser→None, profiled→Tenant, profileless→None)
-        # so that profileless non-superusers can still create without a tenant tag.
-        # The list/detail views will return qs.none() for these users anyway, so
-        # their records are effectively isolated at read time.
         user_tenant = _get_request_user_tenant(self.request.user)
-        serializer.save(tenant=user_tenant)
+        validated = serializer.validated_data
+        vehicle = validated.get("vehicle")
+        operation_type = validated.get("operation_type")
+        weight_type = validated.get("weight_type") or ""
+        flow_kind = _resolve_payload_flow_kind(operation_type=operation_type, weight_type=weight_type)
+
+        duplicate = _find_open_transaction_duplicate(
+            tenant=user_tenant,
+            vehicle=vehicle,
+            flow_kind=flow_kind,
+        )
+        if duplicate:
+            flow_label = (getattr(getattr(duplicate, "operation_type", None), "name", None) or duplicate.weight_type or flow_kind).strip()
+            raise serializers.ValidationError(
+                {
+                    "vehicle": (
+                        f"Vehicle {vehicle.number_plate} already has an active open {flow_label} transaction "
+                        f"(TX-{duplicate.id:05d}) in {duplicate.status}. Complete, recall, or deactivate that record before creating another one."
+                    )
+                }
+            )
+
+        try:
+            tx = serializer.save(
+                tenant=user_tenant,
+                created_by=self.request.user,
+                last_modified_by=self.request.user,
+            )
+            _, invoice_target = _finalize_transaction_workflow(tx)
+            _maybe_create_transaction_invoice(invoice_target)
+        except ValueError as exc:
+            raise serializers.ValidationError({"gross_weight": str(exc)}) from exc
 
 
 class TransactionDetailView(generics.RetrieveUpdateAPIView):
@@ -357,8 +869,22 @@ class TransactionDetailView(generics.RetrieveUpdateAPIView):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        qs = Transaction.objects.select_related("branch", "customer", "vehicle", "item", "vehicle_type")
+        qs = Transaction.objects.select_related("branch", "customer", "vehicle", "item", "vehicle_type", "created_by", "last_modified_by")
         return _apply_tenant_filter(qs, self.request.user)
+
+    def perform_update(self, serializer):
+        current = self.get_object()
+        if current.status == "Completed":
+            raise serializers.ValidationError("Completed transactions are locked. Recall the transaction before editing.")
+        try:
+            tx = serializer.save(last_modified_by=self.request.user)
+            if tx.status not in REVIEWABLE_TRANSACTION_STATUSES:
+                tx.status = "Draft"
+                tx.save(update_fields=["status", "updated_at"])
+            _, invoice_target = _finalize_transaction_workflow(tx)
+            _maybe_create_transaction_invoice(invoice_target)
+        except ValueError as exc:
+            raise serializers.ValidationError({"gross_weight": str(exc)}) from exc
 
 
 class WorkflowContextView(APIView):
@@ -414,15 +940,33 @@ class WorkflowContextView(APIView):
         first_weight_tx = (
             tx_qs
             .filter(
+                Q(operation_type__flow_kind="first") | Q(weight_type="First Weight"),
                 vehicle=vehicle,
-                weight_type="First Weight",
-                status="Pending",
+                status__in=OPEN_TRANSACTION_STATUSES,
                 paired=False,
                 created_at__gte=age_cutoff,
             )
             .order_by("-created_at")
             .first()
         )
+
+        latest_tx = (
+            tx_qs
+            .filter(vehicle=vehicle)
+            .order_by("-updated_at", "-created_at", "-id")
+            .first()
+        )
+
+        open_transactions = [
+            {
+                "id": tx.id,
+                "status": tx.status,
+                "flow_kind": _resolve_transaction_flow(tx),
+                "weight_type": tx.weight_type,
+                "operation_type_name": getattr(getattr(tx, "operation_type", None), "name", "") or "",
+            }
+            for tx in tx_qs.filter(vehicle=vehicle, status__in=OPEN_TRANSACTION_STATUSES).order_by("-updated_at", "-created_at", "-id")[:10]
+        ]
 
         has_pending = first_weight_tx is not None
 
@@ -436,6 +980,8 @@ class WorkflowContextView(APIView):
             "has_pending_first_weight": has_pending,
             "workflow_recommendation": "second_weight" if has_pending else "first_weight",
             "first_weight_transaction": TransactionSerializer(first_weight_tx).data if has_pending else None,
+            "latest_transaction_defaults": _transaction_prefill_defaults(latest_tx),
+            "open_transactions": open_transactions,
             "max_first_weight_age_days": max_age_days,
             "message": (
                 f"Vehicle {vehicle.number_plate} has a pending first weight of "
@@ -494,6 +1040,7 @@ def _maybe_record_overweight_event(tx, user):
         threshold_at_capture=threshold,
         operator=user if user.is_authenticated else None,
         linked_transaction=tx,
+        capture_source="transaction",
         discrepancy_raised=False,
     )
     event.save()
@@ -532,6 +1079,15 @@ def _maybe_record_overweight_event(tx, user):
             tenant = getattr(tx, "tenant", None)
             if tenant:
                 try:
+                    org_admin_memberships = OrganizationMembership.objects.filter(
+                        tenant=tenant,
+                        is_active=True,
+                        is_org_admin=True,
+                    ).select_related("user")
+                    for membership in org_admin_memberships:
+                        email = getattr(membership.user, "email", None)
+                        if email and email not in recipients:
+                            recipients.append(email)
                     from Platform_Core.models import TenantUserProfile
                     admin_profiles = TenantUserProfile.objects.filter(
                         tenant=tenant, is_tenant_admin=True
@@ -650,7 +1206,7 @@ class CaptureWeightView(APIView):
         # Resolve branch directly if not already resolved via transaction
         if not branch and branch_id:
             try:
-                branch = Branch.objects.get(pk=branch_id)
+                branch = Branch.objects.get(pk=branch_id, id__in=_allowed_branch_ids(request.user))
             except Branch.DoesNotExist:
                 return Response(
                     {"error": f"Branch {branch_id} not found."},
@@ -764,7 +1320,8 @@ class TransactionApproveView(APIView):
     """
     POST /api/commercial-weighbridge/transactions/<pk>/approve/
 
-    Marks a transaction as approved (approval_status = True).
+    Marks a manual or recalled transaction as approved and returns it to
+    Completed status.
     Requires: superadmin, tenant_admin, or the Django permission
     SL_Weighbridge.can_approve_pending_transactions.
     """
@@ -779,6 +1336,7 @@ class TransactionApproveView(APIView):
         if not (
             request.user.is_superuser
             or request.user.is_staff
+            or _is_weighbridge_tenant_admin(request.user)
             or request.user.has_perm("SL_Weighbridge.can_approve_pending_transactions")
         ):
             return Response({"error": "Permission denied."}, status=status.HTTP_403_FORBIDDEN)
@@ -786,16 +1344,22 @@ class TransactionApproveView(APIView):
         if tx.approval_status:
             return Response({"error": "Transaction is already approved.", "transaction": TransactionSerializer(tx).data}, status=status.HTTP_400_BAD_REQUEST)
 
-        tx.approval_status = True
-        tx.save(update_fields=["approval_status", "updated_at"])
-        return Response({"message": "Transaction approved.", "transaction": TransactionSerializer(tx).data})
+        if not _transaction_requires_approval(tx):
+            return Response(
+                {"error": "Only recalled or manual draft transactions can be approved."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        tx.last_modified_by = request.user
+        _approve_transaction(tx)
+        return Response({"message": "Transaction approved and completed.", "transaction": TransactionSerializer(tx).data})
 
 
 class TransactionRecallView(APIView):
     """
     POST /api/commercial-weighbridge/transactions/<pk>/recall/
 
-    Recalls a Completed transaction back to Pending, clearing tare/net weights
+    Recalls a Completed transaction back to Recalled, clearing tare/net weights
     and unpairing the first-weight record so it can be re-weighed.
     Requires: superadmin, tenant_admin, or the Django permission
     SL_Weighbridge.can_recall_completed_transactions.
@@ -811,6 +1375,7 @@ class TransactionRecallView(APIView):
         if not (
             request.user.is_superuser
             or request.user.is_staff
+            or _is_weighbridge_tenant_admin(request.user)
             or request.user.has_perm("SL_Weighbridge.can_recall_completed_transactions")
         ):
             return Response({"error": "Permission denied."}, status=status.HTTP_403_FORBIDDEN)
@@ -845,7 +1410,7 @@ class TransactionRecallView(APIView):
             try:
                 first = tx.paired_first_transaction
                 _void_auto_invoice(first)
-                first.status = "Pending"
+                first.status = "Recalled"
                 first.tare_weight = None
                 first.net_weight = None
                 first.paired = False
@@ -857,14 +1422,46 @@ class TransactionRecallView(APIView):
         # Void the invoice on the recalled transaction itself (covers single-weight flow)
         _void_auto_invoice(tx)
 
-        tx.status = "Pending"
+        tx.status = "Recalled"
         tx.approval_status = False
+        tx.manual_weight_capture = True
         tx.tare_weight = None
         tx.net_weight = None
         tx.tare_weight_date = None
         tx.paired = False
+        if not tx.weight_reason:
+            tx.weight_reason = "Transaction recalled for review and re-approval."
         tx.save()
-        return Response({"message": "Transaction recalled to Pending.", "transaction": TransactionSerializer(tx).data})
+        return Response({"message": "Transaction recalled for editing.", "transaction": TransactionSerializer(tx).data})
+
+
+class TransactionRejectView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        try:
+            tx = _get_tenant_scoped_transaction(request.user, pk)
+        except Transaction.DoesNotExist:
+            return Response({"error": f"Transaction {pk} not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        if not (
+            request.user.is_superuser
+            or request.user.is_staff
+            or _is_weighbridge_tenant_admin(request.user)
+            or request.user.has_perm("SL_Weighbridge.can_approve_pending_transactions")
+        ):
+            return Response({"error": "Permission denied."}, status=status.HTTP_403_FORBIDDEN)
+
+        if tx.status == "Completed":
+            return Response({"error": "Completed transactions cannot be rejected."}, status=status.HTTP_400_BAD_REQUEST)
+
+        tx.status = "Rejected"
+        tx.approval_status = False
+        if not tx.weight_reason:
+            tx.weight_reason = "Transaction rejected during weighbridge review."
+        tx.last_modified_by = request.user
+        tx.save(update_fields=["status", "approval_status", "weight_reason", "last_modified_by", "updated_at"])
+        return Response({"message": "Transaction rejected.", "transaction": TransactionSerializer(tx).data})
 
 
 class TransactionEmailReceiptView(APIView):
@@ -886,6 +1483,12 @@ class TransactionEmailReceiptView(APIView):
         except Transaction.DoesNotExist:
             return Response({"error": f"Transaction {pk} not found."}, status=status.HTTP_404_NOT_FOUND)
 
+        if not _receipt_allowed(tx):
+            return Response(
+                {"error": "Receipt is available only after payment is received, unless the transaction is on debt terms."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         # Resolve recipient
         recipient = (request.data.get("email") or "").strip()
         if not recipient and tx.customer:
@@ -897,7 +1500,7 @@ class TransactionEmailReceiptView(APIView):
             )
 
         tx_num = str(tx.id).zfill(5)
-        branch_name = tx.branch.name if tx.branch else "Main Branch"
+        branch_name = tx.branch.name if tx.branch else ""
         plate = tx.vehicle.number_plate if tx.vehicle else "—"
         customer_name = tx.customer.name if tx.customer else "—"
         item_name = tx.item.name if tx.item else "—"
@@ -1018,6 +1621,29 @@ class TransactionEmailReceiptView(APIView):
             return Response({"error": f"Could not send email: {exc}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
+class TransactionReceiptDocumentView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+        try:
+            tx = _get_tenant_scoped_transaction(
+                request.user,
+                pk,
+                select_related=["branch", "customer", "vehicle", "item", "vehicle_type"],
+            )
+        except Transaction.DoesNotExist:
+            return Response({"error": f"Transaction {pk} not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        if not _receipt_allowed(tx):
+            return Response(
+                {"error": "Receipt is available only after payment is received, unless the transaction is on debt terms."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        rendered = render_transaction_receipt(tx, request=request)
+        return HttpResponse(rendered.html, content_type="text/html; charset=utf-8")
+
+
 class TransactionExportCSVView(APIView):
     """
     GET /api/commercial-weighbridge/transactions/export/csv/
@@ -1030,7 +1656,7 @@ class TransactionExportCSVView(APIView):
 
     def get(self, request):
         qs = Transaction.objects.select_related(
-            "branch", "customer", "vehicle", "item", "vehicle_type"
+            "branch", "customer", "vehicle", "item", "vehicle_type", "created_by", "last_modified_by"
         ).order_by("-created_at")
 
         # ── Tenant scoping ────────────────────────────────────────────────────
@@ -1053,11 +1679,15 @@ class TransactionExportCSVView(APIView):
             qs = qs.filter(weight_type=wt)
         if cid := params.get("customer_id"):
             qs = qs.filter(customer_id=cid)
+        if actor_user_id := params.get("actor_user_id"):
+            qs = qs.filter(Q(created_by_id=actor_user_id) | Q(last_modified_by_id=actor_user_id))
         if search := params.get("search"):
             qs = qs.filter(
                 Q(vehicle__number_plate__icontains=search)
                 | Q(customer__name__icontains=search)
                 | Q(operator__icontains=search)
+                | Q(driver_name__icontains=search)
+                | Q(driver_phone__icontains=search)
             )
 
         # Date / time range (same logic as list view)
@@ -1102,7 +1732,7 @@ class TransactionExportCSVView(APIView):
         writer = csv.writer(response)
         writer.writerow([
             "TX ID", "Vehicle Plate", "Customer", "Branch", "Item", "Vehicle Type",
-            "Weight Type", "Gross Weight (kg)", "Tare Weight (kg)", "Net Weight (kg)",
+            "Weight Type", "Actor", "Actor Username", "Gross Weight (kg)", "Tare Weight (kg)", "Net Weight (kg)",
             "Charge (KES)", "Destination", "Operator",
             "Payment Mode", "Payment Status", "Status", "Approved",
             "Manual Capture", "Weight Reason",
@@ -1118,6 +1748,8 @@ class TransactionExportCSVView(APIView):
                 tx.item.name if tx.item else "",
                 tx.vehicle_type.name if tx.vehicle_type else "",
                 tx.weight_type,
+                (tx.created_by.get_full_name() or tx.created_by.username) if tx.created_by else ((tx.last_modified_by.get_full_name() or tx.last_modified_by.username) if tx.last_modified_by else ""),
+                tx.created_by.username if tx.created_by else (tx.last_modified_by.username if tx.last_modified_by else ""),
                 tx.gross_weight or "",
                 tx.tare_weight or "",
                 tx.net_weight or "",
@@ -1139,10 +1771,38 @@ class TransactionExportCSVView(APIView):
         return response
 
 
+class WeighbridgeReportDocumentView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        serializer = ReportRenderRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        tenant = _resolve_user_tenant(request.user)
+        if isinstance(tenant, _NoTenantProfile):
+            return Response({"error": "No tenant is assigned to your account."}, status=status.HTTP_403_FORBIDDEN)
+
+        context = _report_context_from_payload(serializer.validated_data, request.user, tenant)
+        rendered = render_business_document(
+            tenant=None if request.user.is_superuser else tenant,
+            document_type="report",
+            context=context,
+            request=request,
+        )
+        return HttpResponse(rendered.html, content_type="text/html; charset=utf-8")
+
+
 class BranchListView(generics.ListAPIView):
     serializer_class = BranchSerializer
     permission_classes = [IsAuthenticated]
-    queryset = Branch.objects.all().order_by("name")
+
+    def get_queryset(self):
+        resolved = _resolve_user_tenant(self.request.user)
+        if isinstance(resolved, _NoTenantProfile):
+            return Branch.objects.none()
+        if resolved is None:
+            return Branch.objects.all().order_by("name")
+        return get_operational_branches_for_tenant(resolved)
 
 
 # ── Settings / configuration CRUD ────────────────────────────────────────────
@@ -1165,11 +1825,186 @@ class IndicatorConfigListCreateView(generics.ListCreateAPIView):
     permission_classes = [IsAuthenticated]
     queryset = IndicatorConfig.objects.select_related("branch").order_by("branch__name")
 
+    def get_queryset(self):
+        allowed = _allowed_branch_ids(self.request.user)
+        return self.queryset.filter(branch_id__in=allowed)
+
+    def perform_create(self, serializer):
+        branch = serializer.validated_data.get("branch")
+        allowed = _allowed_branch_ids(self.request.user)
+        if not branch or not Branch.objects.filter(pk=branch.pk, id__in=allowed).exists():
+            raise PermissionDenied("You do not have permission to configure this branch.")
+        serializer.save()
+
 
 class IndicatorConfigDetailView(generics.RetrieveUpdateDestroyAPIView):
     serializer_class = IndicatorConfigSerializer
     permission_classes = [IsAuthenticated]
     queryset = IndicatorConfig.objects.select_related("branch")
+
+    def get_queryset(self):
+        allowed = _allowed_branch_ids(self.request.user)
+        return self.queryset.filter(branch_id__in=allowed)
+
+
+class IndicatorConfigTestConnectionView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        try:
+            cfg = IndicatorConfig.objects.select_related("branch").get(pk=pk)
+        except IndicatorConfig.DoesNotExist:
+            return Response({"error": "Indicator config not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        allowed = _allowed_branch_ids(request.user)
+        if cfg.branch_id and not Branch.objects.filter(pk=cfg.branch_id, id__in=allowed).exists():
+            return Response({"error": "Branch not found or access denied."}, status=status.HTTP_404_NOT_FOUND)
+
+        if cfg.connection_type != "HTTP":
+            return Response(
+                {
+                    "ok": False,
+                    "message": "Connection test is currently supported for HTTP indicator configs only.",
+                    "connection_type": cfg.connection_type,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        def _friendly_indicator_error(exc):
+            if isinstance(exc, urllib.error.HTTPError):
+                return (
+                    f"Endpoint returned HTTP {exc.code}. "
+                    "Please confirm the URL is correct and the indicator service is available."
+                )
+            if isinstance(exc, urllib.error.URLError):
+                reason = getattr(exc, "reason", None)
+                if isinstance(reason, socket.timeout):
+                    return "Connection timed out. Please confirm the indicator device is online and reachable."
+                return "Could not reach the indicator endpoint. Please check the URL, network, or DNS settings."
+            if isinstance(exc, TimeoutError):
+                return "Connection timed out. Please confirm the indicator device is online and reachable."
+            if isinstance(exc, _json.JSONDecodeError):
+                return "Endpoint responded with invalid data. Please confirm the indicator URL returns JSON weight data."
+
+            text = str(exc) or ""
+            if "did not return a valid weight" in text:
+                return "Endpoint responded, but no valid weight reading was returned."
+            return "Connection test failed due to an unexpected response from the indicator."
+
+        live_url = (cfg.live_weight_url or "").strip()
+        stable_url = (cfg.stable_weight_url or "").strip()
+        if not live_url and not stable_url:
+            return Response(
+                {
+                    "ok": False,
+                    "message": "No live or stable URL is configured for this indicator.",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        def _test_endpoint(label, url):
+            if not url:
+                return None
+            try:
+                reading = _fetch_indicator_url(url)
+                if reading.get("weight") is None:
+                    raise ValueError("Endpoint responded but did not return a valid weight.")
+                return {
+                    "label": label,
+                    "url": url,
+                    "reachable": True,
+                    "weight": reading.get("weight"),
+                    "stable": reading.get("stable", False),
+                }
+            except Exception as exc:
+                return {
+                    "label": label,
+                    "url": url,
+                    "reachable": False,
+                    "error": _friendly_indicator_error(exc),
+                    "technical_error": str(exc),
+                }
+
+        live_result = _test_endpoint("live", live_url)
+        stable_result = _test_endpoint("stable", stable_url)
+        results = [row for row in [live_result, stable_result] if row is not None]
+        configured_results = [row for row in results if row.get("url")]
+        ok = bool(configured_results) and all(row.get("reachable") for row in configured_results)
+        partial = any(row.get("reachable") for row in configured_results) and not ok
+
+        if ok:
+            message = "Indicator responded successfully."
+        elif partial:
+            message = "Some configured indicator endpoints failed."
+        else:
+            message = "Indicator test failed."
+
+        return Response(
+            {
+                "ok": ok,
+                "partial": partial,
+                "indicator_config_id": cfg.id,
+                "indicator_name": cfg.indicator_name,
+                "branch_id": cfg.branch_id,
+                "branch_name": cfg.branch.name if cfg.branch else None,
+                "message": message,
+                "results": results,
+            },
+            status=status.HTTP_200_OK if ok else status.HTTP_502_BAD_GATEWAY,
+        )
+
+
+class WeighingOperationTypeListCreateView(generics.ListCreateAPIView):
+    serializer_class = WeighingOperationTypeSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        resolved = _resolve_user_tenant(self.request.user)
+        if isinstance(resolved, _NoTenantProfile):
+            return WeighingOperationType.objects.none()
+        if resolved is not None:
+            _ensure_default_weighing_operation_types(resolved)
+            return WeighingOperationType.objects.filter(tenant=resolved).order_by("display_order", "name")
+        return WeighingOperationType.objects.all().order_by("display_order", "name")
+
+    def perform_create(self, serializer):
+        user_tenant = _get_request_user_tenant(self.request.user)
+        serializer.save(tenant=user_tenant)
+
+
+class WeighingOperationTypeDetailView(generics.RetrieveUpdateDestroyAPIView):
+    serializer_class = WeighingOperationTypeSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        resolved = _resolve_user_tenant(self.request.user)
+        if isinstance(resolved, _NoTenantProfile):
+            return WeighingOperationType.objects.none()
+        if resolved is not None:
+            return WeighingOperationType.objects.filter(tenant=resolved)
+        return WeighingOperationType.objects.all()
+
+    def perform_update(self, serializer):
+        instance = self.get_object()
+        if instance.is_default:
+            allowed_fields = {"is_active", "display_order"}
+            if set(serializer.validated_data.keys()) - allowed_fields:
+                raise serializers.ValidationError(
+                    {
+                        "detail": (
+                            "Default operation types are shared workflow definitions. "
+                            "Organizations may only activate, deactivate, or reorder them."
+                        )
+                    }
+                )
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        if instance.is_default:
+            raise PermissionDenied(
+                "Default operation types cannot be deleted. Deactivate them instead."
+            )
+        instance.delete()
 
 
 class VehicleTypeCreateUpdateDeleteView(generics.RetrieveUpdateDestroyAPIView):
@@ -1177,11 +2012,34 @@ class VehicleTypeCreateUpdateDeleteView(generics.RetrieveUpdateDestroyAPIView):
     permission_classes = [IsAuthenticated]
     queryset = VehicleType.objects.all()
 
+    def get_queryset(self):
+        return _tenant_scoped_reference_queryset(self.queryset, self.request.user)
+
+    def perform_update(self, serializer):
+        _require_reference_write_access(self.request.user)
+        instance = serializer.save()
+        _sync_vehicle_type_product(instance, self.request.user)
+
+    def perform_destroy(self, instance):
+        _require_reference_write_access(self.request.user)
+        instance.delete()
+
 
 class VehicleTypeListView(generics.ListCreateAPIView):
     serializer_class = VehicleTypeSerializer
     permission_classes = [IsAuthenticated]
     queryset = VehicleType.objects.all().order_by("name")
+
+    def get_queryset(self):
+        resolved = _resolve_user_tenant(self.request.user)
+        if resolved is not None and not isinstance(resolved, _NoTenantProfile):
+            sync_vehicle_type_products_for_tenant(resolved)
+        return _tenant_scoped_reference_queryset(super().get_queryset(), self.request.user)
+
+    def perform_create(self, serializer):
+        _require_reference_write_access(self.request.user)
+        instance = serializer.save(tenant=_get_request_user_tenant(self.request.user))
+        _sync_vehicle_type_product(instance, self.request.user)
 
 
 class ItemListCreateView(generics.ListCreateAPIView):
@@ -1189,11 +2047,29 @@ class ItemListCreateView(generics.ListCreateAPIView):
     permission_classes = [IsAuthenticated]
     queryset = Item.objects.all().order_by("name")
 
+    def get_queryset(self):
+        return _tenant_scoped_reference_queryset(self.queryset, self.request.user)
+
+    def perform_create(self, serializer):
+        _require_reference_write_access(self.request.user)
+        serializer.save(tenant=_get_request_user_tenant(self.request.user))
+
 
 class ItemDetailView(generics.RetrieveUpdateDestroyAPIView):
     serializer_class = ItemSerializer
     permission_classes = [IsAuthenticated]
     queryset = Item.objects.all()
+
+    def get_queryset(self):
+        return _tenant_scoped_reference_queryset(self.queryset, self.request.user)
+
+    def perform_update(self, serializer):
+        _require_reference_write_access(self.request.user)
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        _require_reference_write_access(self.request.user)
+        instance.delete()
 
 
 # ── CustomerVehicleTypeDiscount CRUD ─────────────────────────────────────────
@@ -1277,16 +2153,40 @@ class CustomerListCreateView(generics.ListCreateAPIView):
         if isinstance(resolved, _NoTenantProfile):
             return qs.none()
         if resolved is not None:  # Tenant object — non-superuser
-            tenant_customer_ids = (
-                Transaction.objects.filter(tenant=resolved)
-                .values_list("customer_id", flat=True)
-                .distinct()
-            )
-            qs = qs.filter(pk__in=tenant_customer_ids)
+            qs = qs.filter(
+                Q(tenant=resolved) | Q(tenant__isnull=True, transaction__tenant=resolved)
+            ).distinct()
+
+        include_deleted = self.request.query_params.get("include_deleted", "false").lower() == "true"
+        if not include_deleted:
+            qs = qs.filter(is_deleted=False)
+
+        if (is_deleted := self.request.query_params.get("is_deleted")) is not None:
+            lowered = is_deleted.lower()
+            if lowered in {"true", "false"}:
+                qs = qs.filter(is_deleted=(lowered == "true"))
+
+        if (is_active := self.request.query_params.get("is_active")) is not None:
+            lowered = is_active.lower()
+            if lowered in {"true", "false"}:
+                qs = qs.filter(is_active=(lowered == "true"))
+
+        if (discounted := self.request.query_params.get("discounted")) is not None:
+            lowered = discounted.lower()
+            if lowered in {"true", "false"}:
+                qs = qs.filter(discounted=(lowered == "true"))
 
         if search := self.request.query_params.get("search"):
-            qs = qs.filter(name__icontains=search)
+            qs = qs.filter(
+                Q(name__icontains=search) |
+                Q(phone_number__icontains=search) |
+                Q(email__icontains=search)
+            )
         return qs
+
+    def perform_create(self, serializer):
+        user_tenant = _get_request_user_tenant(self.request.user)
+        serializer.save(tenant=user_tenant)
 
 
 class CustomerDetailView(generics.RetrieveUpdateDestroyAPIView):
@@ -1300,13 +2200,46 @@ class CustomerDetailView(generics.RetrieveUpdateDestroyAPIView):
         if isinstance(resolved, _NoTenantProfile):
             return qs.none()
         if resolved is not None:  # Tenant object — non-superuser
-            tenant_customer_ids = (
-                Transaction.objects.filter(tenant=resolved)
-                .values_list("customer_id", flat=True)
-                .distinct()
-            )
-            qs = qs.filter(pk__in=tenant_customer_ids)
+            qs = qs.filter(
+                Q(tenant=resolved) | Q(tenant__isnull=True, transaction__tenant=resolved)
+            ).distinct()
         return qs
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        instance.is_active = False
+        instance.is_deleted = True
+        instance.save(update_fields=["is_active", "is_deleted"])
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class CustomerBulkActionView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        serializer = CustomerBulkActionSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        ids = serializer.validated_data["ids"]
+        action = serializer.validated_data["action"]
+
+        qs = Customer.objects.filter(id__in=ids)
+        resolved = _resolve_user_tenant(request.user)
+        if isinstance(resolved, _NoTenantProfile):
+            qs = qs.none()
+        elif resolved is not None:
+            qs = qs.filter(
+                Q(tenant=resolved) | Q(tenant__isnull=True, transaction__tenant=resolved)
+            ).distinct()
+
+        if action == "activate":
+            updated = qs.update(is_active=True, is_deleted=False)
+        elif action == "deactivate":
+            updated = qs.update(is_active=False)
+        else:
+            updated = qs.update(is_active=False, is_deleted=True)
+
+        return Response({"updated": updated, "action": action})
 
 
 class VehicleListCreateView(generics.ListCreateAPIView):
@@ -1328,19 +2261,29 @@ class VehicleListCreateView(generics.ListCreateAPIView):
         if isinstance(resolved, _NoTenantProfile):
             return qs.none()
         if resolved is not None:  # Tenant object — non-superuser
-            tenant_vehicle_ids = (
-                Transaction.objects.filter(tenant=resolved)
-                .values_list("vehicle_id", flat=True)
-                .distinct()
-            )
-            qs = qs.filter(pk__in=tenant_vehicle_ids)
+            qs = qs.filter(
+                Q(tenant=resolved) | Q(tenant__isnull=True, transaction__tenant=resolved)
+            ).distinct()
 
         params = self.request.query_params
         if customer_id := params.get("customer_id"):
             qs = qs.filter(customer_id=customer_id)
+        if vehicle_type_id := params.get("vehicle_type_id"):
+            qs = qs.filter(vehicle_type_id=vehicle_type_id)
+        if is_active := params.get("is_active"):
+            qs = qs.filter(is_active=is_active.lower() == "true")
         if search := params.get("search"):
-            qs = qs.filter(number_plate__icontains=search)
+            qs = qs.filter(
+                Q(number_plate__icontains=search)
+                | Q(customer__name__icontains=search)
+                | Q(vehicle_type__name__icontains=search)
+            )
         return qs
+
+    def perform_create(self, serializer):
+        user_tenant = _get_request_user_tenant(self.request.user)
+        customer = serializer.validated_data.get("customer")
+        serializer.save(tenant=user_tenant or getattr(customer, "tenant", None))
 
 
 class VehicleDetailView(generics.RetrieveUpdateDestroyAPIView):
@@ -1354,12 +2297,9 @@ class VehicleDetailView(generics.RetrieveUpdateDestroyAPIView):
         if isinstance(resolved, _NoTenantProfile):
             return qs.none()
         if resolved is not None:  # Tenant object — non-superuser
-            tenant_vehicle_ids = (
-                Transaction.objects.filter(tenant=resolved)
-                .values_list("vehicle_id", flat=True)
-                .distinct()
-            )
-            qs = qs.filter(pk__in=tenant_vehicle_ids)
+            qs = qs.filter(
+                Q(tenant=resolved) | Q(tenant__isnull=True, transaction__tenant=resolved)
+            ).distinct()
         return qs
 
 
@@ -1381,7 +2321,7 @@ class LiveWeightView(APIView):
         branch = None
         if branch_id:
             try:
-                branch = Branch.objects.get(pk=branch_id)
+                branch = Branch.objects.get(pk=branch_id, id__in=_allowed_branch_ids(request.user))
             except Branch.DoesNotExist:
                 pass
 
@@ -1467,7 +2407,9 @@ class TransactionReceivePaymentView(APIView):
     """
     POST /api/commercial-weighbridge/transactions/<pk>/receive-payment/
     Body: { method: str, reference: str }
-    Marks the transaction as Paid and, if linked, marks its auto_invoice as paid too.
+    Records a payment decision against a transaction and keeps any linked
+    auto-generated invoice in sync. Debt remains outstanding until settled
+    through invoice payment or consolidation.
     """
     permission_classes = [IsAuthenticated]
 
@@ -1480,12 +2422,6 @@ class TransactionReceivePaymentView(APIView):
         except Transaction.DoesNotExist:
             return Response({"error": f"Transaction {pk} not found."}, status=status.HTTP_404_NOT_FOUND)
 
-        if tx.status != "Completed":
-            return Response(
-                {"error": "Only Completed transactions can receive payment."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
         if tx.payment_status == "Paid":
             return Response(
                 {
@@ -1496,38 +2432,78 @@ class TransactionReceivePaymentView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        method    = request.data.get("method", "Cash")
+        method    = (request.data.get("method") or "Cash").strip() or "Cash"
         reference = request.data.get("reference", "")
+        is_debt   = method == "Debt"
+        next_payment_status = "Pending" if is_debt else "Paid"
 
-        # Update transaction payment
-        tx.payment_mode   = method
-        tx.payment_status = "Paid"
-        tx.save(update_fields=["payment_mode", "payment_status", "updated_at"])
+        if not is_debt and assert_posting_allowed is not None:
+            try:
+                assert_posting_allowed(
+                    tenant=getattr(tx, "tenant", None),
+                    posting_date=timezone.now(),
+                    source_label="weighbridge cash sale",
+                )
+            except ValueError as exc:
+                return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
-        # If there's a linked auto_invoice, mark it paid
+        # Debt should stay outstanding; only settled methods mark the
+        # transaction paid immediately.
+        payment_received_at = timezone.now() if not is_debt else None
+
+        tx.payment_mode = method
+        tx.payment_status = next_payment_status
+        tx.payment_reference = reference
+        tx.payment_received_at = payment_received_at
+        tx.save(update_fields=["payment_mode", "payment_status", "payment_reference", "payment_received_at", "updated_at"])
+
+        try:
+            sync_transaction_posting(tx)
+        except Exception:
+            pass
+
         invoice_id = None
+        invoice_status = None
+        invoice_paid_amount = None
+        invoice_balance_amount = None
         try:
             auto_inv = tx.auto_invoice
-            if auto_inv and auto_inv.status != "paid":
-                auto_inv.status = "paid"
-                auto_inv.issued_at = auto_inv.issued_at or timezone.now()
-                auto_inv.save(update_fields=["status", "issued_at"])
-                # Also mark all transactions on that invoice as paid
-                auto_inv.transactions.filter(payment_status="Pending").update(
-                    payment_status="Paid",
-                    payment_mode=method,
-                )
+            if auto_inv:
+                from Platform_API.modules.payments.views import reconcile_invoice_payment_state
                 invoice_id = auto_inv.id
+                if is_debt and auto_inv.status == "draft":
+                    auto_inv.status = "issued"
+                    auto_inv.issued_at = auto_inv.issued_at or timezone.now()
+                    auto_inv.save(update_fields=["status", "issued_at"])
+                reconciliation = reconcile_invoice_payment_state(auto_inv, persist=True)
+                if not is_debt and reconciliation["status"] == "paid":
+                    auto_inv.transactions.filter(payment_status="Pending").update(
+                        payment_status="Paid",
+                        payment_mode=method,
+                    )
+                    reconciliation = reconcile_invoice_payment_state(auto_inv, persist=True)
+                invoice_status = reconciliation["status"]
+                invoice_paid_amount = float(reconciliation["paid_amount"])
+                invoice_balance_amount = float(reconciliation["balance_amount"])
         except Exception:
             pass
 
         return Response({
             "success":        True,
+            "message":        (
+                "Transaction flagged as debt. Linked invoice remains outstanding."
+                if is_debt
+                else "Payment recorded. Transaction marked as paid."
+            ),
             "transaction_id": tx.id,
             "payment_mode":   tx.payment_mode,
             "payment_status": tx.payment_status,
             "reference":      reference,
+            "payment_received_at": tx.payment_received_at,
             "invoice_id":     invoice_id,
+            "invoice_status": invoice_status,
+            "invoice_paid_amount": invoice_paid_amount,
+            "invoice_balance_amount": invoice_balance_amount,
             "transaction":    TransactionSerializer(tx).data,
         })
 
@@ -1623,7 +2599,14 @@ class _WeighbridgeDiscrepancySerializer(serializers.ModelSerializer):
 class _OverweightConfigSerializer(serializers.ModelSerializer):
     class Meta:
         model = OverweightConfig
-        fields = ["id", "branch", "threshold_kg", "grace_window_minutes", "surveillance_enabled"]
+        fields = [
+            "id",
+            "branch",
+            "threshold_kg",
+            "grace_window_minutes",
+            "capture_interval_seconds",
+            "surveillance_enabled",
+        ]
 
 
 class _CameraConfigSerializer(serializers.ModelSerializer):
@@ -1648,17 +2631,30 @@ def _allowed_branch_ids(user):
 
     Returns a QuerySet of Branch PKs (safe to pass to __in= filters).
     """
-    qs = _apply_tenant_filter(Branch.objects.all(), user, filter_field="tenant")
-    return qs.values_list("id", flat=True)
+    resolved = _resolve_user_tenant(user)
+    if isinstance(resolved, _NoTenantProfile):
+        return Branch.objects.none().values_list("id", flat=True)
+    if resolved is None:
+        return Branch.objects.all().values_list("id", flat=True)
+    return get_operational_branches_for_tenant(resolved).values_list("id", flat=True)
+
+
+def _require_reference_write_access(user):
+    if getattr(user, "is_superuser", False) or _is_weighbridge_tenant_admin(user):
+        return
+    raise PermissionDenied(
+        "Only organization administrators can modify organization reference data."
+    )
 
 
 class OverweightEventListView(generics.ListAPIView):
     """
     GET /api/commercial-weighbridge/overweight-events/
-    Query params: branch_id, date_from, date_to, discrepancy_raised
+    Query params: branch_id, date_from, date_to, discrepancy_raised, search
     """
     serializer_class = _OverweightEventSerializer
     permission_classes = [IsAuthenticated]
+    pagination_class = StandardPagination
 
     def get_queryset(self):
         qs = OverweightEvent.objects.select_related(
@@ -1677,6 +2673,14 @@ class OverweightEventListView(generics.ListAPIView):
             qs = qs.filter(recorded_at__date__lte=dt)
         if (dr := p.get("discrepancy_raised")) is not None:
             qs = qs.filter(discrepancy_raised=(dr.lower() == "true"))
+        if search := (p.get("search") or "").strip():
+            qs = qs.filter(
+                Q(vehicle_plate__icontains=search)
+                | Q(branch__name__icontains=search)
+                | Q(operator__username__icontains=search)
+                | Q(operator__first_name__icontains=search)
+                | Q(operator__last_name__icontains=search)
+            )
         return qs
 
 
@@ -1687,7 +2691,7 @@ class OverweightEventExportCSVView(APIView):
     Returns a downloadable CSV of all overweight events matching the same
     date/branch filters as the list view.  Applies the same tenant isolation.
 
-    Query params: branch_id, date_from, date_to, discrepancy_raised
+    Query params: branch_id, date_from, date_to, discrepancy_raised, search
     """
     permission_classes = [IsAuthenticated]
 
@@ -1708,6 +2712,14 @@ class OverweightEventExportCSVView(APIView):
             qs = qs.filter(recorded_at__date__lte=dt)
         if (dr := p.get("discrepancy_raised")) is not None:
             qs = qs.filter(discrepancy_raised=(dr.lower() == "true"))
+        if search := (p.get("search") or "").strip():
+            qs = qs.filter(
+                Q(vehicle_plate__icontains=search)
+                | Q(branch__name__icontains=search)
+                | Q(operator__username__icontains=search)
+                | Q(operator__first_name__icontains=search)
+                | Q(operator__last_name__icontains=search)
+            )
 
         response = HttpResponse(content_type="text/csv")
         response["Content-Disposition"] = 'attachment; filename="overweight_events.csv"'
@@ -1788,7 +2800,12 @@ class OverweightConfigView(generics.RetrieveUpdateAPIView):
 
         obj, _ = OverweightConfig.objects.get_or_create(
             branch_id=branch_pk,
-            defaults={"threshold_kg": 1000, "grace_window_minutes": 30, "surveillance_enabled": True},
+            defaults={
+                "threshold_kg": 1000,
+                "grace_window_minutes": 30,
+                "capture_interval_seconds": 45,
+                "surveillance_enabled": True,
+            },
         )
         return obj
 
@@ -1835,13 +2852,59 @@ class CameraConfigDetailView(generics.RetrieveUpdateDestroyAPIView):
         return CameraConfig.objects.filter(branch_id__in=allowed)
 
 
+class CameraConfigPreviewView(APIView):
+    """
+    GET /api/commercial-weighbridge/camera-configs/preview/?branch_id=<id>
+
+    Returns lightweight preview payloads for the active cameras on a branch.
+    The image is proxied through the backend so camera credentials stay server-side.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        branch_id = request.query_params.get("branch_id")
+        if not branch_id:
+            return Response({"error": "branch_id query parameter is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        allowed = _allowed_branch_ids(request.user)
+        if not Branch.objects.filter(pk=branch_id, id__in=allowed).exists():
+            return Response({"error": "Branch not found or access denied."}, status=status.HTTP_404_NOT_FOUND)
+
+        previews = []
+        cameras = (
+            CameraConfig.objects
+            .filter(branch_id=branch_id, is_active=True)
+            .order_by("id")[:4]
+        )
+
+        for cam in cameras:
+            img_bytes = capture_hikvision_snapshot(cam) if cam.camera_type == "hikvision" else None
+            previews.append({
+                "id": cam.id,
+                "name": cam.name or f"Camera {cam.id}",
+                "camera_type": cam.camera_type,
+                "available": bool(img_bytes),
+                "image_data_url": (
+                    f"data:image/jpeg;base64,{base64.b64encode(img_bytes).decode('ascii')}"
+                    if img_bytes else None
+                ),
+            })
+
+        return Response({
+            "branch_id": int(branch_id),
+            "camera_count": len(previews),
+            "results": previews,
+        })
+
+
 class WeighbridgeDiscrepancyListView(generics.ListAPIView):
     """
     GET /api/commercial-weighbridge/surveillance-discrepancies/
-    Query params: branch_id, resolution_status, date_from, date_to
+    Query params: branch_id, resolution_status, date_from, date_to, search
     """
     serializer_class = _WeighbridgeDiscrepancySerializer
     permission_classes = [IsAuthenticated]
+    pagination_class = StandardPagination
 
     def get_queryset(self):
         qs = WeighbridgeDiscrepancy.objects.select_related(
@@ -1860,6 +2923,18 @@ class WeighbridgeDiscrepancyListView(generics.ListAPIView):
             qs = qs.filter(created_at__date__gte=df)
         if dt := p.get("date_to"):
             qs = qs.filter(created_at__date__lte=dt)
+        if search := (p.get("search") or "").strip():
+            qs = qs.filter(
+                Q(overweight_event__vehicle_plate__icontains=search)
+                | Q(branch__name__icontains=search)
+                | Q(resolution_note__icontains=search)
+                | Q(resolved_by__username__icontains=search)
+                | Q(resolved_by__first_name__icontains=search)
+                | Q(resolved_by__last_name__icontains=search)
+                | Q(overweight_event__operator__username__icontains=search)
+                | Q(overweight_event__operator__first_name__icontains=search)
+                | Q(overweight_event__operator__last_name__icontains=search)
+            )
         return qs
 
 
@@ -1933,3 +3008,126 @@ class CheckDiscrepanciesView(APIView):
         # resolved is either None (superuser → global) or a Tenant object (scoped)
         result = run_sweep(tenant=resolved)
         return Response({"discrepancies_raised": result["created"]})
+
+
+class SurveillanceMonitorStatusView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from Platform_Core.platform import get_active_tenant_module_slugs
+        from SL_Weighbridge.service_runner import (
+            DEFAULT_PRESENCE_INTERVAL,
+            DEFAULT_SWEEP_INTERVAL,
+            LEASE_SECONDS,
+            SERVICE_NAME,
+            _get_background_service_lease_model,
+            get_runner_status_snapshot,
+        )
+        from SL_Weighbridge.surveillance import resolve_tenant_for_branch
+
+        branch_id = request.query_params.get("branch_id")
+        branch = None
+        if branch_id:
+            allowed = _allowed_branch_ids(request.user)
+            if not Branch.objects.filter(pk=branch_id, id__in=allowed).exists():
+                return Response({"error": "Branch not found or access denied."}, status=status.HTTP_404_NOT_FOUND)
+            branch = Branch.objects.select_related("company").filter(pk=branch_id).first()
+
+        resolved = resolve_tenant_for_branch(branch) if branch is not None else _resolve_user_tenant(request.user)
+        active_module_slugs = []
+        tenant_payload = None
+        if not isinstance(resolved, _NoTenantProfile) and resolved is not None:
+            active_module_slugs = sorted(get_active_tenant_module_slugs(resolved))
+            tenant_payload = {
+                "id": resolved.id,
+                "name": resolved.name,
+                "code": resolved.code,
+            }
+
+        BackgroundServiceLease = _get_background_service_lease_model()
+        lease = BackgroundServiceLease.objects.filter(service_name=SERVICE_NAME).first() if BackgroundServiceLease else None
+        fallback_state = get_runner_status_snapshot()
+        now = timezone.now()
+        metadata = dict(getattr(lease, "metadata", {}) or {})
+        if not lease:
+            metadata = {
+                "last_presence_run_at": fallback_state.get("last_presence_run_at"),
+                "last_presence_captured": fallback_state.get("last_presence_captured", 0),
+                "last_presence_results": fallback_state.get("last_presence_results", []),
+                "last_sweep_run_at": fallback_state.get("last_sweep_run_at"),
+                "last_sweep_created": fallback_state.get("last_sweep_created", 0),
+                "last_sweep_skipped": fallback_state.get("last_sweep_skipped", 0),
+                "last_error_at": fallback_state.get("last_error_at"),
+                "last_error": fallback_state.get("last_error"),
+            }
+
+        def _row_matches_scope(row):
+            if branch is None:
+                return True
+            if not isinstance(row, dict):
+                return False
+            row_branch_id = row.get("branch_id")
+            if row_branch_id is None:
+                return False
+            try:
+                return int(row_branch_id) == int(branch.id)
+            except (TypeError, ValueError):
+                return False
+
+        scoped_presence_results = [
+            row for row in (metadata.get("last_presence_results", []) or [])
+            if _row_matches_scope(row)
+        ]
+        lease_until = getattr(lease, "lease_until", None) or fallback_state.get("lease_until")
+        heartbeat_at = getattr(lease, "heartbeat_at", None) or fallback_state.get("heartbeat_at")
+        owner_id = getattr(lease, "owner_id", "") or fallback_state.get("owner_id") or None
+        is_running = bool(lease_until and lease_until > now)
+
+        return Response({
+            "service_name": SERVICE_NAME,
+            "running": is_running,
+            "owner_id": owner_id,
+            "heartbeat_at": heartbeat_at,
+            "lease_until": lease_until,
+            "lease_seconds": LEASE_SECONDS,
+            "presence_interval_seconds": DEFAULT_PRESENCE_INTERVAL,
+            "sweep_interval_seconds": DEFAULT_SWEEP_INTERVAL,
+            "last_presence_run_at": metadata.get("last_presence_run_at"),
+            "last_presence_captured": sum(1 for row in scoped_presence_results if row.get("captured")),
+            "last_presence_results": scoped_presence_results,
+            "last_sweep_run_at": metadata.get("last_sweep_run_at"),
+            "last_sweep_created": metadata.get("last_sweep_created", 0),
+            "last_sweep_skipped": metadata.get("last_sweep_skipped", 0),
+            "last_error_at": metadata.get("last_error_at"),
+            "last_error": metadata.get("last_error"),
+            "tenant": tenant_payload,
+            "branch": {
+                "id": getattr(branch, "id", None),
+                "name": getattr(branch, "name", None),
+                "company_name": getattr(getattr(branch, "company", None), "name", None),
+            } if branch is not None else None,
+            "tenant_has_weighbridge": "weighbridge" in active_module_slugs or "commercial-weighbridge" in active_module_slugs,
+            "active_module_slugs": active_module_slugs,
+        })
+
+
+class SurveillanceMonitorTestView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        from SL_Weighbridge.presence_monitor import poll_branch_once
+
+        branch_id = request.data.get("branch_id") or request.query_params.get("branch_id")
+        if not branch_id:
+            return Response({"error": "branch_id is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        allowed = _allowed_branch_ids(request.user)
+        if not Branch.objects.filter(pk=branch_id, id__in=allowed).exists():
+            return Response({"error": "Branch not found or access denied."}, status=status.HTTP_404_NOT_FOUND)
+
+        branch = Branch.objects.select_related("company").filter(pk=branch_id).first()
+        if branch is None:
+            return Response({"error": "Branch not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        result = poll_branch_once(branch)
+        return Response(result)

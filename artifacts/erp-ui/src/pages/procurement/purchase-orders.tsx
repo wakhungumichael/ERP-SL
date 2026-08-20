@@ -20,7 +20,7 @@ import { useToast } from '@/hooks/use-toast';
 import type { ReactElement } from 'react';
 import {
   ShoppingCart, Truck, Package, Search, Plus, Trash2,
-  ChevronRight, CheckCircle2, Clock, XCircle, ArrowRight, X,
+  ChevronRight, CheckCircle2, Clock, XCircle, ArrowRight, X, Printer,
 } from 'lucide-react';
 
 /* ────────────────────────────────────────────────────────────── helpers ── */
@@ -257,6 +257,23 @@ function PODetail({ po, token, onBack, onRefresh }: { po: any; token: string | n
 
   const items: any[] = po.items ?? [];
 
+  const openPrintableDocument = async () => {
+    try {
+      const res = await fetch(`/api/procurement/orders/${po.id}/document/`, {
+        headers: { Authorization: `Token ${token}` },
+      });
+      if (!res.ok) throw new Error((await res.json()).error ?? res.statusText);
+      const html = await res.text();
+      const blob = new Blob([html], { type: 'text/html' });
+      const url = URL.createObjectURL(blob);
+      const win = window.open(url, '_blank', 'noopener,noreferrer');
+      if (!win) throw new Error('Popup blocked');
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (e: any) {
+      toast({ title: 'Unable to open purchase order', description: e.message, variant: 'destructive' });
+    }
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -266,6 +283,9 @@ function PODetail({ po, token, onBack, onRefresh }: { po: any; token: string | n
         </div>
         <div className="flex items-center gap-2">
           <StatusBadge status={po.status} />
+          <Button size="sm" variant="outline" className="text-xs gap-1" onClick={openPrintableDocument}>
+            <Printer className="h-3.5 w-3.5" /> Print
+          </Button>
           {next.map(s => (
             <Button key={s} size="sm" variant={s === 'Cancelled' ? 'destructive' : 'outline'}
               className="text-xs gap-1" onClick={() => doTransition(s)}>
@@ -343,6 +363,8 @@ export default function PurchaseOrders() {
   const [newPOOpen, setNewPOOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState('10');
   const [selectedPO, setSelectedPO] = useState<any | null>(null);
 
   /* Dashboard */
@@ -373,6 +395,8 @@ export default function PurchaseOrders() {
   });
 
   const orders: any[] = poData?.results ?? [];
+  const totalPages = Math.max(1, Math.ceil(orders.length / Number(pageSize)));
+  const visibleOrders = orders.slice((page - 1) * Number(pageSize), page * Number(pageSize));
   const counts = dashData?.counts ?? {};
 
   const handleRefresh = useCallback(() => {
@@ -386,17 +410,17 @@ export default function PurchaseOrders() {
       <div className="flex items-start justify-between gap-4 border-b pb-4">
         <div>
           <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
-            <ShoppingCart className="h-6 w-6 text-primary" /> Procurement
+            <ShoppingCart className="h-6 w-6 text-primary" /> Purchase orders
           </h1>
-          <p className="text-sm text-muted-foreground mt-0.5">Purchase orders and supplier management</p>
+          <p className="text-sm text-muted-foreground mt-0.5">Track supplier commitments from draft to delivery.</p>
         </div>
         {!selectedPO ? (
           <Button size="sm" className="gap-1.5 font-bold uppercase tracking-wide text-xs" onClick={() => setNewPOOpen(true)}>
-            <Plus className="h-3.5 w-3.5" /> New PO
+            <Plus className="h-3.5 w-3.5" /> New order
           </Button>
         ) : (
           <Button size="sm" variant="outline" className="gap-1.5 text-xs" onClick={() => setSelectedPO(null)}>
-            ← All Orders
+            ← Back to list
           </Button>
         )}
       </div>
@@ -430,7 +454,7 @@ export default function PurchaseOrders() {
               <Input placeholder="Search by reference or supplier…" value={search} onChange={e => setSearch(e.target.value)}
                 className="border-0 shadow-none focus-visible:ring-0 text-sm h-7" />
             </div>
-            <Select value={statusFilter} onValueChange={setStatusFilter}>
+            <Select value={statusFilter} onValueChange={(value) => { setStatusFilter(value); setPage(1); }}>
               <SelectTrigger className="w-36 h-9 text-sm">
                 <SelectValue placeholder="All statuses" />
               </SelectTrigger>
@@ -468,7 +492,7 @@ export default function PurchaseOrders() {
                         <TableCell key={j}><div className="h-4 bg-muted/60 rounded animate-pulse" /></TableCell>
                       ))}</TableRow>
                     ))
-                  ) : orders.length ? orders.map((po: any) => (
+                  ) : orders.length ? visibleOrders.map((po: any) => (
                     <TableRow key={po.id} className="hover:bg-muted/30 cursor-pointer" onClick={() => setSelectedPO(po)}>
                       <TableCell className="py-2.5 font-mono font-bold text-sm">{po.reference}</TableCell>
                       <TableCell className="py-2.5 text-sm">
@@ -491,7 +515,7 @@ export default function PurchaseOrders() {
                             <ShoppingCart className="h-10 w-10 text-muted-foreground/30 mx-auto" />
                             <div>No purchase orders yet.</div>
                             <Button size="sm" onClick={() => setNewPOOpen(true)}>
-                              <Plus className="h-3.5 w-3.5 mr-1.5" /> Create First PO
+                              <Plus className="h-3.5 w-3.5 mr-1.5" /> Create first order
                             </Button>
                           </div>
                         )}
@@ -502,6 +526,29 @@ export default function PurchaseOrders() {
               </Table>
             </CardContent>
           </Card>
+
+          {orders.length > 0 ? (
+            <div className="flex flex-col gap-3 rounded-lg border p-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="text-sm text-muted-foreground">
+                Showing page {page} of {totalPages} with {orders.length} purchase orders
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="text-sm text-muted-foreground">Rows</span>
+                <Select value={pageSize} onValueChange={(value) => { setPageSize(value); setPage(1); }}>
+                  <SelectTrigger className="w-24">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="10">10</SelectItem>
+                    <SelectItem value="25">25</SelectItem>
+                    <SelectItem value="50">50</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage(page - 1)}>Previous</Button>
+                <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage(page + 1)}>Next</Button>
+              </div>
+            </div>
+          ) : null}
         </>
       )}
 

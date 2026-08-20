@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useAuth } from '@/context/use-auth';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
@@ -19,6 +19,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
+import { Checkbox } from '@/components/ui/checkbox';
 import { RefreshCw, Layers, Globe, Zap, Link2, Plus, Pencil, Trash2 } from 'lucide-react';
 
 const BASE = '/api/platform';
@@ -49,9 +50,14 @@ const CATEGORY_STYLE: Record<string, string> = {
 const CATEGORY_LABEL: Record<string, string> = {
   core: 'Core', shared: 'Shared Services', vertical: 'Industry Vertical', integration: 'Integration',
 };
+const SCOPE_LABEL: Record<string, string> = {
+  organization: 'Organization',
+  hybrid: 'Hybrid',
+  platform_admin: 'Platform Admin',
+};
 
 const EMPTY = {
-  slug: '', name: '', category: 'shared', description: '', is_core: false, is_active: true,
+  slug: '', name: '', category: 'shared', scope: 'organization', description: '', is_core: false, is_active: true, industry_ids: [] as number[],
 };
 
 function ModuleDialog({ open, onClose, mod }: { open: boolean; onClose: () => void; mod?: any }) {
@@ -59,14 +65,22 @@ function ModuleDialog({ open, onClose, mod }: { open: boolean; onClose: () => vo
   const { toast } = useToast();
   const qc = useQueryClient();
   const isEdit = !!mod;
+  const { data: industriesData } = useQuery({
+    queryKey: ['module-industries'],
+    queryFn: () => api(token!, '/industries/?page_size=100'),
+    enabled: open && !!token,
+  });
+  const industries: any[] = industriesData?.results ?? [];
   const [form, setForm] = useState(() => mod ? {
     slug: mod.slug, name: mod.name, category: mod.category,
+    scope: mod.scope ?? 'organization',
     description: mod.description ?? '', is_core: mod.is_core, is_active: mod.is_active,
+    industry_ids: Array.isArray(mod.industries) ? mod.industries.map((industry: any) => industry.id) : [],
   } : { ...EMPTY });
 
   const mutation = useMutation({
     mutationFn: () => isEdit
-      ? api(token!, `/modules/${mod.id}/`, 'PATCH', { name: form.name, category: form.category, description: form.description, is_core: form.is_core, is_active: form.is_active })
+      ? api(token!, `/modules/${mod.id}/`, 'PATCH', { name: form.name, category: form.category, scope: form.scope, description: form.description, is_core: form.is_core, is_active: form.is_active, industry_ids: form.industry_ids })
       : api(token!, '/modules/', 'POST', { ...form }),
     onSuccess: () => {
       toast({ title: isEdit ? 'Module updated' : 'Module created' });
@@ -110,8 +124,44 @@ function ModuleDialog({ open, onClose, mod }: { open: boolean; onClose: () => vo
             </Select>
           </div>
           <div className="space-y-1.5">
+            <Label>Scope</Label>
+            <Select value={form.scope} onValueChange={v => setForm(p => ({ ...p, scope: v }))}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="organization">Organization</SelectItem>
+                <SelectItem value="hybrid">Hybrid</SelectItem>
+                <SelectItem value="platform_admin">Platform Admin</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-[11px] text-muted-foreground">Use Organization for subscribable ERP features, Hybrid for shared platform-plus-organization capabilities, and Platform Admin for control-center modules only.</p>
+          </div>
+          <div className="space-y-1.5">
             <Label>Description</Label>
             <Textarea value={form.description} onChange={set('description')} rows={2} placeholder="Short description of what this module provides." />
+          </div>
+          <div className="space-y-2">
+            <Label>Industries</Label>
+            <div className="grid gap-2 rounded-2xl border bg-muted/20 p-3 sm:grid-cols-2">
+              {industries.map((industry: any) => {
+                const checked = form.industry_ids.includes(industry.id);
+                return (
+                  <label key={industry.id} className="flex items-start gap-3 rounded-xl border bg-white px-3 py-3 text-sm cursor-pointer">
+                    <Checkbox
+                      checked={checked}
+                      onCheckedChange={(value) => setForm((current) => ({
+                        ...current,
+                        industry_ids: value
+                          ? [...current.industry_ids, industry.id]
+                          : current.industry_ids.filter((id: number) => id !== industry.id),
+                      }))}
+                    />
+                    <span>{industry.name}</span>
+                  </label>
+                );
+              })}
+              {industries.length === 0 ? <p className="text-sm text-muted-foreground">No industries configured yet.</p> : null}
+            </div>
+            <p className="text-[11px] text-muted-foreground">Assign modules to industries so onboarding, plans, and subscriptions can align correctly.</p>
           </div>
           <div className="flex gap-6">
             <label className="flex items-center gap-2 cursor-pointer">
@@ -147,6 +197,8 @@ export default function Modules() {
     queryKey: ['modules'],
     queryFn: () => api(token!, '/modules/?page_size=100'),
     enabled: !!token,
+    refetchInterval: 15000,
+    refetchOnWindowFocus: true,
   });
 
   const toggleMutation = useMutation({
@@ -169,6 +221,13 @@ export default function Modules() {
   const grouped: Record<string, any[]> = {};
   for (const m of modules) (grouped[m.category] ??= []).push(m);
   const categories = ['core', 'shared', 'vertical', 'integration'].filter(c => grouped[c]?.length);
+  const summary = useMemo(() => ({
+    total: modules.length,
+    active: modules.filter((mod) => mod.is_active).length,
+    core: modules.filter((mod) => mod.is_core).length,
+    liveTenants: modules.reduce((count, mod) => count + Number(mod.active_tenant_count ?? 0), 0),
+    planBindings: modules.reduce((count, mod) => count + Number(mod.plan_count ?? 0), 0),
+  }), [modules]);
 
   return (
     <div className="space-y-6">
@@ -183,6 +242,23 @@ export default function Modules() {
           <Button size="sm" variant="outline" onClick={() => refetch()}><RefreshCw className="h-3.5 w-3.5" /></Button>
           <Button size="sm" onClick={() => setShowNew(true)} className="gap-1.5"><Plus className="h-3.5 w-3.5" /> New Module</Button>
         </div>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        {[
+          ['Total', summary.total],
+          ['Active', summary.active],
+          ['Core', summary.core],
+          ['Live Tenants', summary.liveTenants],
+          ['Plan Links', summary.planBindings],
+        ].map(([label, value]) => (
+          <Card key={String(label)}>
+            <CardContent className="p-4">
+              <div className="text-xs font-bold uppercase tracking-wide text-muted-foreground">{label}</div>
+              <div className="mt-2 text-2xl font-semibold">{value}</div>
+            </CardContent>
+          </Card>
+        ))}
       </div>
 
       {isLoading ? (
@@ -201,16 +277,20 @@ export default function Modules() {
             <div className="flex items-center gap-2">
               {CATEGORY_ICON[cat]}
               <h2 className="text-xs font-bold uppercase tracking-widest text-muted-foreground">{CATEGORY_LABEL[cat]}</h2>
-              <Badge variant="secondary" className="text-[10px] h-4">{grouped[cat].length}</Badge>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-              {grouped[cat].map(mod => (
-                <Card key={mod.id} className={`border group ${CATEGORY_STYLE[cat] ?? ''} ${!mod.is_active ? 'opacity-55' : ''}`}>
+                    <Badge variant="secondary" className="text-[10px] h-4">{grouped[cat].length}</Badge>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                    {grouped[cat].map(mod => (
+                      <Card key={mod.id} className={`border group ${CATEGORY_STYLE[cat] ?? ''} ${!mod.is_active ? 'opacity-55' : ''}`}>
                   <CardHeader className="pb-2 pt-3 px-4">
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0 flex-1">
                         <p className="font-semibold text-sm leading-tight">{mod.name}</p>
                         <p className="text-[10px] font-mono text-muted-foreground mt-0.5">{mod.slug}</p>
+                        <p className="text-[10px] text-muted-foreground mt-1">{SCOPE_LABEL[mod.scope] ?? mod.scope}</p>
+                        <p className="mt-1 text-[10px] text-muted-foreground">
+                          {Number(mod.active_tenant_count ?? 0)} tenants · {Number(mod.plan_count ?? 0)} plans
+                        </p>
                       </div>
                       <div className="flex items-center gap-1 shrink-0">
                         {mod.is_core && (
@@ -246,6 +326,13 @@ export default function Modules() {
                   {mod.description && (
                     <CardContent className="pt-0 pb-3 px-4">
                       <p className="text-xs text-muted-foreground leading-relaxed">{mod.description}</p>
+                      {(mod.industries ?? []).length > 0 ? (
+                        <div className="mt-3 flex flex-wrap gap-1.5">
+                          {(mod.industries ?? []).map((industry: any) => (
+                            <Badge key={industry.id} variant="outline">{industry.name}</Badge>
+                          ))}
+                        </div>
+                      ) : null}
                     </CardContent>
                   )}
                 </Card>

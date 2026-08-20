@@ -71,14 +71,24 @@ class ReceivePaymentIdempotencyTests(TestCase):
     """
 
     def setUp(self):
+        from Platform_Core.models import Tenant, TenantUserProfile
+
         self.client = APIClient()
+        self.tenant = Tenant.objects.create(name="Test Tenant", code="test-tenant")
         self.user = User.objects.create_user(
             username="testop", password="pass", is_staff=True
+        )
+        TenantUserProfile.objects.create(
+            user=self.user,
+            tenant=self.tenant,
+            is_tenant_admin=True,
         )
         self.client.force_authenticate(user=self.user)
 
         base = _create_base_objects()
         self.tx = _make_completed_transaction(base["branch"], base["vehicle_type"])
+        self.tx.tenant = self.tenant
+        self.tx.save(update_fields=["tenant"])
 
     def _post_receive_payment(self, method="Cash", reference="REF001"):
         url = reverse("wb-transaction-receive-payment", kwargs={"pk": self.tx.pk})
@@ -112,11 +122,32 @@ class ReceivePaymentIdempotencyTests(TestCase):
         self.assertEqual(self.tx.payment_status, "Paid")
         self.assertEqual(self.tx.payment_mode, "Cash")  # first write wins
 
-    def test_pending_transaction_is_rejected_before_idempotency_check(self):
-        """A non-Completed transaction still returns 400 with the status error."""
+    def test_pending_transaction_can_receive_payment(self):
+        """An unpaid transaction can still be settled from the receive-payment action."""
         self.tx.status = "Pending"
         self.tx.save(update_fields=["status"])
 
         response = self._post_receive_payment()
-        self.assertEqual(response.status_code, 400)
-        self.assertIn("Only Completed", response.data["error"])
+        self.assertEqual(response.status_code, 200, response.data)
+        self.tx.refresh_from_db()
+        self.assertEqual(self.tx.payment_status, "Paid")
+
+    def test_debt_method_keeps_transaction_pending_and_invoice_outstanding(self):
+        """Debt should flag the transaction without falsely settling the linked invoice."""
+        from Platform_API.modules.payments.views import create_draft_invoice_for_transaction
+
+        invoice = create_draft_invoice_for_transaction(self.tx)
+        self.assertIsNotNone(invoice)
+        self.assertEqual(invoice.status, "draft")
+
+        response = self._post_receive_payment(method="Debt", reference="DEBT001")
+        self.assertEqual(response.status_code, 200, response.data)
+
+        self.tx.refresh_from_db()
+        invoice.refresh_from_db()
+
+        self.assertEqual(self.tx.payment_mode, "Debt")
+        self.assertEqual(self.tx.payment_status, "Pending")
+        self.assertEqual(invoice.status, "issued")
+        self.assertEqual(response.data["payment_status"], "Pending")
+        self.assertEqual(response.data["invoice_status"], "issued")

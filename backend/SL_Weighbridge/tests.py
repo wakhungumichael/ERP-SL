@@ -3,11 +3,11 @@
 
 #IMPORTS
 from django.core.files.storage import FileSystemStorage
-from .models import (Company, Branch, PrinterConfig, IndicatorConfig, Customer, VehicleType,
+from SL_Weighbridge.models import (Company, Branch, PrinterConfig, IndicatorConfig, Customer, VehicleType,
                      Vehicle, Currency, Item, Transaction, VehiclePresence, DiscrepancyReport, ConfigurationFile)
 from SL_Weighbridge.utils import capture_weight_from_indicator, print_receipt, get_printer_command
 from .management.commands.printer_commands import get_printer_command
-from .models import CameraConfig
+from SL_Weighbridge.models import CameraConfig
 from unfold.admin import ModelAdmin as UnfoldModelAdmin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.contrib.auth.admin import GroupAdmin as BaseGroupAdmin
@@ -30,7 +30,7 @@ from io import BytesIO
 import qrcode
 import datetime
 from django.utils.html import format_html
-from .utils import capture_weight_for_transaction  # Ensure this is imported
+from SL_Weighbridge.utils import capture_weight_for_transaction  # Ensure this is imported
 from django.contrib.auth.models import User  # Import if you need to reference the User model
 import csv
 from django.http import HttpResponse
@@ -43,14 +43,14 @@ from django.shortcuts import render
 from django.contrib import admin, messages
 from django.core.exceptions import ValidationError
 from django.shortcuts import redirect
-from .models import Transaction  # Ensure you import your Transaction model
+from SL_Weighbridge.models import Transaction  # Ensure you import your Transaction model
     
 from django.shortcuts import redirect
-from .models import Transaction  # Make sure to import your Transaction model
+from SL_Weighbridge.models import Transaction  # Make sure to import your Transaction model
 
 from django.utils.safestring import mark_safe
 from django.contrib import admin
-from .models import Transaction, Invoice
+from SL_Weighbridge.models import Transaction, Invoice
 from django.utils import timezone
 from datetime import timedelta
 from decimal import Decimal
@@ -63,7 +63,7 @@ from datetime import datetime  # Or import datetime module as shown above
 from django.contrib import admin
 from import_export import resources
 from import_export.admin import ImportExportModelAdmin
-from .models import Transaction
+from SL_Weighbridge.models import Transaction
 
 from django.contrib import admin, messages
 from django.utils import timezone
@@ -73,27 +73,45 @@ from django.contrib import admin
 from django.utils.safestring import mark_safe
 from django.urls import path
 from django.http import JsonResponse
-from .models import Transaction
-from .utils import capture_weight_for_transaction
+from SL_Weighbridge.models import Transaction
+from SL_Weighbridge.utils import capture_weight_for_transaction
 from django.forms.models import model_to_dict
+from django.contrib.admin.sites import AlreadyRegistered, NotRegistered
 
 
 
+
+
+def _safe_register(model):
+    def decorator(admin_class):
+        try:
+            admin.site.register(model, admin_class)
+        except AlreadyRegistered:
+            pass
+        return admin_class
+    return decorator
+
+
+def _safe_unregister(model):
+    try:
+        admin.site.unregister(model)
+    except NotRegistered:
+        pass
 
 
 # unregister - User,Group
-admin.site.unregister(User)
-admin.site.unregister(Group)
+_safe_unregister(User)
+_safe_unregister(Group)
 
 
 # User
-@admin.register(User)
+@_safe_register(User)
 class UserAdmin(BaseUserAdmin, UnfoldModelAdmin):
     pass
 
 # Group
 
-@admin.register(Group)
+@_safe_register(Group)
 class GroupAdmin(BaseGroupAdmin, UnfoldModelAdmin):
     pass
 
@@ -136,7 +154,7 @@ class TransactionAdminForm(forms.ModelForm):
 
 # Transaction
 
-@admin.register(Transaction)
+@_safe_register(Transaction)
 class TransactionAdmin(UnfoldModelAdmin) :
 
 
@@ -1147,11 +1165,11 @@ class TransactionAdmin(UnfoldModelAdmin) :
 
 from django.utils.html import format_html
 from django.contrib import admin
-from .models import VehiclePresence
+from SL_Weighbridge.models import VehiclePresence
 
 from django.utils.html import format_html
 
-@admin.register(VehiclePresence)
+@_safe_register(VehiclePresence)
 class VehiclePresenceAdmin(UnfoldModelAdmin):
     fieldsets = (
         ('Captured Information', {
@@ -1209,9 +1227,9 @@ class VehiclePresenceAdmin(UnfoldModelAdmin):
 
 from django.http import HttpResponse
 from django.contrib import admin
-from .models import DiscrepancyReport  # Make sure to replace 'yourapp' with your actual app name
+from SL_Weighbridge.models import DiscrepancyReport  # Make sure to replace 'yourapp' with your actual app name
 
-@admin.register(DiscrepancyReport)
+@_safe_register(DiscrepancyReport)
 class DiscrepancyReportAdmin(UnfoldModelAdmin):
     list_display = ('detected_weight', 'timestamp', 'image_preview', 'task_id')
     search_fields = ('detected_weight', 'timestamp', 'task_id')
@@ -1264,7 +1282,7 @@ class DiscrepancyReportAdmin(UnfoldModelAdmin):
 
 # Company
 
-@admin.register(Company)
+@_safe_register(Company)
 class CompanyAdmin(UnfoldModelAdmin):
     list_display = ('name', 'address', 'email', 'phone')
     search_fields = ('name', 'address', 'email', 'phone')
@@ -1273,7 +1291,7 @@ class CompanyAdmin(UnfoldModelAdmin):
 
 # PrinterConfig
 
-@admin.register(PrinterConfig)
+@_safe_register(PrinterConfig)
 class PrinterConfigAdmin(UnfoldModelAdmin):
     list_display = ('branch', 'name', 'printer_type')
     search_fields = ('branch', 'name', 'printer_type')
@@ -1282,7 +1300,7 @@ class PrinterConfigAdmin(UnfoldModelAdmin):
 
 # Branch
 
-@admin.register(Branch)
+@_safe_register(Branch)
 class BranchAdmin(UnfoldModelAdmin):
     list_display = ('company', 'name', 'address')
     search_fields = ('company', 'name', 'address')
@@ -1291,7 +1309,7 @@ class BranchAdmin(UnfoldModelAdmin):
 
 # IndicatorConfig
 
-@admin.register(IndicatorConfig)
+@_safe_register(IndicatorConfig)
 class IndicatorConfigAdmin(UnfoldModelAdmin):
     list_display = ('indicator_name', 'connection_type', 'port')
     search_fields = ('indicator_name', 'connection_type', 'port')
@@ -1300,7 +1318,7 @@ class IndicatorConfigAdmin(UnfoldModelAdmin):
 
 # Customer
 
-@admin.register(Customer)
+@_safe_register(Customer)
 class CustomerAdmin(UnfoldModelAdmin):
     list_display = ('name', 'phone_number', 'email','discounted','address')
     search_fields = ['name','phone_number']  # Assuming 'name' is a field in your Customer model
@@ -1322,7 +1340,7 @@ class CustomerAdmin(UnfoldModelAdmin):
 
 # Vehicle type
 
-@admin.register(VehicleType)
+@_safe_register(VehicleType)
 class VehicleTypeAdmin(UnfoldModelAdmin):
     list_display = ('name', 'description', 'charge', 'currency')
     search_fields = ('name', 'charge')
@@ -1345,7 +1363,7 @@ class VehicleTypeAdmin(UnfoldModelAdmin):
 
 # Vehicle
 
-@admin.register(Vehicle)
+@_safe_register(Vehicle)
 class VehicleAdmin(UnfoldModelAdmin):
     list_display = ('customer', 'vehicle_type', 'number_plate')
     search_fields = ['number_plate']  # Assuming 'name' is a field in your Customer model
@@ -1354,7 +1372,7 @@ class VehicleAdmin(UnfoldModelAdmin):
 
 # Currency
 
-@admin.register(Currency)
+@_safe_register(Currency)
 class CurrencyAdmin(UnfoldModelAdmin):
     list_display = ('name', 'code', 'symbol')
     list_filter = ('name', 'code', 'symbol')
@@ -1363,7 +1381,7 @@ class CurrencyAdmin(UnfoldModelAdmin):
 
 # Item
 
-@admin.register(Item)
+@_safe_register(Item)
 class ItemAdmin(UnfoldModelAdmin):
     list_display = ('name', 'description', 'currency')
     list_filter = ('name', 'currency')
@@ -1385,16 +1403,16 @@ class ItemAdmin(UnfoldModelAdmin):
 
 # Camera Config
 
-@admin.register(CameraConfig)
+@_safe_register(CameraConfig)
 class CameraConfigAdmin(UnfoldModelAdmin):
     list_display = ('connection_type', 'ip_address', 'port')
     list_filter = ('connection_type', 'ip_address', 'port')
     search_fields = ('connection_type', 'ip_address', 'port')
 
 
-from .models import CustomerVehicleTypeDiscount
+from SL_Weighbridge.models import CustomerVehicleTypeDiscount
 
-@admin.register(CustomerVehicleTypeDiscount)
+@_safe_register(CustomerVehicleTypeDiscount)
 class CustomerVehicleTypeDiscountAdmin(UnfoldModelAdmin):
     list_display = ('customer', 'vehicle_type', 'discounted_charge')  # Display these fields in the list view
     search_fields = ('customer__name', 'vehicle_type__name')  # Add search fields for easier navigation
@@ -1403,7 +1421,7 @@ class CustomerVehicleTypeDiscountAdmin(UnfoldModelAdmin):
 #admin.site.register(CustomerVehicleTypeDiscount, CustomerVehicleTypeDiscountAdmin)
 
 from django.contrib import admin
-from .models import Invoice, Transaction
+from SL_Weighbridge.models import Invoice, Transaction
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 from reportlab.platypus import Table, TableStyle
@@ -1414,9 +1432,10 @@ from django.http import HttpResponse
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle
 from reportlab.pdfgen import canvas
 from django.contrib import admin
-from .models import Invoice
+from django.contrib.admin.sites import AlreadyRegistered
+from SL_Weighbridge.models import Invoice
 
-@admin.register(Invoice)
+
 class InvoiceAdmin(UnfoldModelAdmin):
     list_display = ('invoice_number', 'transaction_list', 'total_amount', 'issued_date', 'due_date', 'status')
     search_fields = ('invoice_number', 'transaction__customer__name')
@@ -1530,7 +1549,12 @@ class InvoiceAdmin(UnfoldModelAdmin):
 
 
 
-# Register Models
-admin.site.register(ConfigurationFile)
+try:
+    admin.site.register(Invoice, InvoiceAdmin)
+except AlreadyRegistered:
+    pass
 
-
+try:
+    admin.site.register(ConfigurationFile)
+except AlreadyRegistered:
+    pass

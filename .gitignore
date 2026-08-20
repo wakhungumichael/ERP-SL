@@ -10,6 +10,7 @@ out-tsc
 
 # dependencies
 node_modules
+.pnpm-store
 
 # IDEs and editors
 /.idea
@@ -36,6 +37,32 @@ npm-debug.log
 yarn-error.log
 testem.log
 /typings
+/backups/*
+!/backups/.gitkeep
+backend/backups/*
+!backend/backups/.gitkeep
+
+# local environment and secrets
+.env
+.env.*
+!.env.example
+!.env.production.example
+backend/.env
+artifacts/erp-ui/.env
+
+# python
+__pycache__/
+*.py[cod]
+*.sqlite3
+db.sqlite3
+backend/db.sqlite3
+backend/test_db.sqlite3
+
+# user uploads and generated media
+backend/media/
+backend/staticfiles/
+backend/logos/
+backend/vehicle_images/
 
 # System Files
 .DS_Store

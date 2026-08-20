@@ -1,14 +1,39 @@
 import logging
+import csv
 from datetime import timedelta
+from decimal import Decimal
 
+from django.conf import settings
 from django.db import DatabaseError
+from django.db.models import Q
+from django.http import HttpResponse
 from django.utils import timezone
 from rest_framework import serializers, status
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from Platform_API.modules.mixins import (
+    NO_TENANT_ACCESS,
+    apply_tenant_filter,
+    resolve_user_tenant,
+)
 
 logger = logging.getLogger(__name__)
+
+try:
+    from Platform_Core.integrations import list_payment_gateway_capabilities
+    from Platform_Core.models import Tenant
+    from Platform_Core.accounting import assert_posting_allowed, sync_invoice_posting, sync_payment_posting
+    from Platform_Core.documents import render_invoice_document
+    from Platform_Core.platform import get_active_tenant_module_slugs
+except ImportError:
+    Tenant = None
+    list_payment_gateway_capabilities = None
+    assert_posting_allowed = None
+    sync_invoice_posting = None
+    sync_payment_posting = None
+    render_invoice_document = None
+    get_active_tenant_module_slugs = None
 
 try:
     from SL_Weighbridge.models import Invoice, InvoiceLine, Transaction, Customer, InvoiceEmailLog
@@ -22,6 +47,13 @@ try:
     HAS_PAYMENT_METHOD_MODEL = True
 except ImportError:
     HAS_PAYMENT_METHOD_MODEL = False
+
+try:
+    from SL_Weighbridge.models import Payment
+    HAS_PAYMENT_ENTRY_MODEL = True
+except ImportError:
+    Payment = None
+    HAS_PAYMENT_ENTRY_MODEL = False
 
 
 # ── Serializers ───────────────────────────────────────────────────────────────
@@ -127,11 +159,148 @@ def _serialize_invoice(inv, with_lines=False, with_transactions=False):
     return data
 
 
+def _resolve_payment_tenant(request):
+    resolved = resolve_user_tenant(request.user)
+    if resolved is not None and resolved is not NO_TENANT_ACCESS:
+        return resolved
+    if resolved is NO_TENANT_ACCESS:
+        return None
+
+    tenant_id = request.query_params.get("tenant_id")
+    tenant_code = request.query_params.get("tenant_code")
+    if request.user.is_superuser and Tenant is not None and (tenant_id or tenant_code):
+        lookup = {}
+        if tenant_id:
+            lookup["pk"] = tenant_id
+        else:
+            lookup["code"] = tenant_code
+        return Tenant.objects.filter(**lookup).first()
+
+    return None
+
+
+def _resolve_owner_billing_tenant():
+    if Tenant is None:
+        return None
+    owner_codes = [code for code in {getattr(settings, "DEFAULT_TENANT_CODE", ""), "siakora-labs"} if code]
+    if owner_codes:
+        tenant = Tenant.objects.filter(code__in=owner_codes, is_active=True).order_by("name").first()
+        if tenant is not None:
+            return tenant
+    return Tenant.objects.filter(is_active=True).order_by("name").first()
+
+
+def _scoped_customer_queryset(request):
+    resolved = resolve_user_tenant(request.user)
+    qs = Customer.objects.all()
+    if resolved is None:
+        return qs
+    if resolved is NO_TENANT_ACCESS:
+        if getattr(request.user, "is_staff", False):
+            return qs.filter(tenant__isnull=True)
+        return qs.none()
+    return qs.filter(
+        Q(tenant=resolved)
+        | Q(tenant__isnull=True)
+        | Q(tenant__isnull=True, transaction__tenant=resolved)
+    ).distinct()
+
+
+def _scoped_invoice_queryset(request, qs=None):
+    resolved = resolve_user_tenant(request.user)
+    if qs is None:
+        qs = Invoice.objects.all()
+    if resolved is None:
+        return qs
+    if resolved is NO_TENANT_ACCESS:
+        if getattr(request.user, "is_staff", False):
+            return qs.filter(tenant__isnull=True)
+        return qs.none()
+    return qs.filter(
+        Q(tenant=resolved)
+        | Q(tenant__isnull=True, customer__tenant=resolved)
+        | Q(tenant__isnull=True, transactions__tenant=resolved)
+    ).distinct()
+
+
+def reconcile_invoice_payment_state(invoice, *, persist=False):
+    """
+    Compute trustworthy paid/balance values for an invoice from real payment
+    evidence where available.
+
+    Priority:
+    1. Explicit Payment entries, if the deployment has that model.
+    2. Linked transaction payment states for transaction-backed invoices.
+    3. Invoice status fallback for modules that do not track granular payments.
+    """
+    total_amount = Decimal(str(getattr(invoice, "total_amount", 0) or 0))
+    paid_amount = Decimal("0.00")
+
+    if HAS_PAYMENT_ENTRY_MODEL and Payment is not None:
+        try:
+            successful_statuses = {"confirmed", "paid", "success", "completed"}
+            payment_total = Decimal("0.00")
+            for payment in Payment.objects.filter(invoice=invoice):
+                payment_status = (getattr(payment, "status", "") or "").strip().lower()
+                if not payment_status or payment_status in successful_statuses:
+                    payment_total += Decimal(str(getattr(payment, "amount", 0) or 0))
+            paid_amount = payment_total
+        except Exception:
+            paid_amount = Decimal("0.00")
+
+    if paid_amount <= 0:
+        try:
+            txs = list(invoice.transactions.all())
+        except Exception:
+            txs = []
+        if txs:
+            paid_amount = sum(
+                Decimal(str(getattr(tx, "charge", 0) or 0))
+                for tx in txs
+                if (getattr(tx, "payment_status", "") or "").strip() == "Paid"
+            )
+        elif (getattr(invoice, "status", "") or "").strip().lower() == "paid":
+            paid_amount = total_amount
+
+    paid_amount = min(max(paid_amount, Decimal("0.00")), total_amount)
+    balance_amount = max(total_amount - paid_amount, Decimal("0.00"))
+
+    current_status = (getattr(invoice, "status", "") or "").strip().lower()
+    due_date = getattr(invoice, "due_date", None)
+    is_overdue = bool(due_date and due_date < timezone.now().date())
+
+    if total_amount > 0 and balance_amount == Decimal("0.00"):
+        effective_status = "paid"
+    elif getattr(invoice, "issued_at", None) or current_status in {"issued", "overdue", "paid"}:
+        effective_status = "overdue" if is_overdue else "issued"
+    else:
+        effective_status = "draft"
+
+    if persist:
+        update_fields = []
+        if getattr(invoice, "status", None) != effective_status:
+            invoice.status = effective_status
+            update_fields.append("status")
+        if effective_status in {"issued", "paid"} and getattr(invoice, "issued_at", None) is None:
+            invoice.issued_at = timezone.now()
+            update_fields.append("issued_at")
+        if update_fields:
+            invoice.save(update_fields=update_fields)
+
+    return {
+        "total_amount": total_amount,
+        "paid_amount": paid_amount,
+        "balance_amount": balance_amount,
+        "status": effective_status,
+    }
+
+
 def create_draft_invoice_for_transaction(tx):
     """
     Create a draft invoice linked to a completed weighbridge transaction.
     Skips if:
     - payment models are not available
+    - the tenant does not have billing/invoicing enabled
     - the transaction already has an auto_invoice set
     - the transaction is already linked to any non-void Invoice via the M2M
     - the transaction charge is zero or negative (nothing to bill)
@@ -140,6 +309,11 @@ def create_draft_invoice_for_transaction(tx):
     try:
         if not HAS_PAYMENT_MODELS:
             return None
+        tenant = getattr(tx, "tenant", None)
+        if tenant is not None and get_active_tenant_module_slugs is not None:
+            active_module_slugs = get_active_tenant_module_slugs(tenant)
+            if active_module_slugs and not active_module_slugs.intersection({"billing", "invoicing"}):
+                return None
         # Skip if already invoiced via auto_invoice FK
         if getattr(tx, 'auto_invoice_id', None):
             return None
@@ -165,7 +339,7 @@ def create_draft_invoice_for_transaction(tx):
             source_module='weighbridge',
             source_id=tx.id,
             notes=f"Auto-generated for transaction TX-{tx.id:05d}",
-            tenant=getattr(tx, 'tenant', None),   # inherit tenant from transaction
+            tenant=tenant,   # inherit tenant from transaction
         )
         inv.transactions.add(tx)
 
@@ -206,15 +380,10 @@ class InvoiceListView(APIView):
         non-superusers (callers must use _apply_invoice_tenant_filter for
         proper deny-all behaviour in the profileless case).
         """
-        if request.user.is_superuser:
+        resolved = resolve_user_tenant(request.user)
+        if resolved is NO_TENANT_ACCESS:
             return None
-        try:
-            profile = request.user.tenant_profile
-            if profile and profile.tenant:
-                return profile.tenant
-        except Exception:
-            pass
-        return None
+        return resolved
 
     @staticmethod
     def _apply_invoice_tenant_filter(request, qs):
@@ -224,15 +393,7 @@ class InvoiceListView(APIView):
         - Non-superuser w/ profile → filtered by tenant FK
         - Non-superuser w/o profile → qs.none() (deny-all)
         """
-        if request.user.is_superuser:
-            return qs
-        try:
-            profile = request.user.tenant_profile
-            if profile and profile.tenant:
-                return qs.filter(tenant=profile.tenant)
-        except Exception:
-            pass
-        return qs.none()
+        return _scoped_invoice_queryset(request, qs)
 
     @staticmethod
     def _apply_transaction_tenant_filter(request, qs):
@@ -242,15 +403,14 @@ class InvoiceListView(APIView):
         - Non-superuser w/ profile → filtered by tenant FK
         - Non-superuser w/o profile → qs.none() (deny-all)
         """
-        if request.user.is_superuser:
+        resolved = resolve_user_tenant(request.user)
+        if resolved is None:
             return qs
-        try:
-            profile = request.user.tenant_profile
-            if profile and profile.tenant:
-                return qs.filter(tenant=profile.tenant)
-        except Exception:
-            pass
-        return qs.none()
+        if resolved is NO_TENANT_ACCESS:
+            if getattr(request.user, "is_staff", False):
+                return qs.filter(tenant__isnull=True)
+            return qs.none()
+        return qs.filter(tenant=resolved)
 
     def get(self, request):
         if not HAS_PAYMENT_MODELS:
@@ -305,7 +465,7 @@ class InvoiceListView(APIView):
             return Response({"error": "line_items must not be empty."}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            customer = Customer.objects.get(pk=customer_id)
+            customer = _scoped_customer_queryset(request).get(pk=customer_id)
         except Customer.DoesNotExist:
             return Response({"error": "Customer not found."}, status=status.HTTP_404_NOT_FOUND)
 
@@ -384,6 +544,24 @@ class InvoiceDetailView(APIView):
         return Response(_serialize_invoice(inv))
 
 
+class InvoiceDocumentView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+        if not HAS_PAYMENT_MODELS or render_invoice_document is None:
+            return Response({"error": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        try:
+            inv = InvoiceDetailView()._get_invoice(request, pk)
+        except Invoice.DoesNotExist:
+            return Response({"error": "Invoice not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        rendered = render_invoice_document(
+            inv,
+            request=request,
+        )
+        return HttpResponse(rendered.html, content_type="text/html; charset=utf-8")
+
+
 class IssueInvoiceView(APIView):
     """POST /api/payments/invoices/<pk>/issue/ — move draft → issued"""
     permission_classes = [IsAuthenticated]
@@ -403,11 +581,25 @@ class IssueInvoiceView(APIView):
                 {"error": f"Cannot issue invoice with status '{inv.status}'."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        if assert_posting_allowed is not None:
+            try:
+                assert_posting_allowed(
+                    tenant=getattr(inv, "tenant", None),
+                    posting_date=timezone.now(),
+                    source_label="invoice issue",
+                )
+            except ValueError as exc:
+                return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         inv.status    = "issued"
         inv.issued_at = timezone.now()
         if not inv.due_date:
             inv.due_date = (timezone.now() + timedelta(days=30)).date()
         inv.save(update_fields=["status", "issued_at", "due_date"])
+        if sync_invoice_posting is not None:
+            try:
+                sync_invoice_posting(inv)
+            except Exception:
+                logger.exception("Failed to sync accounting entry for invoice %s", inv.pk)
 
         # ── Email notification ────────────────────────────────────────────────
         # Send only when the customer has an email address. A missing/
@@ -477,7 +669,7 @@ class IssueInvoiceView(APIView):
                         success=_email_success,
                         failure_reason=_email_failure,
                     )
-            except DatabaseError as log_exc:
+            except Exception as log_exc:
                 logger.warning("Could not write InvoiceEmailLog for invoice %s: %s", inv.id, log_exc)
 
         return Response(_serialize_invoice(inv))
@@ -515,9 +707,15 @@ class ReceivePaymentView(APIView):
             inv = qs.get(pk=pk)
         except Invoice.DoesNotExist:
             return Response({"error": "Invoice not found."}, status=status.HTTP_404_NOT_FOUND)
-
-        inv.status = "paid"
-        inv.save(update_fields=["status"])
+        if assert_posting_allowed is not None:
+            try:
+                assert_posting_allowed(
+                    tenant=getattr(inv, "tenant", None),
+                    posting_date=timezone.now(),
+                    source_label="invoice payment",
+                )
+            except ValueError as exc:
+                return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
         # Mark linked transactions as paid
         try:
@@ -527,6 +725,25 @@ class ReceivePaymentView(APIView):
             )
         except Exception:
             pass
+
+        # For manual or tenantless legacy invoices with no granular payment rows,
+        # mark the invoice paid immediately when the receive-payment action succeeds.
+        inv.status = "paid"
+        if getattr(inv, "issued_at", None) is None:
+            inv.issued_at = timezone.now()
+        inv.save(update_fields=["status", "issued_at"])
+
+        reconciliation = reconcile_invoice_payment_state(inv, persist=True)
+        if sync_payment_posting is not None:
+            try:
+                sync_payment_posting(
+                    invoice=inv,
+                    payment_mode=payment_mode,
+                    amount=amount or reconciliation["paid_amount"] or inv.total_amount,
+                    reference=reference,
+                )
+            except Exception:
+                logger.exception("Failed to sync payment posting for invoice %s", inv.pk)
 
         # ── Persist payment-received audit log ────────────────────────────────
         # A DatabaseError here (e.g. DB constraint, connection drop) must never
@@ -550,6 +767,8 @@ class ReceivePaymentView(APIView):
             "payment_mode":   payment_mode,
             "reference":      reference,
             "invoice_status": inv.status,
+            "paid_amount":    float(reconciliation["paid_amount"]),
+            "balance_amount": float(reconciliation["balance_amount"]),
         })
 
 
@@ -564,14 +783,34 @@ class ConfirmPaymentView(APIView):
         try:
             qs  = InvoiceListView._apply_invoice_tenant_filter(request, Invoice.objects.all())
             inv = qs.get(pk=pk)
-            inv.status = "paid"
-            inv.save(update_fields=["status"])
+            if assert_posting_allowed is not None:
+                try:
+                    assert_posting_allowed(
+                        tenant=getattr(inv, "tenant", None),
+                        posting_date=timezone.now(),
+                        source_label="confirmed invoice payment",
+                    )
+                except ValueError as exc:
+                    return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+            reconciliation = reconcile_invoice_payment_state(inv, persist=True)
+            if sync_payment_posting is not None:
+                try:
+                    sync_payment_posting(
+                        invoice=inv,
+                        payment_mode=request.data.get("payment_mode", "Card"),
+                        amount=confirmed_amount or reconciliation["paid_amount"] or inv.total_amount,
+                        reference=gateway_reference,
+                    )
+                except Exception:
+                    logger.exception("Failed to sync confirmed payment posting for invoice %s", inv.pk)
             return Response({
                 "success":           True,
                 "message":           f"Payment confirmed for invoice {pk}.",
                 "gateway_reference": gateway_reference,
                 "confirmed_amount":  confirmed_amount,
                 "invoice_status":    inv.status,
+                "paid_amount":       float(reconciliation["paid_amount"]),
+                "balance_amount":    float(reconciliation["balance_amount"]),
             })
         except Invoice.DoesNotExist:
             return Response({"error": "Invoice not found."}, status=status.HTTP_404_NOT_FOUND)
@@ -593,40 +832,113 @@ class PaymentMethodListView(APIView):
         return Response([
             {"id": 1, "name": "Cash",         "is_active": True},
             {"id": 2, "name": "Mpesa",         "is_active": True},
-            {"id": 3, "name": "Bank Deposit",  "is_active": True},
-            {"id": 4, "name": "Debt",          "is_active": True},
+            {"id": 3, "name": "Card",          "is_active": True},
+            {"id": 4, "name": "Bank Transfer", "is_active": True},
+            {"id": 5, "name": "Debt",          "is_active": True},
         ])
 
 
 class PaymentEntriesView(APIView):
     permission_classes = [IsAuthenticated]
 
+    def _build_entries(self, request):
+        invoice_qs = InvoiceListView._apply_invoice_tenant_filter(
+            request, Invoice.objects.select_related("customer").prefetch_related("transactions")
+        )
+
+        entries = []
+        seen_invoice_ids = set()
+
+        for inv in invoice_qs.filter(status="paid").order_by("-issued_date"):
+            related_paid_tx = list(inv.transactions.filter(payment_status="Paid").order_by("-updated_at", "-id"))
+            latest_paid_tx = related_paid_tx[0] if related_paid_tx else None
+            entries.append(
+                {
+                    "entry_type": "invoice",
+                    "id": inv.id,
+                    "invoice_id": inv.id,
+                    "invoice_number": inv.invoice_number or f"INV-{inv.id:04d}",
+                    "transaction_id": latest_paid_tx.id if latest_paid_tx else None,
+                    "customer_name": getattr(getattr(inv, "customer", None), "name", "") or "",
+                    "amount": float(getattr(inv, "total_amount", 0) or 0),
+                    "currency": getattr(inv, "currency", "KES") or "KES",
+                    "payment_mode": getattr(latest_paid_tx, "payment_mode", "") if latest_paid_tx else "",
+                    "reference": "",
+                    "source_module": getattr(inv, "source_module", "manual") or "manual",
+                    "created_at": (
+                        latest_paid_tx.updated_at.isoformat()
+                        if latest_paid_tx and getattr(latest_paid_tx, "updated_at", None)
+                        else (inv.issued_at or inv.issued_date).isoformat() if (inv.issued_at or inv.issued_date) else None
+                    ),
+                }
+            )
+            seen_invoice_ids.add(inv.id)
+
+        direct_tx_qs = InvoiceListView._apply_transaction_tenant_filter(
+            request,
+            Transaction.objects.select_related("customer")
+            .filter(payment_status="Paid")
+            .exclude(auto_invoice_id__isnull=False)
+            .order_by("-updated_at", "-id"),
+        )
+
+        for tx in direct_tx_qs:
+            entries.append(
+                {
+                    "entry_type": "transaction",
+                    "id": tx.id,
+                    "invoice_id": None,
+                    "invoice_number": "",
+                    "transaction_id": tx.id,
+                    "customer_name": getattr(getattr(tx, "customer", None), "name", "") or "",
+                    "amount": float(getattr(tx, "charge", 0) or 0),
+                    "currency": getattr(getattr(tx, "tenant", None), "default_currency", "KES") or "KES",
+                    "payment_mode": getattr(tx, "payment_mode", "") or "",
+                    "reference": "",
+                    "source_module": "weighbridge",
+                    "created_at": tx.updated_at.isoformat() if getattr(tx, "updated_at", None) else None,
+                }
+            )
+
+        entries.sort(key=lambda row: row.get("created_at") or "", reverse=True)
+        return entries
+
     def get(self, request):
         if HAS_PAYMENT_MODELS:
             try:
-                from SL_Weighbridge.models import Payment
-                # Scope to payments on invoices belonging to the requesting user's tenant.
-                # Profileless non-superusers: deny-all (resolved by _apply_invoice_tenant_filter
-                # on the invoice FK side).
-                invoice_qs = InvoiceListView._apply_invoice_tenant_filter(
-                    request, Invoice.objects.all()
-                )
-                qs = Payment.objects.filter(
-                    invoice__in=invoice_qs
-                ).select_related("invoice").order_by("-created_at")
-                data = [
-                    {
-                        "id":           p.id,
-                        "invoice_id":   p.invoice_id,
-                        "amount":       float(getattr(p, "amount", 0) or 0),
-                        "payment_mode": getattr(p, "payment_mode", ""),
-                        "reference":    getattr(p, "reference", ""),
-                        "created_at":   p.created_at.isoformat() if hasattr(p, "created_at") else None,
-                    }
-                    for p in qs[:100]
-                ]
-                return Response({"count": len(data), "results": data})
-            except (ImportError, Exception):
+                data = self._build_entries(request)
+                if request.query_params.get("export") == "csv":
+                    response = HttpResponse(content_type="text/csv")
+                    response["Content-Disposition"] = 'attachment; filename="payments_export.csv"'
+                    writer = csv.writer(response)
+                    writer.writerow([
+                        "Entry Type",
+                        "Invoice Number",
+                        "Transaction ID",
+                        "Customer",
+                        "Amount",
+                        "Currency",
+                        "Payment Mode",
+                        "Reference",
+                        "Source Module",
+                        "Recorded At",
+                    ])
+                    for row in data:
+                        writer.writerow([
+                            row.get("entry_type", ""),
+                            row.get("invoice_number", ""),
+                            row.get("transaction_id", ""),
+                            row.get("customer_name", ""),
+                            row.get("amount", 0),
+                            row.get("currency", "KES"),
+                            row.get("payment_mode", ""),
+                            row.get("reference", ""),
+                            row.get("source_module", ""),
+                            row.get("created_at", ""),
+                        ])
+                    return response
+                return Response({"count": len(data), "results": data[:500]})
+            except Exception:
                 pass
         return Response({"count": 0, "results": []})
 
@@ -635,28 +947,45 @@ class ProviderCapabilitiesView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        tenant = _resolve_payment_tenant(request)
+        payment_scope = request.query_params.get("payment_scope")
+        resolved_via_owner = False
         capabilities = []
-        try:
-            from Platform_Core.models import IntegrationEndpoint
-            for gw in IntegrationEndpoint.objects.filter(integration_type="payment_gateway", is_active=True):
-                capabilities.append({
-                    "id":                   gw.id,
-                    "name":                 gw.name,
-                    "provider":             gw.provider,
-                    "transport":            gw.transport,
-                    "is_primary":           gw.is_primary,
-                    "supports_callback":    True,
-                    "supports_initiation":  True,
-                })
-        except Exception:
-            pass
-        if not capabilities:
-            capabilities = [
-                {"id": None, "name": "Cash",        "provider": "manual",    "is_primary": True,  "supports_callback": False},
-                {"id": None, "name": "Mpesa",        "provider": "safaricom", "is_primary": False, "supports_callback": True},
-                {"id": None, "name": "Bank Deposit", "provider": "manual",    "is_primary": False, "supports_callback": False},
-            ]
-        return Response({"capabilities": capabilities})
+
+        if payment_scope == "saas_billing":
+            owner_tenant = _resolve_owner_billing_tenant()
+            if owner_tenant is not None and (tenant is None or owner_tenant.id != tenant.id):
+                tenant = owner_tenant
+                resolved_via_owner = True
+
+        if list_payment_gateway_capabilities is not None and tenant is not None:
+            try:
+                capabilities = list_payment_gateway_capabilities(
+                    tenant=tenant,
+                    payment_scope=payment_scope,
+                )
+            except Exception:
+                capabilities = []
+
+        response = {
+            "capabilities": capabilities,
+            "tenant": {
+                "id": tenant.id,
+                "name": tenant.name,
+                "code": tenant.code,
+            } if tenant is not None else None,
+            "requested_scope": payment_scope or None,
+            "segregated": True,
+            "resolved_via_owner": resolved_via_owner,
+        }
+
+        if request.user.is_superuser and tenant is None:
+            response["message"] = (
+                "Select a tenant to inspect payment providers. "
+                "Pass ?tenant_id=<id> or ?tenant_code=<code>."
+            )
+
+        return Response(response)
 
 
 class PaymentSummaryView(APIView):
@@ -830,22 +1159,16 @@ class CustomerListForInvoiceView(APIView):
     def get(self, request):
         if not HAS_PAYMENT_MODELS:
             return Response({"results": []})
-        # NOTE: SL_Weighbridge.Customer has no tenant FK, so full row-level isolation
-        # requires adding one (tracked separately).  For now we scope the list to
-        # customers who have at least one transaction belonging to this tenant.
-        # Profileless non-superusers get qs.none() from _apply_transaction_tenant_filter,
-        # so their tenant_customer_ids will be empty and they see no customers.
-        if request.user.is_superuser:
-            qs = Customer.objects.all().order_by("name")
-        else:
-            tenant_customer_ids = (
-                InvoiceListView._apply_transaction_tenant_filter(
-                    request, Transaction.objects.all()
-                )
-                .values_list("customer_id", flat=True)
-                .distinct()
-            )
-            qs = Customer.objects.filter(pk__in=tenant_customer_ids).order_by("name")
+        resolved = resolve_user_tenant(request.user)
+        qs = Customer.objects.all()
+        if resolved is NO_TENANT_ACCESS:
+            qs = qs.none()
+        elif resolved is not None:
+            qs = qs.filter(
+                Q(tenant=resolved)
+                | Q(tenant__isnull=True, transaction__tenant=resolved)
+            ).distinct()
+        qs = qs.order_by("name")
         if q := request.query_params.get("search"):
             qs = qs.filter(name__icontains=q)
         data = [{"id": c.id, "name": c.name, "email": c.email or "", "phone": c.phone_number or ""} for c in qs[:200]]
@@ -1047,7 +1370,7 @@ class DebtConsolidateView(APIView):
                         success=_email_success,
                         failure_reason=_email_failure,
                     )
-            except DatabaseError as log_exc:
+            except Exception as log_exc:
                 logger.warning("Could not write InvoiceEmailLog for invoice %s: %s", inv.id, log_exc)
 
         return Response({

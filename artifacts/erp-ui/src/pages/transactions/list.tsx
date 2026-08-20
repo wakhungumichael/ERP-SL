@@ -1,6 +1,7 @@
 import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import { Link } from 'wouter';
 import { useAuth } from '@/context/use-auth';
+import { ERP_BRANCHES_QUERY_KEY, fetchErpBranches } from '@/lib/branches';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -8,7 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import {
   Plus, Search, Scale, ChevronLeft, ChevronRight,
   ChevronsLeft, ChevronsRight, Printer, SlidersHorizontal, CalendarRange, X,
-  GripVertical, Download, CheckCircle2, RotateCcw, DollarSign,
+  GripVertical, Download,
 } from 'lucide-react';
 import { CAN_APPROVE, CAN_RECALL, CAN_EXPORT, CAN_RECEIVE_PAYMENT } from '@/lib/roles';
 import { Label } from '@/components/ui/label';
@@ -20,6 +21,7 @@ import {
 } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
 import { Badge } from '@/components/ui/badge';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   Popover, PopoverContent, PopoverTrigger,
 } from '@/components/ui/popover';
@@ -28,10 +30,16 @@ import { ReceiptDialog, type ReceiptTransaction } from '@/components/weighbridge
 // ── Types & constants ─────────────────────────────────────────────────────────
 
 const STATUS_COLORS: Record<string, string> = {
-  Pending:   'bg-orange-100 text-orange-800 border-orange-200 dark:bg-orange-900/30 dark:text-orange-400',
+  Draft:     'bg-slate-100 text-slate-800 border-slate-200 dark:bg-slate-900/30 dark:text-slate-300',
+  Recalled:  'bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-900/30 dark:text-amber-400',
+  Rejected:  'bg-rose-100 text-rose-800 border-rose-200 dark:bg-rose-900/30 dark:text-rose-400',
   Completed: 'bg-emerald-100 text-emerald-800 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-400',
   Paid:      'bg-emerald-100 text-emerald-800 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-400',
 };
+
+function transactionOperatorName(t: any) {
+  return t.actor_display_name || t.actor_username || t.operator || '—';
+}
 
 interface ColDef {
   key: string;
@@ -88,13 +96,24 @@ const ALL_COLUMNS: ColDef[] = [
   {
     key: 'payment_status', label: 'Payment',
     render: t => (
-      <span className={`px-2 py-0.5 rounded text-[10px] font-bold tracking-widest uppercase border ${STATUS_COLORS[t.payment_status] ?? 'bg-orange-100 text-orange-800 border-orange-200'}`}>
-        {t.payment_status || 'Pending'}
-      </span>
+      <div className="space-y-1 text-left">
+        <span className={`inline-flex px-2 py-0.5 rounded text-[10px] font-bold tracking-widest uppercase border ${STATUS_COLORS[t.payment_status] ?? 'bg-orange-100 text-orange-800 border-orange-200'}`}>
+          {t.payment_status || 'Pending'}
+        </span>
+        {(t.payment_reference || t.payment_received_at) ? (
+          <div className="text-[10px] text-muted-foreground">
+            {t.payment_reference ? <span className="font-mono">{t.payment_reference}</span> : null}
+            {t.payment_reference && t.payment_received_at ? ' · ' : null}
+            {t.payment_received_at ? new Date(t.payment_received_at).toLocaleString('en-KE', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false }) : null}
+          </div>
+        ) : null}
+      </div>
     ),
     align: 'center',
   },
-  { key: 'operator', label: 'Operator', render: t => <span className="text-xs text-muted-foreground">{t.operator || '—'}</span> },
+  { key: 'operator', label: 'Operator', render: t => <span className="text-xs text-muted-foreground">{transactionOperatorName(t)}</span> },
+  { key: 'driver_name', label: 'Driver', render: t => <span className="text-xs text-muted-foreground">{t.driver_name || '—'}</span> },
+  { key: 'driver_phone', label: 'Driver Phone', render: t => <span className="font-mono text-xs text-muted-foreground whitespace-nowrap">{t.driver_phone || '—'}</span> },
   { key: 'gross_weight_date', label: 'First Wt. Date', render: t => <span className="text-xs font-mono text-muted-foreground whitespace-nowrap">{t.gross_weight_date ? new Date(t.gross_weight_date).toLocaleString('en-KE', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false }) : '—'}</span> },
   { key: 'tare_weight_date',  label: 'Second Wt. Date', render: t => <span className="text-xs font-mono text-muted-foreground whitespace-nowrap">{t.tare_weight_date  ? new Date(t.tare_weight_date).toLocaleString('en-KE',  { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false }) : '—'}</span> },
   { key: 'created_at', label: 'Created', render: t => <span className="text-xs font-mono text-muted-foreground whitespace-nowrap">{t.created_at ? new Date(t.created_at).toLocaleString('en-KE', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false }) : '—'}</span> },
@@ -103,6 +122,25 @@ const ALL_COLUMNS: ColDef[] = [
 
 const DEFAULT_COL_KEYS = ['id','vehicle_plate','customer_name','item_name','weight_type','net_weight','charge','status','payment_status'];
 const STORAGE_COL_KEY = 'sl-erp-tx-columns';
+const BULK_ACTIONS = [
+  { value: 'approve', label: 'Approve Selected' },
+  { value: 'recall', label: 'Recall Selected' },
+  { value: 'receive_payment', label: 'Receive Payment' },
+] as const;
+
+type BulkAction = (typeof BULK_ACTIONS)[number]['value'];
+
+function canApproveTransaction(t: any) {
+  return ['Draft', 'Recalled'].includes(t.status) && !t.approval_status && !!t.manual_weight_capture;
+}
+
+function canRecallTransaction(t: any) {
+  return t.status === 'Completed';
+}
+
+function canReceivePaymentTransaction(t: any) {
+  return t.payment_status !== 'Paid' && t.status !== 'Rejected';
+}
 
 function loadColumns(): string[] {
   try {
@@ -388,111 +426,7 @@ function Pagination({
   );
 }
 
-// ── Quick Pay Popover ─────────────────────────────────────────────────────────
-
 const PAYMENT_METHODS = ['Cash', 'Mpesa', 'Bank Deposit', 'Debt'];
-
-function QuickPayPopover({
-  tx, token, onPaid,
-}: {
-  tx: any;
-  token: string | null;
-  onPaid: () => void;
-}) {
-  const [open, setOpen]         = useState(false);
-  const [method, setMethod]     = useState('Cash');
-  const [reference, setReference] = useState('');
-  const [loading, setLoading]   = useState(false);
-  const { toast }               = useToast();
-
-  const canPay = tx.status === 'Completed' && tx.payment_status !== 'Paid';
-  if (!canPay) return null;
-
-  const handleConfirm = async () => {
-    setLoading(true);
-    try {
-      const res = await fetch(
-        `/api/commercial-weighbridge/transactions/${tx.id}/receive-payment/`,
-        {
-          method: 'POST',
-          headers: { Authorization: `Token ${token}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ method, reference }),
-        },
-      );
-      const body = await res.json();
-      if (!res.ok) throw new Error(body?.error ?? res.statusText);
-      toast({ title: 'Payment recorded', description: `TX-${String(tx.id).padStart(5, '0')} marked as Paid.` });
-      setOpen(false);
-      setReference('');
-      setMethod('Cash');
-      onPaid();
-    } catch (err: any) {
-      toast({ title: 'Payment failed', description: err?.message, variant: 'destructive' });
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <button
-          title="Receive payment"
-          className="inline-flex items-center justify-center h-6 w-6 rounded hover:bg-emerald-50 text-emerald-600 hover:text-emerald-700 dark:hover:bg-emerald-900/20 transition-colors"
-        >
-          <DollarSign className="h-3.5 w-3.5" />
-        </button>
-      </PopoverTrigger>
-      <PopoverContent className="w-64 p-4" align="end" side="left">
-        <div className="text-xs font-bold uppercase tracking-widest text-muted-foreground mb-3">
-          Receive Payment — TX-{String(tx.id).padStart(5, '0')}
-        </div>
-        <div className="space-y-3">
-          <div className="space-y-1.5">
-            <Label className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Method</Label>
-            <Select value={method} onValueChange={setMethod}>
-              <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                {PAYMENT_METHODS.map(m => <SelectItem key={m} value={m} className="text-xs">{m}</SelectItem>)}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Reference</Label>
-            <Input
-              placeholder="e.g. MPE-12345"
-              value={reference}
-              onChange={e => setReference(e.target.value)}
-              className="h-8 text-xs font-mono"
-              onKeyDown={e => { if (e.key === 'Enter') handleConfirm(); }}
-            />
-          </div>
-          <div className="flex gap-2 pt-1">
-            <Button
-              variant="outline"
-              size="sm"
-              className="flex-1 text-xs h-8"
-              onClick={() => setOpen(false)}
-            >
-              Cancel
-            </Button>
-            <Button
-              size="sm"
-              className="flex-1 text-xs h-8 bg-emerald-600 hover:bg-emerald-700 text-white gap-1"
-              disabled={loading}
-              onClick={handleConfirm}
-            >
-              {loading
-                ? <span className="h-3 w-3 rounded-full border-2 border-white border-t-transparent animate-spin" />
-                : <CheckCircle2 className="h-3 w-3" />}
-              {loading ? 'Saving…' : 'Confirm'}
-            </Button>
-          </div>
-        </div>
-      </PopoverContent>
-    </Popover>
-  );
-}
 
 // ── Main component ────────────────────────────────────────────────────────────
 
@@ -510,7 +444,7 @@ export default function TransactionsList() {
 
   // Pagination
   const [page, setPage]         = useState(1);
-  const [pageSize, setPageSize] = useState(25);
+  const [pageSize, setPageSize] = useState(10);
 
   // Column picker
   const [visibleKeys, setVisibleKeys] = useState<string[]>(loadColumns);
@@ -523,8 +457,11 @@ export default function TransactionsList() {
   const [receiptTx, setReceiptTx]     = useState<ReceiptTransaction | null>(null);
   const [receiptOpen, setReceiptOpen] = useState(false);
 
-  // Row-level workflow actions (approve / recall)
-  const [actingOn, setActingOn] = useState<Record<number, 'approve' | 'recall' | null>>({});
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [bulkAction, setBulkAction] = useState<BulkAction | ''>('');
+  const [bulkRunning, setBulkRunning] = useState(false);
+  const [paymentMethod, setPaymentMethod] = useState('Cash');
+  const [paymentReference, setPaymentReference] = useState('');
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -582,32 +519,130 @@ export default function TransactionsList() {
   const rows: any[]  = data?.results ?? [];
   const totalCount   = data?.count ?? 0;
   const visibleCols  = ALL_COLUMNS.filter(c => visibleKeys.includes(c.key)).sort((a, b) => visibleKeys.indexOf(a.key) - visibleKeys.indexOf(b.key));
+  const selectedRowSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+  const selectedRows = useMemo(() => rows.filter((row) => selectedRowSet.has(row.id)), [rows, selectedRowSet]);
+  const allPageIds = useMemo(() => rows.map((row) => row.id), [rows]);
+  const allPageSelected = allPageIds.length > 0 && allPageIds.every((id) => selectedRowSet.has(id));
+  const somePageSelected = allPageIds.some((id) => selectedRowSet.has(id));
 
   const hasDateFilter = dateFilter.dateFrom || dateFilter.dateTo;
   const activeFilterCount = [status, paymentStatus, weightType, hasDateFilter ? '1' : ''].filter(Boolean).length;
 
-  // ── Workflow actions (defined after params so closure is safe) ────────────────
+  const eligibleRowsByAction = useMemo(() => ({
+    approve: selectedRows.filter((row) => CAN_APPROVE.includes(role) && canApproveTransaction(row)),
+    recall: selectedRows.filter((row) => CAN_RECALL.includes(role) && canRecallTransaction(row)),
+    receive_payment: selectedRows.filter((row) => CAN_RECEIVE_PAYMENT.includes(role) && canReceivePaymentTransaction(row)),
+  }), [role, selectedRows]);
 
-  const runAction = useCallback(async (txId: number, action: 'approve' | 'recall') => {
-    setActingOn(prev => ({ ...prev, [txId]: action }));
-    try {
-      const res = await fetch(`/api/commercial-weighbridge/transactions/${txId}/${action}/`, {
-        method: 'POST',
-        headers: { Authorization: `Token ${token}`, 'Content-Type': 'application/json' },
-      });
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(body?.error ?? res.statusText);
-      toast({
-        title: action === 'approve' ? 'Transaction approved' : 'Transaction recalled',
-        description: action === 'approve' ? 'Record marked approved.' : 'Transaction set back to Pending.',
-      });
-      queryClient.invalidateQueries({ queryKey: ['transactions'] });
-    } catch (err: any) {
-      toast({ title: 'Action failed', description: err?.message, variant: 'destructive' });
-    } finally {
-      setActingOn(prev => { const n = { ...prev }; delete n[txId]; return n; });
+  // ── Bulk actions ─────────────────────────────────────────────────────────────
+
+  const requestTransactionAction = useCallback(async (txId: number, action: 'approve' | 'recall') => {
+    const res = await fetch(`/api/commercial-weighbridge/transactions/${txId}/${action}/`, {
+      method: 'POST',
+      headers: { Authorization: `Token ${token}`, 'Content-Type': 'application/json' },
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body?.error ?? res.statusText);
+    return body;
+  }, [token]);
+
+  const requestReceivePayment = useCallback(async (txId: number, method: string, reference: string) => {
+    const res = await fetch(`/api/commercial-weighbridge/transactions/${txId}/receive-payment/`, {
+      method: 'POST',
+      headers: { Authorization: `Token ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ method, reference }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body?.error ?? res.statusText);
+    return body;
+  }, [token]);
+
+  useEffect(() => {
+    setSelectedIds((current) => current.filter((id) => allPageIds.includes(id)));
+  }, [allPageIds]);
+
+  const toggleSelected = useCallback((txId: number, checked: boolean) => {
+    setSelectedIds((current) => (
+      checked ? Array.from(new Set([...current, txId])) : current.filter((id) => id !== txId)
+    ));
+  }, []);
+
+  const toggleSelectAllPage = useCallback((checked: boolean) => {
+    setSelectedIds(checked ? allPageIds : []);
+  }, [allPageIds]);
+
+  const canBulkRun = useMemo(() => {
+    if (!bulkAction || selectedRows.length === 0) return false;
+    if (bulkAction === 'approve') return eligibleRowsByAction.approve.length > 0;
+    if (bulkAction === 'recall') return eligibleRowsByAction.recall.length > 0;
+    if (bulkAction === 'receive_payment') return eligibleRowsByAction.receive_payment.length > 0;
+    return false;
+  }, [bulkAction, eligibleRowsByAction, selectedRows.length]);
+
+  useEffect(() => {
+    if (!bulkAction) return;
+    if (!canBulkRun) {
+      setBulkAction('');
     }
-  }, [token, toast, queryClient]);
+  }, [bulkAction, canBulkRun]);
+
+  const runBulkAction = useCallback(async () => {
+    if (!bulkAction || selectedRows.length === 0) return;
+
+    const eligibleRows =
+      bulkAction === 'approve'
+        ? eligibleRowsByAction.approve
+        : bulkAction === 'recall'
+          ? eligibleRowsByAction.recall
+          : eligibleRowsByAction.receive_payment;
+
+    if (eligibleRows.length === 0) {
+      toast({ title: 'No eligible records', description: 'The selected transactions do not match the chosen action.', variant: 'destructive' });
+      return;
+    }
+
+    setBulkRunning(true);
+    let successCount = 0;
+    let failedCount = 0;
+
+    for (const row of eligibleRows) {
+      try {
+        if (bulkAction === 'receive_payment') {
+          await requestReceivePayment(row.id, paymentMethod, paymentReference);
+        } else {
+          await requestTransactionAction(row.id, bulkAction);
+        }
+        successCount += 1;
+      } catch {
+        failedCount += 1;
+      }
+    }
+
+    setBulkRunning(false);
+    setSelectedIds([]);
+    setBulkAction('');
+    setPaymentMethod('Cash');
+    setPaymentReference('');
+    queryClient.invalidateQueries({ queryKey: ['transactions'] });
+
+    if (failedCount === 0) {
+      toast({
+        title: bulkAction === 'approve'
+          ? 'Bulk approval completed'
+          : bulkAction === 'recall'
+            ? 'Bulk recall completed'
+            : 'Bulk payment update completed',
+        description: `${successCount} transaction${successCount === 1 ? '' : 's'} updated successfully.`,
+      });
+      return;
+    }
+
+    toast({
+      title: 'Bulk action completed with exceptions',
+      description: `${successCount} succeeded, ${failedCount} failed.`,
+      variant: failedCount === eligibleRows.length ? 'destructive' : undefined,
+    });
+  }, [bulkAction, eligibleRowsByAction, paymentMethod, paymentReference, queryClient, requestReceivePayment, requestTransactionAction, selectedRows.length, toast]);
 
   const handleExportCSV = useCallback(() => {
     const qs = new URLSearchParams(params);
@@ -642,14 +677,9 @@ export default function TransactionsList() {
           )}
         </div>
         <div className="flex flex-wrap gap-2 shrink-0">
-          <Link href="/weighbridge/first-weight">
+          <Link href="/weighbridge/weighment-entry">
             <Button variant="outline" size="sm" className="gap-1.5 font-bold uppercase tracking-wide text-xs">
-              <Scale className="h-3.5 w-3.5" /> First Weight
-            </Button>
-          </Link>
-          <Link href="/weighbridge/second-weight">
-            <Button variant="outline" size="sm" className="gap-1.5 font-bold uppercase tracking-wide text-xs">
-              <Scale className="h-3.5 w-3.5" /> Second Weight
+              <Scale className="h-3.5 w-3.5" /> Weighment Entry
             </Button>
           </Link>
           {CAN_EXPORT.includes(role) && (
@@ -657,7 +687,6 @@ export default function TransactionsList() {
               <Download className="h-3.5 w-3.5" /> Export CSV
             </Button>
           )}
-          <CreateTransactionDialog onCreated={() => setPage(1)} />
         </div>
       </div>
 
@@ -673,7 +702,9 @@ export default function TransactionsList() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="__all__" className="text-xs">All Statuses</SelectItem>
-                <SelectItem value="Pending" className="text-xs">Pending</SelectItem>
+                <SelectItem value="Draft" className="text-xs">Draft</SelectItem>
+                <SelectItem value="Recalled" className="text-xs">Recalled</SelectItem>
+                <SelectItem value="Rejected" className="text-xs">Rejected</SelectItem>
                 <SelectItem value="Completed" className="text-xs">Completed</SelectItem>
               </SelectContent>
             </Select>
@@ -711,7 +742,7 @@ export default function TransactionsList() {
           <div className="flex items-center gap-2 px-3 py-2 flex-1 min-w-[200px]">
             <Search className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
             <input
-              placeholder="Search plate, customer, operator…"
+              placeholder="Search plate, customer, operator, driver…"
               value={search}
               onChange={e => setSearch(e.target.value)}
               className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground/60 font-mono"
@@ -774,104 +805,163 @@ export default function TransactionsList() {
         )}
       </div>
 
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-card px-4 py-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="text-xs font-medium text-muted-foreground">
+            {selectedIds.length > 0 ? `${selectedIds.length} selected on this page` : 'Select rows to run bulk actions'}
+          </div>
+          {selectedIds.length > 0 && (
+            <div className="text-xs text-muted-foreground">
+              {eligibleRowsByAction.approve.length > 0 ? `${eligibleRowsByAction.approve.length} approvable` : null}
+              {eligibleRowsByAction.approve.length > 0 && (eligibleRowsByAction.recall.length > 0 || eligibleRowsByAction.receive_payment.length > 0) ? ' · ' : null}
+              {eligibleRowsByAction.recall.length > 0 ? `${eligibleRowsByAction.recall.length} recallable` : null}
+              {eligibleRowsByAction.recall.length > 0 && eligibleRowsByAction.receive_payment.length > 0 ? ' · ' : null}
+              {eligibleRowsByAction.receive_payment.length > 0 ? `${eligibleRowsByAction.receive_payment.length} payable` : null}
+              {eligibleRowsByAction.approve.length === 0 && eligibleRowsByAction.recall.length === 0 && eligibleRowsByAction.receive_payment.length === 0 ? 'No valid actions for the current selection' : null}
+            </div>
+          )}
+          {selectedIds.length > 0 && (
+            <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={() => setSelectedIds([])}>
+              Clear Selection
+            </Button>
+          )}
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Select value={bulkAction || '__none__'} onValueChange={(value) => setBulkAction(value === '__none__' ? '' : (value as BulkAction))}>
+            <SelectTrigger className="h-8 w-[190px] text-xs">
+              <SelectValue placeholder="Choose bulk action" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__none__" className="text-xs">Choose bulk action</SelectItem>
+              {BULK_ACTIONS.filter((action) => (
+                (action.value === 'approve' && CAN_APPROVE.includes(role))
+                || (action.value === 'recall' && CAN_RECALL.includes(role))
+                || (action.value === 'receive_payment' && CAN_RECEIVE_PAYMENT.includes(role))
+              )).map((action) => (
+                <SelectItem
+                  key={action.value}
+                  value={action.value}
+                  className="text-xs"
+                  disabled={
+                    action.value === 'approve'
+                      ? eligibleRowsByAction.approve.length === 0
+                      : action.value === 'recall'
+                        ? eligibleRowsByAction.recall.length === 0
+                        : eligibleRowsByAction.receive_payment.length === 0
+                  }
+                >
+                  {action.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {bulkAction === 'receive_payment' && (
+            <>
+              <Select value={paymentMethod} onValueChange={setPaymentMethod}>
+                <SelectTrigger className="h-8 w-[150px] text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {PAYMENT_METHODS.map((method) => (
+                    <SelectItem key={method} value={method} className="text-xs">{method}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Input
+                value={paymentReference}
+                onChange={(e) => setPaymentReference(e.target.value)}
+                placeholder="Reference"
+                className="h-8 w-[160px] text-xs font-mono"
+              />
+            </>
+          )}
+          <Button size="sm" className="h-8 text-xs font-bold uppercase tracking-wide" disabled={!canBulkRun || bulkRunning} onClick={runBulkAction}>
+            {bulkRunning ? 'Running…' : 'Run'}
+          </Button>
+        </div>
+      </div>
+
       {/* Table */}
       <div className="bg-card rounded-lg border shadow-sm overflow-hidden">
         <div className="overflow-x-auto">
-          <Table>
+          <Table className="min-w-max">
             <TableHeader>
               <TableRow className="bg-muted/50 hover:bg-muted/50">
+                <TableHead className="h-11 w-12 px-3 text-center align-middle">
+                  <Checkbox
+                    checked={allPageSelected ? true : somePageSelected ? 'indeterminate' : false}
+                    onCheckedChange={(checked) => toggleSelectAllPage(checked === true)}
+                    aria-label="Select all rows on this page"
+                  />
+                </TableHead>
                 {visibleCols.map(col => (
                   <TableHead
                     key={col.key}
                     style={{ width: col.width }}
-                    className={`text-[10px] font-bold uppercase tracking-widest whitespace-nowrap ${col.align === 'right' ? 'text-right' : col.align === 'center' ? 'text-center' : ''}`}
+                    className={`h-11 px-3 align-middle text-[10px] font-bold uppercase tracking-widest whitespace-nowrap ${col.align === 'right' ? 'text-right' : col.align === 'center' ? 'text-center' : 'text-left'}`}
                   >
                     {col.label}
                   </TableHead>
                 ))}
                 {/* Action columns always visible */}
-                <TableHead className="w-8 text-center text-[10px] font-bold uppercase tracking-widest">Rcpt</TableHead>
-                {(CAN_APPROVE.includes(role) || CAN_RECALL.includes(role) || CAN_RECEIVE_PAYMENT.includes(role)) && (
-                  <TableHead className="text-center text-[10px] font-bold uppercase tracking-widest whitespace-nowrap">Actions</TableHead>
-                )}
+                <TableHead className="h-11 w-12 px-2 text-center align-middle text-[10px] font-bold uppercase tracking-widest">Rcpt</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {isLoading ? (
                 Array.from({ length: pageSize > 10 ? 8 : 5 }).map((_, i) => (
                   <TableRow key={i}>
+                    <TableCell className="px-3 py-3 align-middle" />
                     {visibleCols.map(c => (
-                      <TableCell key={c.key}>
+                      <TableCell key={c.key} className="px-3 py-3 align-middle">
                         <div className="h-4 bg-muted/60 rounded animate-pulse" style={{ width: c.width ? parseInt(c.width) - 8 : 80 }} />
                       </TableCell>
                     ))}
-                    <TableCell />
+                    <TableCell className="px-2 py-3 align-middle" />
                   </TableRow>
                 ))
               ) : rows.length ? (
                 rows.map(t => (
                   <TableRow key={t.id} className="hover:bg-muted/30 transition-colors">
+                    <TableCell className="px-3 py-2.5 text-center align-middle">
+                      <Checkbox
+                        checked={selectedRowSet.has(t.id)}
+                        onCheckedChange={(checked) => toggleSelected(t.id, checked === true)}
+                        aria-label={`Select transaction ${t.id}`}
+                      />
+                    </TableCell>
                     {visibleCols.map(col => (
                       <TableCell
                         key={col.key}
-                        className={`py-2 ${col.align === 'right' ? 'text-right' : col.align === 'center' ? 'text-center' : ''}`}
+                        className={`px-3 py-2.5 align-middle ${col.align === 'right' ? 'text-right' : col.align === 'center' ? 'text-center' : 'text-left'}`}
                       >
                         {col.render(t)}
                       </TableCell>
                     ))}
                     {/* Receipt */}
-                    <TableCell className="text-center py-2">
+                    <TableCell className="px-2 py-2.5 text-center align-middle">
+                      {(() => {
+                        const canPrintReceipt = t.payment_status === 'Paid' || t.payment_mode === 'Debt';
+                        return (
                       <button
                         onClick={() => { setReceiptTx(t); setReceiptOpen(true); }}
                         title="Print receipt"
-                        className="inline-flex items-center justify-center h-6 w-6 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                        disabled={!canPrintReceipt}
+                        className="inline-flex items-center justify-center h-6 w-6 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors disabled:opacity-30 disabled:hover:bg-transparent"
                       >
                         <Printer className="h-3.5 w-3.5" />
                       </button>
+                        );
+                      })()}
                     </TableCell>
-                    {/* Workflow + payment actions */}
-                    {(CAN_APPROVE.includes(role) || CAN_RECALL.includes(role) || CAN_RECEIVE_PAYMENT.includes(role)) && (
-                      <TableCell className="text-center py-2">
-                        <div className="flex items-center justify-center gap-1">
-                          {CAN_APPROVE.includes(role) && !t.approval_status && t.status === 'Pending' && (
-                            <button
-                              onClick={() => runAction(t.id, 'approve')}
-                              disabled={!!actingOn[t.id]}
-                              title="Approve manual weight"
-                              className="inline-flex items-center justify-center h-6 w-6 rounded hover:bg-emerald-50 text-emerald-600 hover:text-emerald-700 dark:hover:bg-emerald-900/20 transition-colors disabled:opacity-40"
-                            >
-                              {actingOn[t.id] === 'approve'
-                                ? <span className="h-3 w-3 rounded-full border-2 border-emerald-500 border-t-transparent animate-spin inline-block" />
-                                : <CheckCircle2 className="h-3.5 w-3.5" />}
-                            </button>
-                          )}
-                          {CAN_RECALL.includes(role) && t.status === 'Completed' && (
-                            <button
-                              onClick={() => runAction(t.id, 'recall')}
-                              disabled={!!actingOn[t.id]}
-                              title="Recall transaction"
-                              className="inline-flex items-center justify-center h-6 w-6 rounded hover:bg-amber-50 text-amber-600 hover:text-amber-700 dark:hover:bg-amber-900/20 transition-colors disabled:opacity-40"
-                            >
-                              {actingOn[t.id] === 'recall'
-                                ? <span className="h-3 w-3 rounded-full border-2 border-amber-500 border-t-transparent animate-spin inline-block" />
-                                : <RotateCcw className="h-3.5 w-3.5" />}
-                            </button>
-                          )}
-                          {CAN_RECEIVE_PAYMENT.includes(role) && (
-                            <QuickPayPopover
-                              tx={t}
-                              token={token}
-                              onPaid={() => queryClient.invalidateQueries({ queryKey: ['transactions'] })}
-                            />
-                          )}
-                        </div>
-                      </TableCell>
-                    )}
                   </TableRow>
                 ))
               ) : (
                 <TableRow>
-                  <TableCell colSpan={visibleCols.length + 1} className="text-center py-16 font-mono text-sm text-muted-foreground">
+                  <TableCell
+                    colSpan={visibleCols.length + 2}
+                    className="px-3 py-16 text-center font-mono text-sm text-muted-foreground"
+                  >
                     No matching transaction records.
                   </TableCell>
                 </TableRow>
@@ -910,6 +1000,7 @@ function CreateTransactionDialog({ onCreated }: { onCreated?: () => void }) {
   const queryClient = useQueryClient();
 
   const [branchId, setBranchId]         = useState('');
+  const [operationTypeId, setOperationTypeId] = useState('');
   const [customerId, setCustomerId]     = useState('');
   const [vehicleId, setVehicleId]       = useState('');
   const [itemId, setItemId]             = useState('');
@@ -929,7 +1020,8 @@ function CreateTransactionDialog({ onCreated }: { onCreated?: () => void }) {
     return Array.isArray(json) ? json : json?.results ?? [];
   };
 
-  const { data: branches = [] }  = useQuery({ queryKey: ['dlg-branches'], queryFn: () => fetchList('/api/commercial-weighbridge/branches/'), enabled: open });
+  const { data: branches = [] }  = useQuery({ queryKey: ERP_BRANCHES_QUERY_KEY, queryFn: () => fetchErpBranches(token!), enabled: open && !!token });
+  const { data: operationTypes = [] } = useQuery({ queryKey: ['dlg-operation-types'], queryFn: () => fetchList('/api/commercial-weighbridge/weighing-operation-types/'), enabled: open });
   const { data: customers = [] } = useQuery({ queryKey: ['dlg-customers'], queryFn: () => fetchList('/api/commercial-weighbridge/customers/?search='), enabled: open });
   const { data: vehicles = [] }  = useQuery({ queryKey: ['dlg-vehicles', customerId], queryFn: () => fetchList(`/api/commercial-weighbridge/vehicles/${customerId ? `?customer_id=${customerId}` : ''}`), enabled: open && !!customerId });
   const { data: itemsRaw }       = useQuery({ queryKey: ['dlg-items'], queryFn: () => fetchList('/api/commercial-weighbridge/items/'), enabled: open });
@@ -937,7 +1029,7 @@ function CreateTransactionDialog({ onCreated }: { onCreated?: () => void }) {
 
   const reset = () => {
     setBranchId(''); setCustomerId(''); setVehicleId(''); setItemId('');
-    setVehicleTypeId(''); setWeightType('First Weight'); setGrossWeight('');
+    setVehicleTypeId(''); setOperationTypeId(''); setWeightType('First Weight'); setGrossWeight('');
     setDestination(''); setPaymentMode('Cash'); setPaymentStatus('Pending');
     setManualCapture(false); setWeightReason('');
   };
@@ -954,6 +1046,7 @@ function CreateTransactionDialog({ onCreated }: { onCreated?: () => void }) {
       weight_type: weightType, payment_mode: paymentMode, payment_status: paymentStatus,
       destination, manual_weight_capture: manualCapture,
     };
+    if (operationTypeId) payload.operation_type = +operationTypeId;
     if (itemId)          payload.item         = +itemId;
     if (vehicleTypeId)   payload.vehicle_type = +vehicleTypeId;
     if (grossWeight)     payload.gross_weight = +grossWeight;
@@ -991,17 +1084,21 @@ function CreateTransactionDialog({ onCreated }: { onCreated?: () => void }) {
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4 pt-2">
 
-          {/* Weight type toggle */}
+          {/* Operation type */}
           <div className="space-y-1.5">
-            <label className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Weight Type</label>
-            <div className="flex rounded-md overflow-hidden border border-border">
-              {(['First Weight', 'Second Weight'] as const).map(wt => (
-                <button key={wt} type="button" onClick={() => setWeightType(wt)}
-                  className={`flex-1 py-2 text-xs font-bold uppercase tracking-wide transition-colors ${weightType === wt ? 'bg-primary text-primary-foreground' : 'bg-card text-muted-foreground hover:bg-muted'}`}>
-                  {wt}
-                </button>
-              ))}
-            </div>
+            <label className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Operation Type</label>
+            <Select value={operationTypeId} onValueChange={v => {
+              setOperationTypeId(v);
+              const selected = (operationTypes as any[]).find((row: any) => String(row.id) === v);
+              setWeightType((selected?.legacy_weight_type ?? 'First Weight') as 'First Weight' | 'Second Weight');
+            }}>
+              <SelectTrigger><SelectValue placeholder="Select operation type…" /></SelectTrigger>
+              <SelectContent>
+                {(operationTypes as any[]).filter((row: any) => row.is_active).map((row: any) => (
+                  <SelectItem key={row.id} value={String(row.id)}>{row.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
 
           {/* Branch */}

@@ -7,12 +7,19 @@ import { AuthProvider } from '@/context/auth-context';
 
 import { useAuth } from '@/context/use-auth';
 import type { AppRole } from '@/lib/roles';
+import { CAN_VIEW_REPORTS_WORKSPACE } from '@/lib/roles';
 import Login from '@/pages/login';
+import LandingPage from '@/pages/landing';
+import MarketingAppsPage from '@/pages/marketing-apps';
+import MarketingPricingPage from '@/pages/marketing-pricing';
+import MarketingStoriesPage from '@/pages/marketing-stories';
+import MarketingAboutPage from '@/pages/marketing-about';
+import PrivacyPolicyPage from '@/pages/privacy-policy';
 import Dashboard from '@/pages/dashboard';
+import WeighbridgeOverview from '@/pages/weighbridge/overview';
 import TransactionsList from '@/pages/transactions/list';
 import TransactionDetail from '@/pages/transactions/detail';
-import FirstWeight from '@/pages/weighbridge/first-weight';
-import SecondWeight from '@/pages/weighbridge/second-weight';
+import WeighmentEntryPage from '@/pages/weighbridge/weighment-entry';
 import CustomersList from '@/pages/customers/list';
 import VehiclesList from '@/pages/vehicles/list';
 import LiveWeight from '@/pages/live-weight';
@@ -26,8 +33,14 @@ import People from '@/pages/crm/people';
 import Suppliers from '@/pages/crm/suppliers';
 import Opportunities from '@/pages/crm/opportunities';
 import FollowUps from '@/pages/crm/follow-ups';
+import TicketingOverview from '@/pages/ticketing/overview';
+import TicketingQueue from '@/pages/ticketing/queue';
+import TicketingForms from '@/pages/ticketing/forms';
+import TicketingAutomation from '@/pages/ticketing/automation';
+import TicketingSettings from '@/pages/ticketing/settings';
 import Tenants from '@/pages/platform/tenants';
-import Users from '@/pages/platform/users';
+import BillingCenter from '@/pages/platform/billing';
+import Industries from '@/pages/platform/industries';
 import Roles from '@/pages/platform/roles';
 import Modules from '@/pages/platform/modules';
 import Plans from '@/pages/platform/plans';
@@ -35,31 +48,50 @@ import Subscriptions from '@/pages/platform/subscriptions';
 import Licenses from '@/pages/platform/licenses';
 import Integrations from '@/pages/platform/integrations';
 import Workspace from '@/pages/platform/workspace';
-import CompanySettings from '@/pages/platform/company-settings';
+import WorkflowCenter from '@/pages/platform/workflows';
+import Backups from '@/pages/platform/backups';
+import OrganizationSettings from '@/pages/platform/company-settings';
+import AuditLogsPage from '@/pages/platform/audit-logs';
 import WeighbridgeSettings from '@/pages/weighbridge/settings';
 import OverweightLog from '@/pages/weighbridge/overweight-log';
 import Discrepancies from '@/pages/weighbridge/discrepancies';
 import ReportsDashboard from '@/pages/reports/dashboard';
 import HRStaff from '@/pages/hr/staff';
 import PurchaseOrders from '@/pages/procurement/purchase-orders';
+import ProcurementRequisitions from '@/pages/procurement/requisitions';
+import ProcurementApprovalRules from '@/pages/procurement/approval-rules';
+import GoodsReceiptsPage from '@/pages/procurement/receipts';
+import BudgetingOverview from '@/pages/budgeting/overview';
+import InventoryOverview from '@/pages/inventory/overview';
+import InventoryStock from '@/pages/inventory/stock';
+import InventoryWarehouses from '@/pages/inventory/warehouses';
+import InventoryMovements from '@/pages/inventory/movements';
+import ManufacturingOverview from '@/pages/industry/manufacturing-overview';
+import RetailOverview from '@/pages/industry/retail-overview';
+import ServicesOverview from '@/pages/industry/services-overview';
 import NotFound from '@/pages/not-found';
 
-// ── Sales & Payments ──────────────────────────────────────────────────────────
+// ── Sales ─────────────────────────────────────────────────────────────────────
 import SalesEstimates from '@/pages/sales/estimates';
 import SalesInvoices from '@/pages/sales/invoices';
 import SalesRecurring from '@/pages/sales/recurring';
 import SalesStatements from '@/pages/sales/statements';
 import SalesCustomers from '@/pages/sales/customers';
 import SalesProducts from '@/pages/sales/products';
+import SalesOrders from '@/pages/sales/orders';
 
-// ── Purchases ─────────────────────────────────────────────────────────────────
+// ── Procurement legacy pages ──────────────────────────────────────────────────
 import PurchaseBills from '@/pages/purchases/bills';
+import PaymentQueuePage from '@/pages/purchases/payment-queue';
 import PurchaseVendors from '@/pages/purchases/vendors';
 import PurchaseProducts from '@/pages/purchases/products';
 
-// ── Accounting ────────────────────────────────────────────────────────────────
+// ── Finance legacy pages ──────────────────────────────────────────────────────
 import ChartOfAccounts from '@/pages/accounting/chart-of-accounts';
 import AccountingTransactions from '@/pages/accounting/transactions';
+import AccountingTransactionDetail from '@/pages/accounting/transaction-detail';
+import AccountingPostingRules from '@/pages/accounting/posting-rules';
+import AccountingReports from '@/pages/accounting/reports';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -70,7 +102,13 @@ const queryClient = new QueryClient({
 /** Route-level guard: renders children only if the user holds one of `allowedRoles`. */
 function RoleGuard({ allowedRoles, children }: { allowedRoles: AppRole[]; children: React.ReactNode }) {
   const { role, isLoading } = useAuth();
-  if (isLoading) return null;
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-full min-h-[240px] text-sm text-muted-foreground">
+        Loading access…
+      </div>
+    );
+  }
   if (!allowedRoles.includes(role)) {
     return (
       <div className="flex flex-col items-center justify-center h-full p-12 text-center gap-3">
@@ -83,17 +121,88 @@ function RoleGuard({ allowedRoles, children }: { allowedRoles: AppRole[]; childr
 }
 
 function Router() {
+  const { token, user, role, isLoading } = useAuth();
+
+  const homeContent = (() => {
+    if (token && isLoading) {
+      return (
+        <div className="flex min-h-screen items-center justify-center text-sm text-muted-foreground">
+          Loading workspace…
+        </div>
+      );
+    }
+
+    if (token && user) {
+      return role === 'superadmin'
+        ? <Shell><BillingCenter /></Shell>
+        : <Shell><Dashboard /></Shell>;
+    }
+
+    return <LandingPage />;
+  })();
+
   return (
     <Switch>
-      <Route path="/login" component={Login} />
+      <Route path="/landing/:tenantCode/apps">
+        {params => <MarketingAppsPage tenantCode={params.tenantCode} />}
+      </Route>
+      <Route path="/landing/:tenantCode/pricing">
+        {params => <MarketingPricingPage tenantCode={params.tenantCode} />}
+      </Route>
+      <Route path="/landing/:tenantCode/stories">
+        {params => <MarketingStoriesPage tenantCode={params.tenantCode} />}
+      </Route>
+      <Route path="/landing/:tenantCode/about">
+        {params => <MarketingAboutPage tenantCode={params.tenantCode} />}
+      </Route>
+      <Route path="/landing/:tenantCode/privacy">
+        {params => <PrivacyPolicyPage tenantCode={params.tenantCode} />}
+      </Route>
+      <Route path="/landing/:tenantCode">
+        {params => <LandingPage tenantCode={params.tenantCode} />}
+      </Route>
+      <Route path="/landing/apps">
+        <MarketingAppsPage />
+      </Route>
+      <Route path="/landing/pricing">
+        <MarketingPricingPage />
+      </Route>
+      <Route path="/landing/stories">
+        <MarketingStoriesPage />
+      </Route>
+      <Route path="/landing/about">
+        <MarketingAboutPage />
+      </Route>
+      <Route path="/landing/privacy">
+        <PrivacyPolicyPage />
+      </Route>
+      <Route path="/landing">
+        <LandingPage />
+      </Route>
+      <Route path="/login/:tenantCode">
+        <Login />
+      </Route>
+      <Route path="/login">
+        <Login />
+      </Route>
+      <Route path="/privacy">
+        <PrivacyPolicyPage />
+      </Route>
       <Route path="/">
-        <Shell><Dashboard /></Shell>
+        {homeContent}
       </Route>
       <Route path="/dashboard">
-        <Shell><Dashboard /></Shell>
+        <Shell>
+          <RoleGuard allowedRoles={['superadmin', 'tenant_admin', 'finance', 'operator']}>
+            {role === 'superadmin' ? <BillingCenter /> : <Dashboard />}
+          </RoleGuard>
+        </Shell>
       </Route>
 
       {/* Weighbridge */}
+      <Route path="/weighbridge/overview">
+        <Shell><WeighbridgeOverview /></Shell>
+      </Route>
       <Route path="/weighbridge/transactions">
         <Shell><TransactionsList /></Shell>
       </Route>
@@ -101,10 +210,16 @@ function Router() {
         {params => <Shell><TransactionDetail id={params.id} /></Shell>}
       </Route>
       <Route path="/weighbridge/first-weight">
-        <Shell><FirstWeight /></Shell>
+        <Shell><WeighmentEntryPage preferredFlow="first" /></Shell>
       </Route>
       <Route path="/weighbridge/second-weight">
-        <Shell><SecondWeight /></Shell>
+        <Shell><WeighmentEntryPage preferredFlow="second" /></Shell>
+      </Route>
+      <Route path="/weighbridge/weighment-entry">
+        <Shell><WeighmentEntryPage /></Shell>
+      </Route>
+      <Route path="/weighbridge/weight-capture">
+        <Shell><WeighmentEntryPage /></Shell>
       </Route>
       <Route path="/weighbridge/customers">
         <Shell><CustomersList /></Shell>
@@ -125,12 +240,15 @@ function Router() {
         <Shell><Discrepancies /></Shell>
       </Route>
 
-      {/* Sales & Payments */}
+      {/* Sales */}
       <Route path="/sales/estimates">
         <Shell><SalesEstimates /></Shell>
       </Route>
       <Route path="/sales/invoices">
         <Shell><SalesInvoices /></Shell>
+      </Route>
+      <Route path="/sales/orders">
+        <Shell><SalesOrders /></Shell>
       </Route>
       <Route path="/sales/recurring">
         <Shell><SalesRecurring /></Shell>
@@ -145,9 +263,18 @@ function Router() {
         <Shell><SalesProducts /></Shell>
       </Route>
 
-      {/* Purchases */}
+      {/* Purchases legacy paths */}
+      <Route path="/procurement/bills">
+        <Shell><PurchaseBills /></Shell>
+      </Route>
+      <Route path="/procurement/payment-queue">
+        <Shell><PaymentQueuePage /></Shell>
+      </Route>
       <Route path="/purchases/bills">
         <Shell><PurchaseBills /></Shell>
+      </Route>
+      <Route path="/purchases/payment-queue">
+        <Shell><PaymentQueuePage /></Shell>
       </Route>
       <Route path="/purchases/vendors">
         <Shell><PurchaseVendors /></Shell>
@@ -156,15 +283,56 @@ function Router() {
         <Shell><PurchaseProducts /></Shell>
       </Route>
 
-      {/* Accounting */}
+      {/* Accounting legacy paths */}
       <Route path="/accounting/dashboard">
         <Shell><AccountingDashboard /></Shell>
+      </Route>
+      <Route path="/accounting/reports">
+        <Shell><AccountingReports /></Shell>
       </Route>
       <Route path="/accounting/chart-of-accounts">
         <Shell><ChartOfAccounts /></Shell>
       </Route>
       <Route path="/accounting/transactions">
         <Shell><AccountingTransactions /></Shell>
+      </Route>
+      <Route path="/accounting/transactions/:id">
+        {params => <Shell><AccountingTransactionDetail id={params.id} /></Shell>}
+      </Route>
+      <Route path="/accounting/posting-rules">
+        <Shell><AccountingPostingRules /></Shell>
+      </Route>
+
+      {/* Finance canonical paths */}
+      <Route path="/finance/overview">
+        <Shell><AccountingDashboard /></Shell>
+      </Route>
+      <Route path="/finance/reports">
+        <Shell><AccountingReports /></Shell>
+      </Route>
+      <Route path="/finance/chart-of-accounts">
+        <Shell><ChartOfAccounts /></Shell>
+      </Route>
+      <Route path="/finance/transactions">
+        <Shell><AccountingTransactions /></Shell>
+      </Route>
+      <Route path="/finance/transactions/:id">
+        {params => <Shell><AccountingTransactionDetail id={params.id} /></Shell>}
+      </Route>
+      <Route path="/finance/posting-rules">
+        <Shell><AccountingPostingRules /></Shell>
+      </Route>
+      <Route path="/finance/receivables">
+        <Shell><SalesInvoices /></Shell>
+      </Route>
+      <Route path="/finance/payables">
+        <Shell><PurchaseBills /></Shell>
+      </Route>
+      <Route path="/finance/payment-methods">
+        <Shell><PaymentMethods /></Shell>
+      </Route>
+      <Route path="/finance/budgets">
+        <Shell><BudgetingOverview /></Shell>
       </Route>
 
       {/* Legacy Payments & Finance routes — keep for backward compat */}
@@ -186,18 +354,55 @@ function Router() {
       <Route path="/crm/opportunities"><Shell><Opportunities /></Shell></Route>
       <Route path="/crm/follow-ups"><Shell><FollowUps /></Shell></Route>
 
+      {/* Ticketing */}
+      <Route path="/ticketing/overview"><Shell><TicketingOverview /></Shell></Route>
+      <Route path="/ticketing/queue"><Shell><TicketingQueue /></Shell></Route>
+      <Route path="/ticketing/forms"><Shell><TicketingForms /></Shell></Route>
+      <Route path="/ticketing/automation"><Shell><TicketingAutomation /></Shell></Route>
+      <Route path="/ticketing/settings"><Shell><TicketingSettings /></Shell></Route>
+
       {/* Reports */}
-      <Route path="/reports/dashboard"><Shell><ReportsDashboard /></Shell></Route>
+      <Route path="/weighbridge/reports">
+        <Shell><RoleGuard allowedRoles={CAN_VIEW_REPORTS_WORKSPACE}><ReportsDashboard /></RoleGuard></Shell>
+      </Route>
+      <Route path="/reports/dashboard">
+        <Shell><RoleGuard allowedRoles={CAN_VIEW_REPORTS_WORKSPACE}><ReportsDashboard /></RoleGuard></Shell>
+      </Route>
 
       {/* HR */}
       <Route path="/hr/staff"><Shell><HRStaff /></Shell></Route>
 
       {/* Procurement */}
+      <Route path="/procurement/approval-rules"><Shell><ProcurementApprovalRules /></Shell></Route>
+      <Route path="/procurement/requisitions"><Shell><ProcurementRequisitions /></Shell></Route>
+      <Route path="/procurement/receipts"><Shell><GoodsReceiptsPage /></Shell></Route>
       <Route path="/procurement/purchase-orders"><Shell><PurchaseOrders /></Shell></Route>
+      <Route path="/procurement/vendors"><Shell><PurchaseVendors /></Shell></Route>
+      <Route path="/procurement/bills"><Shell><PurchaseBills /></Shell></Route>
+
+      {/* Inventory */}
+      <Route path="/inventory/overview"><Shell><InventoryOverview /></Shell></Route>
+      <Route path="/inventory/stock"><Shell><InventoryStock /></Shell></Route>
+      <Route path="/inventory/warehouses"><Shell><InventoryWarehouses /></Shell></Route>
+      <Route path="/inventory/movements"><Shell><InventoryMovements /></Shell></Route>
+
+      {/* Budgeting */}
+      <Route path="/budgeting/overview"><Shell><BudgetingOverview /></Shell></Route>
+
+      {/* Industry Packs */}
+      <Route path="/manufacturing/overview"><Shell><ManufacturingOverview /></Shell></Route>
+      <Route path="/retail/overview"><Shell><RetailOverview /></Shell></Route>
+      <Route path="/services/overview"><Shell><ServicesOverview /></Shell></Route>
 
       {/* Platform Admin — superadmin-only pages */}
+      <Route path="/platform/billing">
+        <Shell><RoleGuard allowedRoles={['superadmin']}><BillingCenter /></RoleGuard></Shell>
+      </Route>
       <Route path="/platform/tenants">
         <Shell><RoleGuard allowedRoles={['superadmin']}><Tenants /></RoleGuard></Shell>
+      </Route>
+      <Route path="/platform/industries">
+        <Shell><RoleGuard allowedRoles={['superadmin']}><Industries /></RoleGuard></Shell>
       </Route>
       <Route path="/platform/modules">
         <Shell><RoleGuard allowedRoles={['superadmin']}><Modules /></RoleGuard></Shell>
@@ -214,19 +419,31 @@ function Router() {
       <Route path="/platform/integrations">
         <Shell><RoleGuard allowedRoles={['superadmin']}><Integrations /></RoleGuard></Shell>
       </Route>
+      <Route path="/platform/backups">
+        <Shell><RoleGuard allowedRoles={['superadmin', 'tenant_admin']}><Backups /></RoleGuard></Shell>
+      </Route>
 
       {/* Platform Admin — superadmin + tenant_admin pages */}
       <Route path="/platform/users">
-        <Shell><RoleGuard allowedRoles={['superadmin', 'tenant_admin']}><Users /></RoleGuard></Shell>
+        <Shell><RoleGuard allowedRoles={['superadmin', 'tenant_admin']}><OrganizationSettings /></RoleGuard></Shell>
       </Route>
       <Route path="/platform/roles">
-        <Shell><RoleGuard allowedRoles={['superadmin']}><Roles /></RoleGuard></Shell>
+        <Shell><RoleGuard allowedRoles={['superadmin', 'tenant_admin']}><Roles /></RoleGuard></Shell>
       </Route>
       <Route path="/platform/workspace">
         <Shell><RoleGuard allowedRoles={['superadmin']}><Workspace /></RoleGuard></Shell>
       </Route>
+      <Route path="/platform/workflows">
+        <Shell><RoleGuard allowedRoles={['superadmin', 'tenant_admin']}><WorkflowCenter /></RoleGuard></Shell>
+      </Route>
       <Route path="/platform/company-settings">
-        <Shell><RoleGuard allowedRoles={['tenant_admin']}><CompanySettings /></RoleGuard></Shell>
+        <Shell><RoleGuard allowedRoles={['superadmin', 'tenant_admin']}><OrganizationSettings /></RoleGuard></Shell>
+      </Route>
+      <Route path="/platform/organization-settings">
+        <Shell><RoleGuard allowedRoles={['superadmin', 'tenant_admin']}><OrganizationSettings /></RoleGuard></Shell>
+      </Route>
+      <Route path="/platform/audit">
+        <Shell><RoleGuard allowedRoles={['superadmin', 'tenant_admin']}><AuditLogsPage /></RoleGuard></Shell>
       </Route>
 
       <Route component={NotFound} />

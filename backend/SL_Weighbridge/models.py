@@ -54,6 +54,13 @@ class ConfigurationFile(models.Model):
 # Company Model
 
 class Company(models.Model):
+    tenant = models.ForeignKey(
+        'Platform_Core.Tenant',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='weighbridge_companies',
+    )
     name = models.CharField(max_length=255)
     address = models.TextField()
     email = models.EmailField()
@@ -68,6 +75,13 @@ class Company(models.Model):
 # Branch Model
 
 class Branch(models.Model):
+    tenant = models.ForeignKey(
+        'Platform_Core.Tenant',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='weighbridge_branches',
+    )
     company = models.ForeignKey(Company, on_delete=models.CASCADE)
     name = models.CharField(max_length=255)
     address = models.TextField()
@@ -148,12 +162,21 @@ class IndicatorConfig(models.Model):
 # Customer Model
 
 class Customer(models.Model):
+    tenant = models.ForeignKey(
+        'Platform_Core.Tenant',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='weighbridge_customers',
+    )
     name = models.CharField(max_length=255)
     address = models.TextField(null=True, blank=True)
     phone_number = models.CharField(max_length=20, unique=True)
     email = models.EmailField(null=True, blank=True, max_length=255, unique=True)
     discounted = models.BooleanField(default=False)
     charge = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
+    is_active = models.BooleanField(default=True)
+    is_deleted = models.BooleanField(default=False)
     vehicle_type_discounts = models.ManyToManyField(
         'VehicleType',  # Use string reference
         through='CustomerVehicleTypeDiscount',
@@ -166,6 +189,16 @@ class Customer(models.Model):
 
     def __str__(self):
         return self.name
+
+
+def _resolve_vehicle_presence_client(branch=None):
+    """
+    Resolve the legacy company reference for surveillance captures.
+
+    The live VehiclePresence schema stores `client_id` against SL_Weighbridge.company,
+    so we always persist the branch's operational company here.
+    """
+    return getattr(branch, "company", None)
     
 
 # CustomerVehicleTypeDiscount Model
@@ -178,10 +211,24 @@ class CustomerVehicleTypeDiscount(models.Model):
 
 # VehicleType Model
 class VehicleType(models.Model):
+    tenant = models.ForeignKey(
+        'Platform_Core.Tenant',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='weighbridge_vehicle_types',
+    )
     name = models.CharField(max_length=50)
     description = models.TextField(blank=True, null=True)
     charge = models.DecimalField(max_digits=10, decimal_places=2)
     currency = models.ForeignKey('Currency', on_delete=models.SET_NULL, null=True)
+    linked_product = models.ForeignKey(
+        'SL_Sales.Product',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='weighbridge_vehicle_types',
+    )
     max_gross_weight = models.PositiveIntegerField(
         null=True, 
         blank=True, 
@@ -196,12 +243,54 @@ class VehicleType(models.Model):
     def __str__(self):
         return self.name
 
+    def get_effective_charge(self):
+        return self.charge
+
+
+class WeighingOperationType(models.Model):
+    FLOW_KIND_CHOICES = [
+        ('first', 'First Weight'),
+        ('second', 'Second Weight'),
+        ('single', 'Single Weight'),
+        ('axle', 'Axle Weight'),
+    ]
+
+    tenant = models.ForeignKey(
+        'Platform_Core.Tenant',
+        on_delete=models.CASCADE,
+        related_name='weighing_operation_types',
+        null=True,
+        blank=True,
+    )
+    code = models.CharField(max_length=40)
+    name = models.CharField(max_length=120)
+    description = models.TextField(blank=True, null=True)
+    flow_kind = models.CharField(max_length=20, choices=FLOW_KIND_CHOICES, default='first')
+    is_active = models.BooleanField(default=True)
+    display_order = models.PositiveIntegerField(default=10)
+    is_default = models.BooleanField(default=False)
+
+    class Meta:
+        ordering = ['display_order', 'name']
+        unique_together = [('tenant', 'code')]
+
+    def __str__(self):
+        return self.name
+
 
 # Vehicle Model
 class Vehicle(models.Model):
+    tenant = models.ForeignKey(
+        'Platform_Core.Tenant',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='weighbridge_vehicles',
+    )
     customer = models.ForeignKey(Customer, on_delete=models.CASCADE, related_name='vehicles')
     vehicle_type = models.ForeignKey(VehicleType, on_delete=models.CASCADE)  # Mandatory field
     number_plate = models.CharField(max_length=20, unique=True)  # Unique number plate
+    is_active = models.BooleanField(default=True)
     class Meta:
         ordering = ['number_plate']  # Or whatever field you want to use for ordering
     def __str__(self):
@@ -210,6 +299,13 @@ class Vehicle(models.Model):
 
 # Currency Model
 class Currency(models.Model):
+    tenant = models.ForeignKey(
+        'Platform_Core.Tenant',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='weighbridge_currencies',
+    )
     name = models.CharField(max_length=50)
     code = models.CharField(max_length=10)
     symbol = models.CharField(max_length=5)
@@ -219,6 +315,13 @@ class Currency(models.Model):
 
 # Item Model
 class Item(models.Model):
+    tenant = models.ForeignKey(
+        'Platform_Core.Tenant',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='weighbridge_items',
+    )
     name = models.CharField(max_length=255)
     description = models.TextField(blank=True, null=True)
     currency = models.ForeignKey(Currency, on_delete=models.SET_NULL, null=True)
@@ -239,20 +342,31 @@ class Transaction(models.Model):
         null=True, blank=True,
         related_name='weighbridge_transactions',
     )
-    branch = models.ForeignKey(Branch, on_delete=models.CASCADE, default=1)  # Default branch to 1
+    branch = models.ForeignKey(Branch, on_delete=models.CASCADE)
     customer = models.ForeignKey(Customer, on_delete=models.CASCADE)
     vehicle = models.ForeignKey(Vehicle, on_delete=models.CASCADE)
     operator = models.CharField(max_length=100)
+    driver_name = models.CharField(max_length=120, blank=True, default="")
+    driver_phone = models.CharField(max_length=40, blank=True, default="")
     item = models.ForeignKey(Item, on_delete=models.CASCADE)
     vehicle_type = models.ForeignKey(VehicleType, on_delete=models.CASCADE)
+    operation_type = models.ForeignKey(
+        'WeighingOperationType',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='transactions',
+    )
     gross_weight_date = models.DateTimeField(null=True, blank=True)
     tare_weight_date = models.DateTimeField(null=True, blank=True)
     STATUS_CHOICES = [
-        ('Pending', 'Pending'),
+        ('Draft', 'Draft'),
+        ('Recalled', 'Recalled'),
+        ('Rejected', 'Rejected'),
         ('Completed', 'Completed'),
     ]
 
-    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='Pending')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='Draft')
     gross_weight = models.IntegerField(null=True, blank=True, default=0)  # Default to 0
     tare_weight = models.IntegerField(null=True, blank=True, default=0)  # Default to 0
     net_weight = models.IntegerField(null=True, blank=True, default=0)  # Default to 0
@@ -296,6 +410,8 @@ class Transaction(models.Model):
         max_length=20, 
         choices=PAYMENT_STATUS_CHOICES,
         blank=False)
+    payment_reference = models.CharField(max_length=120, blank=True, default="")
+    payment_received_at = models.DateTimeField(blank=True, null=True)
     invoiced = models.BooleanField(default=False)
     workflow_step = models.ForeignKey(WorkflowStep, null=True, blank=True, on_delete=models.SET_NULL)
     approval_status = models.BooleanField(default=False)
@@ -342,10 +458,30 @@ class Transaction(models.Model):
         # Case 1: If it's a second weight, charge is always 0
         if self.weight_type == 'Second Weight':
             self.charge = 0.00
+            self.discounted = False
             return
 
         # Case 2: Handle 'First Weight' scenarios
         if self.weight_type == 'First Weight':
+                base_charge = self.vehicle_type.get_effective_charge() if self.vehicle_type else 0.00
+                from Platform_Core.pricing import resolve_pricing_rule
+
+                pricing_result = resolve_pricing_rule(
+                    tenant=self.tenant,
+                    module_slug="weighbridge",
+                    base_amount=base_charge,
+                    context={
+                        "customer_id": self.customer_id,
+                        "vehicle_type_id": self.vehicle_type_id,
+                        "weight_type": self.weight_type,
+                        "weight_kg": self.gross_weight,
+                    },
+                )
+                if pricing_result["matched"]:
+                    self.charge = pricing_result["amount"]
+                    self.discounted = True
+                    return
+
                 # Check for vehicle-type-specific discount
                 discount = CustomerVehicleTypeDiscount.objects.filter(
                     customer=self.customer, vehicle_type=self.vehicle_type
@@ -353,23 +489,27 @@ class Transaction(models.Model):
                 if discount:
                     # Apply the vehicle-type-specific discount
                     self.charge = discount.discounted_charge
+                    self.discounted = True
                     print(f"Applied vehicle-type-specific discount: {self.charge}")
                     return
 
-                 # If no vehicle-type-specific discount, check for global customer discount
+                # If no vehicle-type-specific discount, check for global customer discount
                 if self.customer and self.customer.discounted:
-                   self.charge = self.customer.charge if self.customer.charge is not None else self.vehicle_type.charge
+                   self.charge = self.customer.charge if self.customer.charge is not None else self.vehicle_type.get_effective_charge()
+                   self.discounted = True
                    print(f"Applied global customer charge: {self.charge}")
                    return
 
                 # Fallback to the normal vehicle type charge
                 if self.vehicle_type:
-                   self.charge = self.vehicle_type.charge
+                   self.charge = self.vehicle_type.get_effective_charge()
+                   self.discounted = False
                    print(f"Applied normal vehicle type charge: {self.charge}")
 
                 else:
                     # Fallback if no vehicle type is found
                     self.charge =0.00
+                    self.discounted = False
                     print("No vehicle type found; charge set to 0.00")
 
 
@@ -470,12 +610,48 @@ class CameraConfig(models.Model):
 
 
 class VehiclePresence(models.Model):
+    tenant = models.ForeignKey(
+        'Platform_Core.Tenant',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='vehicle_presences',
+    )
+    client = models.ForeignKey(
+        Company,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='vehicle_presences',
+    )
+    station = models.ForeignKey(
+        Branch,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='vehicle_presence_stations',
+    )
+    branch = models.ForeignKey(
+        Branch,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='vehicle_presences',
+    )
     timestamp = models.DateTimeField(auto_now_add=True)
     detected_weight = models.FloatField()
     capture_status = models.BooleanField(default=False)
     plate_number = models.CharField(max_length=20, blank=True, null=True)
     image = models.ImageField(upload_to='vehicle_images/', blank=True, null=True)
     locked = models.BooleanField(default=False)  # Field to lock the record
+    match_status = models.CharField(max_length=20, blank=True, default='pending')
+    overweight_event = models.OneToOneField(
+        'OverweightEvent',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='vehicle_presence',
+    )
 
 
     def __str__(self):
@@ -495,6 +671,13 @@ class VehiclePresence(models.Model):
         if self.image and hasattr(self.image, 'name'):
             # Replace any backslashes with forward slashes in the file name
             self.image.name = self.image.name.replace('\\', '/')
+        local_field_names = {field.name for field in self._meta.local_fields}
+        if "station" in local_field_names and self.station_id is None:
+            self.station = self.branch
+        if "client" in local_field_names and self.client_id is None:
+            self.client = _resolve_vehicle_presence_client(self.branch)
+        if not self.match_status:
+            self.match_status = 'pending'
         super().save(*args, **kwargs)
 
 
@@ -528,6 +711,10 @@ class OverweightConfig(models.Model):
         help_text="Minutes after an OverweightEvent before it is promoted to a discrepancy "
                   "if no matching transaction is found.",
     )
+    capture_interval_seconds = models.IntegerField(
+        default=45,
+        help_text="Minimum number of seconds between repeated vehicle-presence captures for the same branch and weight.",
+    )
     surveillance_enabled = models.BooleanField(
         default=True,
         help_text="Master switch — disabling this stops all overweight event creation for this branch.",
@@ -548,6 +735,10 @@ class OverweightConfig(models.Model):
 
 
 class OverweightEvent(models.Model):
+    CAPTURE_SOURCE_CHOICES = [
+        ('transaction', 'Transaction'),
+        ('vehicle_presence', 'Vehicle Presence'),
+    ]
     """Created whenever a weight reading meets or exceeds the branch threshold."""
     tenant = models.ForeignKey(
         'Platform_Core.Tenant', on_delete=models.SET_NULL,
@@ -577,6 +768,12 @@ class OverweightEvent(models.Model):
     linked_transaction = models.ForeignKey(
         'Transaction', on_delete=models.SET_NULL,
         null=True, blank=True, related_name='overweight_events',
+    )
+    capture_source = models.CharField(
+        max_length=32,
+        choices=CAPTURE_SOURCE_CHOICES,
+        default='transaction',
+        help_text="Whether this surveillance event came from a saved transaction or raw vehicle presence monitoring.",
     )
     camera_image = models.ImageField(
         upload_to='overweight_images/', blank=True, null=True,

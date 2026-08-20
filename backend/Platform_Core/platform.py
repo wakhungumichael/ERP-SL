@@ -2,6 +2,8 @@ from django.utils import timezone
 
 from Platform_Core.models import (
     LicenseKey,
+    Tenant,
+    TenantSubscription,
     TenantModuleActivation,
     WorkspaceMenuSection,
 )
@@ -28,10 +30,13 @@ def sync_subscription_modules(subscription):
 
     created = 0
     updated = 0
+    disabled = 0
     activated_modules = []
     plan_modules = subscription.plan.modules.select_related("module").filter(is_enabled=True)
+    desired_module_ids = set()
 
     for plan_module in plan_modules:
+        desired_module_ids.add(plan_module.module_id)
         activation, was_created = TenantModuleActivation.objects.get_or_create(
             tenant=subscription.tenant,
             module=plan_module.module,
@@ -66,11 +71,51 @@ def sync_subscription_modules(subscription):
         elif changed_fields:
             updated += 1
 
+    stale_activations = (
+        TenantModuleActivation.objects.filter(subscription=subscription)
+        .exclude(module_id__in=desired_module_ids)
+        .select_related("module")
+    )
+    for activation in stale_activations:
+        changed_fields = []
+        if activation.status != "disabled":
+            activation.status = "disabled"
+            changed_fields.append("status")
+        if activation.expires_at != expires_at:
+            activation.expires_at = expires_at
+            changed_fields.append("expires_at")
+        if changed_fields:
+            activation.save(update_fields=changed_fields + ["updated_at"])
+            disabled += 1
+
     return {
         "created": created,
         "updated": updated,
+        "disabled": disabled,
         "status": sync_status,
         "modules": activated_modules,
+    }
+
+
+def sync_plan_subscriptions(plan):
+    created = 0
+    updated = 0
+    disabled = 0
+    subscriptions = (
+        TenantSubscription.objects.filter(plan=plan)
+        .select_related("tenant", "plan")
+        .prefetch_related("plan__modules__module")
+    )
+    for subscription in subscriptions:
+        result = sync_subscription_modules(subscription)
+        created += result["created"]
+        updated += result["updated"]
+        disabled += result.get("disabled", 0)
+    return {
+        "created": created,
+        "updated": updated,
+        "disabled": disabled,
+        "subscriptions": subscriptions.count(),
     }
 
 
@@ -185,15 +230,59 @@ def get_tenant_module_access(tenant):
 def get_active_tenant_module_slugs(tenant):
     if tenant is None:
         return set()
-    return set(
+    active_slugs = set(
         tenant.module_activations.filter(status__in={"enabled", "trial"})
         .select_related("module")
         .values_list("module__slug", flat=True)
     )
+    if active_slugs:
+        return active_slugs
+
+    fallback_slugs = set()
+    subscriptions = (
+        TenantSubscription.objects.filter(
+            tenant=tenant,
+            status__in=ACTIVE_SUBSCRIPTION_STATUSES,
+        )
+        .select_related("plan")
+        .prefetch_related("plan__modules__module")
+    )
+    for subscription in subscriptions:
+        for plan_module in subscription.plan.modules.select_related("module").filter(is_enabled=True):
+            fallback_slugs.add(plan_module.module.slug)
+    return fallback_slugs
+
+
+def get_tenants_with_active_module(*module_slugs):
+    requested = {slug for slug in module_slugs if slug}
+    if not requested:
+        return Tenant.objects.none()
+    if "weighbridge" in requested:
+        requested.add("commercial-weighbridge")
+    if "commercial-weighbridge" in requested:
+        requested.add("weighbridge")
+
+    activation_ids = Tenant.objects.filter(
+        module_activations__status__in={"enabled", "trial"},
+        module_activations__module__slug__in=requested,
+    ).values_list("id", flat=True)
+    subscription_ids = Tenant.objects.filter(
+        subscriptions__status__in=ACTIVE_SUBSCRIPTION_STATUSES,
+        subscriptions__plan__modules__is_enabled=True,
+        subscriptions__plan__modules__module__slug__in=requested,
+    ).values_list("id", flat=True)
+    return Tenant.objects.filter(id__in=set(activation_ids).union(set(subscription_ids))).distinct()
+
+
+def tenant_has_active_module(tenant, *module_slugs):
+    if tenant is None:
+        return False
+    return get_tenants_with_active_module(*module_slugs).filter(pk=tenant.pk).exists()
 
 
 def build_workspace_navigation(*, user, tenant=None):
     active_module_slugs = get_active_tenant_module_slugs(tenant)
+    has_tenant_context = tenant is not None
     user_group_ids = set(user.groups.values_list("id", flat=True)) if user.is_authenticated else set()
 
     sections = []
@@ -204,12 +293,12 @@ def build_workspace_navigation(*, user, tenant=None):
     )
 
     for section in queryset:
-        if section.module_id and active_module_slugs and section.module.slug not in active_module_slugs:
+        if has_tenant_context and section.module_id and section.module.slug not in active_module_slugs:
             continue
 
         items = []
         for item in section.items.filter(is_active=True):
-            if item.required_module_id and active_module_slugs and item.required_module.slug not in active_module_slugs:
+            if has_tenant_context and item.required_module_id and item.required_module.slug not in active_module_slugs:
                 continue
             if item.required_permission and not user.has_perm(item.required_permission):
                 continue
@@ -253,8 +342,20 @@ def build_workspace_navigation(*, user, tenant=None):
                 }
             )
 
+    tenant_payload = None
+    if tenant is not None:
+        tenant_payload = {
+            "id": tenant.id,
+            "name": tenant.name,
+            "code": tenant.code,
+            "status": tenant.status,
+            "is_active": tenant.is_active,
+            "default_currency": tenant.default_currency,
+            "timezone": tenant.timezone,
+        }
+
     return {
-        "tenant": tenant,
+        "tenant": tenant_payload,
         "active_module_slugs": sorted(active_module_slugs),
         "sections": sections,
     }

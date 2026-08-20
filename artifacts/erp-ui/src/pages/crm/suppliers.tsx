@@ -41,14 +41,14 @@ export default function SuppliersPage() {
       <div className="flex items-center justify-between border-b pb-4">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Suppliers</h1>
-          <p className="text-sm text-muted-foreground mt-1">Vendors and suppliers your business buys from</p>
+          <p className="text-sm text-muted-foreground mt-1">Manage the suppliers and vendors your business buys from.</p>
         </div>
         <AddSupplierDialog />
       </div>
 
       <div className="flex items-center gap-2 max-w-sm bg-card border rounded-lg px-3 shadow-sm">
         <Search className="h-4 w-4 text-muted-foreground shrink-0" />
-        <Input placeholder="Search suppliers…" value={search} onChange={e => setSearch(e.target.value)}
+        <Input placeholder="Search suppliers or contacts…" value={search} onChange={e => setSearch(e.target.value)}
           className="h-9 border-0 shadow-none focus-visible:ring-0 text-sm" />
       </div>
 
@@ -57,12 +57,12 @@ export default function SuppliersPage() {
           <TableHeader>
             <TableRow className="bg-muted/50">
               <TableHead>Supplier Name</TableHead>
-              <TableHead>Contact Person</TableHead>
-              <TableHead>Contact Details</TableHead>
-              <TableHead>Payment Terms</TableHead>
-              <TableHead>Account No.</TableHead>
-            </TableRow>
-          </TableHeader>
+                <TableHead>Contact Person</TableHead>
+                <TableHead>Contact Details</TableHead>
+                <TableHead>Payment Terms</TableHead>
+                <TableHead>Account Number</TableHead>
+              </TableRow>
+            </TableHeader>
           <TableBody>
             {isLoading ? (
               <TableRow><TableCell colSpan={5} className="text-center py-12 text-sm text-muted-foreground animate-pulse">Loading suppliers…</TableCell></TableRow>
@@ -131,7 +131,7 @@ function AddSupplierDialog() {
             </div>
             <div className="space-y-1.5">
               <label className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Account Number</label>
-              <Input value={form.account_number} onChange={f('account_number')} placeholder="Your account with them" className="font-mono text-sm" />
+              <Input value={form.account_number} onChange={f('account_number')} placeholder="Your account reference with this supplier" className="font-mono text-sm" />
             </div>
           </div>
           <div className="grid grid-cols-2 gap-4">

@@ -580,6 +580,8 @@ export const GetWeighbridgeDashboardQueryParams = zod.object({
 
 export const GetWeighbridgeDashboardResponse = zod.object({
   "totals": zod.object({
+  "all_transactions": zod.number().optional(),
+  "pending_transactions": zod.number().optional(),
   "transactions_today": zod.number().optional(),
   "transactions_this_month": zod.number().optional(),
   "net_weight_today": zod.number().optional(),
@@ -964,5 +966,4 @@ export const GetPaymentSummaryResponse = zod.object({
   "total": zod.number().optional()
 })).optional()
 })
-
 

@@ -10,6 +10,7 @@ import logging
 from datetime import datetime
 from django.utils import timezone
 from .models import PrinterConfig, IndicatorConfig, VehiclePresence, Transaction
+from .surveillance import maybe_record_overweight_event_from_presence
 from .management.commands.printer_commands import get_printer_command
 from requests.auth import HTTPDigestAuth
 from django.conf import settings
@@ -47,12 +48,73 @@ logging.basicConfig(
 )
 
 
-def get_indicator_stable_weight_url():
-    return getattr(settings, "INDICATOR_STABLE_WEIGHT_URL", "")
+def normalize_indicator_payload(payload):
+    """
+    Accept either {weight, stable} or {value, stable} indicator responses.
+    """
+    weight = payload.get("weight")
+    if weight is None:
+        weight = payload.get("value")
+    stable = payload.get("stable", False)
+
+    try:
+        normalized_weight = float(weight) if weight is not None else None
+    except (TypeError, ValueError):
+        normalized_weight = None
+
+    return {
+        "weight": normalized_weight,
+        "stable": bool(stable),
+    }
 
 
-def get_indicator_live_weight_url():
+def fetch_indicator_http_reading(url, timeout=5):
+    response = requests.get(url, timeout=timeout)
+    response.raise_for_status()
+    data = parse_indicator_response(response)
+    return normalize_indicator_payload(data)
+
+
+def resolve_indicator_url(kind="live", branch=None, allow_settings_fallback=True):
+    """
+    Resolve indicator endpoint URLs from maintained IndicatorConfig records.
+
+    kind:
+      - live   -> live_weight_url first, then stable_weight_url
+      - stable -> stable_weight_url first, then live_weight_url
+    """
+    if kind not in {"live", "stable"}:
+        raise ValueError("kind must be 'live' or 'stable'")
+
+    cfg = (
+        IndicatorConfig.objects.filter(branch=branch).first()
+        if branch is not None
+        else None
+    ) or IndicatorConfig.objects.first()
+
+    if cfg and cfg.connection_type == "HTTP":
+        preferred = [cfg.live_weight_url, cfg.stable_weight_url]
+        if kind == "stable":
+            preferred = [cfg.stable_weight_url, cfg.live_weight_url]
+        for candidate in preferred:
+            candidate = (candidate or "").strip()
+            if candidate:
+                return candidate
+
+    if not allow_settings_fallback:
+        return ""
+
+    if kind == "stable":
+        return getattr(settings, "INDICATOR_STABLE_WEIGHT_URL", "")
     return getattr(settings, "INDICATOR_LIVE_WEIGHT_URL", "")
+
+
+def get_indicator_stable_weight_url(branch=None):
+    return resolve_indicator_url(kind="stable", branch=branch)
+
+
+def get_indicator_live_weight_url(branch=None):
+    return resolve_indicator_url(kind="live", branch=branch)
 
 
 def get_indicator_live_weight_stream_url():
@@ -64,6 +126,49 @@ def get_indicator_api_url(path):
     if not base_url:
         return path
     return urljoin(f"{base_url.rstrip('/')}/", path.lstrip('/'))
+
+
+def resolve_presence_indicator_source(branch=None):
+    """
+    Resolve the weight endpoint used by vehicle-presence surveillance.
+
+    Priority:
+    1. Branch-specific IndicatorConfig HTTP URLs
+    2. Any IndicatorConfig HTTP URL
+    3. Django settings fallback
+    """
+    cfg = (
+        IndicatorConfig.objects.filter(branch=branch).first()
+        if branch is not None
+        else None
+    ) or IndicatorConfig.objects.first()
+
+    if cfg and cfg.connection_type == "HTTP":
+        url = resolve_indicator_url(kind="live", branch=branch, allow_settings_fallback=False).strip()
+        if url:
+            return {
+                "indicator_config": cfg,
+                "url": url,
+                "source": cfg.indicator_name or f"Indicator {cfg.id}",
+            }
+
+    settings_url = (
+        get_indicator_live_weight_url()
+        or get_indicator_stable_weight_url()
+        or ""
+    ).strip()
+    if settings_url:
+        return {
+            "indicator_config": None,
+            "url": settings_url,
+            "source": "settings",
+        }
+
+    return {
+        "indicator_config": cfg if cfg and cfg.connection_type == "HTTP" else None,
+        "url": "",
+        "source": "unconfigured",
+    }
 
 
 def parse_indicator_response(response):
@@ -307,7 +412,7 @@ def get_plate_from_camera(ip_address, username, password):
     return None  # Skip plate detection
 
 
-def capture_vehicle_presence(ip_address, username, password, detected_weight):
+def capture_vehicle_presence(ip_address, username, password, detected_weight, branch=None, tenant=None, camera_config=None):
     # Attempt to capture the plate number (skipped in this case)
     plate_number = get_plate_from_camera(ip_address, username, password)
 
@@ -316,6 +421,8 @@ def capture_vehicle_presence(ip_address, username, password, detected_weight):
 
     # Create a VehiclePresence record
     vehicle_presence = VehiclePresence(
+        tenant=tenant,
+        branch=branch or getattr(camera_config, 'branch', None),
         detected_weight=detected_weight,
         capture_status=True,
         plate_number=plate_number,  # This will be None since we're skipping plate detection
@@ -324,6 +431,7 @@ def capture_vehicle_presence(ip_address, username, password, detected_weight):
 
     # Save the record to the database
     vehicle_presence.save()
+    maybe_record_overweight_event_from_presence(vehicle_presence, camera_config=camera_config)
 
     print(f"Vehicle presence recorded: {vehicle_presence}")
 

@@ -39,12 +39,22 @@ interface RecurringInvoice {
   notes: string;
 }
 
+function formatFrequency(value: string) {
+  return value ? value.charAt(0).toUpperCase() + value.slice(1) : 'Not set';
+}
+
+function formatStatus(value: string) {
+  return value ? value.charAt(0).toUpperCase() + value.slice(1) : 'Not set';
+}
+
 export default function RecurringPage() {
   const { token } = useAuth();
   const { toast } = useToast();
 
   const [filterStatus, setFilterStatus] = useState('');
   const [filterFreq, setFilterFreq] = useState('');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState('10');
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({
@@ -72,6 +82,8 @@ export default function RecurringPage() {
   });
 
   const records: RecurringInvoice[] = Array.isArray(data) ? data : (data?.results ?? []);
+  const totalPages = Math.max(1, Math.ceil(records.length / Number(pageSize)));
+  const visibleRecords = records.slice((page - 1) * Number(pageSize), page * Number(pageSize));
 
   const counts = {
     active: records.filter((r) => r.status === 'active').length,
@@ -91,6 +103,7 @@ export default function RecurringPage() {
       toast({ title: 'Recurring invoice created' });
       refetch();
       setOpen(false);
+      setPage(1);
       setForm({ customer_name: '', frequency: 'monthly', start_date: '', next_invoice_date: '', notes: '' });
     } catch {
       toast({ title: 'Error creating recurring invoice', variant: 'destructive' });
@@ -117,8 +130,13 @@ export default function RecurringPage() {
   return (
     <div className="space-y-6 p-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Recurring Invoices</h1>
-        <Button onClick={() => setOpen(true)}>+ New Recurring Invoice</Button>
+        <div>
+          <h1 className="text-2xl font-semibold">Repeat Billing</h1>
+          <p className="text-sm text-muted-foreground">
+            Keep scheduled customer billing clear, simple, and easy to act on.
+          </p>
+        </div>
+        <Button onClick={() => setOpen(true)}>New billing plan</Button>
       </div>
 
       {/* Stats */}
@@ -139,23 +157,23 @@ export default function RecurringPage() {
 
       {/* Filters */}
       <div className="flex flex-wrap gap-3">
-        <Select value={filterStatus} onValueChange={setFilterStatus}>
+        <Select value={filterStatus || '__all__'} onValueChange={(value) => { setFilterStatus(value === '__all__' ? '' : value); setPage(1); }}>
           <SelectTrigger className="w-40">
-            <SelectValue placeholder="All Statuses" />
+            <SelectValue placeholder="All plans" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="">All Statuses</SelectItem>
+            <SelectItem value="__all__">All plans</SelectItem>
             <SelectItem value="active">Active</SelectItem>
             <SelectItem value="paused">Paused</SelectItem>
             <SelectItem value="ended">Ended</SelectItem>
           </SelectContent>
         </Select>
-        <Select value={filterFreq} onValueChange={setFilterFreq}>
+        <Select value={filterFreq || '__all__'} onValueChange={(value) => { setFilterFreq(value === '__all__' ? '' : value); setPage(1); }}>
           <SelectTrigger className="w-40">
-            <SelectValue placeholder="All Frequencies" />
+            <SelectValue placeholder="All cycles" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="">All Frequencies</SelectItem>
+            <SelectItem value="__all__">All cycles</SelectItem>
             <SelectItem value="weekly">Weekly</SelectItem>
             <SelectItem value="monthly">Monthly</SelectItem>
             <SelectItem value="quarterly">Quarterly</SelectItem>
@@ -178,27 +196,27 @@ export default function RecurringPage() {
             <TableHeader>
               <TableRow>
                 <TableHead>Customer</TableHead>
-                <TableHead>Frequency</TableHead>
-                <TableHead>Next Invoice Date</TableHead>
+                <TableHead>Billing cycle</TableHead>
+                <TableHead>Next invoice</TableHead>
                 <TableHead>Total</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {records.map((rec) => (
+              {visibleRecords.map((rec) => (
                 <TableRow key={rec.id} className="hover:bg-muted/50">
                   <TableCell className="font-medium">{rec.customer_name}</TableCell>
                   <TableCell>
                     <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${freqColors[rec.frequency] ?? 'bg-gray-100 text-gray-700'}`}>
-                      {rec.frequency}
+                      {formatFrequency(rec.frequency)}
                     </span>
                   </TableCell>
                   <TableCell>{rec.next_invoice_date || '—'}</TableCell>
                   <TableCell>{fmt(rec.total)}</TableCell>
                   <TableCell>
                     <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${statusColors[rec.status] ?? 'bg-gray-100 text-gray-700'}`}>
-                      {rec.status}
+                      {formatStatus(rec.status)}
                     </span>
                   </TableCell>
                   <TableCell>
@@ -222,19 +240,42 @@ export default function RecurringPage() {
         </div>
       )}
 
+      {records.length > 0 ? (
+        <div className="flex flex-col gap-3 rounded-lg border p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="text-sm text-muted-foreground">
+            Showing page {page} of {totalPages} with {records.length} billing plans
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="text-sm text-muted-foreground">Rows</span>
+            <Select value={pageSize} onValueChange={(value) => { setPageSize(value); setPage(1); }}>
+              <SelectTrigger className="w-24">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="10">10</SelectItem>
+                <SelectItem value="25">25</SelectItem>
+                <SelectItem value="50">50</SelectItem>
+              </SelectContent>
+            </Select>
+            <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage(page - 1)}>Previous</Button>
+            <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage(page + 1)}>Next</Button>
+          </div>
+        </div>
+      ) : null}
+
       {/* Create Dialog */}
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle>New Recurring Invoice</DialogTitle>
+            <DialogTitle>New billing plan</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             <div>
-              <Label>Customer Name *</Label>
-              <Input value={form.customer_name} onChange={(e) => setForm({ ...form, customer_name: e.target.value })} />
+              <Label>Customer name *</Label>
+              <Input value={form.customer_name} onChange={(e) => setForm({ ...form, customer_name: e.target.value })} placeholder="Who should receive this repeating invoice?" />
             </div>
             <div>
-              <Label>Frequency</Label>
+              <Label>Billing cycle</Label>
               <Select value={form.frequency} onValueChange={(v) => setForm({ ...form, frequency: v })}>
                 <SelectTrigger>
                   <SelectValue />
@@ -249,23 +290,23 @@ export default function RecurringPage() {
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <Label>Start Date</Label>
+                <Label>Start date</Label>
                 <Input type="date" value={form.start_date} onChange={(e) => setForm({ ...form, start_date: e.target.value })} />
               </div>
               <div>
-                <Label>Next Invoice Date</Label>
+                <Label>Next invoice date</Label>
                 <Input type="date" value={form.next_invoice_date} onChange={(e) => setForm({ ...form, next_invoice_date: e.target.value })} />
               </div>
             </div>
             <div>
-              <Label>Notes</Label>
+              <Label>Billing notes</Label>
               <Textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} rows={3} />
             </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
             <Button onClick={handleCreate} disabled={saving || !form.customer_name}>
-              {saving ? 'Saving…' : 'Create'}
+              {saving ? 'Saving…' : 'Create plan'}
             </Button>
           </DialogFooter>
         </DialogContent>

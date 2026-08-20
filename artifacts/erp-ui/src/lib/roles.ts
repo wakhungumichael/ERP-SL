@@ -32,49 +32,63 @@ export const ALL_ROLES: AppRole[] = [
 
 const SUPERADMIN_UP: AppRole[] = ['superadmin'];
 const ADMIN_UP: AppRole[]      = ['superadmin', 'tenant_admin'];
-const FINANCE_UP: AppRole[]    = ['superadmin', 'tenant_admin', 'finance'];
-const OPS: AppRole[]           = ['superadmin', 'tenant_admin', 'operator'];
+const TENANT_ADMIN_UP: AppRole[] = ['tenant_admin', 'finance', 'operator'];
+const FINANCE_UP: AppRole[]    = ['tenant_admin', 'finance'];
+const OPS: AppRole[]           = ['tenant_admin', 'operator'];
+const ERP_USERS: AppRole[]     = ['tenant_admin', 'finance', 'operator'];
+export const CAN_VIEW_OPERATIONS_REPORTS: AppRole[] = OPS;
+export const CAN_VIEW_FINANCIAL_REPORTS: AppRole[] = FINANCE_UP;
+export const CAN_VIEW_REPORTS_WORKSPACE: AppRole[] = ['tenant_admin', 'finance', 'operator'];
 
 // ── Weighbridge action permissions ────────────────────────────────────────────
 /** Roles that may approve pending transactions (manual capture approval). */
-export const CAN_APPROVE: AppRole[] = ['superadmin', 'tenant_admin'];
+export const CAN_APPROVE: AppRole[] = ['tenant_admin'];
 /** Roles that may recall a completed transaction back to Pending. */
-export const CAN_RECALL: AppRole[]  = ['superadmin', 'tenant_admin'];
+export const CAN_RECALL: AppRole[]  = ['tenant_admin'];
 /** Roles that may export transaction data (CSV / PDF). */
-export const CAN_EXPORT: AppRole[]  = ['superadmin', 'tenant_admin', 'finance'];
+export const CAN_EXPORT: AppRole[]  = ['tenant_admin', 'finance'];
 /** Roles that may receive / record payment on a completed transaction. */
-export const CAN_RECEIVE_PAYMENT: AppRole[] = ['superadmin', 'tenant_admin', 'finance', 'operator'];
+export const CAN_RECEIVE_PAYMENT: AppRole[] = ['tenant_admin', 'finance', 'operator'];
 
 // ── Static navigation tree ────────────────────────────────────────────────────
 
 export const STATIC_NAV: NavSection[] = [
+  {
+    key: 'dashboard',
+    title: 'Dashboard',
+    roles: ALL_ROLES,
+    items: [
+      { key: 'dashboard', title: 'Dashboard', path: '/dashboard', roles: ALL_ROLES },
+    ],
+  },
+
   // ── Weighbridge ─────────────────────────────────────────────────────────────
   {
     key: 'weighbridge',
     title: 'Weighbridge',
-    roles: ALL_ROLES,
+    roles: ERP_USERS,
     items: [
-      { key: 'dashboard',      title: 'Dashboard',        path: '/dashboard',                     roles: ALL_ROLES },
-      { key: 'transactions',   title: 'Transactions',     path: '/weighbridge/transactions',       roles: ALL_ROLES },
-      { key: 'first-weight',   title: 'First Weight',     path: '/weighbridge/first-weight',       roles: OPS },
-      { key: 'second-weight',  title: 'Second Weight',    path: '/weighbridge/second-weight',      roles: OPS },
+      { key: 'overview',       title: 'Overview',         path: '/weighbridge/overview',         roles: ERP_USERS },
+      { key: 'transactions',   title: 'Transactions',     path: '/weighbridge/transactions',       roles: ERP_USERS },
+      { key: 'weight-capture', title: 'Weighment Entry',  path: '/weighbridge/weighment-entry',    roles: OPS },
       { key: 'customers',      title: 'Customers',        path: '/weighbridge/customers',          roles: OPS },
       { key: 'vehicles',       title: 'Vehicles',         path: '/weighbridge/vehicles',           roles: OPS },
       { key: 'live',           title: 'Live Weight',      path: '/weighbridge/live',               roles: OPS },
-      { key: 'settings',        title: 'Settings',          path: '/weighbridge/settings',           roles: ADMIN_UP },
-      { key: 'overweight-log',  title: 'Overweight Log',    path: '/weighbridge/overweight-log',     roles: ADMIN_UP },
+      { key: 'reports',        title: 'Reports',          path: '/weighbridge/reports',            roles: CAN_VIEW_REPORTS_WORKSPACE },
+      { key: 'settings',        title: 'Settings',          path: '/weighbridge/settings',           roles: ['tenant_admin'] },
+      { key: 'overweight-log',  title: 'Vehicle Presence',  path: '/weighbridge/overweight-log',     roles: ['tenant_admin'] },
       { key: 'discrepancies',   title: 'Discrepancies',     path: '/weighbridge/discrepancies',      roles: FINANCE_UP },
     ],
   },
 
-  // ── Sales & Payments ─────────────────────────────────────────────────────────
+  // ── Sales ───────────────────────────────────────────────────────────────────
   {
     key: 'sales',
-    title: 'Sales & Payments',
+    title: 'Sales',
     roles: FINANCE_UP,
     items: [
       { key: 'sales-estimates',  title: 'Estimates',          path: '/sales/estimates',         roles: FINANCE_UP },
-      { key: 'sales-invoices',   title: 'Invoices',           path: '/sales/invoices',          roles: FINANCE_UP },
+      { key: 'sales-orders',     title: 'Sales Orders',       path: '/sales/orders',            roles: FINANCE_UP },
       { key: 'sales-recurring',  title: 'Recurring Invoices', path: '/sales/recurring',         roles: FINANCE_UP },
       { key: 'sales-statements', title: 'Customer Statements',path: '/sales/statements',        roles: FINANCE_UP },
       { key: 'sales-customers',  title: 'Customers',          path: '/sales/customers',         roles: FINANCE_UP },
@@ -82,27 +96,34 @@ export const STATIC_NAV: NavSection[] = [
     ],
   },
 
-  // ── Purchases ────────────────────────────────────────────────────────────────
+  // ── Inventory ───────────────────────────────────────────────────────────────
   {
-    key: 'purchases',
-    title: 'Purchases',
-    roles: FINANCE_UP,
+    key: 'inventory',
+    title: 'Inventory',
+    roles: ERP_USERS,
     items: [
-      { key: 'purchases-bills',    title: 'Bills',               path: '/purchases/bills',    roles: FINANCE_UP },
-      { key: 'purchases-vendors',  title: 'Vendors',             path: '/purchases/vendors',  roles: FINANCE_UP },
-      { key: 'purchases-products', title: 'Products & Services', path: '/purchases/products', roles: FINANCE_UP },
+      { key: 'inventory-overview',   title: 'Overview',        path: '/inventory/overview',   roles: ERP_USERS },
+      { key: 'inventory-stock',      title: 'Stock Catalog',   path: '/inventory/stock',      roles: ERP_USERS },
+      { key: 'inventory-warehouses', title: 'Warehouses',      path: '/inventory/warehouses', roles: ERP_USERS },
+      { key: 'inventory-movements',  title: 'Movements',       path: '/inventory/movements',  roles: ERP_USERS },
     ],
   },
 
-  // ── Accounting ───────────────────────────────────────────────────────────────
+  // ── Finance ─────────────────────────────────────────────────────────────────
   {
-    key: 'accounting',
-    title: 'Accounting',
+    key: 'finance',
+    title: 'Finance',
     roles: FINANCE_UP,
     items: [
-      { key: 'accounting-dashboard',  title: 'Overview',          path: '/accounting/dashboard',        roles: FINANCE_UP },
-      { key: 'accounting-coa',        title: 'Chart of Accounts', path: '/accounting/chart-of-accounts',roles: ADMIN_UP },
-      { key: 'accounting-ledger',     title: 'Transactions',      path: '/accounting/transactions',     roles: FINANCE_UP },
+      { key: 'finance-overview',       title: 'Overview',           path: '/finance/overview',           roles: FINANCE_UP },
+      { key: 'finance-gl',             title: 'General Ledger',     path: '/finance/transactions',       roles: FINANCE_UP },
+      { key: 'finance-coa',            title: 'Chart of Accounts',  path: '/finance/chart-of-accounts',  roles: ADMIN_UP },
+      { key: 'finance-ar',             title: 'Accounts Receivable',path: '/finance/receivables',        roles: FINANCE_UP },
+      { key: 'finance-ap',             title: 'Accounts Payable',   path: '/finance/payables',           roles: FINANCE_UP },
+      { key: 'finance-cash',           title: 'Cash & Payments',    path: '/finance/payment-methods',    roles: FINANCE_UP },
+      { key: 'finance-budgets',        title: 'Budgets',            path: '/finance/budgets',            roles: FINANCE_UP },
+      { key: 'finance-reports',        title: 'Financial Reports',  path: '/finance/reports',            roles: FINANCE_UP },
+      { key: 'finance-posting-rules',  title: 'Posting Rules',      path: '/finance/posting-rules',      roles: ADMIN_UP },
     ],
   },
 
@@ -110,14 +131,27 @@ export const STATIC_NAV: NavSection[] = [
   {
     key: 'crm',
     title: 'CRM',
-    roles: ALL_ROLES,
+    roles: ERP_USERS,
     items: [
-      { key: 'crm-home',     title: 'Overview',       path: '/crm/dashboard',      roles: ALL_ROLES },
-      { key: 'companies',    title: 'Companies',      path: '/crm/companies',      roles: ALL_ROLES },
-      { key: 'people',       title: 'People',         path: '/crm/people',         roles: ALL_ROLES },
+      { key: 'crm-home',     title: 'Overview',       path: '/crm/dashboard',      roles: ERP_USERS },
+      { key: 'companies',    title: 'Companies',      path: '/crm/companies',      roles: ERP_USERS },
+      { key: 'people',       title: 'People',         path: '/crm/people',         roles: ERP_USERS },
       { key: 'suppliers',    title: 'Suppliers',      path: '/crm/suppliers',      roles: OPS },
-      { key: 'opportunities',title: 'Opportunities',  path: '/crm/opportunities',  roles: ALL_ROLES },
-      { key: 'follow-ups',   title: 'Follow-ups',     path: '/crm/follow-ups',     roles: ALL_ROLES },
+      { key: 'opportunities',title: 'Opportunities',  path: '/crm/opportunities',  roles: ERP_USERS },
+      { key: 'follow-ups',   title: 'Follow-ups',     path: '/crm/follow-ups',     roles: ERP_USERS },
+    ],
+  },
+
+  {
+    key: 'ticketing',
+    title: 'Ticketing',
+    roles: ERP_USERS,
+    items: [
+      { key: 'ticketing-overview', title: 'Overview', path: '/ticketing/overview', roles: ERP_USERS },
+      { key: 'ticketing-queue', title: 'Agent Queue', path: '/ticketing/queue', roles: ERP_USERS },
+      { key: 'ticketing-forms', title: 'Forms & Schema', path: '/ticketing/forms', roles: ADMIN_UP },
+      { key: 'ticketing-automation', title: 'Automation', path: '/ticketing/automation', roles: ADMIN_UP },
+      { key: 'ticketing-settings', title: 'Settings', path: '/ticketing/settings', roles: ADMIN_UP },
     ],
   },
 
@@ -125,16 +159,16 @@ export const STATIC_NAV: NavSection[] = [
   {
     key: 'reports',
     title: 'Reports',
-    roles: FINANCE_UP,
+    roles: CAN_VIEW_REPORTS_WORKSPACE,
     items: [
-      { key: 'reports-dashboard', title: 'Analytics Dashboard', path: '/reports/dashboard', roles: FINANCE_UP },
+      { key: 'reports-dashboard', title: 'ERP Reports', path: '/reports/dashboard', roles: CAN_VIEW_REPORTS_WORKSPACE },
     ],
   },
 
   // ── HR ───────────────────────────────────────────────────────────────────────
   {
     key: 'hr',
-    title: 'HR & Staff',
+    title: 'HR',
     roles: ADMIN_UP,
     items: [
       { key: 'hr-staff', title: 'Staff Directory', path: '/hr/staff', roles: ADMIN_UP },
@@ -147,7 +181,39 @@ export const STATIC_NAV: NavSection[] = [
     title: 'Procurement',
     roles: FINANCE_UP,
     items: [
+      { key: 'procurement-requisitions', title: 'Requisitions', path: '/procurement/requisitions', roles: FINANCE_UP },
+      { key: 'procurement-vendors', title: 'Vendors', path: '/procurement/vendors', roles: FINANCE_UP },
       { key: 'procurement-po', title: 'Purchase Orders', path: '/procurement/purchase-orders', roles: FINANCE_UP },
+      { key: 'procurement-receipts', title: 'Goods Receipts', path: '/procurement/receipts', roles: FINANCE_UP },
+      { key: 'procurement-bills', title: 'Supplier Bills', path: '/procurement/bills', roles: FINANCE_UP },
+      { key: 'procurement-payment-queue', title: 'Payment Queue', path: '/procurement/payment-queue', roles: FINANCE_UP },
+      { key: 'procurement-approvals', title: 'Approval Rules', path: '/procurement/approval-rules', roles: ADMIN_UP },
+    ],
+  },
+
+  // ── Industry Packs ──────────────────────────────────────────────────────────
+  {
+    key: 'manufacturing',
+    title: 'Manufacturing',
+    roles: ERP_USERS,
+    items: [
+      { key: 'manufacturing-overview', title: 'Overview', path: '/manufacturing/overview', roles: ERP_USERS },
+    ],
+  },
+  {
+    key: 'retail',
+    title: 'Retail & Commerce',
+    roles: ERP_USERS,
+    items: [
+      { key: 'retail-overview', title: 'Overview', path: '/retail/overview', roles: ERP_USERS },
+    ],
+  },
+  {
+    key: 'services',
+    title: 'Projects & Services',
+    roles: ERP_USERS,
+    items: [
+      { key: 'services-overview', title: 'Overview', path: '/services/overview', roles: ERP_USERS },
     ],
   },
 
@@ -157,16 +223,20 @@ export const STATIC_NAV: NavSection[] = [
     title: 'Platform Admin',
     roles: ADMIN_UP,
     items: [
+      { key: 'billing-center',   title: 'Billing Center',    path: '/platform/billing',           roles: SUPERADMIN_UP },
       { key: 'tenants',          title: 'Tenants',           path: '/platform/tenants',           roles: SUPERADMIN_UP },
-      { key: 'users',            title: 'Users',             path: '/platform/users',             roles: ADMIN_UP },
-      { key: 'roles',            title: 'Roles',             path: '/platform/roles',             roles: SUPERADMIN_UP },
+      { key: 'industries',       title: 'Industries',        path: '/platform/industries',        roles: SUPERADMIN_UP },
+      { key: 'roles',            title: 'Roles',             path: '/platform/roles',             roles: ADMIN_UP },
       { key: 'workspace',        title: 'Menu Builder',      path: '/platform/workspace',         roles: SUPERADMIN_UP },
+      { key: 'workflows',        title: 'Workflow Center',   path: '/platform/workflows',         roles: ADMIN_UP },
+      { key: 'backups',          title: 'Backups',           path: '/platform/backups',           roles: ADMIN_UP },
       { key: 'modules',          title: 'Modules',           path: '/platform/modules',           roles: SUPERADMIN_UP },
-      { key: 'plans',            title: 'Plans',             path: '/platform/plans',             roles: SUPERADMIN_UP },
-      { key: 'subscriptions',    title: 'Subscriptions',     path: '/platform/subscriptions',     roles: SUPERADMIN_UP },
+      { key: 'plans',            title: 'Subscription Plans',path: '/platform/plans',             roles: SUPERADMIN_UP },
+      { key: 'subscriptions',    title: 'Billing Subscriptions', path: '/platform/subscriptions', roles: SUPERADMIN_UP },
       { key: 'licenses',         title: 'Licenses',          path: '/platform/licenses',          roles: SUPERADMIN_UP },
-      { key: 'integrations',     title: 'Integrations',      path: '/platform/integrations',      roles: SUPERADMIN_UP },
-      { key: 'company-settings', title: 'Company Settings',  path: '/platform/company-settings',  roles: ['tenant_admin'] as AppRole[] },
+      { key: 'integrations',     title: 'Billing Gateways',  path: '/platform/integrations',      roles: SUPERADMIN_UP },
+      { key: 'organization-settings', title: 'Organization Settings',  path: '/platform/organization-settings',  roles: ADMIN_UP },
+      { key: 'audit-logs',       title: 'Audit Logs',        path: '/platform/audit',             roles: ADMIN_UP },
     ],
   },
 ];
@@ -200,7 +270,7 @@ export function detectRole(user: {
 
 export const ROLE_LABELS: Record<AppRole, string> = {
   superadmin:   'Super Admin',
-  tenant_admin: 'Tenant Admin',
+  tenant_admin: 'System Administrator',
   finance:      'Finance',
   operator:     'Operator',
   guest:        'Guest',

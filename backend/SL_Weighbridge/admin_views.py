@@ -6,6 +6,7 @@ from django.http import HttpResponse
 from django.template.loader import render_to_string
 from django.urls import path
 
+from Platform_API.modules.mixins import NO_TENANT_ACCESS, resolve_user_tenant
 from .models import VehiclePresence, Transaction
 
 
@@ -21,8 +22,15 @@ class DiscrepancyReportView(admin.ModelAdmin):
 
     @staff_member_required
     def discrepancy_report_view(self, request):
+        resolved = resolve_user_tenant(request.user)
         transactions = Transaction.objects.all()
         vehicle_presences = VehiclePresence.objects.all()
+        if resolved is NO_TENANT_ACCESS:
+            transactions = transactions.none()
+            vehicle_presences = vehicle_presences.none()
+        elif resolved is not None:
+            transactions = transactions.filter(tenant=resolved)
+            vehicle_presences = vehicle_presences.filter(tenant=resolved)
 
         discrepancies = []
 

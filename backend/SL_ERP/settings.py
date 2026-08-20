@@ -6,8 +6,10 @@ import os
 from pathlib import Path
 
 import dj_database_url
+from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(BASE_DIR / ".env")
 
 
 def env_list(name, default):
@@ -38,7 +40,10 @@ SECRET_KEY = os.getenv(
 
 DEBUG = env_bool("DEBUG", default=True)
 
-ALLOWED_HOSTS = ["*"]
+ALLOWED_HOSTS = env_list(
+    "ALLOWED_HOSTS",
+    ["*"] if DEBUG else ["localhost", "127.0.0.1"],
+)
 
 CSRF_TRUSTED_ORIGINS = env_list("CSRF_TRUSTED_ORIGINS", [
     # Replit preview domains
@@ -67,11 +72,14 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "Platform_Core",
     "Platform_API",
+    "SL_Budgeting",
     "SL_Weighbridge",
     "SL_HR",
     "SL_Procurement",
     "SL_CRM",
     "SL_Sales",
+    "SL_Inventory",
+    "SL_Ticketing",
     "rest_framework",
     "rest_framework.authtoken",
     "django_filters",
@@ -88,15 +96,18 @@ except ImportError:
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
-    "whitenoise.middleware.WhiteNoiseMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "Platform_Core.middleware.AuditRequestMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
+
+if importlib.util.find_spec("whitenoise") is not None:
+    MIDDLEWARE.insert(1, "whitenoise.middleware.WhiteNoiseMiddleware")
 
 ROOT_URLCONF = "SL_ERP.urls"
 
@@ -152,7 +163,7 @@ USE_I18N = True
 USE_TZ = True
 
 # ── Static & media files ──────────────────────────────────────────────────────
-STATIC_URL = "/django-static/"
+STATIC_URL = os.getenv("STATIC_URL", "/static/")
 STATIC_ROOT = BASE_DIR / "staticfiles"
 STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
 MEDIA_URL = "/media/"
@@ -180,8 +191,15 @@ REST_FRAMEWORK = {
 }
 
 # ── CORS ──────────────────────────────────────────────────────────────────────
-CORS_ALLOW_ALL_ORIGINS = True
+CORS_ALLOW_ALL_ORIGINS = env_bool("CORS_ALLOW_ALL_ORIGINS", default=DEBUG)
 CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOWED_ORIGINS = env_list("CORS_ALLOWED_ORIGINS", [])
+
+USE_X_FORWARDED_HOST = env_bool("USE_X_FORWARDED_HOST", default=not DEBUG)
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+SECURE_SSL_REDIRECT = env_bool("SECURE_SSL_REDIRECT", default=False)
+SESSION_COOKIE_SECURE = env_bool("SESSION_COOKIE_SECURE", default=not DEBUG)
+CSRF_COOKIE_SECURE = env_bool("CSRF_COOKIE_SECURE", default=not DEBUG)
 
 # ── Indicator / weighbridge hardware settings ─────────────────────────────────
 INDICATOR_API_BASE_URL = os.getenv(

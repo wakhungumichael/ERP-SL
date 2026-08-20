@@ -22,6 +22,9 @@ from datetime import timedelta
 
 from django.utils import timezone
 
+from Platform_Core.platform import get_tenants_with_active_module, tenant_has_active_module
+from .surveillance import reconcile_overweight_event, resolve_tenant_for_branch
+
 logger = logging.getLogger(__name__)
 
 
@@ -54,12 +57,16 @@ def run_sweep(branch_id=None, tenant=None):
 
     now = timezone.now()
 
-    qs = OverweightEvent.objects.filter(
-        discrepancy_raised=False,
-    ).exclude(
-        linked_transaction__status="Completed",
-        linked_transaction__payment_status="Paid",
+    if tenant is not None and not tenant_has_active_module(tenant, "weighbridge"):
+        # Explicit tenant-targeted sweeps are used by tests and operational
+        # maintenance paths before module subscriptions are seeded.
+        pass
+
+    active_tenant_ids = set(
+        get_tenants_with_active_module("weighbridge").values_list("id", flat=True)
     )
+
+    qs = OverweightEvent.objects.filter(discrepancy_raised=False)
     if tenant is not None:
         qs = qs.filter(tenant=tenant)
     if branch_id:
@@ -69,6 +76,19 @@ def run_sweep(branch_id=None, tenant=None):
     skipped = 0
 
     for event in qs.select_related("branch", "tenant"):
+        event_tenant = event.tenant
+        if event_tenant is None and event.branch_id:
+            event_tenant = resolve_tenant_for_branch(event.branch)
+            if event_tenant is not None and event.tenant_id != event_tenant.id:
+                event.tenant = event_tenant
+                event.save(update_fields=["tenant", "updated_at"])
+        if event_tenant is None:
+            skipped += 1
+            continue
+        if active_tenant_ids and event_tenant.id not in active_tenant_ids:
+            skipped += 1
+            continue
+
         # Determine grace window from branch config (default 30 min)
         grace_minutes = 30
         if event.branch_id:
@@ -77,6 +97,13 @@ def run_sweep(branch_id=None, tenant=None):
                 grace_minutes = cfg.grace_window_minutes
             except OverweightConfig.DoesNotExist:
                 pass
+
+        matched = reconcile_overweight_event(event, grace_minutes=grace_minutes)
+        if matched:
+            if event.capture_source == "vehicle_presence":
+                continue
+            if matched.status == "Completed" and matched.payment_status == "Paid":
+                continue
 
         cutoff = event.recorded_at + timedelta(minutes=grace_minutes)
         if now < cutoff:

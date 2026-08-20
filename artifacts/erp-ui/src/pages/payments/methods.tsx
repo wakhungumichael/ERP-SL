@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { useAuth } from '@/context/use-auth';
 import { CheckCircle2, XCircle, CreditCard } from 'lucide-react';
 
 function usePaymentMethods() {
@@ -19,12 +20,15 @@ function usePaymentMethods() {
 }
 
 function useProviderCapabilities() {
+  const { user } = useAuth();
   return useQuery({
-    queryKey: ['provider-capabilities'],
+    queryKey: ['provider-capabilities', (user as any)?.tenant_id ?? null],
     queryFn: async () => {
       const base = (window as any).__ERP_BASE_URL__ ?? '';
       const token = localStorage.getItem('sl-erp-token');
-      const res = await fetch(`${base}/api/payments/provider-capabilities/`, {
+      const tenantId = (user as any)?.tenant_id;
+      const qs = tenantId ? `?tenant_id=${tenantId}` : '';
+      const res = await fetch(`${base}/api/payments/provider-capabilities/${qs}`, {
         headers: { Authorization: `Token ${token}` },
       });
       if (!res.ok) throw new Error(`${res.status}`);
@@ -90,6 +94,20 @@ export default function PaymentMethodsPage() {
                     </div>
                     <div className="flex gap-3 text-xs text-muted-foreground">
                       <span>Provider: <strong>{c.provider}</strong></span>
+                      {c.payment_scope && (
+                        <span>
+                          Scope: <strong>{c.payment_scope === 'saas_billing' ? 'SaaS Billing' : 'Tenant Collections'}</strong>
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap gap-2 text-[11px]">
+                      {(c.enabled_rails ?? []).map((rail: string) => (
+                        <span key={rail} className="rounded border px-2 py-0.5 font-mono uppercase text-muted-foreground">
+                          {rail.replace('_', ' ')}
+                        </span>
+                      ))}
+                    </div>
+                    <div className="flex gap-3 text-xs text-muted-foreground">
                       {c.supports_initiation && <span className="text-emerald-600">✓ Initiation</span>}
                       {c.supports_callback && <span className="text-emerald-600">✓ Callback</span>}
                     </div>
@@ -98,8 +116,7 @@ export default function PaymentMethodsPage() {
               </ul>
             ) : (
               <div className="p-6 text-center text-sm text-muted-foreground">
-                No gateway providers configured. Add an integration endpoint of type{' '}
-                <code className="font-mono">payment_gateway</code> in Platform Admin.
+                {capData?.message ?? 'No payment providers configured for this tenant yet.'} Add a payment integration in Platform Admin.
               </div>
             )}
           </CardContent>

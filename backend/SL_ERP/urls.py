@@ -30,6 +30,12 @@ urlpatterns = [
     path("api/hr/", include("Platform_API.modules.hr.urls")),
     # Procurement API
     path("api/procurement/", include("Platform_API.modules.procurement.urls")),
+    # Budgeting API
+    path("api/budgeting/", include("Platform_API.modules.budgeting.urls")),
+    # Inventory API
+    path("api/inventory/", include("Platform_API.modules.inventory.urls")),
+    # Ticketing API
+    path("api/ticketing/", include("Platform_API.modules.ticketing.urls")),
     # Django admin (accessible at /admin/)
     path("admin/", admin.site.urls),
 ]

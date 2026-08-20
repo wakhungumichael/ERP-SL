@@ -24,6 +24,12 @@ import {
   Cpu, Activity, Trash2, Package,
 } from 'lucide-react';
 
+const MODULE_SCOPE_LABEL: Record<string, string> = {
+  organization: 'Organization',
+  hybrid: 'Hybrid',
+  platform_admin: 'Platform Admin',
+};
+
 const BASE = '/api/platform';
 function api(token: string, path: string, method = 'GET', body?: object) {
   return fetch(`${BASE}${path}`, {
@@ -176,27 +182,40 @@ function PlanModulesDialog({ open, onClose, plan }: { open: boolean; onClose: ()
     queryKey: ['modules'],
     queryFn: () => api(token!, '/modules/?page_size=100'),
     enabled: open && !!token,
+    refetchInterval: 15000,
   });
   const { data: planModulesData, refetch: refetchPlanModules } = useQuery({
     queryKey: ['plan-modules', plan.id],
     queryFn: () => api(token!, `/plans/${plan.id}/modules/?page_size=100`),
     enabled: open && !!token,
+    refetchInterval: 15000,
   });
 
   const allModules: any[] = allModulesData?.results ?? [];
+  const eligibleModules = allModules.filter((mod) => mod.scope !== 'platform_admin');
   const planModules: any[] = planModulesData?.results ?? [];
   const enabledIds = new Set(planModules.filter(pm => pm.is_enabled).map(pm => pm.module?.id ?? pm.module));
 
   const addMutation = useMutation({
     mutationFn: (module_id: number) =>
       api(token!, `/plans/${plan.id}/modules/`, 'POST', { module_id, is_enabled: true }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['plan-modules', plan.id] }); refetchPlanModules(); },
+    onSuccess: () => {
+      toast({ title: 'Plan modules updated', description: 'Tenant access will resync automatically.' });
+      qc.invalidateQueries({ queryKey: ['plan-modules', plan.id] });
+      qc.invalidateQueries({ queryKey: ['subscriptions'] });
+      refetchPlanModules();
+    },
     onError: (e: any) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
   });
 
   const removeMutation = useMutation({
     mutationFn: (pmId: number) => api(token!, `/plans/${plan.id}/modules/${pmId}/`, 'DELETE'),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['plan-modules', plan.id] }); refetchPlanModules(); },
+    onSuccess: () => {
+      toast({ title: 'Plan modules updated', description: 'Tenant access will resync automatically.' });
+      qc.invalidateQueries({ queryKey: ['plan-modules', plan.id] });
+      qc.invalidateQueries({ queryKey: ['subscriptions'] });
+      refetchPlanModules();
+    },
     onError: (e: any) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
   });
 
@@ -210,7 +229,7 @@ function PlanModulesDialog({ open, onClose, plan }: { open: boolean; onClose: ()
   };
 
   const grouped: Record<string, any[]> = {};
-  for (const m of allModules) (grouped[m.category] ??= []).push(m);
+  for (const m of eligibleModules) (grouped[m.category] ??= []).push(m);
   const catOrder = ['core', 'shared', 'vertical', 'integration'];
   const catLabel: Record<string, string> = {
     core: 'Core', shared: 'Shared Services', vertical: 'Industry Vertical', integration: 'Integration',
@@ -226,6 +245,9 @@ function PlanModulesDialog({ open, onClose, plan }: { open: boolean; onClose: ()
           </DialogTitle>
           <p className="text-xs text-muted-foreground">
             Select which modules are included in this plan. Tenants on this plan can have these modules activated.
+          </p>
+          <p className="text-xs text-muted-foreground">
+            Platform Admin modules are excluded here because organization subscriptions should only carry organization or hybrid capabilities.
           </p>
         </DialogHeader>
         <div className="space-y-4 py-2">
@@ -246,6 +268,7 @@ function PlanModulesDialog({ open, onClose, plan }: { open: boolean; onClose: ()
                       />
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium leading-tight">{mod.name}</p>
+                        <p className="text-[10px] text-muted-foreground mt-0.5">{MODULE_SCOPE_LABEL[mod.scope] ?? mod.scope}</p>
                         {mod.description && (
                           <p className="text-xs text-muted-foreground leading-snug mt-0.5">{mod.description}</p>
                         )}

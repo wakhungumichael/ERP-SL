@@ -6,6 +6,7 @@ import {
 } from '@workspace/api-client-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@/context/use-auth';
+import { ProcessFlow } from '@/components/workflow/process-flow';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -24,7 +25,7 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import {
   FileText, DollarSign, AlertCircle, Search, Plus, ChevronRight,
-  CheckCircle2, Clock, Package, X, ArrowRight, Users, Layers,
+  CheckCircle2, Clock, Package, X, ArrowRight, Users, Layers, ChevronLeft, Download,
 } from 'lucide-react';
 
 /* ─────────────────────────────────────────── helpers ── */
@@ -532,6 +533,10 @@ function DebtTab({ token }: { token: string | null }) {
   const { toast } = useToast();
   const qc = useQueryClient();
   const [consolidating, setConsolidating] = useState<number | null>(null);
+  const [search, setSearch] = useState('');
+  const [amountFilter, setAmountFilter] = useState<'all' | 'small' | 'large'>('all');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
 
   const { data, isLoading, refetch } = useQuery({
     queryKey: ['debt-summary'],
@@ -545,6 +550,20 @@ function DebtTab({ token }: { token: string | null }) {
   });
 
   const debtRows: any[] = data?.results ?? [];
+  const filteredRows = debtRows.filter((row: any) => {
+    const matchesSearch = !search || [row.customer_name, row.customer_email]
+      .filter(Boolean)
+      .some((value: string) => value.toLowerCase().includes(search.toLowerCase()));
+    const totalOwed = Number(row.total_owed ?? 0);
+    const matchesAmount = amountFilter === 'all'
+      ? true
+      : amountFilter === 'small'
+        ? totalOwed < 100000
+        : totalOwed >= 100000;
+    return matchesSearch && matchesAmount;
+  });
+  const totalPages = Math.max(1, Math.ceil(filteredRows.length / pageSize));
+  const pagedRows = filteredRows.slice((page - 1) * pageSize, page * pageSize);
 
   const handleConsolidate = async (customerId: number, customerName: string) => {
     setConsolidating(customerId);
@@ -586,10 +605,49 @@ function DebtTab({ token }: { token: string | null }) {
     <Card>
       <CardHeader className="pb-3">
         <CardTitle className="text-sm font-bold uppercase tracking-widest text-muted-foreground">
-          {debtRows.length} Customer{debtRows.length !== 1 ? 's' : ''} with Outstanding Debt
+          {filteredRows.length} Customer{filteredRows.length !== 1 ? 's' : ''} with Outstanding Debt
         </CardTitle>
       </CardHeader>
-      <CardContent className="p-0">
+      <CardContent className="space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap gap-3">
+            <div className="relative w-full sm:w-72">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Search customer…"
+                value={search}
+                onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+                className="pl-9"
+              />
+            </div>
+            <Select value={amountFilter} onValueChange={(value: 'all' | 'small' | 'large') => { setAmountFilter(value); setPage(1); }}>
+              <SelectTrigger className="w-44">
+                <SelectValue placeholder="All Amounts" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Amounts</SelectItem>
+                <SelectItem value="small">Below 100,000</SelectItem>
+                <SelectItem value="large">100,000 and Above</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="flex items-center gap-2 text-sm">
+            <span className="text-muted-foreground">Records:</span>
+            <Select value={String(pageSize)} onValueChange={(value) => { setPageSize(Number(value)); setPage(1); }}>
+              <SelectTrigger className="w-20">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {[5, 10, 25, 50].map((size) => (
+                  <SelectItem key={size} value={String(size)}>{size}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+        <div className="text-sm text-muted-foreground">
+          {filteredRows.length} record{filteredRows.length !== 1 ? 's' : ''} found
+        </div>
         <Table>
           <TableHeader>
             <TableRow className="bg-muted/50 hover:bg-muted/50">
@@ -601,7 +659,7 @@ function DebtTab({ token }: { token: string | null }) {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {debtRows.map((row: any) => (
+            {pagedRows.map((row: any) => (
               <TableRow key={row.customer_id} className="hover:bg-muted/30">
                 <TableCell className="py-2.5">
                   <div className="font-bold text-sm">{row.customer_name}</div>
@@ -627,8 +685,31 @@ function DebtTab({ token }: { token: string | null }) {
                 </TableCell>
               </TableRow>
             ))}
+            {pagedRows.length === 0 && (
+              <TableRow>
+                <TableCell colSpan={5} className="py-12 text-center text-sm text-muted-foreground">
+                  No debt records match your filters.
+                </TableCell>
+              </TableRow>
+            )}
           </TableBody>
         </Table>
+        {filteredRows.length > 0 && (
+          <div className="flex items-center justify-between text-sm">
+            <span className="text-muted-foreground">
+              Showing {Math.min((page - 1) * pageSize + 1, filteredRows.length)}-{Math.min(page * pageSize, filteredRows.length)} of {filteredRows.length}
+            </span>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>
+                <ChevronLeft className="h-4 w-4 mr-1" /> Previous
+              </Button>
+              <span className="text-muted-foreground">Page {page} of {totalPages}</span>
+              <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage((p) => Math.min(totalPages, p + 1))}>
+                Next <ChevronRight className="h-4 w-4 ml-1" />
+              </Button>
+            </div>
+          </div>
+        )}
       </CardContent>
     </Card>
   );
@@ -642,6 +723,8 @@ export default function InvoicesList() {
   const [activeTab, setActiveTab]     = useState<'all' | 'debt'>('all');
   const [statusFilter, setStatusFilter] = useState('');
   const [search, setSearch]           = useState('');
+  const [page, setPage]               = useState(1);
+  const [pageSize, setPageSize]       = useState(10);
   const [generateOpen, setGenerateOpen] = useState(false);
   const [newInvoiceOpen, setNewInvoiceOpen] = useState(false);
 
@@ -664,6 +747,25 @@ export default function InvoicesList() {
   });
 
   const invoices: any[] = data?.results ?? [];
+  const totalCount = data?.count ?? invoices.length;
+  const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
+  const pagedInvoices = invoices.slice((page - 1) * pageSize, page * pageSize);
+
+  const handleExportPayments = useCallback(async () => {
+    const res = await fetch('/api/payments/entries/?export=csv', {
+      headers: { Authorization: `Token ${token}` },
+    });
+    if (!res.ok) throw new Error(`${res.status}`);
+    const blob = await res.blob();
+    const blobUrl = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = blobUrl;
+    anchor.download = 'payments_export.csv';
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    URL.revokeObjectURL(blobUrl);
+  }, [token]);
 
   const handleSuccess = useCallback((id: number) => {
     qc.invalidateQueries({ queryKey: ['invoices'] });
@@ -706,9 +808,19 @@ export default function InvoicesList() {
           <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
             <FileText className="h-6 w-6 text-primary" /> Invoices
           </h1>
-          <p className="text-sm text-muted-foreground mt-0.5">Financial ledger and billing</p>
+          <p className="text-sm text-muted-foreground mt-0.5">Create invoices, track payment status, and follow customer balances.</p>
         </div>
         <div className="flex items-center gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            className="gap-1.5 font-bold uppercase tracking-wide text-xs"
+            onClick={() => {
+              handleExportPayments().catch(() => {});
+            }}
+          >
+            <Download className="h-3.5 w-3.5" /> Export Payments CSV
+          </Button>
           <Button
             size="sm"
             variant="outline"
@@ -744,11 +856,47 @@ export default function InvoicesList() {
         ))}
       </div>
 
+      <ProcessFlow
+        title="Invoice Flow"
+        description="Move billing from source document to issue, payment collection, statements, and accounting control."
+        stages={[
+          { label: 'Source Document', active: invoices.length > 0 },
+          { label: 'Draft', active: invoices.some((invoice) => invoice.status === 'draft') },
+          { label: 'Issued', active: invoices.some((invoice) => invoice.status === 'issued' || invoice.status === 'paid' || invoice.status === 'overdue'), current: true },
+          { label: 'Collection', active: Number(summary?.total_received ?? 0) > 0 },
+          { label: 'Statement / Aging', active: Number(summary?.outstanding ?? 0) >= 0 },
+          { label: 'Accounting' },
+        ]}
+        actions={[
+          {
+            label: 'Orders',
+            href: '/sales/orders',
+            icon: <Layers className="h-4 w-4 text-violet-600" />,
+            helper: 'Invoices should trace back to customer orders and completed work.',
+            tone: 'default',
+          },
+          {
+            label: 'Statements',
+            href: '/sales/statements',
+            icon: <Users className="h-4 w-4 text-sky-600" />,
+            helper: 'Review balances, collections, and overdue amounts.',
+            tone: 'warning',
+          },
+          {
+            label: 'Accounting',
+            href: '/accounting/posting-rules',
+            icon: <CheckCircle2 className="h-4 w-4 text-emerald-600" />,
+            helper: 'Keep billing aligned with posting rules and financial controls.',
+            tone: 'success',
+          },
+        ]}
+      />
+
       {/* Tabs */}
       <div className="flex items-center gap-0 border-b">
         {[
           { key: 'all', label: 'All Invoices', icon: <FileText className="h-3.5 w-3.5" /> },
-          { key: 'debt', label: 'Debt', icon: <Users className="h-3.5 w-3.5" /> },
+          { key: 'debt', label: 'Customer Balances', icon: <Users className="h-3.5 w-3.5" /> },
         ].map(tab => (
           <button
             key={tab.key}
@@ -775,20 +923,30 @@ export default function InvoicesList() {
               <Input
                 placeholder="Search by invoice # or customer…"
                 value={search}
-                onChange={e => setSearch(e.target.value)}
+                onChange={e => { setSearch(e.target.value); setPage(1); }}
                 className="pl-9 bg-card"
               />
             </div>
-            <Select value={statusFilter} onValueChange={setStatusFilter}>
+            <Select value={statusFilter || '__all__'} onValueChange={(value) => { setStatusFilter(value === '__all__' ? '' : value); setPage(1); }}>
               <SelectTrigger className="w-40 bg-card">
                 <SelectValue placeholder="All statuses" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="">All statuses</SelectItem>
+                <SelectItem value="__all__">All statuses</SelectItem>
                 <SelectItem value="draft">Draft</SelectItem>
                 <SelectItem value="issued">Issued</SelectItem>
                 <SelectItem value="paid">Paid</SelectItem>
                 <SelectItem value="overdue">Overdue</SelectItem>
+              </SelectContent>
+            </Select>
+            <Select value={String(pageSize)} onValueChange={(value) => { setPageSize(Number(value)); setPage(1); }}>
+              <SelectTrigger className="w-28 bg-card">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {[5, 10, 25, 50].map((size) => (
+                  <SelectItem key={size} value={String(size)}>{size} / page</SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>
@@ -797,7 +955,7 @@ export default function InvoicesList() {
           <Card>
             <CardHeader className="pb-3">
               <CardTitle className="text-sm font-bold uppercase tracking-widest text-muted-foreground">
-                {isLoading ? 'Loading…' : `${invoices.length} Invoice${invoices.length !== 1 ? 's' : ''}`}
+                {isLoading ? 'Loading…' : `${totalCount} Invoice${totalCount !== 1 ? 's' : ''}`}
               </CardTitle>
             </CardHeader>
             <CardContent className="p-0">
@@ -823,7 +981,7 @@ export default function InvoicesList() {
                         ))}
                       </TableRow>
                     ))
-                  ) : invoices.length ? invoices.map((inv: any) => {
+                  ) : pagedInvoices.length ? pagedInvoices.map((inv: any) => {
                     const isOverdue = inv.due_date && inv.status === 'issued' && new Date(inv.due_date) < new Date();
                     return (
                       <TableRow
@@ -864,7 +1022,7 @@ export default function InvoicesList() {
                         </div>
                         {!search && !statusFilter && (
                           <Button size="sm" onClick={() => setNewInvoiceOpen(true)}>
-                            <Plus className="h-3.5 w-3.5 mr-1.5" /> Create First Invoice
+                            <Plus className="h-3.5 w-3.5 mr-1.5" /> Create Invoice
                           </Button>
                         )}
                       </TableCell>
@@ -874,6 +1032,22 @@ export default function InvoicesList() {
               </Table>
             </CardContent>
           </Card>
+          {!isLoading && totalCount > 0 && (
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-muted-foreground">
+                Showing {Math.min((page - 1) * pageSize + 1, totalCount)}-{Math.min(page * pageSize, totalCount)} of {totalCount} invoices
+              </span>
+              <div className="flex items-center gap-2">
+                <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>
+                  <ChevronLeft className="h-4 w-4 mr-1" /> Previous
+                </Button>
+                <span className="text-muted-foreground">Page {page} of {totalPages}</span>
+                <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage((p) => Math.min(totalPages, p + 1))}>
+                  Next <ChevronRight className="h-4 w-4 ml-1" />
+                </Button>
+              </div>
+            </div>
+          )}
         </>
       )}
 

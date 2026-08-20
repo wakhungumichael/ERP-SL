@@ -1,7 +1,10 @@
 import { useQuery } from '@tanstack/react-query';
+import { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { TrendingUp, FileText, AlertCircle, CheckCircle2, Clock } from 'lucide-react';
+import { TrendingUp, FileText, AlertCircle, CheckCircle2, Clock, RefreshCw, WandSparkles } from 'lucide-react';
+import { useToast } from '@/hooks/use-toast';
 
 function useAccountingDashboard() {
   return useQuery({
@@ -26,7 +29,30 @@ const STATUS_BADGE: Record<string, string> = {
 };
 
 export default function AccountingDashboard() {
+  const { toast } = useToast();
   const { data, isLoading, error } = useAccountingDashboard();
+  const [bootstrapping, setBootstrapping] = useState(false);
+  const [resyncing, setResyncing] = useState(false);
+
+  async function postAction(path: string, setter: (value: boolean) => void, title: string) {
+    setter(true);
+    try {
+      const base = (window as any).__ERP_BASE_URL__ ?? '';
+      const token = localStorage.getItem('sl-erp-token');
+      const res = await fetch(`${base}${path}`, {
+        method: 'POST',
+        headers: { Authorization: `Token ${token}` },
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(payload?.error || 'Request failed');
+      toast({ title, description: payload?.message || 'Completed successfully.' });
+      window.location.reload();
+    } catch (error: any) {
+      toast({ title: 'Action failed', description: error.message, variant: 'destructive' });
+    } finally {
+      setter(false);
+    }
+  }
 
   if (isLoading) {
     return (
@@ -46,14 +72,24 @@ export default function AccountingDashboard() {
 
   const tx = data?.transactions ?? {};
   const inv = data?.invoices ?? {};
+  const bills = data?.bills ?? {};
+  const journals = data?.journals ?? {};
   const recent: any[] = data?.recent_invoices ?? [];
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between border-b pb-4">
         <h1 className="text-3xl font-bold tracking-tight">Accounting Overview</h1>
-        <div className="text-xs font-mono text-muted-foreground">
-          Month from {data?.period?.month_start ?? '—'}
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={() => postAction('/api/accounting/setup/bootstrap/', setBootstrapping, 'Accounting structure prepared')} disabled={bootstrapping}>
+            <WandSparkles className="mr-1 h-4 w-4" /> {bootstrapping ? 'Preparing…' : 'Prepare Setup'}
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => postAction('/api/accounting/resync/', setResyncing, 'Accounting postings refreshed')} disabled={resyncing}>
+            <RefreshCw className="mr-1 h-4 w-4" /> {resyncing ? 'Re-syncing…' : 'Re-sync Postings'}
+          </Button>
+          <div className="text-xs font-mono text-muted-foreground">
+            Month from {data?.period?.month_start ?? '—'}
+          </div>
         </div>
       </div>
 
@@ -132,6 +168,45 @@ export default function AccountingDashboard() {
               { label: 'Completed',          value: tx.completed           ?? 0 },
               { label: 'Pending',            value: tx.pending             ?? 0 },
               { label: 'Uninvoiced (done)',   value: tx.uninvoiced_completed ?? 0 },
+            ].map(row => (
+              <div key={row.label} className="flex items-center justify-between">
+                <span className="text-sm font-medium">{row.label}</span>
+                <span className="font-mono font-bold">{row.value}</span>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <Card className="shadow-sm">
+          <CardHeader className="bg-muted/20 border-b py-3">
+            <CardTitle className="text-sm font-bold uppercase tracking-widest">Payables</CardTitle>
+          </CardHeader>
+          <CardContent className="p-5 space-y-3">
+            {[
+              { label: 'Approved Bills', value: bills.approved ?? 0 },
+              { label: 'Paid Bills', value: bills.paid ?? 0 },
+              { label: 'Outstanding', value: `KES ${(bills.outstanding ?? 0).toLocaleString()}` },
+            ].map(row => (
+              <div key={row.label} className="flex items-center justify-between">
+                <span className="text-sm font-medium">{row.label}</span>
+                <span className="font-mono font-bold">{row.value}</span>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+
+        <Card className="shadow-sm">
+          <CardHeader className="bg-muted/20 border-b py-3">
+            <CardTitle className="text-sm font-bold uppercase tracking-widest">Posting Health</CardTitle>
+          </CardHeader>
+          <CardContent className="p-5 space-y-3">
+            {[
+              { label: 'Posted Entries', value: journals.posted_entries ?? 0 },
+              { label: 'Draft Entries', value: journals.draft_entries ?? 0 },
+              { label: 'Sales Postings', value: `KES ${(journals.sales_postings ?? 0).toLocaleString()}` },
+              { label: 'Cash In', value: `KES ${(journals.cash_in ?? 0).toLocaleString()}` },
             ].map(row => (
               <div key={row.label} className="flex items-center justify-between">
                 <span className="text-sm font-medium">{row.label}</span>

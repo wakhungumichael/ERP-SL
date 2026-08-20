@@ -10,7 +10,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Package, Pencil, Trash2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Package, Pencil, Trash2 } from 'lucide-react';
 
 const BASE_URL = import.meta.env.BASE_URL?.replace(/\/$/, '') ?? '';
 const fmt = (v: number) => 'KES ' + Number(v ?? 0).toLocaleString('en-KE', { minimumFractionDigits: 2 });
@@ -30,6 +30,7 @@ interface Product {
   tax_rate: number;
   description: string;
   is_active: boolean;
+  source: string;
 }
 
 type FormState = {
@@ -43,30 +44,49 @@ type FormState = {
   is_active: boolean;
 };
 
-const emptyForm = (): FormState => ({
+const emptyForm = (defaultTaxRate = '0'): FormState => ({
   name: '',
   code: '',
   product_type: 'product',
   unit: '',
   unit_price: '',
-  tax_rate: '0',
+  tax_rate: defaultTaxRate,
   description: '',
   is_active: true,
 });
 
 export default function ProductsPage() {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const { toast } = useToast();
+  const tenantId = (user as any)?.tenant_id;
 
   const [filterType, setFilterType] = useState('');
   const [filterActive, setFilterActive] = useState('');
   const [search, setSearch] = useState('');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
   const [open, setOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<Product | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Product | null>(null);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [form, setForm] = useState<FormState>(emptyForm());
+
+  const { data: tenantSettingsData } = useQuery({
+    queryKey: ['tenant-settings-default-tax', tenantId, token],
+    enabled: !!tenantId && !!token,
+    queryFn: async () => {
+      const r = await fetch(BASE_URL + `/api/platform/tenants/${tenantId}/settings/`, {
+        headers: { Authorization: 'Token ' + token },
+      });
+      if (!r.ok) throw new Error('settings fetch failed');
+      return r.json();
+    },
+  });
+
+  const tenantSettings = tenantSettingsData?.data ?? tenantSettingsData ?? {};
+  const defaultTaxRate = String(tenantSettings.default_tax_rate ?? '0');
+  const defaultTaxName = tenantSettings.default_tax_name || 'Tax';
 
   const params = new URLSearchParams();
   if (filterType) params.set('product_type', filterType);
@@ -78,7 +98,7 @@ export default function ProductsPage() {
     enabled: !!token,
     queryFn: async () => {
       const r = await fetch(BASE_URL + '/api/sales/products/?' + params.toString(), {
-        headers: { Authorization: 'Bearer ' + token },
+        headers: { Authorization: 'Token ' + token },
       });
       if (!r.ok) throw new Error('fetch failed');
       return r.json();
@@ -86,6 +106,8 @@ export default function ProductsPage() {
   });
 
   const products: Product[] = Array.isArray(data) ? data : (data?.results ?? []);
+  const totalPages = Math.max(1, Math.ceil(products.length / pageSize));
+  const pagedProducts = products.slice((page - 1) * pageSize, page * pageSize);
 
   const counts = {
     total: products.length,
@@ -96,7 +118,7 @@ export default function ProductsPage() {
 
   function openCreate() {
     setEditTarget(null);
-    setForm(emptyForm());
+    setForm(emptyForm(defaultTaxRate));
     setOpen(true);
   }
 
@@ -129,13 +151,14 @@ export default function ProductsPage() {
       const method = editTarget ? 'PATCH' : 'POST';
       const r = await fetch(url, {
         method,
-        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+        headers: { 'Content-Type': 'application/json', Authorization: 'Token ' + token },
         body: JSON.stringify(payload),
       });
       if (!r.ok) throw new Error('Failed');
       toast({ title: editTarget ? 'Product updated' : 'Product created' });
       refetch();
       setOpen(false);
+      setPage(1);
     } catch {
       toast({ title: 'Error saving product', variant: 'destructive' });
     } finally {
@@ -149,7 +172,7 @@ export default function ProductsPage() {
     try {
       const r = await fetch(BASE_URL + '/api/sales/products/' + deleteTarget.id + '/', {
         method: 'DELETE',
-        headers: { Authorization: 'Bearer ' + token },
+        headers: { Authorization: 'Token ' + token },
       });
       if (!r.ok) throw new Error('Failed');
       toast({ title: 'Product deleted' });
@@ -165,7 +188,12 @@ export default function ProductsPage() {
   return (
     <div className="space-y-6 p-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Products &amp; Services</h1>
+        <div>
+          <h1 className="text-2xl font-semibold">Products &amp; Services</h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            Manual catalog items live here, and weighbridge vehicle-type services sync in automatically.
+          </p>
+        </div>
         <Button onClick={openCreate}>+ New Product</Button>
       </div>
 
@@ -187,33 +215,51 @@ export default function ProductsPage() {
       </div>
 
       {/* Filters */}
-      <div className="flex flex-wrap gap-3">
-        <Input
-          placeholder="Search…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="w-48"
-        />
-        <Select value={filterType} onValueChange={setFilterType}>
-          <SelectTrigger className="w-40">
-            <SelectValue placeholder="All Types" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="">All Types</SelectItem>
-            <SelectItem value="product">Product</SelectItem>
-            <SelectItem value="service">Service</SelectItem>
-          </SelectContent>
-        </Select>
-        <Select value={filterActive} onValueChange={setFilterActive}>
-          <SelectTrigger className="w-40">
-            <SelectValue placeholder="All Statuses" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="">All Statuses</SelectItem>
-            <SelectItem value="true">Active</SelectItem>
-            <SelectItem value="false">Inactive</SelectItem>
-          </SelectContent>
-        </Select>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap gap-3">
+          <Input
+            placeholder="Search…"
+            value={search}
+            onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+            className="w-48"
+          />
+          <Select value={filterType || '__all__'} onValueChange={(value) => { setFilterType(value === '__all__' ? '' : value); setPage(1); }}>
+            <SelectTrigger className="w-40">
+              <SelectValue placeholder="All Types" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all__">All Types</SelectItem>
+              <SelectItem value="product">Product</SelectItem>
+              <SelectItem value="service">Service</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select value={filterActive || '__all__'} onValueChange={(value) => { setFilterActive(value === '__all__' ? '' : value); setPage(1); }}>
+            <SelectTrigger className="w-40">
+              <SelectValue placeholder="All Statuses" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all__">All Statuses</SelectItem>
+              <SelectItem value="true">Active</SelectItem>
+              <SelectItem value="false">Inactive</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="flex items-center gap-2 text-sm">
+          <span className="text-muted-foreground">Records:</span>
+          <Select value={String(pageSize)} onValueChange={(value) => { setPageSize(Number(value)); setPage(1); }}>
+            <SelectTrigger className="w-20">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {[5, 10, 25, 50].map((size) => (
+                <SelectItem key={size} value={String(size)}>{size}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+      <div className="text-sm text-muted-foreground">
+        {products.length} record{products.length !== 1 ? 's' : ''} found
       </div>
 
       {/* Table */}
@@ -225,53 +271,75 @@ export default function ProductsPage() {
           <p>No products found</p>
         </div>
       ) : (
-        <div className="rounded-md border">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Code</TableHead>
-                <TableHead>Name</TableHead>
-                <TableHead>Type</TableHead>
-                <TableHead>Unit Price</TableHead>
-                <TableHead>Tax %</TableHead>
-                <TableHead>Unit</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {products.map((p) => (
-                <TableRow key={p.id} className="hover:bg-muted/50">
-                  <TableCell className="font-mono text-sm">{p.code || '—'}</TableCell>
-                  <TableCell className="font-medium">{p.name}</TableCell>
-                  <TableCell>
-                    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${typeColors[p.product_type] ?? 'bg-gray-100 text-gray-700'}`}>
-                      {p.product_type}
-                    </span>
-                  </TableCell>
-                  <TableCell>{fmt(p.unit_price)}</TableCell>
-                  <TableCell>{p.tax_rate ?? 0}%</TableCell>
-                  <TableCell>{p.unit || '—'}</TableCell>
-                  <TableCell>
-                    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${p.is_active ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-500'}`}>
-                      {p.is_active ? 'Active' : 'Inactive'}
-                    </span>
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex gap-1">
-                      <Button size="sm" variant="ghost" onClick={() => openEdit(p)}>
-                        <Pencil className="h-4 w-4" />
-                      </Button>
-                      <Button size="sm" variant="ghost" className="text-red-500 hover:text-red-700" onClick={() => setDeleteTarget(p)}>
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </TableCell>
+        <>
+          <div className="rounded-md border">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Code</TableHead>
+                  <TableHead>Name</TableHead>
+                  <TableHead>Type</TableHead>
+                  <TableHead>Source</TableHead>
+                  <TableHead>Unit Price</TableHead>
+                  <TableHead>Tax %</TableHead>
+                  <TableHead>Unit</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Actions</TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </div>
+              </TableHeader>
+              <TableBody>
+                {pagedProducts.map((p) => (
+                  <TableRow key={p.id} className="hover:bg-muted/50">
+                    <TableCell className="font-mono text-sm">{p.code || '—'}</TableCell>
+                    <TableCell className="font-medium">{p.name}</TableCell>
+                    <TableCell>
+                      <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${typeColors[p.product_type] ?? 'bg-gray-100 text-gray-700'}`}>
+                        {p.product_type}
+                      </span>
+                    </TableCell>
+                    <TableCell>
+                      <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${p.source === 'weighbridge' ? 'bg-orange-100 text-orange-700' : 'bg-slate-100 text-slate-700'}`}>
+                        {p.source === 'weighbridge' ? 'Weighbridge' : 'Manual'}
+                      </span>
+                    </TableCell>
+                    <TableCell>{fmt(p.unit_price)}</TableCell>
+                    <TableCell>{p.tax_rate ?? 0}%</TableCell>
+                    <TableCell>{p.unit || '—'}</TableCell>
+                    <TableCell>
+                      <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${p.is_active ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-500'}`}>
+                        {p.is_active ? 'Active' : 'Inactive'}
+                      </span>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex gap-1">
+                        <Button size="sm" variant="ghost" onClick={() => openEdit(p)}>
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                        <Button size="sm" variant="ghost" className="text-red-500 hover:text-red-700" onClick={() => setDeleteTarget(p)}>
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+          <div className="flex items-center justify-between text-sm mt-4">
+            <span className="text-muted-foreground">
+              Showing {Math.min((page - 1) * pageSize + 1, products.length)}-{Math.min(page * pageSize, products.length)} of {products.length}
+            </span>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>
+                <ChevronLeft className="h-4 w-4 mr-1" /> Previous
+              </Button>
+              <span className="text-muted-foreground">Page {page} of {totalPages}</span>
+              <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage((p) => Math.min(totalPages, p + 1))}>
+                Next <ChevronRight className="h-4 w-4 ml-1" />
+              </Button>
+            </div>
+          </div>
+        </>
       )}
 
       {/* Create / Edit Dialog */}
@@ -329,6 +397,7 @@ export default function ProductsPage() {
                   value={form.tax_rate}
                   onChange={(e) => setForm({ ...form, tax_rate: e.target.value })}
                 />
+                <p className="mt-1 text-xs text-muted-foreground">Default {defaultTaxName}: {defaultTaxRate}%</p>
               </div>
             </div>
             <div>

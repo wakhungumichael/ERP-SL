@@ -64,17 +64,19 @@ export default function LiveIndicator({ branchId, label = 'Weight', onCapture, c
   const displayWeight = reading?.weight ?? null;
   const isStable     = reading?.stable ?? false;
   const isConnected  = !error && reading !== null;
+  const panelStateClass = !branchId
+    ? 'border-border opacity-50'
+    : !isConnected
+      ? 'border-destructive/30'
+      : isStable
+        ? 'border-emerald-400 shadow-emerald-100 dark:shadow-none shadow-md'
+        : 'border-amber-300';
 
   return (
-    <div className={`rounded-xl border-2 p-5 transition-all ${
-      !branchId      ? 'border-border bg-muted/20 opacity-50' :
-      !isConnected   ? 'border-destructive/30 bg-destructive/5' :
-      isStable       ? 'border-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 dark:border-emerald-700 shadow-emerald-100 dark:shadow-none shadow-md' :
-                       'border-amber-300 bg-amber-50 dark:bg-amber-900/20 dark:border-amber-700'
-    }`}>
+    <div className={`rounded-xl border-2 bg-black p-5 text-primary transition-all ${panelStateClass}`}>
       {/* Header */}
       <div className="flex items-center justify-between mb-3">
-        <span className="text-xs font-bold uppercase tracking-widest text-muted-foreground">{label}</span>
+        <span className="text-xs font-bold uppercase tracking-widest text-primary">{label}</span>
         <div className="flex items-center gap-1.5">
           {!branchId ? null : !isConnected ? (
             <span className="flex items-center gap-1 text-[10px] font-bold text-destructive uppercase tracking-wide">
@@ -103,10 +105,10 @@ export default function LiveIndicator({ branchId, label = 'Weight', onCapture, c
       <div className="flex items-end gap-3 mb-4">
         <div className={`font-black tabular-nums transition-all ${
           displayWeight != null && displayWeight > 0 ? 'text-6xl' : 'text-5xl opacity-30'
-        } ${isStable ? 'text-emerald-700 dark:text-emerald-300' : 'text-amber-700 dark:text-amber-300'}`}>
+        } text-primary`}>
           {!branchId ? '—' : displayWeight != null ? displayWeight.toLocaleString() : '···'}
         </div>
-        <div className="text-2xl font-bold text-muted-foreground mb-2">kg</div>
+        <div className="mb-2 text-2xl font-bold text-primary">kg</div>
       </div>
 
       {/* Captured value pill */}
@@ -137,7 +139,7 @@ export default function LiveIndicator({ branchId, label = 'Weight', onCapture, c
                               `Capture ${displayWeight?.toLocaleString()} kg`}
         </Button>
       ) : (
-        <div className="text-center text-xs font-medium text-muted-foreground py-2">
+        <div className="py-2 text-center text-xs font-medium text-primary">
           Select a branch to enable the indicator
         </div>
       )}

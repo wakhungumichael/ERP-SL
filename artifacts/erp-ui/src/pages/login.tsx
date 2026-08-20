@@ -1,32 +1,166 @@
 import { useEffect, useState } from 'react';
-import { useLocation } from 'wouter';
+import { useLocation, useRoute } from 'wouter';
+import { useQuery } from '@tanstack/react-query';
 import { useAuthLogin } from '@workspace/api-client-react';
+import { ArrowRight, Building2, CheckCircle2, Scale, ShieldCheck, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Scale } from 'lucide-react';
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from '@/components/ui/select';
+import { Switch } from '@/components/ui/switch';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/use-auth';
-import { ROLE_LABELS } from '@/lib/roles';
+import { DEFAULT_PUBLIC_SITE, fetchPublicSiteConfig } from '@/lib/public-site';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+
+const BASE = '/api/platform';
 
 const ROLE_DESCRIPTIONS = [
-  { role: 'Operator', desc: 'Weighbridge transactions & live weight' },
-  { role: 'Finance', desc: 'Invoices, payments & financial reports' },
-  { role: 'Tenant Admin', desc: 'Users, roles & workspace configuration' },
-  { role: 'Super Admin', desc: 'Full platform access & tenant management' },
+  { role: 'Operator', desc: 'Weighbridge transactions, live capture, and dispatch controls' },
+  { role: 'Finance', desc: 'Invoices, collections, statements, and reports' },
+  { role: 'Tenant Admin', desc: 'Users, branding, menu access, and workspace setup' },
+  { role: 'Super Admin', desc: 'Platform governance, plans, subscriptions, and billing' },
 ];
+
+function setupApi(token: string, path: string, method = 'GET', body?: object) {
+  return fetch(`${BASE}${path}`, {
+    method,
+    headers: {
+      Authorization: `Token ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  }).then(async (response) => {
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload?.message || payload?.detail || payload?.error || 'Request failed.');
+    }
+    return payload;
+  });
+}
+
+function recommendPlanForIndustry(plans: any[], industryId?: number | null) {
+  const activePlans = plans.filter((plan) => plan.is_active);
+  if (!activePlans.length) return null;
+  if (!industryId) return [...activePlans].sort((a, b) => Number(a.price) - Number(b.price))[0];
+
+  const scored = activePlans.map((plan) => {
+    const modules = Array.isArray(plan.modules) ? plan.modules : [];
+    const recommendedCount = modules.filter((entry: any) => {
+      const module = entry.module;
+      const industries = Array.isArray(module?.industries) ? module.industries : [];
+      return module?.is_core || industries.some((industry: any) => industry.id === industryId);
+    }).length;
+    return { plan, recommendedCount, price: Number(plan.price ?? 0), totalModules: modules.length };
+  });
+
+  scored.sort((a, b) => {
+    if (b.recommendedCount !== a.recommendedCount) return b.recommendedCount - a.recommendedCount;
+    if (a.price !== b.price) return a.price - b.price;
+    return a.totalModules - b.totalModules;
+  });
+
+  return scored[0]?.plan ?? null;
+}
 
 export default function Login() {
   const [, setLocation] = useLocation();
+  const [, params] = useRoute('/login/:tenantCode');
+  const tenantCode = params?.tenantCode;
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [registerOpen, setRegisterOpen] = useState(false);
+  const [registerStep, setRegisterStep] = useState<1 | 2 | 3>(1);
+  const [registerSubmitting, setRegisterSubmitting] = useState(false);
+  const [organizationSubmitting, setOrganizationSubmitting] = useState(false);
+  const [createdWorkspace, setCreatedWorkspace] = useState(false);
+  const [pendingAuth, setPendingAuth] = useState<{ token: string; user: Record<string, unknown> | null } | null>(null);
+  const [registerForm, setRegisterForm] = useState({
+    name: '',
+    email: '',
+    password: '',
+  });
+  const [organizationForm, setOrganizationForm] = useState({
+    name: '',
+    legal_name: '',
+    contact_email: '',
+    contact_phone: '',
+    industry_id: '',
+  });
+  const [forgotPasswordOpen, setForgotPasswordOpen] = useState(false);
+  const [forgotIdentifier, setForgotIdentifier] = useState('');
+  const [forgotSubmitting, setForgotSubmitting] = useState(false);
   const login = useAuthLogin();
   const { toast } = useToast();
   const { setToken, token } = useAuth();
+  const { data } = useQuery({
+    queryKey: ['public-site-config', tenantCode ?? 'owner'],
+    queryFn: () => fetchPublicSiteConfig(tenantCode),
+    retry: false,
+    staleTime: 5 * 60_000,
+  });
+  const { data: industriesData } = useQuery({
+    queryKey: ['onboarding-industries', pendingAuth?.token ?? 'none'],
+    queryFn: () => setupApi(pendingAuth!.token, '/industries/?page_size=100'),
+    enabled: registerOpen && !!pendingAuth?.token,
+    staleTime: 5 * 60_000,
+  });
+  const { data: plansData } = useQuery({
+    queryKey: ['onboarding-plans', pendingAuth?.token ?? 'none'],
+    queryFn: () => setupApi(pendingAuth!.token, '/plans/?page_size=100'),
+    enabled: registerOpen && !!pendingAuth?.token,
+    staleTime: 5 * 60_000,
+  });
 
-  // Redirect if already logged in
+  const site = data ?? DEFAULT_PUBLIC_SITE;
+  const industries: any[] = industriesData?.results ?? industriesData?.data?.results ?? [];
+  const plans: any[] = plansData?.results ?? plansData?.data?.results ?? [];
+  const brand = site.branding.primary_color ?? '#E85D26';
+  const privacyHref = tenantCode ? `/landing/${tenantCode}/privacy` : '/privacy';
+  const trimmedName = registerForm.name.trim();
+  const trimmedEmail = registerForm.email.trim();
+  const accountNameParts = trimmedName.split(/\s+/).filter(Boolean);
+  const passwordLongEnough = registerForm.password.length >= 8;
+  const emailLooksValid = /\S+@\S+\.\S+/.test(trimmedEmail);
+  const accountStepReady = Boolean(trimmedName && emailLooksValid && passwordLongEnough);
+  const organizationStepReady = Boolean(organizationForm.name.trim());
+  const accountPreviewName = accountNameParts[0] ?? 'Workspace';
+  const organizationPreviewName = organizationForm.name.trim() || `${accountPreviewName} Organization`;
+  const selectedIndustryId = organizationForm.industry_id ? Number(organizationForm.industry_id) : null;
+  const recommendedPlan = recommendPlanForIndustry(plans, selectedIndustryId);
+  const [selectedPlanId, setSelectedPlanId] = useState('');
+  const [startWithDemo, setStartWithDemo] = useState(true);
+  const selectedPlan = plans.find((plan: any) => String(plan.id) === selectedPlanId) ?? recommendedPlan ?? null;
   useEffect(() => {
     if (token) setLocation('/dashboard');
   }, [token, setLocation]);
+
+  useEffect(() => {
+    const nextPlanId = recommendedPlan?.id ? String(recommendedPlan.id) : '';
+    setSelectedPlanId(nextPlanId);
+    setStartWithDemo(Boolean((recommendedPlan?.trial_days ?? 0) > 0));
+  }, [recommendedPlan?.id, recommendedPlan?.trial_days]);
+
+  const resetRegisterFlow = () => {
+    setRegisterOpen(false);
+    setRegisterStep(1);
+    setRegisterSubmitting(false);
+    setOrganizationSubmitting(false);
+    setCreatedWorkspace(false);
+    setPendingAuth(null);
+    setRegisterForm({ name: '', email: '', password: '' });
+    setOrganizationForm({ name: '', legal_name: '', contact_email: '', contact_phone: '', industry_id: '' });
+    setSelectedPlanId('');
+    setStartWithDemo(true);
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -34,11 +168,11 @@ export default function Login() {
       { data: { username, password } },
       {
         onSuccess: (raw) => {
-          // Platform API wraps responses: {success, data: {token, user}}
           const payload = (raw as Record<string, unknown>)?.data as Record<string, unknown> | undefined;
-          const token = (payload?.token ?? (raw as Record<string, unknown>)?.token) as string | undefined;
-          if (token) {
-            setToken(token);
+          const authToken = (payload?.token ?? (raw as Record<string, unknown>)?.token) as string | undefined;
+          const user = (payload?.user ?? (raw as Record<string, unknown>)?.user) as Record<string, unknown> | undefined;
+          if (authToken) {
+            setToken(authToken, user ?? null);
             setLocation('/dashboard');
           }
         },
@@ -49,109 +183,624 @@ export default function Login() {
             variant: 'destructive',
           });
         },
-      }
+      },
     );
   };
 
+  const handleAccountRegistration = async () => {
+    if (!trimmedName || !trimmedEmail || !registerForm.password) {
+      toast({
+        title: 'Missing account details',
+        description: 'Name, email, and password are required.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    if (!emailLooksValid) {
+      toast({
+        title: 'Check the email address',
+        description: 'Use a valid business email address to continue.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    if (!passwordLongEnough) {
+      toast({
+        title: 'Password too short',
+        description: 'Use at least 8 characters for your password.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setRegisterSubmitting(true);
+    try {
+      const response = await fetch('/api/platform/auth/register/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: trimmedName,
+          email: trimmedEmail,
+          password: registerForm.password,
+        }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload?.message || payload?.detail || payload?.error || 'Registration failed.');
+      }
+
+      const data = payload?.data ?? payload;
+      setPendingAuth({
+        token: data.token,
+        user: (data.user as Record<string, unknown> | undefined) ?? null,
+      });
+      setOrganizationForm({
+        name: organizationPreviewName,
+        legal_name: organizationPreviewName,
+        contact_email: trimmedEmail,
+        contact_phone: '',
+        industry_id: '',
+      });
+      setRegisterStep(2);
+    } catch (error: any) {
+      toast({
+        title: 'Account creation failed',
+        description: error.message,
+        variant: 'destructive',
+      });
+    } finally {
+      setRegisterSubmitting(false);
+    }
+  };
+
+  const handleOrganizationCreation = async () => {
+    if (!pendingAuth?.token) return;
+    if (!organizationForm.name.trim()) {
+      toast({
+        title: 'Organization name required',
+        description: 'Add at least one organization now, or skip this step.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setOrganizationSubmitting(true);
+    try {
+      await setupApi(pendingAuth.token, '/tenants/', 'POST', {
+        name: organizationForm.name.trim(),
+        legal_name: organizationForm.legal_name.trim(),
+        contact_email: organizationForm.contact_email.trim(),
+        contact_phone: organizationForm.contact_phone.trim(),
+        industry_id: organizationForm.industry_id ? Number(organizationForm.industry_id) : undefined,
+        plan_id: selectedPlanId ? Number(selectedPlanId) : undefined,
+        demo_days: startWithDemo ? Number(selectedPlan?.trial_days ?? 0) : 0,
+        start_with_demo: startWithDemo,
+        status: 'active',
+        is_active: true,
+      });
+      setCreatedWorkspace(true);
+      setRegisterStep(3);
+    } catch (error: any) {
+      toast({
+        title: 'Organization setup failed',
+        description: error.message,
+        variant: 'destructive',
+      });
+    } finally {
+      setOrganizationSubmitting(false);
+    }
+  };
+
+  const finishRegistration = () => {
+    if (!pendingAuth?.token) return;
+    setToken(pendingAuth.token, pendingAuth.user);
+    setRegisterOpen(false);
+    setLocation(createdWorkspace ? '/platform/organization-settings' : '/dashboard');
+  };
+
+  const handleForgotPassword = async () => {
+    if (!forgotIdentifier.trim()) {
+      toast({
+        title: 'Missing account details',
+        description: 'Enter your email address or username first.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setForgotSubmitting(true);
+    try {
+      const response = await fetch('/api/platform/auth/forgot-password/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          identifier: forgotIdentifier.trim(),
+          tenant_code: tenantCode ?? undefined,
+        }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload?.message || payload?.detail || payload?.error || 'Password reset failed.');
+      }
+      toast({
+        title: 'Password reset sent',
+        description: payload?.message || 'If the account exists, a reset email has been sent.',
+      });
+      setForgotPasswordOpen(false);
+      setForgotIdentifier('');
+    } catch (error: any) {
+      toast({
+        title: 'Password reset failed',
+        description: error.message,
+        variant: 'destructive',
+      });
+    } finally {
+      setForgotSubmitting(false);
+    }
+  };
+
   return (
-    <div className="min-h-screen flex bg-muted/30">
-      {/* Left panel — branding + role info */}
-      <div className="hidden lg:flex lg:w-[480px] bg-sidebar text-sidebar-foreground flex-col justify-between p-12 shrink-0">
-        <div className="flex items-center gap-3">
-          <div className="h-10 w-10 rounded-lg bg-primary flex items-center justify-center">
-            <Scale className="h-5 w-5 text-primary-foreground" />
+    <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(232,93,38,0.26),_transparent_30%),linear-gradient(180deg,#1c1917_0%,#292524_100%)] text-white">
+      <div className="mx-auto grid min-h-screen max-w-7xl lg:grid-cols-[1.08fr_0.92fr]">
+        <div className="flex flex-col justify-between px-8 py-10 sm:px-12 lg:px-14">
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <div className="flex h-11 w-11 items-center justify-center rounded-2xl text-white shadow-lg" style={{ backgroundColor: brand }}>
+                <Scale className="h-5 w-5" />
+              </div>
+              <div>
+                <p className="text-lg font-black tracking-tight">{site.tenant?.name ?? 'SL-ERP'}</p>
+                <p className="text-[11px] font-bold uppercase tracking-[0.28em] text-white/45">
+                  {site.login_page.eyebrow}
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setLocation(tenantCode ? `/landing/${tenantCode}` : '/landing')}
+              className="inline-flex items-center gap-2 rounded-full border border-white/15 px-4 py-2 text-sm font-semibold text-white/82 transition hover:border-white/40 hover:text-white"
+            >
+              View Landing Page
+              <ArrowRight className="h-4 w-4" />
+            </button>
           </div>
-          <div>
-            <div className="font-bold text-lg tracking-tight">SL-ERP</div>
-            <div className="text-[10px] font-medium text-sidebar-foreground/50 uppercase tracking-widest">Operations Platform</div>
+
+          <div className="space-y-8 py-10">
+            <div className="space-y-5">
+              <p className="text-xs font-bold uppercase tracking-[0.32em]" style={{ color: brand }}>
+                {site.login_page.eyebrow}
+              </p>
+              <h1 className="max-w-2xl font-serif text-5xl font-bold leading-tight tracking-tight text-white sm:text-6xl">
+                {site.login_page.title}
+              </h1>
+              <p className="max-w-2xl text-xl font-medium leading-8 text-white/74">
+                {site.login_page.subtitle}
+              </p>
+              <p className="max-w-xl text-base leading-7 text-white/60">
+                {site.login_page.description}
+              </p>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2">
+              {ROLE_DESCRIPTIONS.map((entry) => (
+                <div key={entry.role} className="rounded-[24px] border border-white/10 bg-white/5 p-5 backdrop-blur">
+                  <ShieldCheck className="h-4 w-4" style={{ color: brand }} />
+                  <p className="mt-3 text-sm font-bold uppercase tracking-[0.2em] text-white/90">{entry.role}</p>
+                  <p className="mt-2 text-sm leading-6 text-white/60">{entry.desc}</p>
+                </div>
+              ))}
+            </div>
           </div>
+
+          <footer className="space-y-3 border-t border-white/10 pt-5">
+            <p className="text-sm text-white/60">{site.branding.footer_text}</p>
+            <div className="flex flex-wrap gap-4 text-sm text-white/70">
+              {site.footer_menu.map((item) => (
+                <a key={`${item.label}-${item.href}`} href={item.href} className="transition hover:text-white">
+                  {item.label}
+                </a>
+              ))}
+            </div>
+          </footer>
         </div>
 
-        <div className="space-y-6">
-          <div>
-            <h2 className="text-2xl font-bold tracking-tight mb-2">Built for precision.</h2>
-            <p className="text-sidebar-foreground/60 text-sm leading-relaxed">
-              Commercial weighbridge management for operations teams that cannot afford errors. 
-              Real-time weight capture, multi-tenant billing, and full audit trails.
-            </p>
-          </div>
-
-          <div className="space-y-3">
-            <div className="text-[11px] font-bold uppercase tracking-[0.12em] text-sidebar-foreground/40">
-              Role-based access
+        <div className="flex items-center justify-center px-8 py-10 sm:px-12 lg:px-14">
+          <div className="w-full max-w-md rounded-[32px] border border-white/10 bg-white p-8 text-slate-950 shadow-[0_35px_120px_rgba(0,0,0,0.35)]">
+            <div className="flex items-center gap-3">
+              <div className="flex h-12 w-12 items-center justify-center rounded-2xl text-white" style={{ backgroundColor: brand }}>
+                <Sparkles className="h-5 w-5" />
+              </div>
+              <div>
+                <p className="text-sm font-bold uppercase tracking-[0.24em] text-slate-500">Secure Access</p>
+                <h2 className="text-2xl font-black tracking-tight">Sign in</h2>
+              </div>
             </div>
-            {ROLE_DESCRIPTIONS.map(r => (
-              <div key={r.role} className="flex items-start gap-3">
-                <div className="mt-1.5 h-1.5 w-1.5 rounded-full bg-primary shrink-0" />
-                <div>
-                  <div className="text-sm font-semibold">{r.role}</div>
-                  <div className="text-xs text-sidebar-foreground/50">{r.desc}</div>
+
+            <form onSubmit={handleSubmit} className="mt-8 space-y-5">
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold uppercase tracking-[0.24em] text-slate-500">Username</label>
+                <Input
+                  required
+                  autoFocus
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  placeholder="e.g. siakora.admin"
+                  className="h-12 rounded-2xl border-slate-200 bg-slate-50 font-mono"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold uppercase tracking-[0.24em] text-slate-500">Password</label>
+                <Input
+                  required
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="••••••••"
+                  className="h-12 rounded-2xl border-slate-200 bg-slate-50 font-mono"
+                />
+              </div>
+
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setForgotIdentifier(username);
+                    setForgotPasswordOpen(true);
+                  }}
+                  className="text-sm font-semibold transition hover:opacity-80"
+                  style={{ color: brand }}
+                >
+                  Forgot password?
+                </button>
+              </div>
+
+              <Button
+                type="submit"
+                disabled={login.isPending}
+                className="h-12 w-full rounded-full text-sm font-bold uppercase tracking-[0.22em] text-white"
+                style={{ backgroundColor: brand }}
+              >
+                {login.isPending ? 'Authenticating…' : 'Sign In'}
+              </Button>
+            </form>
+
+            <div className="mt-5 flex items-center justify-between gap-3 text-sm">
+              <span className="text-slate-500">No account yet?</span>
+              <button
+                type="button"
+                onClick={() => setRegisterOpen(true)}
+                className="font-semibold transition hover:opacity-80"
+                style={{ color: brand }}
+              >
+                Create your workspace
+              </button>
+            </div>
+
+            <div className="mt-6 rounded-3xl bg-slate-50 p-5">
+              <p className="text-sm font-semibold text-slate-900">Need product pricing first?</p>
+              <p className="mt-1 text-sm leading-6 text-slate-600">
+                Review the public subscription plans and billing packages before you enter the workspace.
+              </p>
+              <button
+                type="button"
+                onClick={() => setLocation(tenantCode ? `/landing/${tenantCode}` : '/landing')}
+                className="mt-4 inline-flex items-center gap-2 text-sm font-bold"
+                style={{ color: brand }}
+              >
+                Open Landing Page
+                <ArrowRight className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <Dialog open={registerOpen} onOpenChange={(open) => { if (!open) resetRegisterFlow(); else setRegisterOpen(true); }}>
+        <DialogContent className="max-w-5xl rounded-[32px] border-0 p-0 overflow-hidden">
+          <div className="grid gap-0 md:grid-cols-[0.82fr_1.18fr]">
+            <div className="bg-slate-950 px-10 py-10 text-white">
+              <p className="text-xs font-bold uppercase tracking-[0.3em]" style={{ color: brand }}>Workspace Setup</p>
+              <h3 className="mt-5 max-w-sm text-4xl font-bold leading-tight tracking-tight">Create your account, then launch your first organization.</h3>
+              <p className="mt-5 max-w-sm text-base leading-8 text-white/70">
+                Built for multi-industry operators who want a calm, structured start.
+              </p>
+
+              <div className="mt-10 flex items-center gap-3 text-sm text-white/72">
+                <div
+                  className="flex h-10 w-10 items-center justify-center rounded-full text-sm font-bold text-white"
+                  style={{ backgroundColor: registerStep >= 1 ? brand : 'rgba(255,255,255,0.12)' }}
+                >
+                  {registerStep > 1 ? <CheckCircle2 className="h-4 w-4" /> : '1'}
+                </div>
+                <div className="h-px flex-1 bg-white/10" />
+                <div
+                  className="flex h-10 w-10 items-center justify-center rounded-full text-sm font-bold text-white"
+                  style={{ backgroundColor: registerStep >= 2 ? brand : 'rgba(255,255,255,0.12)' }}
+                >
+                  {registerStep > 2 ? <CheckCircle2 className="h-4 w-4" /> : '2'}
+                </div>
+                <div className="h-px flex-1 bg-white/10" />
+                <div
+                  className="flex h-10 w-10 items-center justify-center rounded-full text-sm font-bold text-white"
+                  style={{ backgroundColor: registerStep >= 3 ? brand : 'rgba(255,255,255,0.12)' }}
+                >
+                  3
                 </div>
               </div>
-            ))}
-          </div>
-        </div>
 
-        <div className="text-[11px] text-sidebar-foreground/30">
-          © 2025 Siakora Labs Limited · SL-ERP Platform
-        </div>
-      </div>
-
-      {/* Right panel — login form */}
-      <div className="flex-1 flex items-center justify-center p-8">
-        <div className="w-full max-w-sm space-y-8">
-          {/* Mobile logo */}
-          <div className="flex lg:hidden items-center gap-3 mb-2">
-            <div className="h-9 w-9 rounded-lg bg-primary flex items-center justify-center">
-              <Scale className="h-4.5 w-4.5 text-primary-foreground" />
-            </div>
-            <div className="font-bold text-xl tracking-tight">SL-ERP</div>
-          </div>
-
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight">Sign in</h1>
-            <p className="text-sm text-muted-foreground mt-1">Enter your credentials to access the platform</p>
-          </div>
-
-          <form onSubmit={handleSubmit} className="space-y-5">
-            <div className="space-y-1.5">
-              <label className="text-xs font-bold uppercase tracking-widest text-muted-foreground">Username</label>
-              <Input
-                required
-                autoFocus
-                value={username}
-                onChange={e => setUsername(e.target.value)}
-                placeholder="e.g. operator01"
-                className="h-11 font-mono"
-              />
+              <div className="mt-8 space-y-2 text-sm text-white/58">
+                <p>{registerStep === 1 ? 'Account details' : registerStep === 2 ? 'Organization details' : 'Plan and launch'}</p>
+                <p>{registerStep === 2 ? 'Choose an industry to align modules, plans, and subscriptions.' : 'Review the suggested setup, then continue into the workspace.'}</p>
+              </div>
             </div>
 
-            <div className="space-y-1.5">
-              <label className="text-xs font-bold uppercase tracking-widest text-muted-foreground">Password</label>
-              <Input
-                required
-                type="password"
-                value={password}
-                onChange={e => setPassword(e.target.value)}
-                placeholder="••••••••"
-                className="h-11 font-mono"
-              />
-            </div>
+            <div className="bg-white px-10 py-10 text-slate-950">
+              <DialogHeader className="text-left">
+                <DialogTitle className="text-2xl font-black tracking-tight">
+                  {registerStep === 1 ? 'Create your account' : registerStep === 2 ? 'Add your first organization' : createdWorkspace ? 'Setup complete' : 'Review subscription setup'}
+                </DialogTitle>
+                <DialogDescription className="text-sm leading-6 text-slate-600">
+                  {registerStep === 1
+                    ? 'Set up the administrator account that will own the initial workspace.'
+                    : registerStep === 2
+                      ? 'Create the first organization now. Additional organizations can be added later.'
+                      : createdWorkspace
+                        ? 'Your account and first organization are ready.'
+                        : 'Choose a subscription plan now or continue and manage it later from Organization Settings.'}
+                </DialogDescription>
+              </DialogHeader>
 
+              {registerStep === 1 ? (
+                <div className="mt-6 space-y-4">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold uppercase tracking-[0.22em] text-slate-500">Name</label>
+                    <Input
+                      value={registerForm.name}
+                      onChange={(e) => setRegisterForm((current) => ({ ...current, name: e.target.value }))}
+                      placeholder="John Doe"
+                      className="h-12 rounded-2xl border-slate-200 bg-slate-50"
+                    />
+                    <p className="text-xs text-slate-500">This will be used for the initial administrator profile.</p>
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold uppercase tracking-[0.22em] text-slate-500">Email</label>
+                    <Input
+                      type="email"
+                      value={registerForm.email}
+                      onChange={(e) => setRegisterForm((current) => ({ ...current, email: e.target.value }))}
+                      placeholder="name@company.com"
+                      className="h-12 rounded-2xl border-slate-200 bg-slate-50"
+                    />
+                    {!trimmedEmail || emailLooksValid ? null : (
+                      <p className="text-xs text-amber-700">Enter a valid email address to continue.</p>
+                    )}
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold uppercase tracking-[0.22em] text-slate-500">Password</label>
+                    <Input
+                      type="password"
+                      minLength={8}
+                      value={registerForm.password}
+                      onChange={(e) => setRegisterForm((current) => ({ ...current, password: e.target.value }))}
+                      placeholder="••••••••"
+                      className="h-12 rounded-2xl border-slate-200 bg-slate-50"
+                    />
+                    <p className={`text-xs ${passwordLongEnough ? 'text-emerald-700' : 'text-slate-500'}`}>
+                      {passwordLongEnough ? 'Password strength requirement met.' : 'Use at least 8 characters.'}
+                    </p>
+                  </div>
+                  <p className="text-xs leading-6 text-slate-500">
+                    Your personal data will be handled as outlined in our{' '}
+                    <a href={privacyHref} className="font-semibold underline underline-offset-4" style={{ color: brand }}>
+                      Privacy Policy
+                    </a>
+                    .
+                  </p>
+                </div>
+              ) : null}
+
+              {registerStep === 2 ? (
+                <div className="mt-6 space-y-4">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold uppercase tracking-[0.22em] text-slate-500">Organization Name</label>
+                    <Input
+                      value={organizationForm.name}
+                      onChange={(e) => setOrganizationForm((current) => ({ ...current, name: e.target.value }))}
+                      placeholder="Acme Logistics"
+                      className="h-12 rounded-2xl border-slate-200 bg-slate-50"
+                    />
+                    <p className="text-xs text-slate-500">This becomes your first operating organization inside the platform.</p>
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold uppercase tracking-[0.22em] text-slate-500">Legal Name</label>
+                    <Input
+                      value={organizationForm.legal_name}
+                      onChange={(e) => setOrganizationForm((current) => ({ ...current, legal_name: e.target.value }))}
+                      placeholder="John Doe Holdings Limited"
+                      className="h-12 rounded-2xl border-slate-200 bg-slate-50"
+                    />
+                  </div>
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-bold uppercase tracking-[0.22em] text-slate-500">Contact Email</label>
+                      <Input
+                        type="email"
+                        value={organizationForm.contact_email}
+                        onChange={(e) => setOrganizationForm((current) => ({ ...current, contact_email: e.target.value }))}
+                        placeholder="admin@company.com"
+                        className="h-12 rounded-2xl border-slate-200 bg-slate-50"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-bold uppercase tracking-[0.22em] text-slate-500">Phone</label>
+                      <Input
+                        value={organizationForm.contact_phone}
+                        onChange={(e) => setOrganizationForm((current) => ({ ...current, contact_phone: e.target.value }))}
+                        placeholder="+254..."
+                        className="h-12 rounded-2xl border-slate-200 bg-slate-50"
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold uppercase tracking-[0.22em] text-slate-500">Industry</label>
+                    <Select
+                      value={organizationForm.industry_id}
+                      onValueChange={(value) => setOrganizationForm((current) => ({ ...current, industry_id: value }))}
+                    >
+                      <SelectTrigger className="h-12 rounded-2xl border-slate-200 bg-slate-50">
+                        <SelectValue placeholder="Select an industry" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {industries.map((industry: any) => (
+                          <SelectItem key={industry.id} value={String(industry.id)}>
+                            {industry.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-slate-500">
+                      Industries are maintained by the SaaS administrator and help control default module fit, plan packaging, and subscription alignment.
+                    </p>
+                  </div>
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                    <p className="text-sm font-semibold text-slate-900">{organizationPreviewName}</p>
+                    <p className="mt-1 text-sm text-slate-600">
+                      {industries.find((industry: any) => String(industry.id) === organizationForm.industry_id)?.name ?? 'Choose an industry to continue with better alignment.'}
+                    </p>
+                  </div>
+                </div>
+              ) : null}
+
+              {registerStep === 3 ? (
+                createdWorkspace ? (
+                  <div className="mt-6 rounded-3xl border border-emerald-200 bg-emerald-50 p-5">
+                    <div className="flex items-center gap-3 text-emerald-800">
+                      <CheckCircle2 className="h-5 w-5" />
+                      <p className="text-base font-semibold">Your account is ready.</p>
+                    </div>
+                    <p className="mt-3 text-sm leading-6 text-emerald-900/80">
+                      We created your first organization and made you its System Administrator.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="mt-6 space-y-5">
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-bold uppercase tracking-[0.22em] text-slate-500">Suggested Plan</label>
+                      <Select value={selectedPlanId} onValueChange={setSelectedPlanId}>
+                        <SelectTrigger className="h-12 rounded-2xl border-slate-200 bg-slate-50">
+                          <SelectValue placeholder="Select a plan" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {plans.map((plan: any) => (
+                            <SelectItem key={plan.id} value={String(plan.id)}>
+                              {plan.name} - {plan.currency} {Number(plan.price).toLocaleString()}/{plan.billing_period}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      {recommendedPlan && (
+                        <p className="text-xs text-slate-500">
+                          Current plan: <span className="font-semibold text-slate-900">{recommendedPlan.name}</span>
+                        </p>
+                      )}
+                    </div>
+
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                      <div className="flex items-center justify-between gap-4">
+                        <div>
+                          <p className="text-sm font-semibold text-slate-900">Start with demo workspace</p>
+                          <p className="mt-1 text-xs leading-5 text-slate-600">
+                            Begin on the trial period first, then upgrade, downgrade, or continue billing later.
+                          </p>
+                        </div>
+                        <Switch checked={startWithDemo} onCheckedChange={setStartWithDemo} />
+                      </div>
+                    </div>
+
+                  </div>
+                )
+              ) : null}
+
+              <DialogFooter className="mt-8 gap-2 sm:justify-between">
+                <div className="text-xs text-slate-500">
+                  {registerStep === 2 ? 'You can skip this step and continue later.' : registerStep === 3 && !createdWorkspace ? 'You can still adjust subscription and billing later inside Organization Settings.' : ' '}
+                </div>
+                <div className="flex flex-col-reverse gap-2 sm:flex-row">
+                  {registerStep === 1 ? (
+                    <Button variant="outline" onClick={resetRegisterFlow}>Cancel</Button>
+                  ) : null}
+                  {registerStep === 2 ? (
+                    <>
+                      <Button variant="outline" onClick={() => setRegisterStep(1)} disabled={organizationSubmitting}>Back</Button>
+                      <Button variant="outline" onClick={finishRegistration} disabled={organizationSubmitting}>Skip for now</Button>
+                    </>
+                  ) : null}
+                  {registerStep === 1 ? (
+                    <Button onClick={handleAccountRegistration} disabled={registerSubmitting || !accountStepReady} style={{ backgroundColor: brand }}>
+                      {registerSubmitting ? 'Creating account…' : 'Continue'}
+                    </Button>
+                  ) : null}
+                  {registerStep === 2 ? (
+                    <Button onClick={() => setRegisterStep(3)} disabled={!organizationStepReady} style={{ backgroundColor: brand }}>
+                      Continue
+                    </Button>
+                  ) : null}
+                  {registerStep === 3 ? (
+                    createdWorkspace ? (
+                      <Button onClick={finishRegistration} style={{ backgroundColor: brand }}>
+                        Open workspace
+                      </Button>
+                    ) : (
+                      <>
+                        <Button variant="outline" onClick={() => setRegisterStep(2)} disabled={organizationSubmitting}>Back</Button>
+                        <Button onClick={handleOrganizationCreation} disabled={organizationSubmitting} style={{ backgroundColor: brand }}>
+                          {organizationSubmitting ? 'Creating workspace…' : 'Create workspace'}
+                        </Button>
+                      </>
+                    )
+                  ) : null}
+                </div>
+              </DialogFooter>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={forgotPasswordOpen} onOpenChange={setForgotPasswordOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Reset Password</DialogTitle>
+            <DialogDescription>
+              Enter your username or email address. We will send a temporary password using this organization&apos;s email settings.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 py-2">
+            <label className="text-xs font-bold uppercase tracking-[0.24em] text-slate-500">Username or Email</label>
+            <Input
+              value={forgotIdentifier}
+              onChange={(event) => setForgotIdentifier(event.target.value)}
+              placeholder="name@company.com or username"
+              className="h-12 rounded-2xl border-slate-200 bg-slate-50 font-mono"
+            />
+            {tenantCode && (
+              <p className="text-xs text-muted-foreground">
+                Reset will use the email settings for organization code <span className="font-mono">{tenantCode}</span>.
+              </p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setForgotPasswordOpen(false)}>Cancel</Button>
             <Button
-              type="submit"
-              className="w-full h-11 font-bold tracking-wide uppercase"
-              disabled={login.isPending}
+              onClick={handleForgotPassword}
+              disabled={forgotSubmitting || !forgotIdentifier.trim()}
+              style={{ backgroundColor: brand }}
             >
-              {login.isPending ? 'Authenticating…' : 'Sign In'}
+              {forgotSubmitting ? 'Sending…' : 'Send Reset'}
             </Button>
-          </form>
-
-          <p className="text-xs text-muted-foreground text-center">
-            Access is role-restricted. Contact your administrator if you need access.
-          </p>
-        </div>
-      </div>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

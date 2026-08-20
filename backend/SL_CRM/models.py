@@ -8,13 +8,14 @@ scope data correctly across plans and subscriptions.
 
 from django.db import models
 from django.contrib.auth.models import User
+from Platform_Core.models import AuditMetadataMixin
 
 
 # ---------------------------------------------------------------------------
 # Organisation (Company / Business Entity)
 # ---------------------------------------------------------------------------
 
-class Organisation(models.Model):
+class Organisation(AuditMetadataMixin, models.Model):
     """
     A business entity — could be a prospect, active customer, or partner.
     If the organisation already exists as a Weighbridge customer, it can
@@ -67,7 +68,7 @@ class Organisation(models.Model):
 # Contact (Person)
 # ---------------------------------------------------------------------------
 
-class Contact(models.Model):
+class Contact(AuditMetadataMixin, models.Model):
     """
     A real person — an employee, decision-maker, or point of contact
     at an organisation or supplier.
@@ -115,7 +116,7 @@ class Contact(models.Model):
 # Supplier
 # ---------------------------------------------------------------------------
 
-class Supplier(models.Model):
+class Supplier(AuditMetadataMixin, models.Model):
     """
     A vendor or supplier of goods and services. Feeds into the
     Procurement module when it is built.
@@ -160,7 +161,7 @@ class Supplier(models.Model):
 # Lead / Opportunity
 # ---------------------------------------------------------------------------
 
-class Lead(models.Model):
+class Lead(AuditMetadataMixin, models.Model):
     """
     A sales opportunity being tracked through the pipeline.
     Plain-English stages map to a standard sales funnel.
@@ -183,6 +184,11 @@ class Lead(models.Model):
     contact              = models.ForeignKey(
         Contact, null=True, blank=True,
         on_delete=models.SET_NULL, related_name="leads",
+    )
+    products             = models.ManyToManyField(
+        "SL_Sales.Product",
+        blank=True,
+        related_name="crm_leads",
     )
     stage                = models.CharField(max_length=20, choices=STAGE_CHOICES, default="new")
     value                = models.DecimalField(
@@ -230,7 +236,7 @@ class Lead(models.Model):
 # Activity / Follow-up
 # ---------------------------------------------------------------------------
 
-class Activity(models.Model):
+class Activity(AuditMetadataMixin, models.Model):
     """
     A logged interaction — call, email, meeting, or internal note.
     Can be linked to a person, company, or opportunity.

@@ -1,57 +1,25 @@
 import logging
 import os
 import threading
-import time
-
 from django.apps import AppConfig
 
 logger = logging.getLogger(__name__)
-
-# How often the in-process scheduler runs the sweep (seconds).
-# Override via DISCREPANCY_SWEEP_INTERVAL_SECONDS env var.
-_DEFAULT_SWEEP_INTERVAL = 10 * 60  # 10 minutes
-
-
-def _sweep_loop(interval: int) -> None:
-    """
-    Background daemon thread: run the discrepancy sweep every *interval* seconds.
-
-    Starts with an initial delay equal to *interval* so the first sweep happens
-    after the server has fully started up rather than immediately on boot.
-    Exceptions inside run_sweep are caught and logged so the thread never dies.
-    """
-    from SL_Weighbridge.sweep import run_sweep
-
-    logger.info(
-        "Discrepancy sweep scheduler started (interval=%ds). "
-        "First sweep in %ds.",
-        interval,
-        interval,
-    )
-    time.sleep(interval)  # wait for the server to settle before first run
-
-    while True:
-        try:
-            result = run_sweep()
-            logger.info(
-                "Scheduled discrepancy sweep complete — "
-                "%d raised, %d skipped.",
-                result["created"],
-                result["skipped"],
-            )
-        except Exception:
-            logger.exception("Scheduled discrepancy sweep encountered an error.")
-
-        time.sleep(interval)
 
 
 class SlWeighbridgeConfig(AppConfig):
     default_auto_field = 'django.db.models.BigAutoField'
     name = 'SL_Weighbridge'
+    sl_module_definition = {
+        "slug": "weighbridge",
+        "name": "Commercial Weighbridge",
+        "category": "vertical",
+        "is_core": True,
+        "description": "Weight ticket capture, transaction management, and live scale integration.",
+    }
 
     def ready(self):
         """
-        Start the background sweep scheduler when Django boots.
+        Start the coordinated weighbridge surveillance runner when Django boots.
 
         Guards:
         1. Only runs in server processes (runserver, gunicorn, uvicorn, wsgi/asgi).
@@ -75,13 +43,9 @@ class SlWeighbridgeConfig(AppConfig):
             # Parent reloader process — the child will start the thread.
             return
 
-        interval = int(
-            os.environ.get("DISCREPANCY_SWEEP_INTERVAL_SECONDS", _DEFAULT_SWEEP_INTERVAL)
-        )
         t = threading.Thread(
-            target=_sweep_loop,
-            args=(interval,),
-            name="discrepancy-sweep",
+            target=_start_surveillance_runner,
+            name="weighbridge-surveillance",
             daemon=True,
         )
         t.start()
@@ -108,3 +72,9 @@ def _is_management_server():
     if "wsgi" in cmd or "asgi" in cmd:
         return True
     return False
+
+
+def _start_surveillance_runner():
+    from SL_Weighbridge.service_runner import run_surveillance_loop
+
+    run_surveillance_loop()
