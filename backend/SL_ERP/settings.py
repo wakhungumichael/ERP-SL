@@ -42,7 +42,7 @@ DEBUG = env_bool("DEBUG", default=True)
 
 ALLOWED_HOSTS = env_list(
     "ALLOWED_HOSTS",
-    ["*"] if DEBUG else ["localhost", "127.0.0.1"],
+    ["*"] if DEBUG else ["erp.siakoralabs.co.ke", "217.21.122.58", "localhost", "127.0.0.1"],
 )
 
 CSRF_TRUSTED_ORIGINS = env_list("CSRF_TRUSTED_ORIGINS", [
@@ -59,6 +59,9 @@ CSRF_TRUSTED_ORIGINS = env_list("CSRF_TRUSTED_ORIGINS", [
     "http://127.0.0.1:5173",
     "http://127.0.0.1:8000",
     "http://127.0.0.1:8080",
+    # SL ERP production domain. Environment variables can add other domains.
+    "https://erp.siakoralabs.co.ke",
+    "http://erp.siakoralabs.co.ke",
 ])
 
 INSTALLED_APPS = [
