@@ -14,7 +14,9 @@ fi
 
 docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" pull || true
 docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" build
-docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d
+# Images are rebuilt under stable local tags; force replacement so every
+# service actually starts from the newly built image.
+docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --force-recreate
 
 # The Docker image keeps Django's project at /app/backend.
 docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" exec -T backend sh -c "cd /app/backend && python manage.py migrate"
