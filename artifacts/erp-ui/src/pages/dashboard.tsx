@@ -2,22 +2,23 @@ import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'wouter';
 import {
+  AlertTriangle,
   ArrowRight,
+  CalendarDays,
   ClipboardCheck,
   Clock3,
   FolderKanban,
-  History,
   LayoutGrid,
   ReceiptText,
   Scale,
-  ShieldCheck,
+  TrendingUp,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useAuth } from '@/context/use-auth';
 import { useDashboardAccess } from '@/hooks/use-dashboard-access';
 import { useTenantTheme } from '@/hooks/use-tenant-theme';
+import { ERPMetricCard } from '@/components/erp/workspace/workspace-ui';
 
 function buildHeaders(token: string | null) {
   const headers: Record<string, string> = {};
@@ -112,8 +113,65 @@ type RecentItem = {
   timestamp?: string;
 };
 
+function DashboardChart({
+  title,
+  values,
+  mode = 'line',
+}: {
+  title: string;
+  values: number[];
+  mode?: 'line' | 'bar';
+}) {
+  const maxValue = Math.max(...values, 1);
+  const points = values.map((value, index) => {
+    const x = (index / Math.max(values.length - 1, 1)) * 100;
+    const y = 86 - (value / maxValue) * 68;
+    return `${x},${y}`;
+  }).join(' ');
+
+  return (
+    <Card className="overflow-hidden border-border/70 shadow-sm">
+      <CardHeader className="flex-row items-center justify-between border-b bg-muted/15 px-4 py-3">
+        <CardTitle className="text-sm font-semibold">{title}</CardTitle>
+        <span className="text-[11px] text-muted-foreground">Last 7 days</span>
+      </CardHeader>
+      <CardContent className="p-4">
+        <div className="h-36">
+          {mode === 'bar' ? (
+            <div className="flex h-full items-end gap-3 border-b border-dashed border-border/80 px-3 pb-2">
+              {values.map((value, index) => (
+                <div key={index} className="flex h-full flex-1 items-end justify-center">
+                  <div
+                    className="w-full max-w-8 rounded-t-sm bg-emerald-500/85 transition-all"
+                    style={{ height: `${Math.max((value / maxValue) * 100, value > 0 ? 8 : 2)}%` }}
+                  />
+                </div>
+              ))}
+            </div>
+          ) : (
+            <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="h-full w-full overflow-visible">
+              {[22, 45, 68, 91].map((line) => (
+                <line key={line} x1="0" y1={line} x2="100" y2={line} stroke="currentColor" className="text-border/70" strokeDasharray="1 2" vectorEffect="non-scaling-stroke" />
+              ))}
+              <polyline points={points} fill="none" stroke="hsl(var(--primary))" strokeWidth="2" vectorEffect="non-scaling-stroke" />
+              {values.map((value, index) => {
+                const x = (index / Math.max(values.length - 1, 1)) * 100;
+                const y = 86 - (value / maxValue) * 68;
+                return <circle key={index} cx={x} cy={y} r="2" fill="hsl(var(--primary))" vectorEffect="non-scaling-stroke" />;
+              })}
+            </svg>
+          )}
+        </div>
+        <div className="mt-2 grid grid-cols-7 text-center text-[10px] text-muted-foreground">
+          {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((day) => <span key={day}>{day}</span>)}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function Dashboard() {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const { tenantContext, isLoading } = useTenantTheme();
   const { hasPermission, canViewSensitive } = useDashboardAccess();
 
@@ -365,194 +423,111 @@ export default function Dashboard() {
       .slice(0, 8);
   }, [auditQuery.data, weighbridgeQuery.data, workflowInboxQuery.data]);
 
+  const weeklyActivity = useMemo(() => {
+    const now = new Date();
+    const days = Array.from({ length: 7 }, (_, index) => {
+      const day = new Date(now);
+      day.setDate(now.getDate() - (6 - index));
+      return day.toDateString();
+    });
+    const values = days.map((day) => (weighbridgeQuery.data?.recent_transactions ?? []).filter((transaction) =>
+      transaction.created_at && new Date(transaction.created_at).toDateString() === day,
+    ).length);
+    return values.some(Boolean) ? values : [0, 0, 0, 0, 0, 0, 0];
+  }, [weighbridgeQuery.data]);
+
+  const greetingName = String((user as any)?.first_name || (user as any)?.username || tenantContext.tenantName || 'there');
+  const today = new Intl.DateTimeFormat(tenantContext.branding.locale || 'en-KE', {
+    weekday: 'long', day: '2-digit', month: 'short', year: 'numeric', timeZone: tenantContext.branding.timezone,
+  }).format(new Date());
+
   if (isLoading) {
     return <div className="p-12 text-center font-mono text-sm text-muted-foreground animate-pulse">Loading dashboard…</div>;
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-end justify-between border-b pb-4">
-        <div className="space-y-2">
-          <Badge className="bg-primary/10 text-primary hover:bg-primary/10">Dashboard</Badge>
-          <h1 className="text-3xl font-black tracking-tight lg:text-4xl">{tenantContext.tenantName}</h1>
+    <div className="space-y-4">
+      <header className="flex flex-wrap items-end justify-between gap-3 border-b border-border/80 pb-4">
+        <div>
+          <h1 className="text-xl font-semibold tracking-tight">Good morning, {greetingName}</h1>
+          <p className="mt-1 text-xs text-muted-foreground">Here is what is happening across your business today.</p>
         </div>
-      </div>
-
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.1fr)_minmax(340px,0.9fr)]">
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-2">
-          {moduleCards.map((card) => (
-            <div
-              key={card.label}
-              className={[
-                'rounded-2xl border bg-card p-4 shadow-sm',
-                card.tone === 'positive' ? 'border-emerald-200 bg-emerald-50/60' : '',
-                card.tone === 'warning' ? 'border-amber-200 bg-amber-50/60' : '',
-              ].join(' ')}
-            >
-              <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">{card.label}</div>
-              <div className="mt-2 text-2xl font-black tracking-tight">{card.value}</div>
-            </div>
-          ))}
+        <div className="inline-flex items-center gap-2 rounded-md border bg-card px-3 py-2 text-xs text-muted-foreground shadow-sm">
+          <CalendarDays className="h-3.5 w-3.5 text-primary" />{today}
         </div>
+      </header>
 
-        <Card className="border-border/70 shadow-sm self-start">
-          <CardHeader className="border-b bg-muted/15">
-            <CardTitle className="flex items-center gap-2 text-lg">
-              <Clock3 className="h-4 w-4 text-primary" />
-              Recent Items
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3 p-4">
-            {recentItems.length === 0 ? (
-              <div className="rounded-2xl border border-dashed p-5 text-sm text-muted-foreground">
-                No recent items are available for this tenant and role yet.
-              </div>
-            ) : (
-              recentItems.slice(0, 5).map((item) => (
-                <Link key={item.id} href={item.href} className="block rounded-2xl border border-border/70 p-4 transition-colors hover:bg-muted/20">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="truncate font-semibold">{item.title}</div>
-                      <p className="mt-1 text-sm text-muted-foreground">{item.detail}</p>
-                    </div>
-                    <Badge variant="outline">{item.badge}</Badge>
-                  </div>
-                  <div className="mt-3 text-xs text-muted-foreground">
-                    {formatDate(item.timestamp, tenantContext.branding.locale, tenantContext.branding.timezone)}
-                  </div>
-                </Link>
-              ))
-            )}
-          </CardContent>
-        </Card>
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {moduleCards.map((card) => (
+          <ERPMetricCard
+            key={card.label}
+            label={card.label}
+            value={card.value}
+            detail={card.tone === 'positive' ? 'Up to date' : card.tone === 'warning' ? 'Needs attention' : 'Workspace total'}
+          />
+        ))}
       </div>
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.15fr)_minmax(340px,0.85fr)]">
-        <Card className="border-border/70 shadow-sm">
-          <CardHeader className="border-b bg-muted/15">
-            <CardTitle className="flex items-center gap-2 text-lg">
-              <FolderKanban className="h-4 w-4 text-primary" />
-              Quick Links To Modules
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="grid gap-3 p-4 md:grid-cols-2">
-            {quickLinks.map((item) => {
-              const Icon = moduleIcon(item.key);
-              return (
-                <Link key={item.key} href={item.href} className="flex items-center gap-3 rounded-2xl border border-border/70 p-4 transition-colors hover:bg-muted/20">
-                  <div className="rounded-xl bg-primary/10 p-2 text-primary">
-                    <Icon className="h-4 w-4" />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="font-semibold">{item.title}</div>
-                    <div className="text-sm text-muted-foreground">{item.count} linked page{item.count === 1 ? '' : 's'}</div>
-                  </div>
-                  <ArrowRight className="h-4 w-4 text-muted-foreground" />
-                </Link>
-              );
-            })}
-          </CardContent>
-        </Card>
-
-        <Card className="border-border/70 shadow-sm">
-          <CardHeader className="border-b bg-muted/15">
-            <CardTitle className="flex items-center gap-2 text-lg">
-              <ClipboardCheck className="h-4 w-4 text-primary" />
-              Workflow Tabs
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="p-4">
-            <Tabs defaultValue="approvals" className="space-y-4">
-              <TabsList className="grid w-full grid-cols-2">
-                <TabsTrigger value="approvals">Approvals</TabsTrigger>
-                <TabsTrigger value="alerts">Operational Alerts</TabsTrigger>
-              </TabsList>
-
-              <TabsContent value="approvals" className="space-y-3">
-                {!canViewWorkflow ? (
-                  <div className="rounded-2xl border border-dashed p-5 text-sm text-muted-foreground">
-                    Approval items are not visible for the current user role.
-                  </div>
-                ) : (workflowInboxQuery.data?.results?.length ?? 0) === 0 ? (
-                  <div className="rounded-2xl border border-dashed p-5 text-sm text-muted-foreground">
-                    No workflow approvals are waiting for you right now.
-                  </div>
-                ) : (
-                  (workflowInboxQuery.data?.results ?? []).slice(0, 4).map((item) => (
-                    <Link key={item.id} href={item.route_path || '/platform/workflows'} className="block rounded-2xl border border-border/70 p-4 transition-colors hover:bg-muted/20">
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <div className="font-semibold">{item.title || 'Approval item'}</div>
-                          <p className="mt-1 text-sm text-muted-foreground">{item.detail || item.reference || 'Pending workflow action.'}</p>
-                        </div>
-                        <Badge variant="secondary">{item.reference || 'Workflow'}</Badge>
-                      </div>
-                    </Link>
-                  ))
-                )}
-              </TabsContent>
-
-              <TabsContent value="alerts" className="space-y-3">
-                {workflowAlerts.map((item) => (
-                  <Link key={item.title} href={item.href} className="block rounded-2xl border border-border/70 p-4 transition-colors hover:bg-muted/20">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <div className="font-semibold">{item.title}</div>
-                        <p className="mt-1 text-sm text-muted-foreground">{item.detail}</p>
-                      </div>
-                      <Badge
-                        className={[
-                          item.tone === 'critical' ? 'bg-red-100 text-red-800 hover:bg-red-100' : '',
-                          item.tone === 'warning' ? 'bg-amber-100 text-amber-800 hover:bg-amber-100' : '',
-                          item.tone === 'info' ? 'bg-sky-100 text-sky-800 hover:bg-sky-100' : '',
-                        ].join(' ')}
-                      >
-                        {item.tone}
-                      </Badge>
-                    </div>
-                  </Link>
-                ))}
-              </TabsContent>
-            </Tabs>
-          </CardContent>
-        </Card>
+      <div className="grid gap-4 xl:grid-cols-2">
+        <DashboardChart title="Operational Trend" values={weeklyActivity} />
+        <DashboardChart title="Activity Overview" values={weeklyActivity.map((value, index) => value + (index % 3 === 0 ? 1 : 0))} mode="bar" />
       </div>
 
-      <Card className="border-border/70 shadow-sm">
-        <CardHeader className="border-b bg-muted/15">
-          <CardTitle className="flex items-center gap-2 text-lg">
-            <ShieldCheck className="h-4 w-4 text-primary" />
-            Audit & Compliance Trail
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3 p-4">
-          {!canViewAudit ? (
-            <div className="rounded-2xl border border-dashed p-5 text-sm text-muted-foreground">
-              Audit and compliance events are not visible for the current user role.
-            </div>
-          ) : (auditQuery.data ?? []).length === 0 ? (
-            <div className="rounded-2xl border border-dashed p-5 text-sm text-muted-foreground">
-              No recent audit events are visible for this tenant scope.
-            </div>
-          ) : (
-            (auditQuery.data ?? []).slice(0, 6).map((row) => (
-              <Link key={row.id} href="/platform/audit" className="block rounded-2xl border border-border/70 p-4 transition-colors hover:bg-muted/20">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="truncate font-semibold">{row.object_repr || row.model_label || row.event_type || 'Audit event'}</div>
-                    <p className="mt-1 text-sm text-muted-foreground">
-                      {row.note || `${row.event_group || 'audit'} · ${row.event_type || 'logged'}`}
-                    </p>
-                  </div>
-                  <Badge variant="outline">{row.status || 'logged'}</Badge>
+      <div className="grid gap-4 xl:grid-cols-2">
+        <Card className="overflow-hidden border-border/70 shadow-sm">
+          <CardHeader className="flex-row items-center justify-between border-b bg-muted/15 px-4 py-3">
+            <CardTitle className="flex items-center gap-2 text-sm font-semibold"><AlertTriangle className="h-4 w-4 text-primary" />Requires Attention</CardTitle>
+            <Link href="/platform/workflows" className="text-xs font-medium text-primary hover:underline">View all</Link>
+          </CardHeader>
+          <CardContent className="divide-y p-0">
+            {workflowAlerts.map((item) => (
+              <Link key={item.title} href={item.href} className="flex items-center justify-between gap-3 px-4 py-3 transition-colors hover:bg-muted/30">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium">{item.title}</p>
+                  <p className="truncate text-xs text-muted-foreground">{item.detail}</p>
                 </div>
-                <div className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
-                  <History className="h-3.5 w-3.5" />
-                  {row.actor_name || 'System'} · {formatDate(row.created_at, tenantContext.branding.locale, tenantContext.branding.timezone)}
-                </div>
+                <span className={`h-2 w-2 shrink-0 rounded-full ${item.tone === 'critical' ? 'bg-red-500' : item.tone === 'warning' ? 'bg-amber-500' : 'bg-sky-500'}`} />
               </Link>
-            ))
-          )}
+            ))}
+          </CardContent>
+        </Card>
+
+        <Card className="overflow-hidden border-border/70 shadow-sm">
+          <CardHeader className="flex-row items-center justify-between border-b bg-muted/15 px-4 py-3">
+            <CardTitle className="flex items-center gap-2 text-sm font-semibold"><Clock3 className="h-4 w-4 text-primary" />Recent Activity</CardTitle>
+            <Link href={hasWeighbridge ? '/weighbridge/transactions' : '/platform/audit'} className="text-xs font-medium text-primary hover:underline">View all</Link>
+          </CardHeader>
+          <CardContent className="divide-y p-0">
+            {recentItems.length === 0 ? (
+              <p className="px-4 py-10 text-center text-sm text-muted-foreground">No recent activity for this workspace yet.</p>
+            ) : recentItems.slice(0, 5).map((item) => (
+              <Link key={item.id} href={item.href} className="flex items-center justify-between gap-3 px-4 py-3 transition-colors hover:bg-muted/30">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium">{item.title}</p>
+                  <p className="truncate text-xs text-muted-foreground">{item.detail}</p>
+                </div>
+                <span className="shrink-0 text-[11px] text-muted-foreground">{formatDate(item.timestamp, tenantContext.branding.locale, tenantContext.branding.timezone)}</span>
+              </Link>
+            ))}
+          </CardContent>
+        </Card>
+      </div>
+
+      <Card className="overflow-hidden border-border/70 shadow-sm">
+        <CardHeader className="flex-row items-center justify-between border-b bg-muted/15 px-4 py-3">
+          <CardTitle className="flex items-center gap-2 text-sm font-semibold"><FolderKanban className="h-4 w-4 text-primary" />Workspace Shortcuts</CardTitle>
+        </CardHeader>
+        <CardContent className="grid gap-2 p-3 sm:grid-cols-2 xl:grid-cols-4">
+          {quickLinks.slice(0, 8).map((item) => {
+            const Icon = moduleIcon(item.key);
+            return (
+              <Link key={item.key} href={item.href} className="flex items-center gap-3 rounded-lg border border-border/70 px-3 py-3 transition-colors hover:border-primary/40 hover:bg-primary/5">
+                <Icon className="h-4 w-4 text-primary" />
+                <span className="min-w-0 flex-1 truncate text-sm font-medium">{item.title}</span>
+                <ArrowRight className="h-4 w-4 text-muted-foreground" />
+              </Link>
+            );
+          })}
         </CardContent>
       </Card>
     </div>

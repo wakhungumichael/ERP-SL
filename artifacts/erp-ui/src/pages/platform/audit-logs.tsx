@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useAuth } from '@/context/use-auth';
+import { ERPMetricCard, ERPPageHeader } from '@/components/erp/workspace/workspace-ui';
 
 type AuditEvent = {
   id: number;
@@ -128,17 +129,14 @@ export default function AuditLogsPage() {
   }, [accessQuery.data, search]);
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col gap-3 border-b pb-4 md:flex-row md:items-end md:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Audit Logs</h1>
-          <p className="text-sm text-muted-foreground">
-            {role === 'superadmin'
-              ? 'Cross-tenant oversight for data changes, workflow actions, and user access.'
-              : 'Tenant-scoped visibility into who changed records, viewed resources, and triggered system activity.'}
-          </p>
-        </div>
-        <div className="relative w-full md:w-80">
+    <div className="space-y-5">
+      <ERPPageHeader
+        title="Audit Logs"
+        description={role === 'superadmin'
+          ? 'Cross-tenant oversight for data changes, workflow actions, and user access.'
+          : 'Tenant-scoped visibility into record changes and access activity.'}
+        actions={
+          <div className="relative w-full sm:w-80">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             value={search}
@@ -146,36 +144,14 @@ export default function AuditLogsPage() {
             placeholder="Search actor, tenant, model, path..."
             className="pl-9"
           />
-        </div>
-      </div>
+          </div>
+        }
+      />
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-xs font-bold uppercase tracking-widest text-muted-foreground">
-              Change Events
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="text-3xl font-black">{eventQuery.data?.length ?? 0}</CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-xs font-bold uppercase tracking-widest text-muted-foreground">
-              Access Events
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="text-3xl font-black">{accessQuery.data?.length ?? 0}</CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-xs font-bold uppercase tracking-widest text-muted-foreground">
-              Scope
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="text-lg font-bold">
-            {role === 'superadmin' ? 'Global / Multi-tenant' : 'Tenant-aware / Restricted'}
-          </CardContent>
-        </Card>
+        <ERPMetricCard label="Change Events" value={eventQuery.data?.length ?? 0} />
+        <ERPMetricCard label="Access Events" value={accessQuery.data?.length ?? 0} />
+        <ERPMetricCard label="Scope" value={role === 'superadmin' ? 'Global' : 'Organization'} detail={role === 'superadmin' ? 'Multi-tenant visibility' : 'Restricted to your organization'} />
       </div>
 
       <Tabs defaultValue="events" className="space-y-4">

@@ -12,8 +12,8 @@ import Login from '@/pages/login';
 import LandingPage from '@/pages/landing';
 import MarketingAppsPage from '@/pages/marketing-apps';
 import MarketingPricingPage from '@/pages/marketing-pricing';
-import MarketingStoriesPage from '@/pages/marketing-stories';
 import MarketingAboutPage from '@/pages/marketing-about';
+import MarketingSupportPage from '@/pages/marketing-support';
 import PrivacyPolicyPage from '@/pages/privacy-policy';
 import Dashboard from '@/pages/dashboard';
 import WeighbridgeOverview from '@/pages/weighbridge/overview';
@@ -143,41 +143,41 @@ function Router() {
 
   return (
     <Switch>
-      <Route path="/landing/:tenantCode/apps">
-        {params => <MarketingAppsPage tenantCode={params.tenantCode} />}
-      </Route>
-      <Route path="/landing/:tenantCode/pricing">
-        {params => <MarketingPricingPage tenantCode={params.tenantCode} />}
-      </Route>
-      <Route path="/landing/:tenantCode/stories">
-        {params => <MarketingStoriesPage tenantCode={params.tenantCode} />}
-      </Route>
-      <Route path="/landing/:tenantCode/about">
-        {params => <MarketingAboutPage tenantCode={params.tenantCode} />}
-      </Route>
-      <Route path="/landing/:tenantCode/privacy">
-        {params => <PrivacyPolicyPage tenantCode={params.tenantCode} />}
-      </Route>
-      <Route path="/landing/:tenantCode">
-        {params => <LandingPage tenantCode={params.tenantCode} />}
-      </Route>
       <Route path="/landing/apps">
         <MarketingAppsPage />
       </Route>
       <Route path="/landing/pricing">
         <MarketingPricingPage />
       </Route>
-      <Route path="/landing/stories">
-        <MarketingStoriesPage />
-      </Route>
       <Route path="/landing/about">
         <MarketingAboutPage />
+      </Route>
+      <Route path="/landing/support">
+        <MarketingSupportPage />
       </Route>
       <Route path="/landing/privacy">
         <PrivacyPolicyPage />
       </Route>
       <Route path="/landing">
         <LandingPage />
+      </Route>
+      <Route path="/landing/:tenantCode/apps">
+        {params => <MarketingAppsPage tenantCode={params.tenantCode} />}
+      </Route>
+      <Route path="/landing/:tenantCode/pricing">
+        {params => <MarketingPricingPage tenantCode={params.tenantCode} />}
+      </Route>
+      <Route path="/landing/:tenantCode/about">
+        {params => <MarketingAboutPage tenantCode={params.tenantCode} />}
+      </Route>
+      <Route path="/landing/:tenantCode/support">
+        {params => <MarketingSupportPage tenantCode={params.tenantCode} />}
+      </Route>
+      <Route path="/landing/:tenantCode/privacy">
+        {params => <PrivacyPolicyPage tenantCode={params.tenantCode} />}
+      </Route>
+      <Route path="/landing/:tenantCode">
+        {params => <LandingPage tenantCode={params.tenantCode} />}
       </Route>
       <Route path="/login/:tenantCode">
         <Login />
@@ -192,6 +192,13 @@ function Router() {
         {homeContent}
       </Route>
       <Route path="/dashboard">
+        <Shell>
+          <RoleGuard allowedRoles={['superadmin', 'tenant_admin', 'finance', 'operator']}>
+            {role === 'superadmin' ? <BillingCenter /> : <Dashboard />}
+          </RoleGuard>
+        </Shell>
+      </Route>
+      <Route path="/workspace/operations/dashboard">
         <Shell>
           <RoleGuard allowedRoles={['superadmin', 'tenant_admin', 'finance', 'operator']}>
             {role === 'superadmin' ? <BillingCenter /> : <Dashboard />}

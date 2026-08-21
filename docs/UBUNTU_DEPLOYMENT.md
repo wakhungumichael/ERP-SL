@@ -150,6 +150,8 @@ If you do not want the default owner bootstrap, create a superuser manually:
 python manage.py createsuperuser
 ```
 
+If the `slabs` SaaS admin can sign in but the Modules screen is empty or unavailable, verify the environment was initialized with both `python manage.py seed_platform` and `python manage.py bootstrap_saas_owner`. The Modules API only allows platform superadmins, and the bootstrap command is what creates `slabs` with `is_superuser=True`.
+
 ## 10. Build the Frontend
 
 ```bash

@@ -1,6 +1,6 @@
 import { Link, useLocation } from 'wouter';
 import { useAuthLogout } from '@workspace/api-client-react';
-import { LogOut, Scale, ChevronRight, ChevronDown, Search, UserCircle2, Settings, PanelTop, X, Menu } from 'lucide-react';
+import { LogOut, Scale, ChevronRight, ChevronDown, Search, UserCircle2, Settings, PanelTop, X, Menu, ShieldAlert } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { Input } from '@/components/ui/input';
@@ -31,6 +31,7 @@ import { useAuth } from '@/context/use-auth';
 import { STATIC_NAV, ROLE_LABELS, ROLE_COLORS, type NavSection } from '@/lib/roles';
 import type { AppRole } from '@/lib/roles';
 import { useTenantTheme } from '@/hooks/use-tenant-theme';
+import { evaluateWorkspaceRouteAccess } from '@/lib/workspace-access';
 import {
   Select,
   SelectContent,
@@ -62,6 +63,33 @@ const STATIC_SECTION_MODULES: Record<string, string[]> = {
   retail: ['retail', 'retail-pack', 'commerce'],
   services: ['services', 'services-pack', 'projects'],
 };
+
+// Older workspace records used a route scheme that predates the current app.
+// Keep those records usable without showing duplicate dashboard destinations.
+const LEGACY_WORKSPACE_PATHS: Record<string, string> = {
+  '/workspace/operations/dashboard': '/weighbridge/overview',
+  '/workspace/operations/transactions': '/weighbridge/transactions',
+  '/workspace/operations/live-weight': '/weighbridge/live',
+  '/workspace/operations/reports': '/weighbridge/reports',
+  '/workspace/finance/overview': '/finance/overview',
+  '/workspace/finance/invoices': '/finance/receivables',
+  '/workspace/finance/accounting': '/finance/overview',
+  '/workspace/admin/tenants': '/platform/tenants',
+  '/workspace/admin/users': '/platform/users',
+  '/workspace/admin/menu': '/platform/workspace',
+  '/workspace/admin/licenses': '/platform/licenses',
+  '/workspace/admin/integrations': '/platform/integrations',
+};
+
+const LEGACY_WORKSPACE_SECTION_KEYS: Record<string, { key: string; title: string }> = {
+  operations: { key: 'weighbridge', title: 'Weighbridge' },
+  'platform-admin': { key: 'platform', title: 'Platform Admin' },
+};
+
+function normalizeWorkspacePath(path: unknown) {
+  const value = String(path ?? '');
+  return LEGACY_WORKSPACE_PATHS[value] ?? value;
+}
 
 /** Fetch workspace navigation from the backend and transform into NavSection[]. */
 function normalizeNavRoles(value: unknown): AppRole[] {
@@ -105,39 +133,69 @@ function useWorkspaceNav(token: string | null): NavSection[] {
 
   try {
     const payload: any = data;
-    const sections = Array.isArray(data)
-      ? data
-      : Array.isArray(payload.sections)
-        ? payload.sections
-        : Object.values(data);
+    const workspacePayload: any = Array.isArray(payload)
+      ? { sections: payload }
+      : payload?.workspace && typeof payload.workspace === 'object'
+        ? payload.workspace
+        : payload;
+    const sections = Array.isArray(workspacePayload)
+      ? workspacePayload
+      : Array.isArray(workspacePayload.sections)
+        ? workspacePayload.sections
+        : [];
     if (!sections.length) return STATIC_NAV;
 
     const activeModuleSlugs = new Set<string>(
-      Array.isArray(payload.active_module_slugs)
-        ? payload.active_module_slugs.map((entry: unknown) => String(entry))
+      Array.isArray(workspacePayload.active_module_slugs)
+        ? workspacePayload.active_module_slugs.map((entry: unknown) => String(entry))
         : [],
     );
     const isSectionEnabledBySubscription = (sectionKey: string) => {
       const requiredModules = STATIC_SECTION_MODULES[sectionKey];
-      if (!requiredModules || activeModuleSlugs.size === 0) return true;
+      if (!requiredModules) return true;
+      if (activeModuleSlugs.size === 0) return false;
       return requiredModules.some((slug) => activeModuleSlugs.has(slug));
     };
 
-    const transformed = sections.map((s: any) => ({
-      key: s.key ?? s.slug ?? s.title?.toLowerCase().replace(/\s+/g, '-'),
-      title: s.title ?? s.name ?? s.label,
-      roles: normalizeNavRoles(s.roles),
-      items: (s.items ?? s.children ?? []).map((item: any) => ({
-        key: item.key ?? item.slug ?? item.title?.toLowerCase().replace(/\s+/g, '-'),
-        title: item.title ?? item.name ?? item.label,
-        path: item.path ?? item.route_path ?? item.url ?? item.href,
-        roles: normalizeNavRoles(item.roles ?? s.roles),
-      })),
-    })).filter((s: NavSection) => s.title && s.items.length > 0 && s.items.some(item => item.path));
+    const transformed = sections.map((s: any) => {
+      const sourceKey = s.key ?? s.slug ?? s.title?.toLowerCase().replace(/\s+/g, '-');
+      const sectionOverride = LEGACY_WORKSPACE_SECTION_KEYS[sourceKey];
+      const items: NavSection['items'] = (s.items ?? s.children ?? []).map((item: any) => {
+        const sourcePath = item.path ?? item.route_path ?? item.url ?? item.href;
+        return {
+          key: item.key ?? item.slug ?? item.title?.toLowerCase().replace(/\s+/g, '-'),
+          title: sourcePath === '/workspace/operations/dashboard'
+            ? 'Overview'
+            : item.title ?? item.name ?? item.label,
+          path: normalizeWorkspacePath(sourcePath),
+          roles: normalizeNavRoles(item.roles ?? s.roles),
+        };
+      });
+      return {
+        key: sectionOverride?.key ?? sourceKey,
+        title: sectionOverride?.title ?? s.title ?? s.name ?? s.label,
+        roles: normalizeNavRoles(s.roles),
+        items: items.filter((item, index) =>
+          Boolean(item.path) && items.findIndex((candidate) => candidate.path === item.path) === index,
+        ),
+      };
+    }).filter((s: NavSection) => s.title && s.items.length > 0 && s.items.some(item => item.path));
 
     if (!transformed.length) return STATIC_NAV;
 
-    const merged = transformed.map((section: NavSection) => {
+    const normalizedSections = (transformed as NavSection[]).reduce((result: NavSection[], section: NavSection) => {
+      const existing = result.find((candidate) => candidate.key === section.key);
+      if (!existing) {
+        result.push(section);
+        return result;
+      }
+
+      const existingPaths = new Set(existing.items.map((item) => item.path));
+      existing.items.push(...section.items.filter((item) => !existingPaths.has(item.path)));
+      return result;
+    }, []);
+
+    const merged = normalizedSections.map((section: NavSection) => {
       const staticSection = STATIC_NAV.find((candidate) => candidate.key === section.key);
       if (!staticSection) return section;
 
@@ -148,7 +206,18 @@ function useWorkspaceNav(token: string | null): NavSection[] {
       return {
         ...section,
         roles: section.roles?.length ? section.roles : staticSection.roles,
-        items: [...section.items, ...missingStaticItems],
+        items: [
+          ...section.items.map((item) => {
+            const staticItem = staticSection.items.find((candidate) => candidate.path === item.path);
+            return {
+              ...item,
+              // Backend menu records predate per-item role metadata. When a
+              // route is known locally, its stricter role rule remains authoritative.
+              roles: staticItem?.roles?.length ? staticItem.roles : item.roles,
+            };
+          }),
+          ...missingStaticItems,
+        ],
       };
     });
 
@@ -295,7 +364,7 @@ function NavSectionItem({ section, location, sidebarCollapsed, open, onToggle }:
 export function Shell({ children }: { children: React.ReactNode }) {
   const [location, setLocation] = useLocation();
   const { token, user, role, isLoading, authErrorStatus, clearToken, refreshUser } = useAuth();
-  const { tenantContext } = useTenantTheme();
+  const { tenantContext, isLoading: tenantThemeLoading } = useTenantTheme();
   const logout = useAuthLogout();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
@@ -393,9 +462,25 @@ export function Shell({ children }: { children: React.ReactNode }) {
     .filter(s => s.items.length > 0);
 
   const resolvedSections = visibleSections.length > 0 ? visibleSections : staticVisibleSections;
-  const navSections = resolvedSections.some(section => section.items.some(item => item.path === '/dashboard'))
-    ? resolvedSections
-    : [HOME_SECTION, ...resolvedSections];
+  const dashboardSections = resolvedSections.filter(section =>
+    section.items.some(item => item.path === '/dashboard'),
+  );
+  const nonDashboardSections = resolvedSections.filter(section =>
+    !section.items.some(item => item.path === '/dashboard'),
+  );
+  const platformSections = nonDashboardSections.filter(section => section.key === 'platform');
+  const remainingSections = nonDashboardSections.filter(section => section.key !== 'platform');
+  const navSections = dashboardSections.length > 0
+    ? [...dashboardSections, ...remainingSections, ...platformSections]
+    : [HOME_SECTION, ...remainingSections, ...platformSections];
+  const routeAccess = useMemo(
+    () => evaluateWorkspaceRouteAccess({
+      path: location,
+      role: effectiveRole,
+      activeModuleSlugs: tenantContext.activeModuleSlugs ?? [],
+    }),
+    [effectiveRole, location, tenantContext.activeModuleSlugs],
+  );
 
   const searchIndex = useMemo(
     () =>
@@ -695,9 +780,39 @@ export function Shell({ children }: { children: React.ReactNode }) {
         </header>
 
         {/* Page content */}
-        <div className="flex-1 overflow-auto bg-muted/20 p-4 md:p-6 lg:p-8">
-          <div className="w-full">
-            {children}
+        <div className="flex-1 overflow-auto bg-muted/20 p-4 md:p-6 lg:p-7">
+          <div className="erp-workspace mx-auto w-full max-w-[1600px]">
+            {!tenantThemeLoading && !routeAccess.allowed ? (
+              <div className="flex min-h-[60vh] items-center justify-center">
+                <div className="w-full max-w-2xl rounded-[28px] border border-border bg-card p-8 shadow-sm">
+                  <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-orange-50 text-orange-600">
+                    <ShieldAlert className="h-6 w-6" />
+                  </div>
+                  <h1 className="mt-5 text-2xl font-semibold tracking-tight text-foreground">
+                    {routeAccess.reason === 'module'
+                      ? 'This page is not active for your organization.'
+                      : 'You do not have access to this page.'}
+                  </h1>
+                  <p className="mt-3 text-sm leading-7 text-muted-foreground">
+                    {routeAccess.reason === 'module'
+                      ? 'Your current organization plan does not include this module, or the module has not been activated for this workspace.'
+                      : 'Your current role does not have permission to open this workspace area for this organization.'}
+                  </p>
+                  <div className="mt-6 flex flex-col gap-3 sm:flex-row">
+                    <Button onClick={() => setLocation('/dashboard')}>
+                      Return to dashboard
+                    </Button>
+                    {effectiveRole === 'tenant_admin' ? (
+                      <Button variant="outline" onClick={() => setLocation('/platform/organization-settings')}>
+                        Open organization settings
+                      </Button>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              children
+            )}
           </div>
         </div>
       </main>

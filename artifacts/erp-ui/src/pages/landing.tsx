@@ -35,8 +35,15 @@ const APP_SHOWCASE = [
   { label: 'Workspace', icon: Building2 },
 ];
 
+const WORKFLOW_SHOWCASE = [
+  'Order to cash with billing and collections',
+  'Procurement, approvals, and supplier control',
+  'Inventory, operations, and live reporting',
+  'Customer service, CRM, and follow-up workflows',
+];
+
 function CurvedSurface({ children, className = '' }: { children: React.ReactNode; className?: string }) {
-  return <div className={`rounded-[56px] bg-[#f5f2ed] ${className}`}>{children}</div>;
+  return <div className={`rounded-[56px] bg-[#fff4ea] ${className}`}>{children}</div>;
 }
 
 function HighlightStroke({ children, color }: { children: React.ReactNode; color: string }) {
@@ -51,9 +58,22 @@ function HighlightStroke({ children, color }: { children: React.ReactNode; color
 export default function LandingPage({ tenantCode }: { tenantCode?: string }) {
   const site = useMarketingSite(tenantCode);
   const brand = site.branding.primary_color ?? '#E85D26';
-  const highlights = site.landing_page.highlights ?? [];
-  const isTenantSite = site.site_scope === 'tenant';
-  const primaryHref = tenantCode ? `/login/${tenantCode}` : (site.landing_page.primary_cta_url ?? '/login');
+  const primaryHref = tenantCode ? `/login/${tenantCode}?intent=register` : '/login?intent=register';
+  const publishedModules = [...site.modules]
+    .filter((module) => module.is_active !== false)
+    .sort((a, b) => {
+      const categoryCompare = (a.category ?? '').localeCompare(b.category ?? '');
+      if (categoryCompare !== 0) return categoryCompare;
+      return (a.name ?? '').localeCompare(b.name ?? '');
+    });
+  const moduleShowcase = publishedModules.length > 0
+    ? publishedModules.map((module) => ({
+      label: module.name,
+      icon: APP_SHOWCASE.find((entry) => entry.label.toLowerCase() === module.name.toLowerCase())?.icon
+        ?? APP_SHOWCASE.find((entry) => entry.label.toLowerCase() === module.slug.toLowerCase())?.icon
+        ?? Blocks,
+    }))
+    : APP_SHOWCASE;
 
   return (
     <MarketingSiteShell site={site} tenantCode={tenantCode} currentPage="home">
@@ -61,17 +81,14 @@ export default function LandingPage({ tenantCode }: { tenantCode?: string }) {
         <div className="grid gap-14 lg:grid-cols-[1.05fr_0.95fr] lg:items-start">
           <div className="space-y-8">
             <div className="space-y-5">
-              <p className="inline-flex rounded-full border border-black/5 bg-white px-4 py-2 text-[11px] font-bold uppercase tracking-[0.28em] text-[#6b7280]">
-                {isTenantSite ? 'Tenant public site' : 'SaaS owner public site'}
-              </p>
               <h1 className="max-w-5xl text-[3.25rem] font-semibold leading-[0.96] tracking-[-0.05em] text-[#111827] sm:text-[4.8rem] lg:text-[5.45rem]">
                 {site.landing_page.headline}
               </h1>
               <div className="max-w-3xl space-y-4">
-                <p className="text-[2rem] italic leading-tight tracking-[-0.03em] sm:text-[2.5rem]" style={{ color: '#172033' }}>
+                <p className="text-[1.45rem] italic leading-snug tracking-[-0.03em] sm:text-[1.8rem]" style={{ color: '#172033' }}>
                   {site.landing_page.subheadline}
                 </p>
-                <p className="max-w-2xl text-lg leading-8 text-[#4b5563]">
+                <p className="max-w-2xl text-base leading-8 text-[#4b5563]">
                   <HighlightStroke color={`${brand}55`}>{site.landing_page.description}</HighlightStroke>
                 </p>
               </div>
@@ -96,25 +113,25 @@ export default function LandingPage({ tenantCode }: { tenantCode?: string }) {
             </div>
 
             <div className="grid gap-4 sm:grid-cols-3">
-              <div className="rounded-[30px] border border-black/5 bg-white p-5 shadow-[0_14px_40px_rgba(17,24,39,0.05)]">
-                <p className="text-3xl font-semibold tracking-tight">{APP_SHOWCASE.length}+</p>
-                <p className="mt-2 text-sm leading-6 text-[#6b7280]">Connected ERP and billing capabilities in one calm workspace.</p>
+              <div className="rounded-[30px] border border-black/5 bg-white p-5 shadow-[0_14px_40px_rgba(232,93,38,0.08)]">
+                <p className="text-3xl font-semibold tracking-tight">{moduleShowcase.length}+</p>
+                <p className="mt-2 text-sm leading-6 text-[#6b7280]">Core modules covering finance, operations, inventory, HR, CRM, and support.</p>
               </div>
-              <div className="rounded-[30px] border border-black/5 bg-white p-5 shadow-[0_14px_40px_rgba(17,24,39,0.05)]">
-                <p className="text-3xl font-semibold tracking-tight">1 stack</p>
-                <p className="mt-2 text-sm leading-6 text-[#6b7280]">Subscriptions, finance, CRM, procurement, and operations without tool sprawl.</p>
+              <div className="rounded-[30px] border border-black/5 bg-white p-5 shadow-[0_14px_40px_rgba(232,93,38,0.08)]">
+                <p className="text-3xl font-semibold tracking-tight">1 system</p>
+                <p className="mt-2 text-sm leading-6 text-[#6b7280]">One shared workspace that keeps departments connected instead of split across many tools.</p>
               </div>
-              <div className="rounded-[30px] border border-black/5 bg-white p-5 shadow-[0_14px_40px_rgba(17,24,39,0.05)]">
-                <p className="text-3xl font-semibold tracking-tight">Minimal</p>
-                <p className="mt-2 text-sm leading-6 text-[#6b7280]">Built to feel simple first, then grow into a full business operating system.</p>
+              <div className="rounded-[30px] border border-black/5 bg-white p-5 shadow-[0_14px_40px_rgba(232,93,38,0.08)]">
+                <p className="text-3xl font-semibold tracking-tight">Scalable</p>
+                <p className="mt-2 text-sm leading-6 text-[#6b7280]">Designed to serve small businesses today and larger multi-team operations as you grow.</p>
               </div>
             </div>
           </div>
 
           <div className="relative">
-            <CurvedSurface className="relative overflow-hidden border border-black/5 px-6 pb-6 pt-14 shadow-[0_26px_80px_rgba(17,24,39,0.08)]">
+            <CurvedSurface className="relative overflow-hidden border border-black/5 px-6 pb-6 pt-14 shadow-[0_26px_80px_rgba(232,93,38,0.12)]">
               <div className="absolute left-1/2 top-[4.8rem] z-10 -translate-x-1/2">
-                <div className="rounded-full border border-black/5 bg-white px-4 py-2 shadow-[0_10px_30px_rgba(17,24,39,0.08)]">
+                <div className="rounded-full border border-black/5 bg-white px-4 py-2 shadow-[0_10px_30px_rgba(232,93,38,0.12)]">
                   <div className="flex items-center gap-3 text-[11px] font-semibold text-[#4b5563]">
                     <span className="rounded-full bg-[#172033] px-2 py-1 text-[10px] uppercase tracking-[0.22em] text-white">Live</span>
                     <span>Workspace provisioning</span>
@@ -124,16 +141,16 @@ export default function LandingPage({ tenantCode }: { tenantCode?: string }) {
                 </div>
               </div>
               <div className="absolute inset-x-6 top-6 flex items-center justify-between rounded-full border border-black/5 bg-white px-4 py-2 text-xs font-semibold uppercase tracking-[0.22em] text-[#6b7280]">
-                <span>All your business on one platform</span>
-                <span>{site.tenant?.name ?? 'Siakora Labs'}</span>
+                <span>Modules and workflows in one ERP</span>
+                <span>SL ERP</span>
               </div>
 
-              <div className="rounded-[34px] bg-white p-5 shadow-[0_18px_50px_rgba(17,24,39,0.06)]">
+              <div className="rounded-[34px] bg-white p-5 shadow-[0_18px_50px_rgba(232,93,38,0.1)]">
                 <div className="grid grid-cols-4 gap-3 sm:grid-cols-6">
-                  {APP_SHOWCASE.map((app) => {
+                  {moduleShowcase.map((app) => {
                     const Icon = app.icon;
                     return (
-                      <div key={app.label} className="group rounded-[24px] border border-black/5 bg-[#fcfaf6] p-3 text-center transition hover:-translate-y-0.5 hover:border-black/10 hover:bg-white">
+                      <div key={app.label} className="group rounded-[24px] border border-black/5 bg-[#fff8f1] p-3 text-center transition hover:-translate-y-0.5 hover:border-black/10 hover:bg-white">
                         <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-white shadow-sm">
                           <Icon className="h-5 w-5" style={{ color: brand }} />
                         </div>
@@ -143,16 +160,16 @@ export default function LandingPage({ tenantCode }: { tenantCode?: string }) {
                   })}
                 </div>
 
-                <div className="mt-5 rounded-[28px] bg-[#172033] p-5 text-white">
+                <div className="mt-5 rounded-[28px] p-5 text-white" style={{ background: 'linear-gradient(180deg, #2d211b 0%, #1b1614 100%)' }}>
                   <div className="flex items-center justify-between gap-4">
                     <div>
                       <p className="text-xs font-bold uppercase tracking-[0.26em] text-white/45">Workflow</p>
-                      <p className="mt-3 text-2xl font-semibold tracking-tight">Billing, approvals, and operations move together.</p>
+                      <p className="mt-3 text-2xl font-semibold tracking-tight">Sales, service, finance, and operations stay connected.</p>
                     </div>
                     <ShieldCheck className="h-6 w-6 text-[#7dd3c7]" />
                   </div>
-                  <div className="mt-5 grid gap-3 sm:grid-cols-3">
-                    {highlights.slice(0, 3).map((highlight) => (
+                  <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                    {WORKFLOW_SHOWCASE.map((highlight) => (
                       <div key={highlight} className="rounded-2xl border border-white/10 bg-white/5 p-4">
                         <CheckCircle2 className="h-4 w-4 text-[#7dd3c7]" />
                         <p className="mt-2 text-sm leading-6 text-white/76">{highlight}</p>
@@ -170,34 +187,44 @@ export default function LandingPage({ tenantCode }: { tenantCode?: string }) {
         <div className="grid gap-5 lg:grid-cols-3">
           {[
             {
-              title: 'Explore the app ecosystem',
-              desc: 'See how billing, CRM, procurement, inventory, and reporting fit together in one modular stack.',
+              title: 'See What SL ERP Covers',
+              desc: 'Browse the modules behind finance, inventory, HR, CRM, support, approvals, and daily operations.',
               href: buildMarketingPath(tenantCode, 'apps'),
               icon: LayoutGrid,
+              cta: 'View modules',
             },
             {
-              title: 'Review pricing and plans',
-              desc: 'Understand how subscriptions are packaged for growing SaaS operators and larger multi-entity teams.',
+              title: 'Choose The Right Plan',
+              desc: 'Review pricing options built for small businesses, growing companies, and larger organizations.',
               href: buildMarketingPath(tenantCode, 'pricing'),
               icon: CreditCard,
+              cta: 'See pricing',
             },
             {
-              title: 'Read stories and outcomes',
-              desc: 'See how cleaner workflows, calmer operations, and better financial visibility show up in real teams.',
-              href: buildMarketingPath(tenantCode, 'stories'),
+              title: 'Talk To Our Team',
+              desc: 'Reach out for product questions, onboarding guidance, support, or help choosing the right setup.',
+              href: buildMarketingPath(tenantCode, 'support'),
               icon: Users2,
+              cta: 'Contact us',
             },
-          ].map((item) => {
+            {
+              title: 'Get Support And Guidance',
+              desc: 'Reach our team for onboarding questions, support help, and product guidance as you evaluate SL ERP.',
+              href: buildMarketingPath(tenantCode, 'support'),
+              icon: Users2,
+              cta: 'Contact us',
+            },
+          ].slice(0, 3).map((item) => {
             const Icon = item.icon;
             return (
-              <Link key={item.title} href={item.href} className="rounded-[34px] border border-black/5 bg-white p-6 shadow-[0_16px_46px_rgba(17,24,39,0.05)] transition hover:-translate-y-0.5">
-                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#f5f2ed]">
+              <Link key={item.title} href={item.href} className="rounded-[34px] border border-black/5 bg-white p-6 shadow-[0_16px_46px_rgba(232,93,38,0.08)] transition hover:-translate-y-0.5">
+                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#fff4ea]">
                   <Icon className="h-5 w-5" style={{ color: brand }} />
                 </div>
                 <p className="mt-5 text-2xl font-semibold tracking-tight text-[#111827]">{item.title}</p>
                 <p className="mt-3 text-sm leading-7 text-[#4b5563]">{item.desc}</p>
                 <div className="mt-6 inline-flex items-center gap-2 text-sm font-semibold" style={{ color: brand }}>
-                  Open page
+                  {item.cta}
                   <ArrowRight className="h-4 w-4" />
                 </div>
               </Link>

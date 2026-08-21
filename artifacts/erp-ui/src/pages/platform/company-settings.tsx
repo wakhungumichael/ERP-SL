@@ -61,26 +61,58 @@ const TEMPLATE_GROUPS = [
 ] as const;
 
 const DEFAULT_LOGIN_PAGE_CONFIG = {
-  eyebrow: 'SaaS Billing Platform',
-  title: 'Welcome back to SL-ERP',
-  subtitle: 'Sign in to manage tenants, billing, subscriptions, and ERP operations.',
-  description: 'One workspace for product packaging, subscription billing, and customer operations.',
+  eyebrow: 'SL ERP',
+  title: 'SL ERP',
+  subtitle: 'SL ERP for small businesses, growing companies, and large enterprises.',
+  description: 'A scalable business system built to support everyday operations, finance, billing, and control at every stage of growth.',
 };
 
 const DEFAULT_LANDING_PAGE_CONFIG = {
-  eyebrow: 'Subscription Billing for SaaS Operators',
-  headline: 'Launch, bill, and scale your SaaS business from one platform.',
-  subheadline: 'A modern ERP and billing control center for subscriptions, collections, and operations.',
-  description: 'Publish plans, manage subscriptions, and run the back office from one shared workspace.',
+  eyebrow: 'SL ERP',
+  headline: 'SL ERP for small businesses, growing companies, and large enterprises.',
+  subheadline: 'Manage finance, operations, inventory, HR, CRM, support, and approvals in one connected business system.',
+  description: 'Replace scattered tools with one scalable ERP built for visibility, speed, control, and better decisions across every department.',
   primary_cta_label: 'Start Subscription',
   primary_cta_url: '/login',
   secondary_cta_label: 'View Plans',
   secondary_cta_url: '#plans',
   highlights: [
-    'Tenant onboarding and provisioning',
-    'Plan-based subscription billing',
-    'Operations, finance, and customer management',
+    'Order to cash with billing and collections',
+    'Procurement, approvals, and supplier control',
+    'Inventory, operations, and live reporting',
   ],
+};
+
+const DEFAULT_SUPPORT_FORM_FIELDS = [
+  { key: 'requester_name', label: 'Full name', type: 'text', placeholder: 'Your full name', required: false, enabled: true, options: [] },
+  { key: 'requester_email', label: 'Email address', type: 'email', placeholder: 'you@example.com', required: true, enabled: true, options: [] },
+  { key: 'requester_phone', label: 'Phone', type: 'tel', placeholder: '+254700000000', required: false, enabled: true, options: [] },
+  { key: 'category', label: 'Category', type: 'select', placeholder: '', required: false, enabled: true, options: ['General help', 'Technical issue', 'Billing or invoice', 'Account access'] },
+  { key: 'priority', label: 'Priority', type: 'select', placeholder: '', required: false, enabled: true, options: ['Standard', 'High', 'Urgent', 'Low'] },
+  { key: 'subject', label: 'Subject', type: 'text', placeholder: 'A short summary of your request', required: true, enabled: true, options: [] },
+  { key: 'description', label: 'Issue details', type: 'textarea', placeholder: 'Tell us what happened and what help you need.', required: true, enabled: true, options: [] },
+] as const;
+
+const DEFAULT_SUPPORT_PAGE_CONFIG = {
+  eyebrow: 'Customer Support',
+  headline: 'How can we help today?',
+  subheadline: 'Contact our team for support, billing, account, or service questions.',
+  description: 'Share the details below and our team will guide your request to the right people.',
+  primary_cta_label: 'Send Request',
+  secondary_cta_label: 'Check Request Status',
+  form_title: 'Send us a request',
+  form_description: 'Tell us what you need and we will route it to the best team to help you.',
+  tracking_title: 'Check your request status',
+  tracking_description: 'Enter your request number and email address to see the latest progress.',
+  status_title: 'Current update',
+  success_title: 'Request received',
+  success_description: 'Please keep your request number for future follow-up.',
+  highlights: [
+    'Reach the right team faster',
+    'Receive clear status updates',
+    'Stay within your branded support experience',
+  ],
+  form_fields: DEFAULT_SUPPORT_FORM_FIELDS,
 };
 
 const ORGANIZATION_CURRENCIES = ['KES', 'USD', 'EUR', 'GBP', 'UGX', 'TZS'];
@@ -1633,6 +1665,9 @@ export default function OrganizationSettings() {
   const publicLoginUrl = role === 'superadmin'
     ? '/login'
     : (tenant.code ? `/login/${tenant.code}` : '/login');
+  const publicSupportUrl = role === 'superadmin'
+    ? '/landing/support'
+    : (tenant.code ? `/landing/${tenant.code}/support` : '/landing/support');
 
   const [tenantForm, setTenantForm] = useState<any>(null);
   const [settingsForm, setSettingsForm] = useState<any>(null);
@@ -1642,7 +1677,7 @@ export default function OrganizationSettings() {
   const [organizationDialogOpen, setOrganizationDialogOpen] = useState(false);
   const [organizationSearch, setOrganizationSearch] = useState('');
   const [organizationsPage, setOrganizationsPage] = useState(1);
-  const [organizationsPageSize, setOrganizationsPageSize] = useState(5);
+  const [organizationsPageSize, setOrganizationsPageSize] = useState(10);
   const [newOrganizationForm, setNewOrganizationForm] = useState({
     name: '',
     legal_name: '',
@@ -1650,6 +1685,7 @@ export default function OrganizationSettings() {
     contact_phone: '',
     industry_id: '',
   });
+  const organizationBrandColor = settingsForm?.primary_color ?? settings?.primary_color ?? '#E85D26';
   const memberships: any[] = Array.isArray((user as any)?.memberships) ? (user as any).memberships : [];
   const activeMembershipId = (user as any)?.active_membership_id ? String((user as any).active_membership_id) : '';
 
@@ -1722,6 +1758,14 @@ export default function OrganizationSettings() {
     landing_page_config: {
       ...DEFAULT_LANDING_PAGE_CONFIG,
       ...(source?.landing_page_config ?? {}),
+      support_page: {
+        ...DEFAULT_SUPPORT_PAGE_CONFIG,
+        subheadline: `Contact ${source?.tenant?.name ?? tenant?.name ?? 'our team'} for support, billing, account, or service questions.`,
+        form_fields: Array.isArray(source?.landing_page_config?.support_page?.form_fields)
+          ? source.landing_page_config.support_page.form_fields
+          : DEFAULT_SUPPORT_PAGE_CONFIG.form_fields,
+        ...(source?.landing_page_config?.support_page ?? {}),
+      },
       highlights: Array.isArray(source?.landing_page_config?.highlights)
         ? source.landing_page_config.highlights
         : DEFAULT_LANDING_PAGE_CONFIG.highlights,
@@ -1839,6 +1883,89 @@ export default function OrganizationSettings() {
       landing_page_config: {
         ...(p?.landing_page_config ?? {}),
         highlights: [...(Array.isArray(p?.landing_page_config?.highlights) ? p.landing_page_config.highlights : []), ''],
+      },
+    }));
+  const updateSupportPageField = (key: string, value: string) =>
+    setSettingsForm((p: any) => ({
+      ...p,
+      landing_page_config: {
+        ...(p?.landing_page_config ?? {}),
+        support_page: { ...(p?.landing_page_config?.support_page ?? {}), [key]: value },
+      },
+    }));
+  const updateSupportHighlight = (index: number, value: string) =>
+    setSettingsForm((p: any) => {
+      const current = Array.isArray(p?.landing_page_config?.support_page?.highlights)
+        ? [...p.landing_page_config.support_page.highlights]
+        : [];
+      current[index] = value;
+      return {
+        ...p,
+        landing_page_config: {
+          ...(p?.landing_page_config ?? {}),
+          support_page: { ...(p?.landing_page_config?.support_page ?? {}), highlights: current },
+        },
+      };
+    });
+  const addSupportHighlight = () =>
+    setSettingsForm((p: any) => ({
+      ...p,
+      landing_page_config: {
+        ...(p?.landing_page_config ?? {}),
+        support_page: {
+          ...(p?.landing_page_config?.support_page ?? {}),
+          highlights: [...(Array.isArray(p?.landing_page_config?.support_page?.highlights) ? p.landing_page_config.support_page.highlights : []), ''],
+        },
+      },
+    }));
+  const removeSupportHighlight = (index: number) =>
+    setSettingsForm((p: any) => ({
+      ...p,
+      landing_page_config: {
+        ...(p?.landing_page_config ?? {}),
+        support_page: {
+          ...(p?.landing_page_config?.support_page ?? {}),
+          highlights: (Array.isArray(p?.landing_page_config?.support_page?.highlights) ? p.landing_page_config.support_page.highlights : []).filter((_: string, currentIndex: number) => currentIndex !== index),
+        },
+      },
+    }));
+  const updateSupportFormField = (index: number, key: string, value: any) =>
+    setSettingsForm((p: any) => {
+      const fields = Array.isArray(p?.landing_page_config?.support_page?.form_fields)
+        ? [...p.landing_page_config.support_page.form_fields]
+        : [...DEFAULT_SUPPORT_FORM_FIELDS];
+      fields[index] = { ...(fields[index] ?? {}), [key]: value };
+      return {
+        ...p,
+        landing_page_config: {
+          ...(p?.landing_page_config ?? {}),
+          support_page: { ...(p?.landing_page_config?.support_page ?? {}), form_fields: fields },
+        },
+      };
+    });
+  const addSupportFormField = () =>
+    setSettingsForm((p: any) => ({
+      ...p,
+      landing_page_config: {
+        ...(p?.landing_page_config ?? {}),
+        support_page: {
+          ...(p?.landing_page_config?.support_page ?? {}),
+          form_fields: [
+            ...(Array.isArray(p?.landing_page_config?.support_page?.form_fields) ? p.landing_page_config.support_page.form_fields : []),
+            { key: `custom_field_${Date.now()}`, label: 'Custom question', type: 'text', placeholder: '', required: false, enabled: true, options: [] },
+          ],
+        },
+      },
+    }));
+  const removeSupportFormField = (index: number) =>
+    setSettingsForm((p: any) => ({
+      ...p,
+      landing_page_config: {
+        ...(p?.landing_page_config ?? {}),
+        support_page: {
+          ...(p?.landing_page_config?.support_page ?? {}),
+          form_fields: (Array.isArray(p?.landing_page_config?.support_page?.form_fields) ? p.landing_page_config.support_page.form_fields : []).filter((_: any, currentIndex: number) => currentIndex !== index),
+        },
       },
     }));
   const removeLandingHighlight = (index: number) =>
@@ -1970,56 +2097,17 @@ export default function OrganizationSettings() {
   );
 
   return (
-    <div className="w-full max-w-[1600px] space-y-6">
-      <div className="border-b pb-4">
-        <h1 className="text-2xl font-bold tracking-tight">Organization Settings</h1>
-        <p className="text-xs text-muted-foreground mt-0.5">Configure organization information, branding, users, templates, branches, and integrations</p>
+    <div
+      className="w-full max-w-[1600px] grid grid-cols-1 gap-5 rounded-3xl p-1 xl:grid-cols-[330px_minmax(0,1fr)] xl:items-start"
+      style={{ backgroundImage: `radial-gradient(circle at 0 0, color-mix(in srgb, ${organizationBrandColor} 14%, transparent), transparent 46%)` }}
+    >
+      <div className="border-b border-border/70 pb-4 xl:col-span-2">
+        <h1 className="text-2xl font-bold tracking-tight">Organizations</h1>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[360px_minmax(0,1fr)]">
-        <Card className="h-fit">
-          <CardHeader className="bg-muted/20 border-b py-3 px-4">
-            <CardTitle className="text-xs font-bold uppercase tracking-widest">Active Organization</CardTitle>
-          </CardHeader>
-          <CardContent className="p-5 space-y-4">
-            <div className="space-y-1.5">
-              <Label>Working Context</Label>
-              <Select
-                value={activeMembershipId}
-                onValueChange={(value) => {
-                  if (!value || value === activeMembershipId || switchOrganization.isPending) return;
-                  switchOrganization.mutate(value);
-                }}
-              >
-                <SelectTrigger><SelectValue placeholder="Select organization" /></SelectTrigger>
-                <SelectContent>
-                  {memberships.map((membership: any) => (
-                    <SelectItem key={membership.id} value={String(membership.id)}>
-                      {membership.organization_name ?? membership.tenant_name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="rounded-2xl border bg-muted/20 p-4">
-              <p className="text-sm font-semibold">{tenant?.name ?? 'No active organization selected'}</p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                {tenant?.code ? `Code: ${tenant.code}` : 'Use this section to centralize organization management.'}
-              </p>
-              <div className="mt-3 flex flex-wrap gap-2">
-                <Badge variant="secondary">{memberships.length} linked org{memberships.length !== 1 ? 's' : ''}</Badge>
-                {tenant?.default_currency && <Badge variant="outline">{tenant.default_currency}</Badge>}
-                {tenant?.timezone && <Badge variant="outline">{tenant.timezone}</Badge>}
-              </div>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              Switching here updates the organization, branch, and ERP data context for your session.
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="bg-muted/20 border-b py-3 px-4">
+      <div className="grid grid-cols-1 gap-4 xl:col-start-1">
+        <Card className="overflow-hidden border-border/70 bg-card/95 shadow-sm xl:flex xl:max-h-[calc(100vh-12rem)] xl:flex-col">
+          <CardHeader className="border-b border-border/70 py-3 px-4">
             <CardTitle className="text-xs font-bold uppercase tracking-widest flex items-center justify-between">
               <span>Organizations</span>
               <Button size="sm" onClick={() => setOrganizationDialogOpen(true)} className="gap-1.5">
@@ -2027,16 +2115,16 @@ export default function OrganizationSettings() {
               </Button>
             </CardTitle>
           </CardHeader>
-          <CardContent className="p-6">
+          <CardContent className="min-h-0 p-3 xl:flex-1">
             {organizations.length === 0 ? (
               <p className="text-sm text-muted-foreground">No organizations found.</p>
             ) : (
-              <div className="overflow-hidden rounded-lg border bg-card">
-                <div className="border-b px-4 py-3">
+              <div className="flex min-h-0 flex-col overflow-hidden rounded-xl border bg-card xl:h-full">
+                <div className="border-b px-3 py-3">
                   <div className="flex items-center gap-2 rounded-md border px-3 py-2">
                     <Search className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
                     <input
-                      placeholder="Search organizations by name, role, branch, or email..."
+                      placeholder="Search organizations..."
                       value={organizationSearch}
                       onChange={(event) => setOrganizationSearch(event.target.value)}
                       className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground/60"
@@ -2048,7 +2136,7 @@ export default function OrganizationSettings() {
                     )}
                   </div>
                 </div>
-                <div className="space-y-3 p-4">
+                <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">
                   {paginatedMemberships.length === 0 ? (
                     <div className="rounded-xl border px-4 py-10 text-center text-sm text-muted-foreground">
                       No organizations match your search.
@@ -2057,12 +2145,10 @@ export default function OrganizationSettings() {
                     paginatedMemberships.map((membership: any) => {
                       const org = organizations.find((entry: any) => entry.id === membership.tenant) ?? {};
                       return (
-                        <div key={membership.id} className="rounded-xl border p-4 flex flex-wrap items-center justify-between gap-3">
+                        <div key={membership.id} className="rounded-xl border p-3 flex flex-wrap items-center justify-between gap-3">
                           <div className="min-w-0">
                             <p className="font-semibold text-sm">{membership.organization_name ?? membership.tenant_name}</p>
-                            <p className="text-xs text-muted-foreground">
-                              {[membership.role, membership.branch_name, org.contact_email].filter(Boolean).join(' · ')}
-                            </p>
+                            <p className="text-xs text-muted-foreground">{org.code ? `Code ${org.code}` : membership.role}</p>
                           </div>
                           <div className="flex items-center gap-2">
                             {membership.is_default && <Badge variant="secondary">Active</Badge>}
@@ -2090,8 +2176,8 @@ export default function OrganizationSettings() {
         </Card>
       </div>
 
-      <Tabs defaultValue="company" className="w-full">
-        <TabsList className="flex h-auto w-full flex-wrap justify-start gap-1">
+      <Tabs defaultValue="company" className="w-full xl:col-start-2 xl:row-start-2">
+        <TabsList className="flex h-auto w-full flex-wrap justify-start gap-1 rounded-none border-b border-orange-100 bg-transparent p-0">
           <TabsTrigger value="company" className="gap-1.5"><Building2 className="h-3.5 w-3.5" /> Profile</TabsTrigger>
           <TabsTrigger value="branding" className="gap-1.5"><Palette className="h-3.5 w-3.5" /> Branding</TabsTrigger>
           {canManagePublicSite && (
@@ -2114,14 +2200,14 @@ export default function OrganizationSettings() {
             </TabsList>
 
             <TabsContent value="profile" className="mt-6">
-              <Card>
-                <CardHeader className="bg-muted/20 border-b py-3 px-4">
-                  <CardTitle className="text-xs font-bold uppercase tracking-widest">Organization Profile</CardTitle>
-                </CardHeader>
-                <CardContent className="p-6 space-y-4">
-                  {tenantForm && (
-                    <>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {tenantForm && (
+                <div className="space-y-5">
+                  <div className="grid gap-5 lg:grid-cols-[minmax(0,1.25fr)_minmax(280px,0.85fr)]">
+                    <Card className="overflow-hidden border-orange-100 shadow-sm">
+                      <CardHeader className="border-b border-orange-100 bg-[linear-gradient(135deg,#fff7ed_0%,#ffffff_76%)] py-4 px-5">
+                        <CardTitle className="text-base">Company Details</CardTitle>
+                      </CardHeader>
+                      <CardContent className="grid gap-4 p-5 sm:grid-cols-2">
                         <div className="space-y-1.5">
                           <Label>Organization Name *</Label>
                           <Input value={tenantForm.name ?? ''} onChange={tf('name')} />
@@ -2138,7 +2224,7 @@ export default function OrganizationSettings() {
                           <Label>Phone</Label>
                           <Input value={tenantForm.contact_phone ?? ''} onChange={tf('contact_phone')} />
                         </div>
-                        <div className="space-y-1.5">
+                        <div className="space-y-1.5 sm:col-span-2">
                           <Label>Industry</Label>
                           <Select value={tenantForm.industry_id ?? '__none__'} onValueChange={v => setTenantForm((p: any) => ({ ...p, industry_id: v === '__none__' ? '' : v }))}>
                             <SelectTrigger><SelectValue placeholder="Select an industry" /></SelectTrigger>
@@ -2148,13 +2234,14 @@ export default function OrganizationSettings() {
                             </SelectContent>
                           </Select>
                         </div>
-                        <div className="space-y-1.5">
-                          <Label>Default Currency</Label>
-                          <Select value={tenantForm.default_currency ?? 'KES'} onValueChange={v => setTenantForm((p: any) => ({ ...p, default_currency: v }))}>
-                            <SelectTrigger><SelectValue /></SelectTrigger>
-                            <SelectContent>{CURRENCIES.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
-                          </Select>
-                        </div>
+                      </CardContent>
+                    </Card>
+
+                    <Card className="h-fit overflow-hidden border-orange-100 shadow-sm">
+                      <CardHeader className="border-b border-orange-100 bg-[linear-gradient(135deg,#fff7ed_0%,#ffffff_76%)] py-4 px-5">
+                        <CardTitle className="text-base">Regional Settings</CardTitle>
+                      </CardHeader>
+                      <CardContent className="space-y-4 p-5">
                         <div className="space-y-1.5">
                           <Label>Timezone</Label>
                           <Select value={tenantForm.timezone ?? 'Africa/Nairobi'} onValueChange={v => setTenantForm((p: any) => ({ ...p, timezone: v }))}>
@@ -2162,14 +2249,21 @@ export default function OrganizationSettings() {
                             <SelectContent>{TIMEZONES.map(tz => <SelectItem key={tz} value={tz}>{tz}</SelectItem>)}</SelectContent>
                           </Select>
                         </div>
-                      </div>
-                      <Button onClick={() => saveTenant.mutate()} disabled={saveTenant.isPending}>
-                        {saveTenant.isPending ? 'Saving…' : 'Save Organization Profile'}
-                      </Button>
-                    </>
-                  )}
-                </CardContent>
-              </Card>
+                        <div className="space-y-1.5">
+                          <Label>Default Currency</Label>
+                          <Select value={tenantForm.default_currency ?? 'KES'} onValueChange={v => setTenantForm((p: any) => ({ ...p, default_currency: v }))}>
+                            <SelectTrigger><SelectValue /></SelectTrigger>
+                            <SelectContent>{CURRENCIES.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
+                          </Select>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </div>
+                  <Button onClick={() => saveTenant.mutate()} disabled={saveTenant.isPending}>
+                    {saveTenant.isPending ? 'Saving…' : 'Save Profile'}
+                  </Button>
+                </div>
+              )}
             </TabsContent>
 
             <TabsContent value="subscription" className="mt-6">
@@ -2209,7 +2303,7 @@ export default function OrganizationSettings() {
                         disabled={uploadingLogo}
                       />
                       <p className="text-xs text-muted-foreground">
-                        {uploadingLogo ? 'Uploading logo…' : 'Upload PNG, JPG, or SVG logo.'}
+                        {uploadingLogo ? 'Uploading logo…' : 'Upload PNG, JPG, or SVG logo. This logo appears on sign-in and public-facing pages.'}
                       </p>
                     </div>
                     <div className="space-y-4">
@@ -2230,7 +2324,7 @@ export default function OrganizationSettings() {
                           />
                         </div>
                         <p className="text-xs text-muted-foreground">
-                          Used across invoices, estimates, statements, and customer-facing documents.
+                          Used across sign-in, public pages, invoices, estimates, statements, and customer-facing documents.
                         </p>
                       </div>
                       <div className="rounded-2xl border p-5" style={{ background: `linear-gradient(135deg, ${settingsForm.primary_color ?? '#E85D26'} 0%, #ffffff 85%)` }}>
@@ -2274,6 +2368,7 @@ export default function OrganizationSettings() {
                       <div className="mt-3 flex flex-wrap gap-3 text-sm">
                         <a href={publicLandingUrl} className="font-medium text-primary hover:underline">Preview landing: {publicLandingUrl}</a>
                         <a href={publicLoginUrl} className="font-medium text-primary hover:underline">Preview login: {publicLoginUrl}</a>
+                        <a href={publicSupportUrl} className="font-medium text-primary hover:underline">Preview support: {publicSupportUrl}</a>
                       </div>
                     </div>
 
@@ -2357,6 +2452,169 @@ export default function OrganizationSettings() {
                               </Button>
                             </div>
                           ))}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-4 border-t pt-6">
+                      <div>
+                        <p className="text-sm font-semibold">Support Page</p>
+                        <p className="text-xs text-muted-foreground">Control the customer-facing support portal wording for this organization.</p>
+                      </div>
+                      <div className="grid gap-4">
+                        <div className="space-y-1.5">
+                          <Label>Eyebrow</Label>
+                          <Input value={settingsForm.landing_page_config?.support_page?.eyebrow ?? ''} onChange={(e) => updateSupportPageField('eyebrow', e.target.value)} />
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label>Headline</Label>
+                          <Textarea value={settingsForm.landing_page_config?.support_page?.headline ?? ''} onChange={(e) => updateSupportPageField('headline', e.target.value)} />
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label>Subheadline</Label>
+                          <Textarea value={settingsForm.landing_page_config?.support_page?.subheadline ?? ''} onChange={(e) => updateSupportPageField('subheadline', e.target.value)} />
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label>Description</Label>
+                          <Textarea value={settingsForm.landing_page_config?.support_page?.description ?? ''} onChange={(e) => updateSupportPageField('description', e.target.value)} />
+                        </div>
+                        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                          <div className="space-y-1.5">
+                            <Label>Primary CTA Label</Label>
+                            <Input value={settingsForm.landing_page_config?.support_page?.primary_cta_label ?? ''} onChange={(e) => updateSupportPageField('primary_cta_label', e.target.value)} />
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label>Secondary CTA Label</Label>
+                            <Input value={settingsForm.landing_page_config?.support_page?.secondary_cta_label ?? ''} onChange={(e) => updateSupportPageField('secondary_cta_label', e.target.value)} />
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label>Form Title</Label>
+                            <Input value={settingsForm.landing_page_config?.support_page?.form_title ?? ''} onChange={(e) => updateSupportPageField('form_title', e.target.value)} />
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label>Tracking Title</Label>
+                            <Input value={settingsForm.landing_page_config?.support_page?.tracking_title ?? ''} onChange={(e) => updateSupportPageField('tracking_title', e.target.value)} />
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label>Status Card Title</Label>
+                            <Input value={settingsForm.landing_page_config?.support_page?.status_title ?? ''} onChange={(e) => updateSupportPageField('status_title', e.target.value)} />
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label>Success Card Title</Label>
+                            <Input value={settingsForm.landing_page_config?.support_page?.success_title ?? ''} onChange={(e) => updateSupportPageField('success_title', e.target.value)} />
+                          </div>
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label>Form Description</Label>
+                          <Textarea value={settingsForm.landing_page_config?.support_page?.form_description ?? ''} onChange={(e) => updateSupportPageField('form_description', e.target.value)} />
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label>Tracking Description</Label>
+                          <Textarea value={settingsForm.landing_page_config?.support_page?.tracking_description ?? ''} onChange={(e) => updateSupportPageField('tracking_description', e.target.value)} />
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label>Success Description</Label>
+                          <Textarea value={settingsForm.landing_page_config?.support_page?.success_description ?? ''} onChange={(e) => updateSupportPageField('success_description', e.target.value)} />
+                        </div>
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between">
+                            <Label>Support Highlights</Label>
+                            <Button type="button" size="sm" variant="outline" onClick={addSupportHighlight} className="gap-1.5">
+                              <Plus className="h-3.5 w-3.5" /> Add Highlight
+                            </Button>
+                          </div>
+                          {(settingsForm.landing_page_config?.support_page?.highlights ?? []).map((highlight: string, index: number) => (
+                            <div key={`support-highlight-${index}`} className="flex items-start gap-2">
+                              <Textarea value={highlight} onChange={(e) => updateSupportHighlight(index, e.target.value)} className="min-h-[72px]" />
+                              <Button type="button" size="icon" variant="ghost" onClick={() => removeSupportHighlight(index)}>
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          ))}
+                        </div>
+                        <div className="space-y-3 border-t pt-4">
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <Label>Support Form Fields</Label>
+                              <p className="text-xs text-muted-foreground">Choose which customer-facing questions appear on the tenant support page.</p>
+                            </div>
+                            <Button type="button" size="sm" variant="outline" onClick={addSupportFormField} className="gap-1.5">
+                              <Plus className="h-3.5 w-3.5" /> Add Field
+                            </Button>
+                          </div>
+                          {(settingsForm.landing_page_config?.support_page?.form_fields ?? []).map((field: any, index: number) => {
+                            const isCoreField = ['requester_name', 'requester_email', 'requester_phone', 'category', 'priority', 'subject', 'description'].includes(field?.key);
+                            const isAlwaysRequired = ['requester_email', 'subject', 'description'].includes(field?.key);
+                            return (
+                              <div key={`support-field-${index}`} className="space-y-4 rounded-xl border p-4">
+                                <div className="grid gap-4 sm:grid-cols-2">
+                                  <div className="space-y-1.5">
+                                    <Label>Label</Label>
+                                    <Input value={field?.label ?? ''} onChange={(e) => updateSupportFormField(index, 'label', e.target.value)} />
+                                  </div>
+                                  <div className="space-y-1.5">
+                                    <Label>Field Key</Label>
+                                    <Input
+                                      value={field?.key ?? ''}
+                                      onChange={(e) => updateSupportFormField(index, 'key', e.target.value.toLowerCase().replace(/\s+/g, '_'))}
+                                      disabled={isCoreField}
+                                    />
+                                  </div>
+                                  <div className="space-y-1.5">
+                                    <Label>Type</Label>
+                                    <Select value={field?.type ?? 'text'} onValueChange={(value) => updateSupportFormField(index, 'type', value)} disabled={isCoreField}>
+                                      <SelectTrigger><SelectValue /></SelectTrigger>
+                                      <SelectContent>
+                                        <SelectItem value="text">Text</SelectItem>
+                                        <SelectItem value="email">Email</SelectItem>
+                                        <SelectItem value="tel">Phone</SelectItem>
+                                        <SelectItem value="textarea">Long Text</SelectItem>
+                                        <SelectItem value="select">Dropdown</SelectItem>
+                                      </SelectContent>
+                                    </Select>
+                                  </div>
+                                  <div className="space-y-1.5">
+                                    <Label>Placeholder</Label>
+                                    <Input value={field?.placeholder ?? ''} onChange={(e) => updateSupportFormField(index, 'placeholder', e.target.value)} />
+                                  </div>
+                                </div>
+                                {(field?.type ?? 'text') === 'select' ? (
+                                  <div className="space-y-1.5">
+                                    <Label>Dropdown Options</Label>
+                                    <Textarea
+                                      value={Array.isArray(field?.options) ? field.options.join('\n') : ''}
+                                      onChange={(e) => updateSupportFormField(index, 'options', e.target.value.split('\n').map((item) => item.trim()).filter(Boolean))}
+                                      className="min-h-[96px]"
+                                      placeholder={'Option one\nOption two'}
+                                    />
+                                  </div>
+                                ) : null}
+                                <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl bg-muted/20 p-3">
+                                  <div className="flex items-center gap-3">
+                                    <Switch
+                                      checked={field?.enabled !== false}
+                                      onCheckedChange={(value) => updateSupportFormField(index, 'enabled', value)}
+                                      disabled={isAlwaysRequired}
+                                    />
+                                    <Label>Visible to customers</Label>
+                                  </div>
+                                  <div className="flex items-center gap-3">
+                                    <Switch
+                                      checked={field?.required === true || isAlwaysRequired}
+                                      onCheckedChange={(value) => updateSupportFormField(index, 'required', value)}
+                                      disabled={isAlwaysRequired}
+                                    />
+                                    <Label>Required</Label>
+                                  </div>
+                                  {!isCoreField ? (
+                                    <Button type="button" size="icon" variant="ghost" onClick={() => removeSupportFormField(index)}>
+                                      <Trash2 className="h-4 w-4" />
+                                    </Button>
+                                  ) : null}
+                                </div>
+                              </div>
+                            );
+                          })}
                         </div>
                       </div>
                     </div>

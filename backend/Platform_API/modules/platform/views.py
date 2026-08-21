@@ -8,7 +8,7 @@ from django.contrib.auth.models import Group, Permission, User
 from django.contrib.auth import logout
 from django.conf import settings
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import Prefetch, Q
 from django.shortcuts import get_object_or_404
 from django.utils.decorators import method_decorator
 from django.utils import timezone
@@ -29,6 +29,7 @@ from Platform_Core.branch_sync import sync_tenant_branch_to_operational
 from Platform_Core.platform import (
     activate_license,
     build_workspace_navigation,
+    get_active_tenant_module_slugs,
     get_tenant_module_access,
     sync_plan_subscriptions,
     sync_subscription_modules,
@@ -286,37 +287,55 @@ def _auto_create_subscription_billing_request(*, subscription, requested_by):
 
 
 def _default_login_page_config(tenant):
-    platform_name = getattr(settings, "PLATFORM_NAME", "SL-ERP Platform")
-    tenant_name = tenant.name if tenant else platform_name
     return {
-        "eyebrow": "SaaS Billing Platform",
-        "title": f"Welcome back to {tenant_name}",
-        "subtitle": "Sign in to manage tenants, billing, subscriptions, and ERP operations.",
-        "description": (
-            "One workspace for product packaging, subscription billing, "
-            "operations, finance, and customer lifecycle management."
-        ),
+        "eyebrow": "SL ERP",
+        "title": "SL ERP",
+        "subtitle": "SL ERP for small businesses, growing companies, and large enterprises.",
+        "description": "A scalable business system built to support everyday operations, finance, billing, and control at every stage of growth.",
     }
 
 
 def _default_landing_page_config(tenant):
-    tenant_name = tenant.name if tenant else getattr(settings, "PLATFORM_NAME", "SL-ERP Platform")
     return {
-        "eyebrow": "Subscription Billing for SaaS Operators",
-        "headline": f"Launch, bill, and scale your SaaS business with {tenant_name}",
-        "subheadline": "Unified billing, tenant lifecycle management, and ERP operations in one platform.",
+        "eyebrow": "SL ERP",
+        "headline": "SL ERP for small businesses, growing companies, and large enterprises.",
+        "subheadline": "Manage finance, operations, inventory, HR, CRM, support, and approvals in one connected business system.",
         "description": (
-            "Showcase products, publish subscription plans, manage onboarding, "
-            "and keep finance, operations, and support aligned from a single control center."
+            "Replace scattered tools with one scalable ERP built for visibility, speed, "
+            "control, and better decisions across every department."
         ),
         "primary_cta_label": "Start Subscription",
         "primary_cta_url": "/login",
         "secondary_cta_label": "View Plans",
         "secondary_cta_url": "#plans",
         "highlights": [
-            "Tenant onboarding and workspace provisioning",
-            "Plan-based SaaS subscriptions and billing operations",
-            "Operational modules for finance, procurement, CRM, and weighbridge workflows",
+            "Order to cash with billing and collections",
+            "Procurement, approvals, and supplier control",
+            "Inventory, operations, and live reporting",
+        ],
+    }
+
+
+def _default_support_page_config(tenant):
+    tenant_name = tenant.name if tenant else getattr(settings, "PLATFORM_NAME", "SL-ERP Platform")
+    return {
+        "eyebrow": "Customer Support",
+        "headline": "How can we help today?",
+        "subheadline": f"Contact {tenant_name} for support, billing, account, or service questions.",
+        "description": "Share the details below and our team will guide your request to the right people.",
+        "primary_cta_label": "Send Request",
+        "secondary_cta_label": "Check Request Status",
+        "form_title": "Send us a request",
+        "form_description": "Tell us what you need and we will route it to the best team to help you.",
+        "tracking_title": "Check your request status",
+        "tracking_description": "Enter your request number and email address to see the latest progress.",
+        "status_title": "Current update",
+        "success_title": "Request received",
+        "success_description": "Please keep your request number for future follow-up.",
+        "highlights": [
+            "Reach the right team faster",
+            "Receive clear status updates",
+            "Stay within your branded support experience",
         ],
     }
 
@@ -334,6 +353,17 @@ def _normalize_footer_menu(menu_items):
             continue
         normalized.append({"label": label, "href": href})
     return normalized
+
+
+def _public_site_modules_queryset():
+    internal_slugs = {"platform-core", "users-access", "workspace-admin", "tenant-admin"}
+    return (
+        ModuleDefinition.objects.filter(is_active=True)
+        .exclude(scope="platform_admin")
+        .exclude(category="core")
+        .exclude(slug__in=internal_slugs)
+        .order_by("category", "name")
+    )
 
 
 def _validate_payment_integration_scope(*, tenant, payload):
@@ -386,6 +416,19 @@ PROTECTED_PERMISSION_APP_LABELS = {
     "authtoken",
     "contenttypes",
     "sessions",
+}
+
+# Permission content types use Django app labels while subscriptions use module
+# slugs. This keeps tenant role management within the organization's plan.
+TENANT_PERMISSION_MODULE_SLUGS = {
+    "SL_Weighbridge": {"weighbridge", "commercial-weighbridge"},
+    "SL_Budgeting": {"budgeting"},
+    "SL_CRM": {"crm"},
+    "SL_HR": {"hr-payroll"},
+    "SL_Procurement": {"procurement"},
+    "SL_Sales": {"sales"},
+    "SL_Inventory": {"inventory"},
+    "SL_Ticketing": {"ticketing"},
 }
 
 
@@ -495,19 +538,43 @@ def _role_belongs_to_tenant(group, tenant_id):
     return group.name.startswith(tenant_role_prefix(tenant_id))
 
 
-def _tenant_manageable_permissions_queryset():
-    return Permission.objects.select_related("content_type").exclude(
-        content_type__app_label__in=PROTECTED_PERMISSION_APP_LABELS
-    )
+def _tenant_manageable_permissions_queryset(tenant):
+    active_module_slugs = get_active_tenant_module_slugs(tenant)
+    allowed_app_labels = [
+        app_label
+        for app_label, module_slugs in TENANT_PERMISSION_MODULE_SLUGS.items()
+        if active_module_slugs.intersection(module_slugs)
+    ]
+    return Permission.objects.select_related("content_type").filter(
+        content_type__app_label__in=allowed_app_labels
+    ).exclude(content_type__app_label__in=PROTECTED_PERMISSION_APP_LABELS)
 
 
-def _validate_tenant_role_permissions(permission_list):
-    allowed_ids = set(_tenant_manageable_permissions_queryset().values_list("id", flat=True))
+def _validate_tenant_role_permissions(permission_list, *, tenant):
+    allowed_ids = set(_tenant_manageable_permissions_queryset(tenant).values_list("id", flat=True))
     disallowed = [perm.id for perm in permission_list if perm.id not in allowed_ids]
     if disallowed:
         raise ValidationError(
             {"permission_ids": "Tenant administrators may only assign tenant-manageable permissions."}
         )
+
+
+def _roles_with_visible_permissions_queryset(user):
+    roles = _tenant_visible_roles_queryset(user)
+    if _is_superadmin(user):
+        return roles.prefetch_related("permissions__content_type")
+
+    profile = _tenant_admin_profile(user)
+    if not profile:
+        return roles.none()
+    return roles.prefetch_related(
+        Prefetch(
+            "permissions",
+            queryset=_tenant_manageable_permissions_queryset(profile.tenant).order_by(
+                "content_type__app_label", "content_type__model", "codename"
+            ),
+        )
+    )
 
 
 def _validate_tenant_role_name(name, *, tenant_id, exclude_group_id=None):
@@ -653,7 +720,12 @@ class PublicSiteConfigurationAPIView(APIView):
             **_default_landing_page_config(tenant),
             **(serialized_settings.get("landing_page_config") or {}),
         }
+        support_page_config = {
+            **_default_support_page_config(tenant),
+            **((serialized_settings.get("landing_page_config") or {}).get("support_page") or {}),
+        }
         plans = SubscriptionPlan.objects.filter(is_active=True).prefetch_related("modules").order_by("price", "name")
+        public_modules = _public_site_modules_queryset()
 
         return success_response(
             "Public site configuration loaded.",
@@ -662,13 +734,16 @@ class PublicSiteConfigurationAPIView(APIView):
                 "branding": {
                     "logo_url": serialized_settings.get("logo_url") or "",
                     "primary_color": serialized_settings.get("primary_color") or "#E85D26",
-                    "footer_text": serialized_settings.get("footer_text") or "",
+                    "footer_text": serialized_settings.get("footer_text")
+                    or "Built for small businesses, growing companies, and large enterprises that need one reliable business system.",
                     "support_email": serialized_settings.get("support_email") or "",
                 },
                 "login_page": login_page_config,
                 "landing_page": landing_page_config,
+                "support_page": support_page_config,
                 "footer_menu": _normalize_footer_menu(serialized_settings.get("footer_menu")),
                 "plans": SubscriptionPlanSerializer(plans, many=True).data,
+                "modules": ModuleDefinitionSerializer(public_modules, many=True).data,
                 "site_scope": "owner" if _is_owner_tenant(tenant) else "tenant",
             },
         )
@@ -1162,8 +1237,7 @@ class PlatformRoleListAPIView(ModuleAPIViewMixin, generics.ListCreateAPIView):
         return super().list(request, *args, **kwargs)
 
     def get_queryset(self):
-        qs = super().get_queryset()
-        return _tenant_visible_roles_queryset(self.request.user).prefetch_related("permissions__content_type")
+        return _roles_with_visible_permissions_queryset(self.request.user)
 
     def get_serializer_context(self):
         context = super().get_serializer_context()
@@ -1191,7 +1265,7 @@ class PlatformRoleListAPIView(ModuleAPIViewMixin, generics.ListCreateAPIView):
         serializer = self.get_serializer(data=payload)
         serializer.is_valid(raise_exception=True)
         permissions = serializer.validated_data.get("permissions", [])
-        _validate_tenant_role_permissions(permissions)
+        _validate_tenant_role_permissions(permissions, tenant=profile.tenant)
         role = serializer.save(name=internal_name)
         headers = self.get_success_headers(serializer.data)
         output = self.get_serializer(role)
@@ -1205,7 +1279,7 @@ class PlatformRoleDetailAPIView(generics.RetrieveUpdateDestroyAPIView):
     serializer_class = GroupDetailSerializer
 
     def get_queryset(self):
-        return _tenant_visible_roles_queryset(self.request.user).prefetch_related("permissions__content_type")
+        return _roles_with_visible_permissions_queryset(self.request.user)
 
     def get_serializer_context(self):
         context = super().get_serializer_context()
@@ -1255,7 +1329,7 @@ class PlatformRoleDetailAPIView(generics.RetrieveUpdateDestroyAPIView):
         serializer.is_valid(raise_exception=True)
         permissions = serializer.validated_data.get("permissions")
         if permissions is not None:
-            _validate_tenant_role_permissions(permissions)
+            _validate_tenant_role_permissions(permissions, tenant=profile.tenant)
         serializer.save(**save_kwargs)
         from rest_framework.response import Response
 
@@ -1310,7 +1384,10 @@ class PlatformPermissionListAPIView(ModuleAPIViewMixin, generics.ListAPIView):
         qs = super().get_queryset()
         if _is_superadmin(self.request.user):
             return qs
-        return qs.exclude(content_type__app_label__in=PROTECTED_PERMISSION_APP_LABELS)
+        profile = _tenant_admin_profile(self.request.user)
+        if not profile:
+            return qs.none()
+        return _tenant_manageable_permissions_queryset(profile.tenant)
 
 
 class WorkspaceMenuSectionListCreateAPIView(ModuleAPIViewMixin, generics.ListCreateAPIView):

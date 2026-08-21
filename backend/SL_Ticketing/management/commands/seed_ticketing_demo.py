@@ -26,6 +26,12 @@ DEMO_TENANT_CODES = [
 ]
 
 
+def demo_token(tenant_code: str, key_type: str) -> str:
+    safe_code = tenant_code.replace("-", "_")
+    prefix = "stp" if key_type == "public" else "sts"
+    return f"{prefix}_demo_{safe_code}_{key_type}"
+
+
 FORM_SCHEMAS = [
     {
         "name": "Default Support Form",
@@ -253,21 +259,48 @@ class Command(BaseCommand):
                 "allowed_domains": [
                     f"https://support.{tenant.code}.example.com",
                     "https://portal.siakora.com",
+                    "http://localhost:5173",
+                    "http://127.0.0.1:5173",
                 ],
                 "portal_access_policy": "email_match",
                 "brand_settings": {
-                    "brand_color": "#0f766e",
+                    "brand_color": "#E85D26",
                     "support_email": f"support@{tenant.code}.example.com",
                 },
                 "widget_settings": {
                     "headline": f"{tenant.name} Support Desk",
+                    "intro_text": "Tell us what happened and our support team will follow up with the right next step.",
                     "submit_label": "Create Support Ticket",
                 },
-                "require_cors_origin": True,
+                "require_cors_origin": False,
                 "allow_anonymous_tracking": True,
                 "allow_requester_close": True,
             },
         )
+        config.allowed_domains = list(
+            dict.fromkeys(
+                [
+                    *list(config.allowed_domains or []),
+                    "http://localhost:5173",
+                    "http://127.0.0.1:5173",
+                ]
+            )
+        )
+        config.brand_settings = {
+            **(config.brand_settings or {}),
+            "brand_color": "#E85D26" if str((config.brand_settings or {}).get("brand_color", "")).strip() == "" else (config.brand_settings or {}).get("brand_color"),
+            "support_email": (config.brand_settings or {}).get("support_email") or f"support@{tenant.code}.example.com",
+        }
+        config.widget_settings = {
+            **(config.widget_settings or {}),
+            "headline": (config.widget_settings or {}).get("headline") or f"{tenant.name} Support Desk",
+            "intro_text": (config.widget_settings or {}).get("intro_text") or "Tell us what happened and our support team will follow up with the right next step.",
+            "submit_label": (config.widget_settings or {}).get("submit_label") or "Create Support Ticket",
+        }
+        config.require_cors_origin = False
+        config.allow_anonymous_tracking = True
+        config.allow_requester_close = True
+        config.save()
 
         users = self._candidate_users(tenant)
         assignee = users[0] if users else None
@@ -308,9 +341,22 @@ class Command(BaseCommand):
             ("public", "Public Demo Widget Key"),
             ("secret", "Secret Demo Export Key"),
         ):
-            existing = TicketingApiKey.objects.filter(tenant=tenant, name=name, key_type=key_type).first()
-            if not existing:
-                TicketingApiKey.issue_token(tenant=tenant, name=name, key_type=key_type)
+            raw_token = demo_token(tenant.code, key_type)
+            TicketingApiKey.objects.update_or_create(
+                tenant=tenant,
+                name=name,
+                key_type=key_type,
+                defaults={
+                    "token_prefix": raw_token[:18],
+                    "token_hash": TicketingApiKey.hash_token(raw_token),
+                    "metadata": {
+                        "seeded_demo": True,
+                        "raw_token": raw_token,
+                    },
+                    "is_active": True,
+                    "revoked_at": None,
+                },
+            )
             key_count += 1
 
         ticket_count = 0
@@ -351,6 +397,7 @@ class Command(BaseCommand):
             "keys": key_count,
             "tickets": ticket_count,
             "config_id": config.id,
+            "public_key": demo_token(tenant.code, "public"),
         }
 
     def _candidate_users(self, tenant):

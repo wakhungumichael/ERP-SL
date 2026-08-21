@@ -441,13 +441,19 @@ class Transaction(models.Model):
     
     class Meta:
             permissions = [
-               # ('can_export_csv', 'Can export transactions to CSV'),
                 ("can_export_transaction", "Can export transactions to CSV"),
-
-                ('can_approve_pending_transactions', 'Can pending completed transactions'),  # approve permission
-                ('can_recall_completed_transactions', 'Can recall completed transactions'),  # recall permission
-
-
+                ("can_approve_pending_transactions", "Can approve pending transactions"),
+                ("can_recall_completed_transactions", "Can recall completed transactions"),
+                # Process permissions are separate from record CRUD so roles can
+                # be tailored to the actual weighbridge operating flow.
+                ("can_access_weighment_entry", "Can access Weighment Entry"),
+                ("can_capture_first_weight", "Can capture first weight"),
+                ("can_capture_second_weight", "Can capture second weight"),
+                ("can_view_live_weight", "Can view live weight"),
+                ("can_manage_weighbridge_reports", "Can manage weighbridge reports"),
+                ("can_manage_weighbridge_settings", "Can manage weighbridge settings"),
+                ("can_manage_vehicle_presence", "Can manage vehicle presence"),
+                ("can_review_weighbridge_discrepancies", "Can review weighbridge discrepancies"),
             ]
 
                                              

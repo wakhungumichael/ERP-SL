@@ -677,6 +677,16 @@ def _can_view_weighbridge_team_dashboard(user):
     ])
 
 
+def _has_weighbridge_process_permission(user, codename):
+    """Tenant admins retain operational access; custom roles need the named process permission."""
+    return bool(
+        getattr(user, "is_superuser", False)
+        or getattr(user, "is_staff", False)
+        or _is_weighbridge_tenant_admin(user)
+        or user.has_perm(f"SL_Weighbridge.{codename}")
+    )
+
+
 # ── Views ─────────────────────────────────────────────────────────────────────
 
 class WeighbridgeDashboardView(APIView):
@@ -828,6 +838,12 @@ class TransactionListCreateView(generics.ListCreateAPIView):
         operation_type = validated.get("operation_type")
         weight_type = validated.get("weight_type") or ""
         flow_kind = _resolve_payload_flow_kind(operation_type=operation_type, weight_type=weight_type)
+
+        if not _has_weighbridge_process_permission(self.request.user, "can_access_weighment_entry"):
+            raise PermissionDenied("You do not have access to Weighment Entry.")
+        capture_permission = "can_capture_second_weight" if weight_type == "Second Weight" else "can_capture_first_weight"
+        if not _has_weighbridge_process_permission(self.request.user, capture_permission):
+            raise PermissionDenied("You do not have permission for this weight-capture step.")
 
         duplicate = _find_open_transaction_duplicate(
             tenant=user_tenant,
@@ -1202,6 +1218,13 @@ class CaptureWeightView(APIView):
                     {"error": f"Transaction {transaction_id} not found."},
                     status=status.HTTP_404_NOT_FOUND,
                 )
+
+        if not _has_weighbridge_process_permission(request.user, "can_access_weighment_entry"):
+            return Response({"error": "You do not have access to Weighment Entry."}, status=status.HTTP_403_FORBIDDEN)
+        if tx:
+            capture_permission = "can_capture_second_weight" if tx.weight_type == "Second Weight" else "can_capture_first_weight"
+            if not _has_weighbridge_process_permission(request.user, capture_permission):
+                return Response({"error": "You do not have permission for this weight-capture step."}, status=status.HTTP_403_FORBIDDEN)
 
         # Resolve branch directly if not already resolved via transaction
         if not branch and branch_id:
@@ -1655,6 +1678,11 @@ class TransactionExportCSVView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        if not (
+            _has_weighbridge_process_permission(request.user, "can_manage_weighbridge_reports")
+            or request.user.has_perm("SL_Weighbridge.can_export_transaction")
+        ):
+            return Response({"error": "You do not have permission to export weighbridge reports."}, status=status.HTTP_403_FORBIDDEN)
         qs = Transaction.objects.select_related(
             "branch", "customer", "vehicle", "item", "vehicle_type", "created_by", "last_modified_by"
         ).order_by("-created_at")
@@ -1775,6 +1803,8 @@ class WeighbridgeReportDocumentView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
+        if not _has_weighbridge_process_permission(request.user, "can_manage_weighbridge_reports"):
+            return Response({"error": "You do not have permission to generate weighbridge reports."}, status=status.HTTP_403_FORBIDDEN)
         serializer = ReportRenderRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
@@ -2317,6 +2347,8 @@ class LiveWeightView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        if not _has_weighbridge_process_permission(request.user, "can_view_live_weight"):
+            return Response({"error": "You do not have permission to view live weight."}, status=status.HTTP_403_FORBIDDEN)
         branch_id = request.query_params.get("branch_id")
         branch = None
         if branch_id:

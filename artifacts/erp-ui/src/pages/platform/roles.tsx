@@ -6,7 +6,6 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/hooks/use-toast';
 import {
@@ -23,6 +22,7 @@ import {
   ShieldCheck, Plus, Trash2, RefreshCw, UserMinus, Save, ChevronRight,
   Shield, Users, Pencil, Check,
 } from 'lucide-react';
+import { ERPPageHeader } from '@/components/erp/workspace/workspace-ui';
 
 const BASE = '/api/platform';
 
@@ -57,17 +57,40 @@ interface Role {
 
 const MODULE_LABELS: Record<string, string> = {
   SL_Weighbridge: 'Weighbridge',
-  Platform_Core: 'Platform Admin',
   SL_CRM: 'CRM',
   SL_HR: 'HR & Payroll',
   SL_Procurement: 'Procurement',
+  SL_Sales: 'Sales',
+  SL_Inventory: 'Inventory',
+  SL_Budgeting: 'Budgeting & Commitments',
+  SL_Ticketing: 'Ticketing',
+  Platform_Core: 'Platform Admin',
   auth: 'User Management',
 };
-const MODULE_ORDER = ['SL_Weighbridge', 'SL_CRM', 'SL_HR', 'SL_Procurement', 'Platform_Core', 'auth'];
+const MODULE_ORDER = [
+  'SL_Weighbridge',
+  'SL_CRM',
+  'SL_HR',
+  'SL_Procurement',
+  'SL_Sales',
+  'SL_Inventory',
+  'SL_Budgeting',
+  'SL_Ticketing',
+  'Platform_Core',
+  'auth',
+];
 const HIDDEN_APPS = new Set(['admin', 'authtoken', 'sessions', 'contenttypes']);
 
 // Action permissions that don't fit the add/change/delete/view CRUD pattern
 const ACTION_CODENAMES: Record<string, string> = {
+  can_access_weighment_entry: 'Weighment Entry',
+  can_capture_first_weight: 'First Weight',
+  can_capture_second_weight: 'Second Weight',
+  can_view_live_weight: 'Live Weight',
+  can_manage_weighbridge_reports: 'Reports',
+  can_manage_weighbridge_settings: 'Settings',
+  can_manage_vehicle_presence: 'Vehicle Presence',
+  can_review_weighbridge_discrepancies: 'Discrepancies',
   can_approve_pending_transactions: 'Approve',
   can_recall_completed_transactions: 'Recall',
   can_export_transaction: 'Export',
@@ -76,17 +99,6 @@ const ACTION_CODENAMES: Record<string, string> = {
 const CRUD_ACTIONS = ['view', 'add', 'change', 'delete'] as const;
 const CRUD_LABELS: Record<string, string> = {
   view: 'View', add: 'Add', change: 'Edit', delete: 'Delete',
-};
-
-const ROLE_COLORS: Record<string, string> = {
-  superadmin:    'bg-red-100 text-red-800 border-red-300',
-  'Super Admin': 'bg-red-100 text-red-800 border-red-300',
-  'Tenant Admin':'bg-blue-100 text-blue-800 border-blue-300',
-  tenant_admin:  'bg-blue-100 text-blue-800 border-blue-300',
-  Finance:       'bg-emerald-100 text-emerald-800 border-emerald-300',
-  finance:       'bg-emerald-100 text-emerald-800 border-emerald-300',
-  Operator:      'bg-orange-100 text-orange-800 border-orange-300',
-  operator:      'bg-orange-100 text-orange-800 border-orange-300',
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -300,12 +312,22 @@ function PermissionMatrix({
   // Track selected permission IDs as a Set (local state, save on demand)
   const [selected, setSelected] = useState<Set<number>>(new Set(role.permissions.map(p => p.id)));
   const [dirty, setDirty] = useState(false);
+  const [activeSection, setActiveSection] = useState('');
 
   // Reset when role changes
   useEffect(() => {
-    setSelected(new Set(role.permissions.map(p => p.id)));
+    // The API only returns modules included in this organization's plan. Do
+    // not retain legacy or inactive-module permissions when saving a role.
+    const allowedIds = new Set(allPerms.map((permission) => permission.id));
+    setSelected(new Set(role.permissions.filter((permission) => allowedIds.has(permission.id)).map((permission) => permission.id)));
     setDirty(false);
-  }, [role.id]);
+  }, [role.id, allPerms]);
+
+  useEffect(() => {
+    if (!sections.some((section) => section.appLabel === activeSection)) {
+      setActiveSection(sections[0]?.appLabel ?? '');
+    }
+  }, [activeSection, sections]);
 
   const toggle = (id: number) => {
     setSelected(prev => {
@@ -363,13 +385,25 @@ function PermissionMatrix({
   });
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {!editable && (
         <div className="rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
           This shared role can be assigned inside the tenant, but only a super admin can change its permissions.
         </div>
       )}
-      {sections.map(section => {
+      <Tabs value={activeSection} onValueChange={setActiveSection}>
+        <TabsList className="h-auto w-full justify-start gap-5 overflow-x-auto rounded-none border-b bg-transparent p-0">
+          {sections.map((section) => (
+            <TabsTrigger
+              key={section.appLabel}
+              value={section.appLabel}
+              className="shrink-0 rounded-none border-b-2 border-transparent px-1 pb-2 pt-0 text-xs data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:text-primary data-[state=active]:shadow-none"
+            >
+              {section.label}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+        {sections.filter((section) => section.appLabel === activeSection).map(section => {
         const sectionIds: number[] = [];
         section.models.forEach(g => {
           Object.values(g.perms).forEach(p => sectionIds.push(p.id));
@@ -387,8 +421,8 @@ function PermissionMatrix({
         );
 
         return (
-          <div key={section.appLabel}>
-            <div className="flex items-center gap-2 mb-2">
+          <TabsContent key={section.appLabel} value={section.appLabel} className="mt-4">
+            <div className="mb-2 flex items-center gap-2">
               <button
                 type="button"
                 onClick={() => editable && toggleModule(section)}
@@ -510,9 +544,10 @@ function PermissionMatrix({
                 </tbody>
               </table>
             </div>
-          </div>
+          </TabsContent>
         );
       })}
+      </Tabs>
 
       {/* Sticky save bar */}
       <div className={`sticky bottom-0 bg-background border-t pt-3 pb-1 flex items-center justify-between gap-3 transition-opacity ${dirty ? 'opacity-100' : 'opacity-40 pointer-events-none'}`}>
@@ -620,6 +655,7 @@ export default function Roles() {
   const [deleteTarget, setDeleteTarget] = useState<Role | null>(null);
   const [renaming, setRenaming] = useState<number | null>(null);
   const [renameValue, setRenameValue] = useState('');
+  const [editorTab, setEditorTab] = useState<'permissions' | 'members'>('permissions');
 
   const { data: rolesRaw, isLoading: rolesLoading, refetch } = useQuery({
     queryKey: ['roles'],
@@ -679,22 +715,27 @@ export default function Roles() {
     ).length;
 
   return (
-    <div className="flex h-full min-h-0 gap-0 -m-6">
+    <div className="space-y-5">
+      <ERPPageHeader
+        title="Roles & Permissions"
+        description="Manage access to your organization’s data and workflows."
+      />
+      <div className="flex min-h-[calc(100vh-15rem)] overflow-hidden rounded-xl border border-border/80 bg-card shadow-sm">
       {/* ── Left sidebar: role list ─────────────────────────────────────── */}
-      <div className="w-64 shrink-0 border-r flex flex-col bg-muted/20">
-        <div className="px-4 py-4 border-b">
+      <div className="w-64 shrink-0 border-r flex flex-col bg-card">
+        <div className="px-4 py-3 border-b bg-muted/15">
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               <Shield className="h-4 w-4 text-primary" />
               <span className="font-semibold text-sm">Roles</span>
             </div>
-            <Button size="sm" variant="outline" className="h-7 gap-1 text-xs" onClick={() => setShowCreate(true)}>
+            <Button size="sm" className="h-7 gap-1 text-xs" onClick={() => setShowCreate(true)}>
               <Plus className="h-3 w-3" /> New
             </Button>
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto py-2">
+        <div className="flex-1 overflow-y-auto overscroll-contain py-2">
           {rolesLoading ? (
             <p className="text-xs text-muted-foreground text-center py-6 animate-pulse">Loading…</p>
           ) : (
@@ -706,7 +747,7 @@ export default function Roles() {
                   key={role.id}
                   className={`group flex items-center justify-between px-3 py-2.5 cursor-pointer transition-colors ${
                     isSelected
-                      ? 'bg-primary/10 border-r-2 border-primary'
+                      ? 'border-l-2 border-primary bg-primary/10'
                       : 'hover:bg-muted/40'
                   }`}
                   onClick={() => setSelectedId(role.id)}
@@ -782,7 +823,7 @@ export default function Roles() {
       </div>
 
       {/* ── Right panel: editor ─────────────────────────────────────────── */}
-      <div className="flex-1 overflow-y-auto p-6">
+      <div className="flex-1 overflow-y-auto p-5 lg:p-6">
         {!selectedRole ? (
           <div className="flex flex-col items-center justify-center h-full text-muted-foreground gap-3 min-h-[300px]">
             <Shield className="h-12 w-12 opacity-20" />
@@ -792,62 +833,42 @@ export default function Roles() {
             </Button>
           </div>
         ) : (
-          <div className="max-w-4xl space-y-6">
+          <div className="w-full max-w-none space-y-4">
             {/* Header */}
-            <div className="flex items-center justify-between pb-4 border-b">
-              <div className="flex items-center gap-3">
-                <span className={`px-2.5 py-1 rounded text-sm font-bold border ${
-                  ROLE_COLORS[selectedRole.name] ?? 'bg-slate-100 text-slate-800 border-slate-300'
-                }`}>
-                  {roleLabel(selectedRole)}
-                </span>
-                <Badge variant="secondary" className="text-xs">
-                  {memberCount(selectedRole)} member{memberCount(selectedRole) !== 1 ? 's' : ''}
-                </Badge>
-                <Badge variant="outline" className="text-xs">
-                  {selectedRole.scope === 'tenant' ? 'Tenant role' : 'Shared role'}
-                </Badge>
+            <div className="flex items-center justify-between gap-3 pb-3 border-b">
+              <div>
+                <h2 className="text-sm font-semibold">{roleLabel(selectedRole)}</h2>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  {selectedRole.scope === 'tenant' ? 'Organization role' : 'Shared system role'} · {memberCount(selectedRole)} user{memberCount(selectedRole) !== 1 ? 's' : ''}
+                </p>
               </div>
               <Button
                 size="sm"
-                variant="ghost"
-                className="gap-1.5 text-destructive hover:text-destructive hover:bg-destructive/10"
-                onClick={() => setDeleteTarget(selectedRole)}
-                disabled={selectedRole.is_editable === false}
+                variant="outline"
+                className="h-7 text-xs"
+                onClick={() => setEditorTab('members')}
               >
-                <Trash2 className="h-3.5 w-3.5" /> Delete Role
+                View Users
               </Button>
             </div>
 
-            <Tabs defaultValue="permissions">
-              <TabsList className="mb-4">
-                <TabsTrigger value="permissions" className="gap-1.5">
-                  <ShieldCheck className="h-3.5 w-3.5" /> Permissions
-                </TabsTrigger>
-                <TabsTrigger value="members" className="gap-1.5">
-                  <Users className="h-3.5 w-3.5" /> Members
-                </TabsTrigger>
-              </TabsList>
-
-              <TabsContent value="permissions">
-                {permsLoading ? (
-                  <p className="text-sm text-muted-foreground text-center py-12 animate-pulse">
-                    Loading permissions…
-                  </p>
-                ) : (
-                  <PermissionMatrix
-                    key={selectedRole.id}
-                    role={selectedRole}
-                    allPerms={allPerms}
-                    onSaved={() => qc.invalidateQueries({ queryKey: ['roles'] })}
-                  />
-                )}
-              </TabsContent>
-
-              <TabsContent value="members">
+            {editorTab === 'members' ? (
+              <div className="space-y-4">
+                <Button size="sm" variant="ghost" className="px-0 text-xs text-primary hover:bg-transparent hover:text-primary" onClick={() => setEditorTab('permissions')}>
+                  ← Back to permissions
+                </Button>
                 <MembersPanel role={selectedRole} allUsers={allUsers} />
-              </TabsContent>
-            </Tabs>
+              </div>
+            ) : permsLoading ? (
+              <p className="py-12 text-center text-sm text-muted-foreground animate-pulse">Loading permissions…</p>
+            ) : (
+              <PermissionMatrix
+                key={selectedRole.id}
+                role={selectedRole}
+                allPerms={allPerms}
+                onSaved={() => qc.invalidateQueries({ queryKey: ['roles'] })}
+              />
+            )}
           </div>
         )}
       </div>
@@ -875,6 +896,7 @@ export default function Roles() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      </div>
     </div>
   );
 }

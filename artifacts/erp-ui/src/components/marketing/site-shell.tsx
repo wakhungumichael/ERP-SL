@@ -1,15 +1,16 @@
-import { ArrowRight, Sparkles } from 'lucide-react';
+import { ArrowRight, Menu, X } from 'lucide-react';
+import { useState } from 'react';
 import { Link } from 'wouter';
 import type { PublicSiteConfig } from '@/lib/public-site';
 import { buildMarketingPath } from '@/lib/public-site';
 
-type MarketingPage = 'home' | 'apps' | 'pricing' | 'stories' | 'about';
+type MarketingPage = 'home' | 'apps' | 'pricing' | 'stories' | 'about' | 'support';
 
 const NAV_ITEMS: Array<{ key: MarketingPage; label: string }> = [
   { key: 'home', label: 'Home' },
+  { key: 'support', label: 'Support' },
   { key: 'apps', label: 'Apps' },
   { key: 'pricing', label: 'Pricing' },
-  { key: 'stories', label: 'Stories' },
   { key: 'about', label: 'About' },
 ];
 
@@ -26,79 +27,137 @@ export function MarketingSiteShell({
 }) {
   const brand = site.branding.primary_color ?? '#E85D26';
   const loginHref = tenantCode ? `/login/${tenantCode}` : '/login';
+  const startNowHref = tenantCode ? `/login/${tenantCode}?intent=register` : '/login?intent=register';
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   return (
-    <div className="min-h-screen bg-[#fcfaf6] text-[#111827]">
+    <div
+      className="min-h-screen text-[#111827]"
+      style={{
+        background: `radial-gradient(circle at top left, ${brand}30 0%, ${brand}14 18%, transparent 38%),
+          linear-gradient(115deg, #fff9f4 0%, #fff8f2 34%, #fff4eb 68%, #fff1e7 100%)`,
+      }}
+    >
       <div
         className="pointer-events-none fixed inset-x-0 top-0 h-[520px] opacity-90"
         style={{
-          background: `radial-gradient(circle at 18% 22%, ${brand}20 0, transparent 22%),
-            radial-gradient(circle at 82% 10%, #0f8c9514 0, transparent 20%),
-            linear-gradient(180deg, #fffdf8 0%, #fcfaf6 72%)`,
+          background: `radial-gradient(circle at 16% 18%, ${brand}22 0%, transparent 30%),
+            radial-gradient(circle at 74% 12%, rgba(255,255,255,0.55) 0%, transparent 28%),
+            linear-gradient(180deg, rgba(255,255,255,0.5) 0%, rgba(255,248,242,0.18) 72%, rgba(255,244,234,0.08) 100%)`,
         }}
       />
 
       <div className="relative">
         <header className="mx-auto max-w-7xl px-6 pt-6 sm:px-8 lg:px-10">
-          <div className="flex items-center justify-between rounded-full border border-black/5 bg-white/80 px-5 py-3 shadow-[0_18px_60px_rgba(17,24,39,0.06)] backdrop-blur">
-            <Link href={buildMarketingPath(tenantCode)} className="flex items-center gap-3">
-              <div
-                className="flex h-11 w-11 items-center justify-center rounded-2xl text-white shadow-sm"
-                style={{ backgroundColor: brand }}
-              >
-                <Sparkles className="h-5 w-5" />
-              </div>
-              <div>
-                <p className="text-[11px] font-bold uppercase tracking-[0.28em] text-[#6b7280]">
-                  Siakora Labs
-                </p>
-                <p className="text-lg font-semibold tracking-tight">
-                  {site.tenant?.name ?? 'SL-ERP'}
-                </p>
-              </div>
-            </Link>
-
-            <nav className="hidden items-center gap-6 text-sm font-medium text-[#4b5563] lg:flex">
-              {NAV_ITEMS.map((item) => (
-                <Link
-                  key={item.key}
-                  href={buildMarketingPath(tenantCode, item.key === 'home' ? undefined : item.key)}
-                  className={`transition hover:text-[#111827] ${currentPage === item.key ? 'text-[#111827]' : ''}`}
+          <div className="rounded-[28px] border border-black/5 bg-white/90 px-5 py-3 shadow-[0_18px_60px_rgba(232,93,38,0.12)] backdrop-blur">
+            <div className="flex items-center justify-between gap-4">
+              <Link href={buildMarketingPath(tenantCode)} className="flex items-center gap-3" onClick={() => setMobileMenuOpen(false)}>
+                <div
+                  className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-2xl bg-white p-2 shadow-sm"
+                  style={{ border: '1px solid rgba(17,24,39,0.08)' }}
                 >
-                  {item.label}
-                </Link>
-              ))}
-            </nav>
+                  {site.branding.logo_url ? (
+                    <img src={site.branding.logo_url} alt="SL ERP logo" className="h-full w-full object-contain" />
+                  ) : (
+                    <div className="flex h-full w-full items-center justify-center rounded-xl text-sm font-black tracking-[0.2em] text-white" style={{ backgroundColor: brand }}>
+                      SL
+                    </div>
+                  )}
+                </div>
+                <p className="text-xl font-semibold tracking-tight text-[#111827]">SL ERP</p>
+              </Link>
 
-            <div className="flex items-center gap-3">
-              <Link href={loginHref} className="hidden text-sm font-semibold text-[#4b5563] transition hover:text-[#111827] sm:inline-flex">
-                Sign in
-              </Link>
-              <Link
-                href={loginHref}
-                className="inline-flex items-center gap-2 rounded-full px-4 py-2.5 text-sm font-semibold text-white transition hover:opacity-90"
-                style={{ backgroundColor: brand }}
+              <nav className="hidden items-center gap-6 text-sm font-medium text-[#4b5563] lg:flex">
+                {NAV_ITEMS.map((item) => (
+                  <Link
+                    key={item.key}
+                    href={buildMarketingPath(tenantCode, item.key === 'home' ? undefined : item.key)}
+                    className={`transition hover:text-[#111827] ${currentPage === item.key ? 'text-[#111827]' : ''}`}
+                  >
+                    {item.label}
+                  </Link>
+                ))}
+              </nav>
+
+              <div className="hidden items-center gap-3 lg:flex">
+                <Link href={loginHref} className="text-sm font-semibold text-[#4b5563] transition hover:text-[#111827]">
+                  Sign in
+                </Link>
+                <Link
+                  href={startNowHref}
+                  className="inline-flex items-center gap-2 rounded-full px-4 py-2.5 text-sm font-semibold text-white transition hover:opacity-90"
+                  style={{ backgroundColor: brand }}
+                >
+                  Start now
+                  <ArrowRight className="h-4 w-4" />
+                </Link>
+              </div>
+
+              <button
+                type="button"
+                aria-label={mobileMenuOpen ? 'Close menu' : 'Open menu'}
+                aria-expanded={mobileMenuOpen}
+                onClick={() => setMobileMenuOpen((open) => !open)}
+                className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-black/10 bg-white text-[#111827] transition hover:border-black/20 lg:hidden"
               >
-                Start now
-                <ArrowRight className="h-4 w-4" />
-              </Link>
+                {mobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+              </button>
             </div>
+
+            {mobileMenuOpen ? (
+              <div className="mt-4 border-t border-black/5 pt-4 lg:hidden">
+                <nav className="grid gap-2">
+                  {NAV_ITEMS.map((item) => (
+                    <Link
+                      key={item.key}
+                      href={buildMarketingPath(tenantCode, item.key === 'home' ? undefined : item.key)}
+                      className={`rounded-2xl px-4 py-3 text-sm font-medium transition ${
+                        currentPage === item.key
+                          ? 'bg-[#fff4ea] text-[#111827]'
+                          : 'text-[#4b5563] hover:bg-[#fff8f1] hover:text-[#111827]'
+                      }`}
+                      onClick={() => setMobileMenuOpen(false)}
+                    >
+                      {item.label}
+                    </Link>
+                  ))}
+                </nav>
+
+                <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                  <Link
+                    href={loginHref}
+                    className="inline-flex items-center justify-center rounded-full border border-black/10 bg-white px-4 py-3 text-sm font-semibold text-[#111827] transition hover:border-black/20"
+                    onClick={() => setMobileMenuOpen(false)}
+                  >
+                    Sign in
+                  </Link>
+                  <Link
+                    href={startNowHref}
+                    className="inline-flex items-center justify-center gap-2 rounded-full px-4 py-3 text-sm font-semibold text-white transition hover:opacity-90"
+                    style={{ backgroundColor: brand }}
+                    onClick={() => setMobileMenuOpen(false)}
+                  >
+                    Start now
+                    <ArrowRight className="h-4 w-4" />
+                  </Link>
+                </div>
+              </div>
+            ) : null}
           </div>
         </header>
 
         {children}
 
-        <footer className="mt-10 bg-[#1e2230] text-white">
+        <footer className="mt-10 text-white" style={{ background: 'linear-gradient(180deg, #2a1f1a 0%, #181412 100%)' }}>
           <div className="mx-auto max-w-7xl px-6 pt-12 sm:px-8 lg:px-10">
             <div className="mb-10 flex flex-col items-start justify-between gap-6 border-b border-white/10 pb-8 lg:flex-row lg:items-end">
               <div>
-                <p className="text-[11px] font-bold uppercase tracking-[0.28em] text-white/45">Siakora Labs</p>
-                <p className="mt-3 max-w-3xl text-4xl font-semibold tracking-tight">
+                <p className="max-w-3xl text-4xl font-semibold tracking-tight">
                   A quieter way to run subscriptions, teams, and operations.
                 </p>
               </div>
               <Link
-                href={loginHref}
+                href={startNowHref}
                 className="inline-flex items-center gap-2 rounded-full px-5 py-3 text-sm font-semibold text-white transition hover:opacity-90"
                 style={{ backgroundColor: brand }}
               >
@@ -109,8 +168,7 @@ export function MarketingSiteShell({
 
             <div className="grid gap-10 py-4 lg:grid-cols-[1.2fr_0.8fr_0.8fr_1fr]">
               <div>
-                <p className="text-[11px] font-bold uppercase tracking-[0.28em] text-white/45">Siakora Labs</p>
-                <p className="mt-3 text-2xl font-semibold tracking-tight">{site.tenant?.name ?? 'SL-ERP'}</p>
+                <p className="text-2xl font-semibold tracking-tight">SL ERP</p>
                 <p className="mt-4 max-w-md text-sm leading-7 text-white/68">
                   {site.branding.footer_text || 'Subscription billing, ERP operations, and customer workflows in one minimal platform.'}
                 </p>
@@ -136,7 +194,6 @@ export function MarketingSiteShell({
                 <nav className="mt-4 space-y-3 text-sm text-white/68">
                   <Link href={loginHref} className="block transition hover:text-white">Sign in</Link>
                   <Link href={buildMarketingPath(tenantCode, 'pricing')} className="block transition hover:text-white">See pricing</Link>
-                  <Link href={buildMarketingPath(tenantCode, 'stories')} className="block transition hover:text-white">Customer stories</Link>
                 </nav>
               </div>
 

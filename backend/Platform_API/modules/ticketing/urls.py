@@ -17,6 +17,8 @@ urlpatterns = [
     path("tickets/", views.AgentTicketListCreateView.as_view(), name="ticketing-tickets"),
     path("tickets/<int:pk>/", views.AgentTicketDetailView.as_view(), name="ticketing-ticket-detail"),
     path("tickets/<int:pk>/reply/", views.AgentTicketReplyAPIView.as_view(), name="ticketing-ticket-reply"),
+    path("inbound/email/<str:tenant_code>/", views.TicketingInboundEmailAPIView.as_view(), name="ticketing-inbound-email"),
+    path("inbound/whatsapp/<str:tenant_code>/", views.TicketingInboundWhatsAppAPIView.as_view(), name="ticketing-inbound-whatsapp"),
     path("v1/tickets/", views.PublicTicketCreateListExportAPIView.as_view(), name="public-ticket-create-list"),
     path("v1/tickets/track/", views.PublicTicketTrackAPIView.as_view(), name="public-ticket-track"),
     path("v1/tickets/export/", views.PublicTicketExportAPIView.as_view(), name="public-ticket-export"),
@@ -25,4 +27,3 @@ urlpatterns = [
     path("v1/tickets/<str:public_id>/reply/", views.PublicTicketReplyAPIView.as_view(), name="public-ticket-reply"),
     path("v1/tickets/<str:public_id>/close/", views.PublicTicketCloseAPIView.as_view(), name="public-ticket-close"),
 ]
-

@@ -32,6 +32,7 @@ class TicketingInboxConfig(TimeStampedModel):
     widget_settings = models.JSONField(blank=True, default=dict)
     email_settings = models.JSONField(blank=True, default=dict)
     webhook_settings = models.JSONField(blank=True, default=dict)
+    channel_settings = models.JSONField(blank=True, default=dict)
     require_cors_origin = models.BooleanField(default=True)
     allow_anonymous_tracking = models.BooleanField(default=True)
     allow_requester_close = models.BooleanField(default=True)
@@ -278,6 +279,26 @@ class TicketMessage(TimeStampedModel):
         ("agent", "Agent"),
         ("system", "System"),
     ]
+    DIRECTION_CHOICES = [
+        ("inbound", "Inbound"),
+        ("outbound", "Outbound"),
+        ("internal", "Internal"),
+    ]
+    CHANNEL_CHOICES = [
+        ("portal", "Portal"),
+        ("email", "Email"),
+        ("whatsapp", "WhatsApp"),
+        ("erp", "ERP"),
+        ("api", "API"),
+        ("system", "System"),
+    ]
+    DELIVERY_STATUS_CHOICES = [
+        ("received", "Received"),
+        ("queued", "Queued"),
+        ("sent", "Sent"),
+        ("failed", "Failed"),
+        ("internal", "Internal"),
+    ]
 
     ticket = models.ForeignKey(Ticket, on_delete=models.CASCADE, related_name="messages")
     author_type = models.CharField(max_length=20, choices=AUTHOR_TYPE_CHOICES, default="requester")
@@ -291,6 +312,11 @@ class TicketMessage(TimeStampedModel):
     author_name = models.CharField(max_length=150, blank=True)
     message = models.TextField()
     attachments = models.JSONField(blank=True, default=list)
+    direction = models.CharField(max_length=20, choices=DIRECTION_CHOICES, default="inbound")
+    channel = models.CharField(max_length=20, choices=CHANNEL_CHOICES, default="portal")
+    delivery_status = models.CharField(max_length=20, choices=DELIVERY_STATUS_CHOICES, default="received")
+    external_message_id = models.CharField(max_length=160, blank=True)
+    metadata = models.JSONField(blank=True, default=dict)
     is_public = models.BooleanField(default=True)
 
     class Meta:
@@ -333,4 +359,3 @@ class TicketWebhookDelivery(TimeStampedModel):
 
     def __str__(self):
         return f"{self.endpoint.name} {self.event_type}"
-

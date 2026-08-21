@@ -39,9 +39,10 @@ export function ERPDataTable<Row extends { id: number | string }>({
   const columnCount = columns.length + (hasSelection ? 1 : 0) + (rowActions ? 1 : 0);
 
   return (
+    <div className="overflow-hidden rounded-xl border border-border/80 bg-card shadow-sm">
     <Table>
       <TableHeader>
-        <TableRow>
+        <TableRow className="bg-muted/35 hover:bg-muted/35">
           {hasSelection ? (
             <TableHead className="w-12">
               <Checkbox
@@ -92,5 +93,6 @@ export function ERPDataTable<Row extends { id: number | string }>({
         ))}
       </TableBody>
     </Table>
+    </div>
   );
 }

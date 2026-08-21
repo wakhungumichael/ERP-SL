@@ -60,8 +60,38 @@ That script will:
 - run Django behind Gunicorn
 - start Celery worker and beat
 - expose the frontend through Nginx
+- run `migrate`
+- seed module, plan, and industry data
+- bootstrap the default `slabs` platform superadmin
 
-## 5. Useful Docker Commands
+## 5. First Login
+
+After the script completes:
+
+- open `http://your-server/`
+- sign in with the `slabs` account created by `bootstrap_saas_owner`
+- verify the Modules page loads records instead of showing an empty state
+
+If `slabs` can sign in but Modules is empty or unavailable, rerun:
+
+```bash
+docker compose --env-file .env.production -f docker-compose.production.yml exec backend python manage.py seed_platform
+docker compose --env-file .env.production -f docker-compose.production.yml exec backend python manage.py bootstrap_saas_owner
+```
+
+## 6. Ongoing Updates During Development
+
+When you push new code and want the Ubuntu server updated:
+
+```bash
+cd /srv/sl-erp
+git pull
+bash scripts/deploy-docker.sh
+```
+
+That is the main Docker advantage here: you do not reinstall dependencies manually on the server. The images are rebuilt with the app and dependency changes, then the containers are restarted with the new version.
+
+## 7. Useful Docker Commands
 
 ```bash
 docker compose --env-file .env.production -f docker-compose.production.yml ps
@@ -69,9 +99,10 @@ docker compose --env-file .env.production -f docker-compose.production.yml logs 
 docker compose --env-file .env.production -f docker-compose.production.yml logs -f frontend
 docker compose --env-file .env.production -f docker-compose.production.yml restart backend
 docker compose --env-file .env.production -f docker-compose.production.yml down
+docker compose --env-file .env.production -f docker-compose.production.yml exec backend python manage.py createsuperuser
 ```
 
-## 6. Validation
+## 8. Validation
 
 After startup, verify:
 
@@ -88,7 +119,14 @@ Then test:
 - tenant creation
 - module access
 
-## 7. GitHub Actions Secrets
+## 9. Troubleshooting
+
+- If Compose says `POSTGRES_PASSWORD` is missing, rerun with `--env-file .env.production` or use `bash scripts/deploy-docker.sh`.
+- If backend images fail on Python package builds, make sure you are using the committed `backend/requirements.txt` and `deployment/docker/backend.Dockerfile` from this branch.
+- If the Modules page shows an error instead of data, the `slabs` account is likely not a platform superuser or the seed commands did not run yet.
+- If frontend builds but is slow to load, that is currently a bundle-size optimization issue, not a deployment failure.
+
+## 10. GitHub Actions Secrets
 
 For remote Docker deploy automation, configure:
 
@@ -102,6 +140,6 @@ The workflow file is [deploy-docker.yml](/home/mike/DEVELOPMENT/SIAKORA%20LABS/S
 
 ## Notes
 
-- The backend container runs migrations and collectstatic automatically on start.
+- The deployment script also runs `migrate`, `seed_platform`, and `bootstrap_saas_owner` after containers start.
 - Persistent data is stored in Docker volumes for Postgres, Redis, static files, and media files.
 - For internet-facing deployments, put a TLS terminator in front of the stack or change the Nginx container setup accordingly.

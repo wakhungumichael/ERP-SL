@@ -2,11 +2,13 @@ import csv
 import hashlib
 import hmac
 import json
+import re
 import urllib.error
 import urllib.request
 from io import StringIO
 
 from django.contrib.auth.models import User
+from django.core.mail import EmailMultiAlternatives, get_connection
 from django.db.models import Count, Q
 from django.http import HttpResponse
 from django.utils import timezone
@@ -21,6 +23,7 @@ from Platform_API.modules.mixins import (
     resolve_user_tenant as _resolve_user_tenant,
     tenant_or_403 as _tenant_or_403,
 )
+from Platform_Core.models import TenantSettings
 from SL_Ticketing.models import (
     Ticket,
     TicketEvent,
@@ -34,12 +37,232 @@ from SL_Ticketing.models import (
 )
 
 
+TICKET_ID_PATTERN = re.compile(r"(TKT-[A-Z0-9]+)")
+
+
 def _scoped_user_queryset(user):
     return _apply_tenant_filter(User.objects.all(), user, filter_field="organization_memberships__tenant")
 
 
 def _resolve_config(tenant):
     return TicketingInboxConfig.objects.get_or_create(tenant=tenant)[0]
+
+
+def _default_channel_settings(tenant):
+    return {
+        "email": {
+            "enabled": False,
+            "inbound_secret": "",
+            "from_name": tenant.name,
+            "reply_subject_prefix": f"[{tenant.name} Support]",
+            "allow_new_tickets": True,
+        },
+        "whatsapp": {
+            "enabled": False,
+            "provider": "meta_cloud_api",
+            "verify_token": "",
+            "phone_number_id": "",
+            "access_token": "",
+            "business_account_id": "",
+            "allow_new_tickets": True,
+            "welcome_template": "",
+        },
+    }
+
+
+def _merged_channel_settings(tenant):
+    config = _resolve_config(tenant)
+    current = config.channel_settings or {}
+    defaults = _default_channel_settings(tenant)
+    return {
+        "email": {**defaults["email"], **(current.get("email") or {})},
+        "whatsapp": {**defaults["whatsapp"], **(current.get("whatsapp") or {})},
+    }
+
+
+def _ticket_subject_from_text(prefix, body, fallback):
+    first_line = (body or "").strip().splitlines()[0] if (body or "").strip() else ""
+    candidate = first_line or prefix or fallback
+    return candidate[:255]
+
+
+def _extract_ticket_id(*parts):
+    for part in parts:
+        if not part:
+            continue
+        match = TICKET_ID_PATTERN.search(str(part).upper())
+        if match:
+            return match.group(1)
+    return ""
+
+
+def _ticket_settings_for_email(tenant):
+    tenant_settings = getattr(tenant, "settings", None)
+    if not tenant_settings:
+        tenant_settings = TenantSettings.objects.filter(tenant=tenant).first()
+    return tenant_settings
+
+
+def _send_email_message(ticket, message_obj):
+    settings_obj = _ticket_settings_for_email(ticket.tenant)
+    if not settings_obj or not settings_obj.smtp_host or not settings_obj.smtp_user:
+        raise ValidationError("Tenant SMTP settings are not configured.")
+
+    channel_settings = _merged_channel_settings(ticket.tenant)["email"]
+    subject_prefix = channel_settings.get("reply_subject_prefix") or f"[{ticket.tenant.name} Support]"
+    from_name = channel_settings.get("from_name") or ticket.tenant.name
+    subject = f"{subject_prefix} {ticket.public_id} {ticket.subject}".strip()
+    connection = get_connection(
+        backend="django.core.mail.backends.smtp.EmailBackend",
+        host=settings_obj.smtp_host,
+        port=settings_obj.smtp_port or 587,
+        username=settings_obj.smtp_user,
+        password=settings_obj.smtp_password,
+        use_tls=settings_obj.smtp_use_tls,
+    )
+    from_email = settings_obj.support_email or settings_obj.smtp_user
+    email = EmailMultiAlternatives(
+        subject=subject,
+        body=message_obj.message,
+        from_email=f"{from_name} <{from_email}>",
+        to=[ticket.requester_email],
+        connection=connection,
+        headers={"Reply-To": from_email},
+    )
+    email.send()
+    return {"to": ticket.requester_email, "subject": subject, "from_email": from_email}
+
+
+def _send_whatsapp_message(ticket, message_obj):
+    if not ticket.requester_phone:
+        raise ValidationError("Requester phone number is required for WhatsApp replies.")
+    channel_settings = _merged_channel_settings(ticket.tenant)["whatsapp"]
+    if not channel_settings.get("enabled"):
+        raise ValidationError("WhatsApp channel is not enabled for this tenant.")
+    if channel_settings.get("provider") != "meta_cloud_api":
+        raise ValidationError("Unsupported WhatsApp provider.")
+    access_token = (channel_settings.get("access_token") or "").strip()
+    phone_number_id = (channel_settings.get("phone_number_id") or "").strip()
+    if not access_token or not phone_number_id:
+        raise ValidationError("WhatsApp provider credentials are incomplete.")
+
+    payload = {
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": ticket.requester_phone,
+        "type": "text",
+        "text": {"preview_url": False, "body": message_obj.message},
+    }
+    raw_payload = json.dumps(payload).encode("utf-8")
+    request = urllib.request.Request(
+        f"https://graph.facebook.com/v20.0/{phone_number_id}/messages",
+        data=raw_payload,
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {access_token}",
+        },
+    )
+    with urllib.request.urlopen(request, timeout=8) as response:
+        body = json.loads(response.read().decode("utf-8") or "{}")
+        messages = body.get("messages") or []
+        external_message_id = messages[0].get("id", "") if messages else ""
+        return {
+            "to": ticket.requester_phone,
+            "provider": "meta_cloud_api",
+            "response": body,
+            "external_message_id": external_message_id,
+        }
+
+
+def _send_ticket_reply(ticket, message_obj, reply_channel):
+    if reply_channel == "email":
+        result = _send_email_message(ticket, message_obj)
+        message_obj.delivery_status = "sent"
+        message_obj.metadata = {**(message_obj.metadata or {}), "delivery": result}
+        message_obj.save(update_fields=["delivery_status", "metadata", "updated_at"])
+        return result
+    if reply_channel == "whatsapp":
+        result = _send_whatsapp_message(ticket, message_obj)
+        message_obj.delivery_status = "sent"
+        message_obj.external_message_id = result.get("external_message_id", "")
+        message_obj.metadata = {**(message_obj.metadata or {}), "delivery": result}
+        message_obj.save(update_fields=["delivery_status", "external_message_id", "metadata", "updated_at"])
+        return result
+    message_obj.delivery_status = "internal"
+    message_obj.save(update_fields=["delivery_status", "updated_at"])
+    return {"channel": reply_channel or "portal"}
+
+
+def _reply_channel_choices(ticket):
+    channels = ["portal", "email"]
+    if ticket.requester_phone:
+        channels.append("whatsapp")
+    return channels
+
+
+def _determine_reply_channel(ticket, requested_channel=None):
+    preferred = (requested_channel or "").strip().lower()
+    if preferred in _reply_channel_choices(ticket):
+        return preferred
+    if ticket.source_channel in {"email", "whatsapp"} and ticket.source_channel in _reply_channel_choices(ticket):
+        return ticket.source_channel
+    return "portal"
+
+
+def _record_message(
+    *,
+    ticket,
+    author_type,
+    author_name,
+    message,
+    attachments=None,
+    is_public=True,
+    author_user=None,
+    direction="inbound",
+    channel="portal",
+    delivery_status="received",
+    external_message_id="",
+    metadata=None,
+):
+    return TicketMessage.objects.create(
+        ticket=ticket,
+        author_type=author_type,
+        author_user=author_user,
+        author_name=author_name,
+        message=message,
+        attachments=attachments or [],
+        is_public=is_public,
+        direction=direction,
+        channel=channel,
+        delivery_status=delivery_status,
+        external_message_id=external_message_id,
+        metadata=metadata or {},
+    )
+
+
+def _resolve_ticket_for_email(tenant, payload):
+    explicit_id = _extract_ticket_id(payload.get("ticket_id"), payload.get("subject"), payload.get("text"))
+    if explicit_id:
+        return Ticket.objects.filter(tenant=tenant, public_id=explicit_id).first()
+    requester_email = str(payload.get("from_email") or "").strip().lower()
+    if requester_email:
+        return Ticket.objects.filter(tenant=tenant, requester_email__iexact=requester_email).exclude(status="closed").order_by("-updated_at").first()
+    return None
+
+
+def _resolve_ticket_for_whatsapp(tenant, sender_phone, context_message_id=""):
+    if context_message_id:
+        linked = TicketMessage.objects.filter(
+            ticket__tenant=tenant,
+            channel="whatsapp",
+            external_message_id=context_message_id,
+        ).select_related("ticket").order_by("-created_at").first()
+        if linked:
+            return linked.ticket
+    if sender_phone:
+        return Ticket.objects.filter(tenant=tenant, requester_phone=sender_phone).exclude(status="closed").order_by("-updated_at").first()
+    return None
 
 
 def _match_rule(rule, ticket):
@@ -104,6 +327,11 @@ def _ticket_payload(ticket, include_private=False):
                     "author_name": message.author_name,
                     "message": message.message,
                     "attachments": message.attachments,
+                    "direction": message.direction,
+                    "channel": message.channel,
+                    "delivery_status": message.delivery_status,
+                    "external_message_id": message.external_message_id,
+                    "metadata": message.metadata,
                     "created_at": message.created_at,
                 }
             )
@@ -236,6 +464,21 @@ def _authenticate_public_request(request, key_type):
     return key.tenant, key
 
 
+def _resolve_public_tenant_request(request):
+    tenant_code = request.headers.get("X-Tenant-ID", "").strip()
+    if not tenant_code:
+        raise ValidationError("X-Tenant-ID is required.")
+    tenant = TicketingInboxConfig.objects.select_related("tenant").filter(tenant__code=tenant_code).first()
+    if tenant is None:
+        from Platform_Core.models import Tenant
+        tenant_obj = Tenant.objects.filter(code=tenant_code, is_active=True).first()
+        if tenant_obj is None:
+            raise ValidationError("Invalid tenant.")
+        tenant = _resolve_config(tenant_obj)
+    _ensure_origin_allowed(request, tenant.tenant)
+    return tenant.tenant
+
+
 def _validate_tracking_access(request, ticket):
     config = _resolve_config(ticket.tenant)
     if config.portal_access_policy == "secure_token":
@@ -270,6 +513,7 @@ class TicketingInboxConfigSerializer(serializers.ModelSerializer):
             "widget_settings",
             "email_settings",
             "webhook_settings",
+            "channel_settings",
             "require_cors_origin",
             "allow_anonymous_tracking",
             "allow_requester_close",
@@ -372,7 +616,20 @@ class TicketingWebhookEndpointSerializer(serializers.ModelSerializer):
 class TicketMessageSerializer(serializers.ModelSerializer):
     class Meta:
         model = TicketMessage
-        fields = ["id", "author_type", "author_name", "message", "attachments", "is_public", "created_at"]
+        fields = [
+            "id",
+            "author_type",
+            "author_name",
+            "message",
+            "attachments",
+            "direction",
+            "channel",
+            "delivery_status",
+            "external_message_id",
+            "metadata",
+            "is_public",
+            "created_at",
+        ]
         read_only_fields = ["id", "created_at"]
 
 
@@ -446,6 +703,7 @@ class TicketReplySerializer(serializers.Serializer):
     attachments = serializers.JSONField(required=False)
     email = serializers.EmailField(required=False)
     token = serializers.CharField(required=False, allow_blank=True)
+    reply_channel = serializers.ChoiceField(choices=["portal", "email", "whatsapp"], required=False)
 
 
 class TicketCloseSerializer(serializers.Serializer):
@@ -493,15 +751,27 @@ class TicketingConfigAPIView(APIView):
     def get(self, request):
         tenant = _tenant_or_403(request.user)
         config = _resolve_config(tenant)
-        return Response(TicketingInboxConfigSerializer(config).data)
+        data = TicketingInboxConfigSerializer(config).data
+        data["channel_settings"] = _merged_channel_settings(tenant)
+        return Response(data)
 
     def patch(self, request):
         tenant = _tenant_or_403(request.user)
         config = _resolve_config(tenant)
-        serializer = TicketingInboxConfigSerializer(config, data=request.data, partial=True)
+        payload = dict(request.data)
+        if "channel_settings" in payload:
+            merged = _merged_channel_settings(tenant)
+            incoming = payload.get("channel_settings") or {}
+            payload["channel_settings"] = {
+                "email": {**merged["email"], **(incoming.get("email") or {})},
+                "whatsapp": {**merged["whatsapp"], **(incoming.get("whatsapp") or {})},
+            }
+        serializer = TicketingInboxConfigSerializer(config, data=payload, partial=True)
         serializer.is_valid(raise_exception=True)
         serializer.save()
-        return Response(serializer.data)
+        data = serializer.data
+        data["channel_settings"] = _merged_channel_settings(tenant)
+        return Response(data)
 
 
 class TicketingApiKeyListCreateView(APIView):
@@ -644,15 +914,21 @@ class AgentTicketListCreateView(APIView):
         tenant = _tenant_or_403(request.user)
         serializer = PublicTicketCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        ticket = Ticket.objects.create(tenant=tenant, **serializer.validated_data)
-        if ticket.description:
-            TicketMessage.objects.create(
+        validated = dict(serializer.validated_data)
+        initial_message = str(validated.pop("message", "") or "").strip()
+        ticket = Ticket.objects.create(tenant=tenant, **validated)
+        initial_body = ticket.description or initial_message
+        if initial_body:
+            _record_message(
                 ticket=ticket,
                 author_type="requester",
                 author_name=ticket.requester_name or ticket.requester_email,
-                message=ticket.description,
+                message=initial_body,
                 attachments=ticket.attachments,
                 is_public=True,
+                channel="erp",
+                direction="inbound",
+                delivery_status="internal",
             )
         _record_event(ticket, "ticket.created", "Ticket created by internal agent.", {"source": "erp"})
         _apply_routing(ticket)
@@ -696,7 +972,8 @@ class AgentTicketReplyAPIView(APIView):
             return Response({"error": "Not found."}, status=status.HTTP_404_NOT_FOUND)
         serializer = TicketReplySerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        TicketMessage.objects.create(
+        reply_channel = _determine_reply_channel(ticket, serializer.validated_data.get("reply_channel"))
+        message_obj = _record_message(
             ticket=ticket,
             author_type="agent",
             author_user=request.user,
@@ -704,31 +981,182 @@ class AgentTicketReplyAPIView(APIView):
             message=serializer.validated_data["message"],
             attachments=serializer.validated_data.get("attachments", []),
             is_public=request.data.get("is_public", True),
+            channel=reply_channel,
+            direction="outbound",
+            delivery_status="queued" if reply_channel in {"email", "whatsapp"} else "internal",
+            metadata={"reply_channel": reply_channel},
         )
+        try:
+            delivery_result = _send_ticket_reply(ticket, message_obj, reply_channel)
+        except Exception as exc:
+            message_obj.delivery_status = "failed"
+            message_obj.metadata = {**(message_obj.metadata or {}), "delivery_error": str(exc)}
+            message_obj.save(update_fields=["delivery_status", "metadata", "updated_at"])
+            return Response({"error": _validation_message(exc)}, status=status.HTTP_400_BAD_REQUEST)
         if not ticket.first_response_at:
             ticket.first_response_at = timezone.now()
             ticket.save(update_fields=["first_response_at", "updated_at"])
-        _record_event(ticket, "ticket.replied", "Agent replied to the requester.", {"agent_id": request.user.id})
-        _dispatch_webhooks(ticket, "ticket.status_changed")
+        _record_event(ticket, "ticket.replied", "Agent replied to the requester.", {"agent_id": request.user.id, "channel": reply_channel, "delivery": delivery_result}, is_public=False)
+        _dispatch_webhooks(ticket, "ticket.replied")
         return Response(TicketSerializer(ticket).data, status=status.HTTP_201_CREATED)
+
+
+class TicketingInboundEmailAPIView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request, tenant_code):
+        config = TicketingInboxConfig.objects.select_related("tenant").filter(tenant__code=tenant_code).first()
+        if not config:
+            return Response({"error": "Tenant not found."}, status=status.HTTP_404_NOT_FOUND)
+        settings_map = _merged_channel_settings(config.tenant)["email"]
+        if not settings_map.get("enabled"):
+            return Response({"error": "Email intake is not enabled."}, status=status.HTTP_403_FORBIDDEN)
+        secret = (request.headers.get("X-Ticketing-Secret") or request.data.get("secret") or "").strip()
+        if not settings_map.get("inbound_secret") or secret != settings_map.get("inbound_secret"):
+            return Response({"error": "Invalid inbound email secret."}, status=status.HTTP_403_FORBIDDEN)
+
+        payload = request.data or {}
+        from_email = str(payload.get("from_email") or "").strip().lower()
+        if not from_email:
+            return Response({"error": "from_email is required."}, status=status.HTTP_400_BAD_REQUEST)
+        body = str(payload.get("text") or payload.get("body") or payload.get("message") or "").strip()
+        if not body:
+            return Response({"error": "Email body is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        ticket = _resolve_ticket_for_email(config.tenant, payload)
+        if ticket is None:
+            if not settings_map.get("allow_new_tickets", True):
+                return Response({"error": "Email replies must target an existing ticket."}, status=status.HTTP_400_BAD_REQUEST)
+            ticket = Ticket.objects.create(
+                tenant=config.tenant,
+                requester_name=str(payload.get("from_name") or from_email.split("@")[0]).strip(),
+                requester_email=from_email,
+                subject=_ticket_subject_from_text(str(payload.get("subject") or ""), body, "Email support request"),
+                description=body,
+                requester_phone=str(payload.get("from_phone") or "").strip(),
+                source_channel="email",
+                external_reference=str(payload.get("external_message_id") or payload.get("message_id") or "").strip(),
+            )
+            _record_event(ticket, "ticket.created", "Ticket created from inbound email.", {"channel": "email"})
+        message_obj = _record_message(
+            ticket=ticket,
+            author_type="requester",
+            author_name=ticket.requester_name or from_email,
+            message=body,
+            attachments=payload.get("attachments") or [],
+            channel="email",
+            direction="inbound",
+            delivery_status="received",
+            external_message_id=str(payload.get("external_message_id") or payload.get("message_id") or "").strip(),
+            metadata={"subject": str(payload.get("subject") or "").strip()},
+        )
+        matched_rule = _apply_routing(ticket)
+        if matched_rule:
+            _record_event(ticket, "ticket.routed", f"Ticket routed by rule {matched_rule.name}.", {"rule_id": matched_rule.id}, is_public=False)
+        _record_event(ticket, "ticket.replied", "Requester replied by email.", {"message_id": message_obj.external_message_id})
+        _dispatch_webhooks(ticket, "ticket.replied")
+        return Response({"ticket_id": ticket.public_id, "status": ticket.status}, status=status.HTTP_201_CREATED)
+
+
+class TicketingInboundWhatsAppAPIView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request, tenant_code):
+        config = TicketingInboxConfig.objects.select_related("tenant").filter(tenant__code=tenant_code).first()
+        if not config:
+            return Response({"error": "Tenant not found."}, status=status.HTTP_404_NOT_FOUND)
+        settings_map = _merged_channel_settings(config.tenant)["whatsapp"]
+        verify_token = (request.query_params.get("hub.verify_token") or "").strip()
+        challenge = request.query_params.get("hub.challenge") or ""
+        if verify_token and settings_map.get("verify_token") and verify_token == settings_map.get("verify_token"):
+            return HttpResponse(challenge or "", content_type="text/plain")
+        return Response({"error": "Verification failed."}, status=status.HTTP_403_FORBIDDEN)
+
+    def post(self, request, tenant_code):
+        config = TicketingInboxConfig.objects.select_related("tenant").filter(tenant__code=tenant_code).first()
+        if not config:
+            return Response({"error": "Tenant not found."}, status=status.HTTP_404_NOT_FOUND)
+        settings_map = _merged_channel_settings(config.tenant)["whatsapp"]
+        if not settings_map.get("enabled"):
+            return Response({"error": "WhatsApp intake is not enabled."}, status=status.HTTP_403_FORBIDDEN)
+
+        payload = request.data or {}
+        messages = []
+        for entry in payload.get("entry") or []:
+            for change in entry.get("changes") or []:
+                value = change.get("value") or {}
+                messages.extend(value.get("messages") or [])
+        if not messages:
+            return Response({"status": "ignored"})
+
+        results = []
+        for inbound in messages:
+            sender_phone = str(inbound.get("from") or "").strip()
+            text_body = str(((inbound.get("text") or {}).get("body")) or "").strip()
+            if not sender_phone or not text_body:
+                continue
+            context_message_id = str((inbound.get("context") or {}).get("id") or "").strip()
+            ticket = _resolve_ticket_for_whatsapp(config.tenant, sender_phone, context_message_id)
+            if ticket is None:
+                if not settings_map.get("allow_new_tickets", True):
+                    continue
+                ticket = Ticket.objects.create(
+                    tenant=config.tenant,
+                    requester_name=str((inbound.get("profile") or {}).get("name") or sender_phone).strip(),
+                    requester_email=f"{sender_phone}@whatsapp.local",
+                    requester_phone=sender_phone,
+                    subject=_ticket_subject_from_text("WhatsApp request", text_body, "WhatsApp support request"),
+                    description=text_body,
+                    source_channel="whatsapp",
+                    external_reference=str(inbound.get("id") or "").strip(),
+                )
+                _record_event(ticket, "ticket.created", "Ticket created from inbound WhatsApp.", {"channel": "whatsapp"})
+            message_obj = _record_message(
+                ticket=ticket,
+                author_type="requester",
+                author_name=ticket.requester_name or sender_phone,
+                message=text_body,
+                channel="whatsapp",
+                direction="inbound",
+                delivery_status="received",
+                external_message_id=str(inbound.get("id") or "").strip(),
+                metadata={"context_message_id": context_message_id},
+            )
+            matched_rule = _apply_routing(ticket)
+            if matched_rule:
+                _record_event(ticket, "ticket.routed", f"Ticket routed by rule {matched_rule.name}.", {"rule_id": matched_rule.id}, is_public=False)
+            _record_event(ticket, "ticket.replied", "Requester replied by WhatsApp.", {"message_id": message_obj.external_message_id, "context_message_id": context_message_id})
+            _dispatch_webhooks(ticket, "ticket.replied")
+            results.append({"ticket_id": ticket.public_id, "message_id": message_obj.external_message_id})
+        return Response({"processed": results}, status=status.HTTP_200_OK)
 
 
 class PublicTicketCreateListExportAPIView(APIView):
     permission_classes = [AllowAny]
 
     def post(self, request):
-        tenant, _ = _authenticate_public_request(request, "public")
+        raw_token = _extract_bearer_token(request)
+        if raw_token:
+            tenant, _ = _authenticate_public_request(request, "public")
+        else:
+            tenant = _resolve_public_tenant_request(request)
         serializer = PublicTicketCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        ticket = Ticket.objects.create(tenant=tenant, **serializer.validated_data)
-        if ticket.description:
-            TicketMessage.objects.create(
+        validated = dict(serializer.validated_data)
+        initial_message = str(validated.pop("message", "") or "").strip()
+        ticket = Ticket.objects.create(tenant=tenant, **validated)
+        initial_body = ticket.description or initial_message
+        if initial_body:
+            _record_message(
                 ticket=ticket,
                 author_type="requester",
                 author_name=ticket.requester_name or ticket.requester_email,
-                message=ticket.description,
+                message=initial_body,
                 attachments=ticket.attachments,
                 is_public=True,
+                channel=ticket.source_channel or "portal",
+                direction="inbound",
+                delivery_status="received",
             )
         _record_event(ticket, "ticket.created", "Ticket created from public API.", {"source_page": ticket.source_page})
         matched_rule = _apply_routing(ticket)
@@ -856,16 +1284,19 @@ class PublicTicketReplyAPIView(APIView):
             _validate_tracking_access(request, ticket)
         except ValidationError as exc:
             return Response({"error": _validation_message(exc)}, status=status.HTTP_403_FORBIDDEN)
-        TicketMessage.objects.create(
+        _record_message(
             ticket=ticket,
             author_type="requester",
             author_name=ticket.requester_name or ticket.requester_email,
             message=serializer.validated_data["message"],
             attachments=serializer.validated_data.get("attachments", []),
             is_public=True,
+            channel=ticket.source_channel or "portal",
+            direction="inbound",
+            delivery_status="received",
         )
         _record_event(ticket, "ticket.replied", "Requester replied via external portal.")
-        _dispatch_webhooks(ticket, "ticket.status_changed")
+        _dispatch_webhooks(ticket, "ticket.replied")
         return Response({"ticket_id": ticket.public_id, "status": ticket.status}, status=status.HTTP_201_CREATED)
 
 

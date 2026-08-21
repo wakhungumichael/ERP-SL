@@ -6,11 +6,11 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Card, CardContent } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ChevronLeft, ChevronRight, Package, Pencil, Trash2 } from 'lucide-react';
+import { ERPMetricCard, ERPPageHeader } from '@/components/erp/workspace/workspace-ui';
 
 const BASE_URL = import.meta.env.BASE_URL?.replace(/\/$/, '') ?? '';
 const fmt = (v: number) => 'KES ' + Number(v ?? 0).toLocaleString('en-KE', { minimumFractionDigits: 2 });
@@ -186,16 +186,12 @@ export default function ProductsPage() {
   }
 
   return (
-    <div className="space-y-6 p-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold">Products &amp; Services</h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Manual catalog items live here, and weighbridge vehicle-type services sync in automatically.
-          </p>
-        </div>
-        <Button onClick={openCreate}>+ New Product</Button>
-      </div>
+    <div className="space-y-5">
+      <ERPPageHeader
+        title="Products & Services"
+        description="Manage the products and services your teams use for sales, billing, and operations."
+        actions={<Button onClick={openCreate}>+ New Product / Service</Button>}
+      />
 
       {/* Stats */}
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
@@ -205,17 +201,12 @@ export default function ProductsPage() {
           { label: 'Services', value: counts.services },
           { label: 'Active', value: counts.active },
         ].map((s) => (
-          <Card key={s.label}>
-            <CardContent className="pt-4">
-              <p className="text-2xl font-bold">{s.value}</p>
-              <p className="text-sm text-muted-foreground">{s.label}</p>
-            </CardContent>
-          </Card>
+          <ERPMetricCard key={s.label} label={s.label} value={s.value} />
         ))}
       </div>
 
       {/* Filters */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border/80 bg-card p-3 shadow-sm">
         <div className="flex flex-wrap gap-3">
           <Input
             placeholder="Search…"
@@ -272,7 +263,7 @@ export default function ProductsPage() {
         </div>
       ) : (
         <>
-          <div className="rounded-md border">
+          <div className="overflow-hidden rounded-xl border border-border/80 bg-card shadow-sm">
             <Table>
               <TableHeader>
                 <TableRow>

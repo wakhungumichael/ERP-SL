@@ -193,7 +193,7 @@ export default function Modules() {
   const [editing, setEditing] = useState<any>(null);
   const [deleting, setDeleting] = useState<any>(null);
 
-  const { data, isLoading, refetch } = useQuery({
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['modules'],
     queryFn: () => api(token!, '/modules/?page_size=100'),
     enabled: !!token,
@@ -263,6 +263,19 @@ export default function Modules() {
 
       {isLoading ? (
         <p className="text-center text-muted-foreground text-sm py-12 animate-pulse">Loading…</p>
+      ) : isError ? (
+        <div className="rounded-2xl border border-destructive/25 bg-destructive/5 px-5 py-6 text-sm">
+          <p className="font-semibold text-destructive">Unable to load modules.</p>
+          <p className="mt-2 text-muted-foreground">
+            {error instanceof Error ? error.message : 'The module registry request failed.'}
+          </p>
+          <p className="mt-2 text-muted-foreground">
+            Platform module management requires a platform superadmin account and seeded platform data.
+          </p>
+          <Button size="sm" variant="outline" onClick={() => refetch()} className="mt-4 gap-1.5">
+            <RefreshCw className="h-3.5 w-3.5" /> Try again
+          </Button>
+        </div>
       ) : modules.length === 0 ? (
         <div className="text-center py-16 text-muted-foreground text-sm space-y-3">
           <Layers className="h-10 w-10 mx-auto opacity-20" />

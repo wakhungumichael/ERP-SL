@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useLocation, useRoute } from 'wouter';
 import { useQuery } from '@tanstack/react-query';
 import { useAuthLogin } from '@workspace/api-client-react';
-import { ArrowRight, Building2, CheckCircle2, Scale, ShieldCheck, Sparkles } from 'lucide-react';
+import { ArrowRight, CheckCircle2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -22,13 +22,6 @@ import {
 } from '@/components/ui/dialog';
 
 const BASE = '/api/platform';
-
-const ROLE_DESCRIPTIONS = [
-  { role: 'Operator', desc: 'Weighbridge transactions, live capture, and dispatch controls' },
-  { role: 'Finance', desc: 'Invoices, collections, statements, and reports' },
-  { role: 'Tenant Admin', desc: 'Users, branding, menu access, and workspace setup' },
-  { role: 'Super Admin', desc: 'Platform governance, plans, subscriptions, and billing' },
-];
 
 function setupApi(token: string, path: string, method = 'GET', body?: object) {
   return fetch(`${BASE}${path}`, {
@@ -75,6 +68,9 @@ export default function Login() {
   const [, setLocation] = useLocation();
   const [, params] = useRoute('/login/:tenantCode');
   const tenantCode = params?.tenantCode;
+  const searchParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
+  const requestedIntent = searchParams?.get('intent');
+  const requestedPlanId = searchParams?.get('plan') ?? '';
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [registerOpen, setRegisterOpen] = useState(false);
@@ -82,6 +78,7 @@ export default function Login() {
   const [registerSubmitting, setRegisterSubmitting] = useState(false);
   const [organizationSubmitting, setOrganizationSubmitting] = useState(false);
   const [createdWorkspace, setCreatedWorkspace] = useState(false);
+  const [preferredPlanId, setPreferredPlanId] = useState(requestedPlanId);
   const [pendingAuth, setPendingAuth] = useState<{ token: string; user: Record<string, unknown> | null } | null>(null);
   const [registerForm, setRegisterForm] = useState({
     name: '',
@@ -139,15 +136,26 @@ export default function Login() {
   const [selectedPlanId, setSelectedPlanId] = useState('');
   const [startWithDemo, setStartWithDemo] = useState(true);
   const selectedPlan = plans.find((plan: any) => String(plan.id) === selectedPlanId) ?? recommendedPlan ?? null;
+  const logoUrl = site.branding.logo_url?.trim();
   useEffect(() => {
     if (token) setLocation('/dashboard');
   }, [token, setLocation]);
 
   useEffect(() => {
     const nextPlanId = recommendedPlan?.id ? String(recommendedPlan.id) : '';
-    setSelectedPlanId(nextPlanId);
+    setSelectedPlanId((current) => current || preferredPlanId || nextPlanId);
     setStartWithDemo(Boolean((recommendedPlan?.trial_days ?? 0) > 0));
-  }, [recommendedPlan?.id, recommendedPlan?.trial_days]);
+  }, [preferredPlanId, recommendedPlan?.id, recommendedPlan?.trial_days]);
+
+  useEffect(() => {
+    if (requestedIntent === 'register') {
+      setRegisterOpen(true);
+    }
+    if (requestedPlanId) {
+      setPreferredPlanId(requestedPlanId);
+      setSelectedPlanId(requestedPlanId);
+    }
+  }, [requestedIntent, requestedPlanId]);
 
   const resetRegisterFlow = () => {
     setRegisterOpen(false);
@@ -343,57 +351,53 @@ export default function Login() {
     <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(232,93,38,0.26),_transparent_30%),linear-gradient(180deg,#1c1917_0%,#292524_100%)] text-white">
       <div className="mx-auto grid min-h-screen max-w-7xl lg:grid-cols-[1.08fr_0.92fr]">
         <div className="flex flex-col justify-between px-8 py-10 sm:px-12 lg:px-14">
-          <div className="flex items-center justify-between gap-4">
+          <div className="flex items-center gap-4">
             <div className="flex items-center gap-3">
-              <div className="flex h-11 w-11 items-center justify-center rounded-2xl text-white shadow-lg" style={{ backgroundColor: brand }}>
-                <Scale className="h-5 w-5" />
+              <div className="flex h-14 w-14 items-center justify-center overflow-hidden rounded-2xl bg-white/95 p-2 shadow-lg">
+                {logoUrl ? (
+                  <img src={logoUrl} alt="SL ERP logo" className="h-full w-full object-contain" />
+                ) : (
+                  <div className="flex h-full w-full items-center justify-center rounded-xl text-sm font-black tracking-[0.2em] text-white" style={{ backgroundColor: brand }}>
+                    SL
+                  </div>
+                )}
               </div>
               <div>
-                <p className="text-lg font-black tracking-tight">{site.tenant?.name ?? 'SL-ERP'}</p>
-                <p className="text-[11px] font-bold uppercase tracking-[0.28em] text-white/45">
-                  {site.login_page.eyebrow}
-                </p>
+                <p className="text-lg font-black tracking-tight">SL ERP</p>
               </div>
             </div>
-            <button
-              type="button"
-              onClick={() => setLocation(tenantCode ? `/landing/${tenantCode}` : '/landing')}
-              className="inline-flex items-center gap-2 rounded-full border border-white/15 px-4 py-2 text-sm font-semibold text-white/82 transition hover:border-white/40 hover:text-white"
-            >
-              View Landing Page
-              <ArrowRight className="h-4 w-4" />
-            </button>
           </div>
 
-          <div className="space-y-8 py-10">
+          <div className="space-y-8 py-10 lg:max-w-2xl">
             <div className="space-y-5">
-              <p className="text-xs font-bold uppercase tracking-[0.32em]" style={{ color: brand }}>
-                {site.login_page.eyebrow}
-              </p>
               <h1 className="max-w-2xl font-serif text-5xl font-bold leading-tight tracking-tight text-white sm:text-6xl">
                 {site.login_page.title}
               </h1>
               <p className="max-w-2xl text-xl font-medium leading-8 text-white/74">
                 {site.login_page.subtitle}
               </p>
-              <p className="max-w-xl text-base leading-7 text-white/60">
-                {site.login_page.description}
-              </p>
+              {site.login_page.description ? (
+                <p className="max-w-xl text-base leading-7 text-white/60">
+                  {site.login_page.description}
+                </p>
+              ) : null}
             </div>
 
-            <div className="grid gap-4 md:grid-cols-2">
-              {ROLE_DESCRIPTIONS.map((entry) => (
-                <div key={entry.role} className="rounded-[24px] border border-white/10 bg-white/5 p-5 backdrop-blur">
-                  <ShieldCheck className="h-4 w-4" style={{ color: brand }} />
-                  <p className="mt-3 text-sm font-bold uppercase tracking-[0.2em] text-white/90">{entry.role}</p>
-                  <p className="mt-2 text-sm leading-6 text-white/60">{entry.desc}</p>
-                </div>
-              ))}
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setLocation(tenantCode ? `/landing/${tenantCode}` : '/landing')}
+                className="inline-flex items-center gap-2 rounded-full px-5 py-3 text-sm font-bold text-white shadow-[0_18px_40px_rgba(232,93,38,0.24)] transition hover:opacity-90"
+                style={{ backgroundColor: brand }}
+              >
+                View Landing Page
+                <ArrowRight className="h-4 w-4" />
+              </button>
             </div>
           </div>
 
           <footer className="space-y-3 border-t border-white/10 pt-5">
-            <p className="text-sm text-white/60">{site.branding.footer_text}</p>
+            {site.branding.footer_text ? <p className="text-sm text-white/60">{site.branding.footer_text}</p> : null}
             <div className="flex flex-wrap gap-4 text-sm text-white/70">
               {site.footer_menu.map((item) => (
                 <a key={`${item.label}-${item.href}`} href={item.href} className="transition hover:text-white">
@@ -406,13 +410,18 @@ export default function Login() {
 
         <div className="flex items-center justify-center px-8 py-10 sm:px-12 lg:px-14">
           <div className="w-full max-w-md rounded-[32px] border border-white/10 bg-white p-8 text-slate-950 shadow-[0_35px_120px_rgba(0,0,0,0.35)]">
-            <div className="flex items-center gap-3">
-              <div className="flex h-12 w-12 items-center justify-center rounded-2xl text-white" style={{ backgroundColor: brand }}>
-                <Sparkles className="h-5 w-5" />
+            <div className="flex items-center gap-4">
+              <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-white/95 p-2 shadow-sm">
+                {logoUrl ? (
+                  <img src={logoUrl} alt="SL ERP logo" className="h-full w-full object-contain" />
+                ) : (
+                  <div className="flex h-full w-full items-center justify-center rounded-xl text-sm font-black tracking-[0.2em] text-white" style={{ backgroundColor: brand }}>
+                    SL
+                  </div>
+                )}
               </div>
-              <div>
-                <p className="text-sm font-bold uppercase tracking-[0.24em] text-slate-500">Secure Access</p>
-                <h2 className="text-2xl font-black tracking-tight">Sign in</h2>
+              <div className="flex min-h-[56px] items-center">
+                <h2 className="text-2xl font-black leading-none tracking-tight">Sign in</h2>
               </div>
             </div>
 
@@ -424,7 +433,7 @@ export default function Login() {
                   autoFocus
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
-                  placeholder="e.g. siakora.admin"
+                  placeholder=""
                   className="h-12 rounded-2xl border-slate-200 bg-slate-50 font-mono"
                 />
               </div>
@@ -436,7 +445,7 @@ export default function Login() {
                   type="password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  placeholder="••••••••"
+                  placeholder=""
                   className="h-12 rounded-2xl border-slate-200 bg-slate-50 font-mono"
                 />
               </div>
@@ -477,6 +486,15 @@ export default function Login() {
               </button>
             </div>
 
+            {requestedIntent === 'subscribe' ? (
+              <div className="mt-4 rounded-2xl border border-[#f1d7c8] bg-[#fff8f3] p-4 text-sm text-slate-700">
+                <p className="font-semibold text-slate-900">Continue with your subscription</p>
+                <p className="mt-1 leading-6">
+                  Sign in, then open Organization Settings to continue with plan selection and subscription setup.
+                </p>
+              </div>
+            ) : null}
+
             <div className="mt-6 rounded-3xl bg-slate-50 p-5">
               <p className="text-sm font-semibold text-slate-900">Need product pricing first?</p>
               <p className="mt-1 text-sm leading-6 text-slate-600">
@@ -497,47 +515,47 @@ export default function Login() {
       </div>
 
       <Dialog open={registerOpen} onOpenChange={(open) => { if (!open) resetRegisterFlow(); else setRegisterOpen(true); }}>
-        <DialogContent className="max-w-5xl rounded-[32px] border-0 p-0 overflow-hidden">
-          <div className="grid gap-0 md:grid-cols-[0.82fr_1.18fr]">
-            <div className="bg-slate-950 px-10 py-10 text-white">
+        <DialogContent className="h-[100dvh] max-h-[100dvh] max-w-5xl overflow-hidden rounded-none border-0 p-0 md:h-auto md:max-h-[90vh] md:rounded-[32px]">
+          <div className="grid h-full gap-0 overflow-hidden md:grid-cols-[0.82fr_1.18fr]">
+            <div className="bg-slate-950 px-5 py-4 text-white sm:px-8 md:px-10 md:py-10">
               <p className="text-xs font-bold uppercase tracking-[0.3em]" style={{ color: brand }}>Workspace Setup</p>
-              <h3 className="mt-5 max-w-sm text-4xl font-bold leading-tight tracking-tight">Create your account, then launch your first organization.</h3>
-              <p className="mt-5 max-w-sm text-base leading-8 text-white/70">
+              <h3 className="mt-3 max-w-sm text-2xl font-bold leading-tight tracking-tight md:mt-5 md:text-4xl">Create your account, then launch your first organization.</h3>
+              <p className="mt-3 hidden max-w-sm text-base leading-8 text-white/70 md:mt-5 md:block">
                 Built for multi-industry operators who want a calm, structured start.
               </p>
 
-              <div className="mt-10 flex items-center gap-3 text-sm text-white/72">
+              <div className="mt-4 flex items-center gap-3 text-sm text-white/72 md:mt-10">
                 <div
-                  className="flex h-10 w-10 items-center justify-center rounded-full text-sm font-bold text-white"
+                  className="flex h-9 w-9 items-center justify-center rounded-full text-sm font-bold text-white md:h-10 md:w-10"
                   style={{ backgroundColor: registerStep >= 1 ? brand : 'rgba(255,255,255,0.12)' }}
                 >
                   {registerStep > 1 ? <CheckCircle2 className="h-4 w-4" /> : '1'}
                 </div>
                 <div className="h-px flex-1 bg-white/10" />
                 <div
-                  className="flex h-10 w-10 items-center justify-center rounded-full text-sm font-bold text-white"
+                  className="flex h-9 w-9 items-center justify-center rounded-full text-sm font-bold text-white md:h-10 md:w-10"
                   style={{ backgroundColor: registerStep >= 2 ? brand : 'rgba(255,255,255,0.12)' }}
                 >
                   {registerStep > 2 ? <CheckCircle2 className="h-4 w-4" /> : '2'}
                 </div>
                 <div className="h-px flex-1 bg-white/10" />
                 <div
-                  className="flex h-10 w-10 items-center justify-center rounded-full text-sm font-bold text-white"
+                  className="flex h-9 w-9 items-center justify-center rounded-full text-sm font-bold text-white md:h-10 md:w-10"
                   style={{ backgroundColor: registerStep >= 3 ? brand : 'rgba(255,255,255,0.12)' }}
                 >
                   3
                 </div>
               </div>
 
-              <div className="mt-8 space-y-2 text-sm text-white/58">
+              <div className="mt-4 space-y-1 text-xs text-white/58 md:mt-8 md:space-y-2 md:text-sm">
                 <p>{registerStep === 1 ? 'Account details' : registerStep === 2 ? 'Organization details' : 'Plan and launch'}</p>
-                <p>{registerStep === 2 ? 'Choose an industry to align modules, plans, and subscriptions.' : 'Review the suggested setup, then continue into the workspace.'}</p>
+                <p className="hidden md:block">{registerStep === 2 ? 'Choose an industry to align modules, plans, and subscriptions.' : 'Review the suggested setup, then continue into the workspace.'}</p>
               </div>
             </div>
 
-            <div className="bg-white px-10 py-10 text-slate-950">
-              <DialogHeader className="text-left">
-                <DialogTitle className="text-2xl font-black tracking-tight">
+            <div className="flex min-h-0 flex-col bg-white px-5 py-5 text-slate-950 sm:px-8 md:px-10 md:py-10">
+              <DialogHeader className="shrink-0 pr-8 text-left">
+                <DialogTitle className="text-xl font-black tracking-tight md:text-2xl">
                   {registerStep === 1 ? 'Create your account' : registerStep === 2 ? 'Add your first organization' : createdWorkspace ? 'Setup complete' : 'Review subscription setup'}
                 </DialogTitle>
                 <DialogDescription className="text-sm leading-6 text-slate-600">
@@ -551,8 +569,9 @@ export default function Login() {
                 </DialogDescription>
               </DialogHeader>
 
+              <div className="mt-4 min-h-0 flex-1 overflow-y-auto pr-1 md:mt-6">
               {registerStep === 1 ? (
-                <div className="mt-6 space-y-4">
+                <div className="space-y-4 pb-2">
                   <div className="space-y-1.5">
                     <label className="text-xs font-bold uppercase tracking-[0.22em] text-slate-500">Name</label>
                     <Input
@@ -601,7 +620,7 @@ export default function Login() {
               ) : null}
 
               {registerStep === 2 ? (
-                <div className="mt-6 space-y-4">
+                <div className="space-y-4 pb-2">
                   <div className="space-y-1.5">
                     <label className="text-xs font-bold uppercase tracking-[0.22em] text-slate-500">Organization Name</label>
                     <Input
@@ -674,7 +693,7 @@ export default function Login() {
 
               {registerStep === 3 ? (
                 createdWorkspace ? (
-                  <div className="mt-6 rounded-3xl border border-emerald-200 bg-emerald-50 p-5">
+                  <div className="rounded-3xl border border-emerald-200 bg-emerald-50 p-5">
                     <div className="flex items-center gap-3 text-emerald-800">
                       <CheckCircle2 className="h-5 w-5" />
                       <p className="text-base font-semibold">Your account is ready.</p>
@@ -684,7 +703,7 @@ export default function Login() {
                     </p>
                   </div>
                 ) : (
-                  <div className="mt-6 space-y-5">
+                  <div className="space-y-5 pb-2">
                     <div className="space-y-1.5">
                       <label className="text-xs font-bold uppercase tracking-[0.22em] text-slate-500">Suggested Plan</label>
                       <Select value={selectedPlanId} onValueChange={setSelectedPlanId}>
@@ -721,8 +740,9 @@ export default function Login() {
                   </div>
                 )
               ) : null}
+              </div>
 
-              <DialogFooter className="mt-8 gap-2 sm:justify-between">
+              <DialogFooter className="mt-4 shrink-0 gap-2 border-t border-slate-100 pt-3 sm:justify-between md:mt-6 md:pt-4">
                 <div className="text-xs text-slate-500">
                   {registerStep === 2 ? 'You can skip this step and continue later.' : registerStep === 3 && !createdWorkspace ? 'You can still adjust subscription and billing later inside Organization Settings.' : ' '}
                 </div>

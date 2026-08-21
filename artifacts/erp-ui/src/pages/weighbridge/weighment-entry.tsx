@@ -18,6 +18,7 @@ import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, Command
 import LiveIndicator from '@/components/weighbridge/live-indicator';
 import { Camera, Check, ChevronsUpDown, Plus, RefreshCw, Scale, Search, WifiOff } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { ERPPageHeader } from '@/components/erp/workspace/workspace-ui';
 
 type RouteFlow = 'first' | 'second';
 
@@ -156,6 +157,7 @@ function SearchSelect({
 }
 
 function CameraPanel({ branchId, snapshotVersion, onRefresh }: { branchId: string; snapshotVersion: number; onRefresh: () => void }) {
+  const [selectedCameraId, setSelectedCameraId] = useState('');
   const { data, isLoading, isFetching } = useQuery({
     queryKey: ['wb-camera-preview', branchId, snapshotVersion],
     enabled: !!branchId,
@@ -169,20 +171,23 @@ function CameraPanel({ branchId, snapshotVersion, onRefresh }: { branchId: strin
   });
 
   const previews = data?.results ?? [];
+  const selectedCamera = previews.find((camera) => String(camera.id) === selectedCameraId) ?? previews[0];
 
   return (
-    <Card className="overflow-hidden">
-      <CardHeader className="flex flex-row items-center justify-between border-b bg-muted/20 py-3">
-        <CardTitle className="flex items-center gap-2 text-sm font-bold uppercase tracking-widest">
+    <Card className="overflow-hidden border-border/70 shadow-sm">
+      <CardHeader className="flex flex-row items-center justify-between border-b bg-muted/15 px-4 py-3">
+        <CardTitle className="flex items-center gap-2 text-sm font-semibold">
           <Camera className="h-4 w-4" />
           Camera View
         </CardTitle>
-        <Button type="button" size="sm" variant="outline" onClick={onRefresh} disabled={!branchId || isFetching}>
-          <RefreshCw className={cn('mr-1.5 h-3.5 w-3.5', isFetching && 'animate-spin')} />
-          Refresh
-        </Button>
+        {previews.length > 1 ? (
+          <Select value={selectedCameraId || String(selectedCamera?.id ?? '')} onValueChange={setSelectedCameraId}>
+            <SelectTrigger className="h-7 w-28 text-[11px]"><SelectValue /></SelectTrigger>
+            <SelectContent>{previews.map((camera) => <SelectItem key={camera.id} value={String(camera.id)}>{camera.name}</SelectItem>)}</SelectContent>
+          </Select>
+        ) : null}
       </CardHeader>
-      <CardContent className="p-4">
+      <CardContent className="p-3">
         {!branchId ? (
           <div className="rounded-lg border border-dashed px-4 py-10 text-center text-sm text-muted-foreground">
             Select a branch to load camera previews.
@@ -192,26 +197,19 @@ function CameraPanel({ branchId, snapshotVersion, onRefresh }: { branchId: strin
         ) : previews.length === 0 ? (
           <div className="rounded-lg border px-4 py-10 text-center text-sm text-muted-foreground">No active cameras configured for this branch.</div>
         ) : (
-          <div className="grid gap-3 sm:grid-cols-2">
-            {previews.map((camera) => (
-              <div key={camera.id} className="overflow-hidden rounded-lg border bg-card">
-                <div className="flex items-center justify-between border-b px-3 py-2">
-                  <div className="truncate text-xs font-bold uppercase tracking-wide">{camera.name}</div>
-                  <Badge variant={camera.available ? 'outline' : 'secondary'} className="text-[10px]">
-                    {camera.available ? 'Live' : 'No image'}
-                  </Badge>
-                </div>
-                {camera.image_data_url ? (
-                  <img src={camera.image_data_url} alt={camera.name} className="aspect-[4/3] w-full object-cover" />
-                ) : (
-                  <div className="flex aspect-[4/3] items-center justify-center text-xs text-muted-foreground">
-                    Preview unavailable
-                  </div>
-                )}
-              </div>
-            ))}
+          <div className="overflow-hidden rounded-md border bg-black">
+            {selectedCamera?.image_data_url ? (
+              <img src={selectedCamera.image_data_url} alt={selectedCamera.name} className="aspect-[16/8] w-full object-cover" />
+            ) : (
+              <div className="flex aspect-[16/8] items-center justify-center text-xs text-muted-foreground">Preview unavailable</div>
+            )}
           </div>
         )}
+        <div className="mt-2 flex justify-end">
+          <Button type="button" size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={onRefresh} disabled={!branchId || isFetching}>
+            <RefreshCw className={cn('mr-1.5 h-3.5 w-3.5', isFetching && 'animate-spin')} />Refresh
+          </Button>
+        </div>
       </CardContent>
     </Card>
   );
@@ -220,6 +218,36 @@ function CameraPanel({ branchId, snapshotVersion, onRefresh }: { branchId: strin
 function normalizeBranchId(value: unknown): string | null {
   if (value == null || value === '') return null;
   return String(value);
+}
+
+function WeighmentStepper({ isSecondFlow }: { isSecondFlow: boolean }) {
+  const steps = ['Vehicle', 'First Weight', 'Second Weight', 'Review', 'Complete'];
+  const activeStep = isSecondFlow ? 2 : 1;
+
+  return (
+    <div className="overflow-x-auto border-b border-border/80 pb-4">
+      <div className="flex min-w-[620px] items-center">
+        {steps.map((step, index) => {
+          const completed = index < activeStep;
+          const active = index === activeStep;
+          return (
+            <div key={step} className="flex flex-1 items-center last:flex-none">
+              <div className="flex items-center gap-2 whitespace-nowrap">
+                <span className={cn(
+                  'flex h-5 w-5 items-center justify-center rounded-full border text-[10px] font-bold',
+                  completed || active ? 'border-primary bg-primary text-primary-foreground' : 'border-border bg-card text-muted-foreground',
+                )}>
+                  {completed ? '✓' : index + 1}
+                </span>
+                <span className={cn('text-xs font-medium', active ? 'text-foreground' : 'text-muted-foreground')}>{step}</span>
+              </div>
+              {index < steps.length - 1 ? <div className={cn('mx-3 h-px flex-1', completed ? 'bg-primary' : 'bg-border')} /> : null}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 function extractAssignedBranchIds(user: Record<string, unknown> | null): string[] {
@@ -599,24 +627,24 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col gap-4 border-b pb-4 lg:flex-row lg:items-end lg:justify-between">
-        <div>
-          <h1 className="flex items-center gap-2 text-2xl font-bold tracking-tight">
-            <Scale className="h-5 w-5 text-primary" />
-            Weighment Entry
-          </h1>
-        </div>
-      </div>
+    <div className="space-y-5">
+      <ERPPageHeader
+        title={<span className="flex items-center gap-2"><Scale className="h-5 w-5 text-primary" />Weighment Entry</span>}
+      />
+      <WeighmentStepper isSecondFlow={isSecondFlow} />
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.45fr)_minmax(360px,0.95fr)]">
-        <form onSubmit={handleSubmit} className="space-y-6">
-          <Card className="overflow-hidden">
+      <form onSubmit={handleSubmit} className="grid gap-5 xl:grid-cols-[minmax(0,1.15fr)_minmax(360px,0.85fr)]">
+          <Card className="overflow-hidden border-border/70 shadow-sm">
+            <CardHeader className="flex-row items-center justify-between border-b bg-muted/15 px-4 py-3">
+              <CardTitle className="text-sm font-semibold">Live Weight</CardTitle>
+              <Badge className={cn(
+                'border-0 hover:bg-transparent',
+                effectiveBranchId ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700',
+              )}>{effectiveBranchId ? 'Indicator connected' : 'Select branch'}</Badge>
+            </CardHeader>
             <CardContent className="space-y-3 p-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <CardTitle className="text-sm font-bold uppercase tracking-widest">
-                  {isSecondFlow ? 'Capture Tare Weight' : 'Capture Gross Weight'}
-                </CardTitle>
+                <p className="text-xs font-medium text-muted-foreground">{isSecondFlow ? 'Capture tare weight' : 'Capture gross weight'}</p>
                 <button
                   type="button"
                   onClick={() => {
@@ -675,17 +703,16 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
             </CardContent>
           </Card>
 
-          <Card>
+          <CameraPanel branchId={effectiveBranchId} snapshotVersion={snapshotVersion} onRefresh={refreshCameraPreviews} />
+
+          <Card className="overflow-hidden border-border/70 shadow-sm xl:col-span-2">
             <CardHeader className="border-b bg-muted/20 py-3">
               <CardTitle className="text-sm font-bold uppercase tracking-widest">
                 Vehicle and Transaction Details
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4 p-5">
-              <div className={cn(
-                'grid gap-4',
-                shouldShowBranchSelector ? 'md:grid-cols-2' : 'md:grid-cols-1',
-              )}>
+              <div className={cn('grid gap-3', shouldShowBranchSelector ? 'md:grid-cols-2 xl:grid-cols-4' : 'md:grid-cols-2 xl:grid-cols-4')}>
                 <div className="space-y-1.5">
                   <Label>Operation Type</Label>
                   <Select value={operationTypeId} onValueChange={setOperationTypeId}>
@@ -798,7 +825,7 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
                   ) : null}
                 </>
               ) : (
-                <div className="grid gap-4 md:grid-cols-2">
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                   <div className="space-y-1.5">
                     <div className="flex items-center justify-between gap-3">
                       <Label>Customer</Label>
@@ -907,7 +934,7 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
             </CardContent>
           </Card>
 
-          <div className="flex items-center justify-end gap-3">
+          <div className="flex items-center justify-end gap-3 xl:col-span-2">
             <Button type="button" variant="outline" onClick={() => setLocation('/weighbridge/transactions')}>
               Close
             </Button>
@@ -919,12 +946,7 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
                   : 'Submit First Weight'}
             </Button>
           </div>
-        </form>
-
-        <div className="space-y-6">
-          <CameraPanel branchId={effectiveBranchId} snapshotVersion={snapshotVersion} onRefresh={refreshCameraPreviews} />
-        </div>
-      </div>
+      </form>
 
       <Dialog open={customerOpen} onOpenChange={setCustomerOpen}>
         <DialogContent className="max-w-md">

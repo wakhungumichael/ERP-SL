@@ -10,7 +10,7 @@ export function ERPFilterBar({
   toolsSlot?: ReactNode;
 }) {
   return (
-    <div className="rounded-lg border bg-card shadow-sm">
+    <div className="rounded-xl border border-border/80 bg-card shadow-sm">
       <div className="flex flex-wrap items-center gap-3 p-3">
         <div className="flex min-w-[220px] flex-1 items-center gap-2">
           {searchSlot}

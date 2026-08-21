@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowUpRight, CheckCircle2, MessageSquare, Search } from 'lucide-react';
 
@@ -23,13 +23,18 @@ type TicketRow = {
   priority: string;
   status: string;
   assigned_to_name?: string;
+  source_channel?: string;
   timeline?: Array<{
     kind: string;
     author_name?: string;
     author_type?: string;
     summary?: string;
     message?: string;
+    direction?: string;
+    channel?: string;
+    delivery_status?: string;
     payload?: Record<string, unknown>;
+    metadata?: Record<string, unknown>;
   }>;
 };
 
@@ -53,6 +58,7 @@ export default function TicketingQueue() {
   const [statusFilter, setStatusFilter] = useState<'all' | 'new' | 'open' | 'pending' | 'resolved' | 'closed'>('all');
   const [priorityFilter, setPriorityFilter] = useState<'all' | 'low' | 'normal' | 'high' | 'urgent'>('all');
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [replyChannel, setReplyChannel] = useState<'portal' | 'email' | 'whatsapp'>('portal');
 
   const { data, isLoading } = useQuery<TicketRow[]>({
     queryKey: ['ticketing-queue', search, statusFilter, priorityFilter],
@@ -80,6 +86,21 @@ export default function TicketingQueue() {
     () => tickets.find((ticket) => ticket.id === selectedId) ?? null,
     [selectedId, tickets],
   );
+
+  const availableReplyChannels = useMemo(() => {
+    if (!selectedTicket) return ['portal'] as Array<'portal' | 'email' | 'whatsapp'>;
+    const channels: Array<'portal' | 'email' | 'whatsapp'> = ['portal', 'email'];
+    if (selectedTicket.source_channel === 'whatsapp' || selectedTicket.requester_email?.endsWith('@whatsapp.local')) {
+      channels.push('whatsapp');
+    }
+    return channels;
+  }, [selectedTicket]);
+
+  useEffect(() => {
+    if (!availableReplyChannels.includes(replyChannel)) {
+      setReplyChannel(availableReplyChannels[0]);
+    }
+  }, [availableReplyChannels, replyChannel]);
 
   const columns: ERPTableColumn<TicketRow>[] = [
     {
@@ -124,13 +145,14 @@ export default function TicketingQueue() {
       if (!selectedTicket) return null;
       const res = await authFetch(token!, `/api/ticketing/tickets/${selectedTicket.id}/reply/`, {
         method: 'POST',
-        body: JSON.stringify({ message: reply, is_public: true }),
+        body: JSON.stringify({ message: reply, is_public: true, reply_channel: replyChannel }),
       });
       if (!res.ok) throw new Error('Failed to send reply');
       return res.json();
     },
     onSuccess: () => {
       setReply('');
+      setReplyChannel('portal');
       qc.invalidateQueries({ queryKey: ['ticketing-queue'] });
     },
   });
@@ -261,6 +283,7 @@ export default function TicketingQueue() {
             <div className="flex flex-wrap gap-2">
               <Badge>{selectedTicket.priority}</Badge>
               <Badge variant="outline">{selectedTicket.status}</Badge>
+              <Badge variant="secondary">{selectedTicket.source_channel || 'portal'}</Badge>
               {selectedTicket.assigned_to_name ? <Badge variant="secondary">{selectedTicket.assigned_to_name}</Badge> : null}
             </div>
             <div className="rounded-lg border p-4 text-sm">
@@ -270,7 +293,12 @@ export default function TicketingQueue() {
             <div className="space-y-3">
               {(selectedTicket.timeline ?? []).map((item, index) => (
                 <div key={`${item.kind}-${index}`} className="rounded-lg border p-3 text-sm">
-                  <div className="font-medium">{item.kind === 'message' ? (item.author_name || item.author_type) : item.summary}</div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="font-medium">{item.kind === 'message' ? (item.author_name || item.author_type) : item.summary}</div>
+                    {item.kind === 'message' ? <Badge variant="outline">{item.channel || 'portal'}</Badge> : null}
+                    {item.kind === 'message' && item.direction ? <Badge variant="secondary">{item.direction}</Badge> : null}
+                    {item.kind === 'message' && item.delivery_status ? <Badge>{item.delivery_status}</Badge> : null}
+                  </div>
                   <div className="mt-1 text-muted-foreground">
                     {item.kind === 'message' ? item.message : JSON.stringify(item.payload ?? {})}
                   </div>
@@ -279,6 +307,19 @@ export default function TicketingQueue() {
             </div>
             <div className="space-y-2">
               <div className="text-sm font-medium">Public Reply</div>
+              <div className="grid gap-3 md:grid-cols-[220px_1fr]">
+                <div className="space-y-2">
+                  <div className="text-xs font-medium text-muted-foreground">Send through</div>
+                  <Select value={replyChannel} onValueChange={(value: 'portal' | 'email' | 'whatsapp') => setReplyChannel(value)}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {availableReplyChannels.map((channel) => (
+                        <SelectItem key={channel} value={channel}>{channel}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
               <Textarea value={reply} onChange={(e) => setReply(e.target.value)} placeholder="Write a response to the requester" rows={6} />
             </div>
           </div>

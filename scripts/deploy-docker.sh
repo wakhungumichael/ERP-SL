@@ -16,4 +16,8 @@ docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" pull || true
 docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" build
 docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d
 
+docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" exec -T backend python manage.py migrate
+docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" exec -T backend python manage.py seed_platform
+docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" exec -T backend python manage.py bootstrap_saas_owner
+
 echo "Docker deployment completed."

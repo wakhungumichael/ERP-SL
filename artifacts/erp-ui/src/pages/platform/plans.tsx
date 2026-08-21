@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
+import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
@@ -49,7 +50,25 @@ const EMPTY_PLAN = {
   currency: 'KES', trial_days: '14',
   max_users: '10', max_branches: '2', max_devices: '2', max_monthly_transactions: '5000',
   is_active: true,
+  features_text: '',
 };
+
+function planFeaturesToLines(features: unknown) {
+  if (Array.isArray(features)) {
+    return features.filter((value): value is string => typeof value === 'string' && value.trim().length > 0).join('\n');
+  }
+  if (features && typeof features === 'object') {
+    return Object.values(features).filter((value): value is string => typeof value === 'string' && value.trim().length > 0).join('\n');
+  }
+  return '';
+}
+
+function parseFeatureLines(value: string) {
+  return value
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
 
 function PlanDialog({ open, onClose, plan }: { open: boolean; onClose: () => void; plan?: any }) {
   const { token } = useAuth();
@@ -62,10 +81,12 @@ function PlanDialog({ open, onClose, plan }: { open: boolean; onClose: () => voi
     max_users: String(plan.max_users), max_branches: String(plan.max_branches),
     max_devices: String(plan.max_devices), max_monthly_transactions: String(plan.max_monthly_transactions),
     is_active: plan.is_active,
+    features_text: planFeaturesToLines(plan.features),
   } : { ...EMPTY_PLAN });
 
   const mutation = useMutation({
     mutationFn: () => {
+      const featureLines = parseFeatureLines(form.features_text);
       const payload = {
         ...form,
         price: Number(form.price),
@@ -74,7 +95,9 @@ function PlanDialog({ open, onClose, plan }: { open: boolean; onClose: () => voi
         max_branches: Number(form.max_branches),
         max_devices: Number(form.max_devices),
         max_monthly_transactions: Number(form.max_monthly_transactions),
+        features: featureLines,
       };
+      delete (payload as any).features_text;
       return isEdit
         ? api(token!, `/plans/${plan.id}/`, 'PATCH', payload)
         : api(token!, '/plans/', 'POST', payload);
@@ -156,6 +179,18 @@ function PlanDialog({ open, onClose, plan }: { open: boolean; onClose: () => voi
                 <Input value={form.max_monthly_transactions} onChange={f('max_monthly_transactions')} type="number" min="1" />
               </div>
             </div>
+          </div>
+          <div className="border-t pt-3 space-y-1.5">
+            <Label>Plan Benefits</Label>
+            <Textarea
+              value={form.features_text}
+              onChange={(e) => setForm(p => ({ ...p, features_text: e.target.value }))}
+              rows={6}
+              placeholder={'One benefit per line\nOrder-to-cash workflows in one system\nRole-based approvals and controls\nLive reporting across departments'}
+            />
+            <p className="text-xs text-muted-foreground">
+              These lines appear in the public pricing cards and plan details modal.
+            </p>
           </div>
           <div className="flex items-center gap-3">
             <Switch checked={form.is_active} onCheckedChange={v => setForm(p => ({ ...p, is_active: v }))} />
@@ -368,6 +403,22 @@ export default function Plans() {
                 </div>
               </CardHeader>
               <CardContent className="space-y-3 flex-1">
+                {(() => {
+                  const featureLines = parseFeatureLines(planFeaturesToLines(p.features));
+                  return featureLines.length > 0 ? (
+                    <div className="rounded-lg bg-muted/30 p-3">
+                      <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Plan Benefits</p>
+                      <div className="mt-2 space-y-1.5">
+                        {featureLines.slice(0, 3).map((line) => (
+                          <p key={line} className="text-xs text-muted-foreground">{line}</p>
+                        ))}
+                        {featureLines.length > 3 ? (
+                          <p className="text-[10px] font-medium text-muted-foreground">+{featureLines.length - 3} more</p>
+                        ) : null}
+                      </div>
+                    </div>
+                  ) : null;
+                })()}
                 <div>
                   <p className="text-2xl font-black">
                     {p.currency} {Number(p.price).toLocaleString()}

@@ -24,7 +24,7 @@ const TESTIMONIALS = [
 export default function MarketingStoriesPage({ tenantCode }: { tenantCode?: string }) {
   const site = useMarketingSite(tenantCode);
   const brand = site.branding.primary_color ?? '#E85D26';
-  const loginHref = tenantCode ? `/login/${tenantCode}` : '/login';
+  const startNowHref = tenantCode ? `/login/${tenantCode}?intent=register` : '/login?intent=register';
 
   return (
     <MarketingSiteShell site={site} tenantCode={tenantCode} currentPage="stories">
@@ -79,7 +79,7 @@ export default function MarketingStoriesPage({ tenantCode }: { tenantCode?: stri
           </p>
           <div className="mt-7">
             <Link
-              href={loginHref}
+              href={startNowHref}
               className="inline-flex items-center rounded-full px-6 py-3.5 text-sm font-semibold text-white transition hover:opacity-90"
               style={{ backgroundColor: brand }}
             >

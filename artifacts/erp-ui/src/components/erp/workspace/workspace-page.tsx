@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { ERPPageHeader } from '@/components/erp/workspace/workspace-ui';
 
 export function ERPWorkspacePage({
   title,
@@ -12,14 +13,8 @@ export function ERPWorkspacePage({
   children: ReactNode;
 }) {
   return (
-    <div className="space-y-6 p-6">
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-semibold tracking-tight">{title}</h1>
-          {description ? <p className="mt-1 text-sm text-muted-foreground">{description}</p> : null}
-        </div>
-        {actions ? <div className="flex flex-wrap gap-2">{actions}</div> : null}
-      </div>
+    <div className="space-y-5">
+      <ERPPageHeader title={title} description={description} actions={actions} />
       {children}
     </div>
   );
