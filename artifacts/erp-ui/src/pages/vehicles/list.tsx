@@ -455,19 +455,21 @@ export default function VehiclesList() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-start justify-between gap-4 border-b pb-4">
+      <div className="flex items-start justify-between gap-4 border-b pb-5">
         <div>
+          <p className="mb-1 text-[10px] font-bold uppercase tracking-[0.18em] text-primary">Weighbridge</p>
           <h1 className="text-2xl font-bold tracking-tight">Fleet Registry</h1>
+          <p className="mt-1 text-sm text-muted-foreground">Manage registered vehicles, customer ownership, and fleet classification.</p>
         </div>
         <CreateVehicleDialog />
       </div>
 
-      <div className="rounded-lg border bg-card shadow-sm">
-        <div className="flex flex-wrap items-center gap-0 divide-x divide-border">
+      <div className="rounded-xl border-2 border-primary/40 bg-card p-1 shadow-sm">
+        <div className="flex flex-wrap items-center gap-0 divide-y divide-border sm:divide-x sm:divide-y-0">
           <div className="flex min-w-[180px] items-center px-3 py-2">
             <Select value={customerId} onValueChange={(value) => setCustomerId(value === '__all__' ? '' : value)}>
               <SelectTrigger className="h-8 border-0 text-xs font-medium shadow-none focus:ring-0">
-                <SelectValue placeholder="All Customers" />
+                <SelectValue placeholder="Client company" />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="__all__" className="text-xs">All Customers</SelectItem>
@@ -508,7 +510,7 @@ export default function VehiclesList() {
           <div className="flex min-w-[220px] flex-1 items-center gap-2 px-3 py-2">
             <Search className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
             <input
-              placeholder="Search plate, customer, or type…"
+              placeholder="Search plate, customer, or type..."
               value={search}
               onChange={(event) => setSearch(event.target.value)}
               className="flex-1 bg-transparent font-mono text-sm outline-none placeholder:text-muted-foreground/60"
@@ -545,8 +547,12 @@ export default function VehiclesList() {
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-card px-4 py-3">
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border-2 border-primary/40 bg-card px-3 py-2 shadow-sm">
         <div className="flex flex-wrap items-center gap-3">
+          {search && <Badge variant="secondary" className="gap-1.5 rounded-md px-2 py-1 text-xs">Search: {search}<button type="button" onClick={() => setSearch('')} aria-label="Clear search"><X className="h-3 w-3" /></button></Badge>}
+          {customerId && <Badge variant="secondary" className="gap-1.5 rounded-md px-2 py-1 text-xs">Client: {(customersRaw as any[]).find((customer) => String(customer.id) === customerId)?.name ?? customerId}<button type="button" onClick={() => setCustomerId('')} aria-label="Clear client filter"><X className="h-3 w-3" /></button></Badge>}
+          {vehicleTypeId && <Badge variant="secondary" className="gap-1.5 rounded-md px-2 py-1 text-xs">Type: {(vehicleTypesRaw as any[]).find((vehicleType) => String(vehicleType.id) === vehicleTypeId)?.name ?? vehicleTypeId}<button type="button" onClick={() => setVehicleTypeId('')} aria-label="Clear vehicle type filter"><X className="h-3 w-3" /></button></Badge>}
+          {statusFilter && <Badge variant="secondary" className="gap-1.5 rounded-md px-2 py-1 text-xs">Status: {statusFilter === 'true' ? 'Active' : 'Inactive'}<button type="button" onClick={() => setStatusFilter('')} aria-label="Clear status filter"><X className="h-3 w-3" /></button></Badge>}
           <div className="text-xs font-medium text-muted-foreground">
             {selectedIds.length > 0 ? `${selectedIds.length} selected on this page` : 'Select rows to run bulk actions'}
           </div>
@@ -589,7 +595,7 @@ export default function VehiclesList() {
         </div>
       </div>
 
-      <div className="overflow-hidden rounded-lg border bg-card shadow-sm">
+      <div className="overflow-hidden rounded-xl border bg-card shadow-sm">
         <div className="overflow-x-auto">
           <Table className="min-w-max">
             <TableHeader>
@@ -707,26 +713,26 @@ function CreateVehicleDialog() {
       <DialogTrigger asChild>
         <Button className="gap-2 font-bold uppercase tracking-wide"><Plus className="h-4 w-4" /> Register Asset</Button>
       </DialogTrigger>
-      <DialogContent className="sm:max-w-[425px]">
-        <DialogHeader>
-          <DialogTitle className="font-bold uppercase tracking-widest">New Fleet Asset</DialogTitle>
+      <DialogContent className="max-h-[calc(100dvh-2rem)] rounded-xl border-2 border-primary/30 p-5 sm:max-w-[440px] sm:p-6">
+        <DialogHeader className="border-b pb-4">
+          <DialogTitle className="text-base font-bold uppercase tracking-[0.14em]">New Fleet Asset</DialogTitle>
         </DialogHeader>
-        <form onSubmit={handleSubmit} className="space-y-6 pt-4">
-          <div className="grid gap-4">
+        <form onSubmit={handleSubmit} className="space-y-5 pt-1">
+          <div className="grid gap-5">
             <div className="space-y-2">
-              <label className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Registration Plate</label>
+              <label className="text-[10px] font-bold uppercase tracking-[0.16em] text-muted-foreground">Registration Plate</label>
               <Input
                 value={formData.number_plate}
                 onChange={(event) => setFormData({ ...formData, number_plate: event.target.value.toUpperCase() })}
                 required
-                className="border-2 text-lg font-black uppercase tracking-widest font-mono focus-visible:ring-primary"
+                className="h-11 border-2 text-base font-black uppercase tracking-widest font-mono focus-visible:ring-primary"
                 placeholder="ABC-1234"
               />
             </div>
             <div className="space-y-2">
-              <label className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Customer</label>
+              <label className="text-[10px] font-bold uppercase tracking-[0.16em] text-muted-foreground">Customer</label>
               <Select value={formData.customer} onValueChange={(value) => setFormData({ ...formData, customer: value })}>
-                <SelectTrigger><SelectValue placeholder="Select customer…" /></SelectTrigger>
+                <SelectTrigger className="h-11"><SelectValue placeholder="Select customer..." /></SelectTrigger>
                 <SelectContent>
                   {(customers as any[]).map((customer: any) => (
                     <SelectItem key={customer.id} value={String(customer.id)}>{customer.name}</SelectItem>
@@ -735,9 +741,9 @@ function CreateVehicleDialog() {
               </Select>
             </div>
             <div className="space-y-2">
-              <label className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Vehicle Type</label>
+              <label className="text-[10px] font-bold uppercase tracking-[0.16em] text-muted-foreground">Vehicle Type</label>
               <Select value={formData.vehicle_type} onValueChange={(value) => setFormData({ ...formData, vehicle_type: value })}>
-                <SelectTrigger><SelectValue placeholder="Select vehicle type…" /></SelectTrigger>
+                <SelectTrigger className="h-11"><SelectValue placeholder="Select vehicle type..." /></SelectTrigger>
                 <SelectContent>
                   {(vehicleTypes as any[]).map((vehicleType: any) => (
                     <SelectItem key={vehicleType.id} value={String(vehicleType.id)}>{vehicleType.name}</SelectItem>
@@ -746,7 +752,7 @@ function CreateVehicleDialog() {
               </Select>
             </div>
           </div>
-          <Button type="submit" className="w-full font-bold uppercase tracking-widest" disabled={!formData.customer || !formData.vehicle_type}>
+          <Button type="submit" className="h-11 w-full font-bold uppercase tracking-[0.12em]" disabled={!formData.customer || !formData.vehicle_type}>
             Commit Registration
           </Button>
         </form>

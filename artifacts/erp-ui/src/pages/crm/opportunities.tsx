@@ -11,7 +11,6 @@ import { Card, CardContent } from '@/components/ui/card';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Checkbox } from '@/components/ui/checkbox';
 import { useToast } from '@/hooks/use-toast';
-import { ProcessFlow } from '@/components/workflow/process-flow';
 import {
   ArrowRight,
   Boxes,
@@ -59,6 +58,12 @@ type Opportunity = {
   value?: string | number | null;
   currency?: string;
   expected_close_date?: string | null;
+  probability?: number | null;
+  loss_reason?: string;
+  last_activity?: string | null;
+  next_action?: string;
+  next_action_date?: string | null;
+  attention_status?: string;
   assigned_to?: number | null;
   assigned_to_name?: string;
   products?: number[];
@@ -143,6 +148,8 @@ function ProductSelectionField({
   selectedIds: string[];
   onChange: (next: string[]) => void;
 }) {
+  const [search, setSearch] = useState('');
+  const visibleProducts = products.filter((product) => `${product.name} ${product.code ?? ''}`.toLowerCase().includes(search.toLowerCase()));
   const toggle = (value: string) => {
     onChange(
       selectedIds.includes(value)
@@ -165,7 +172,8 @@ function ProductSelectionField({
         }) : <span className="text-sm text-muted-foreground">No products or services linked yet.</span>}
       </div>
       <div className="max-h-56 space-y-2 overflow-y-auto rounded-xl border p-3">
-        {products.length ? products.map((product) => {
+        <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search products or services…" className="h-8" />
+        {visibleProducts.length ? visibleProducts.map((product) => {
           const productId = String(product.id);
           const selected = selectedIds.includes(productId);
           return (
@@ -247,114 +255,21 @@ export default function OpportunitiesPage() {
         <AddOpportunityDialog />
       </div>
 
-      <section className="rounded-3xl border bg-card p-6 shadow-sm">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <div className="text-xs font-bold uppercase tracking-[0.22em] text-muted-foreground">
-              Deal Overview
-            </div>
-            <h2 className="mt-2 text-2xl font-bold tracking-tight">See what each deal needs next.</h2>
-            <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
-              Use the board or list to check deal status, spot delays, and move sales into quotes or orders.
-            </p>
-          </div>
-          <div className="min-w-[340px] space-y-3">
-            <ToggleGroup
-              type="single"
-              value={viewMode}
-              onValueChange={(value) => value && setViewMode(value as 'board' | 'list')}
-              className="justify-start rounded-xl border bg-muted/30 p-1"
-            >
-              <ToggleGroupItem value="board" className="gap-2">
-                <KanbanSquare className="h-4 w-4" />
-                Board
-              </ToggleGroupItem>
-              <ToggleGroupItem value="list" className="gap-2">
-                <Rows3 className="h-4 w-4" />
-                List
-              </ToggleGroupItem>
-            </ToggleGroup>
-            <div className="grid gap-3 sm:grid-cols-3">
-              <div className="rounded-2xl border bg-muted/20 p-4">
-                <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-muted-foreground">Open Deal Value</div>
-                <div className="mt-2 text-2xl font-semibold">{formatMoney(pipelineValue)}</div>
-                <div className="mt-1 text-xs text-muted-foreground">Value of deals still in progress</div>
-              </div>
-              <div className="rounded-2xl border bg-muted/20 p-4">
-                <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-muted-foreground">Won Deals</div>
-                <div className="mt-2 text-2xl font-semibold">{wonCount}</div>
-                <div className="mt-1 text-xs text-muted-foreground">Deals already marked as won</div>
-              </div>
-              <div className="rounded-2xl border bg-muted/20 p-4">
-                <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-muted-foreground">Proposal or Negotiation</div>
-                <div className="mt-2 text-2xl font-semibold">{atRiskCount}</div>
-                <div className="mt-1 text-xs text-muted-foreground">Deals that may need faster follow-up</div>
-              </div>
-            </div>
-          </div>
-        </div>
+      <section className="grid grid-cols-2 gap-3 border-y py-3 md:grid-cols-4">
+        {[['Open Pipeline', formatMoney(pipelineValue)], ['Closing This Month', opportunities.filter((item: Opportunity) => item.expected_close_date?.slice(0, 7) === new Date().toISOString().slice(0, 7) && !['won', 'lost'].includes(item.stage)).length], ['Won Deals', wonCount], ['Deals at Risk', atRiskCount]].map(([label, value]) => <div key={String(label)} className="border-l px-3 first:border-l-0"><div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{label}</div><div className="mt-1 text-lg font-semibold">{value}</div></div>)}
       </section>
 
-      <ProcessFlow
-        title="Sales Flow"
-        description="Move a deal from first contact to quote, order, delivery, and invoice without losing context."
-        stages={[
-          { label: 'Lead', active: true },
-          { label: 'Proposal', active: !!pipeline.find((s: any) => s.stage === 'proposal') },
-          { label: 'Negotiation', active: !!pipeline.find((s: any) => s.stage === 'negotiation') },
-          { label: 'Won', active: !!pipeline.find((s: any) => s.stage === 'won') },
-          { label: 'Sales Order' },
-          { label: 'Fulfillment' },
-          { label: 'Invoice' },
-        ]}
-        actions={[
-          {
-            label: 'Create Quote',
-            href: '/sales/estimates',
-            icon: <TrendingUp className="h-4 w-4 text-violet-600" />,
-            helper: 'Move proposal and negotiation deals into formal quotes.',
-            tone: 'default',
-          },
-          {
-            label: 'Create Sales Order',
-            href: '/sales/orders',
-            icon: <ShoppingCart className="h-4 w-4 text-sky-600" />,
-            helper: 'Turn won deals into confirmed customer orders.',
-            tone: 'success',
-          },
-          {
-            label: 'View Fulfillment',
-            href: '/inventory/overview',
-            icon: <PackageCheck className="h-4 w-4 text-emerald-600" />,
-            helper: 'Check stock, reservations, and dispatch progress.',
-            tone: 'warning',
-          },
-        ]}
-      />
-
-      {pipeline.length > 0 && (
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-6">
-          {pipeline.map((stage: any) => (
-            <button
-              key={stage.stage}
-              onClick={() => setStageFilter(stageFilter === stage.stage ? '' : stage.stage)}
-              className={`rounded-lg border bg-card p-3 text-left shadow-sm transition-all hover:shadow-md ${stageFilter === stage.stage ? 'ring-2 ring-primary ring-offset-1' : ''}`}
-            >
-              <div className={`mb-2 text-[10px] font-bold uppercase tracking-wide ${STAGE_STYLES[stage.stage]?.tone ?? 'text-muted-foreground'}`}>{stage.label}</div>
-              <div className="text-xl font-black">{stage.count}</div>
-              {stage.total_value > 0 && <div className="mt-0.5 text-[10px] font-mono text-muted-foreground">KES {stage.total_value.toLocaleString()}</div>}
-            </button>
-          ))}
-        </div>
-      )}
-
-      <div className="flex flex-wrap items-center gap-3 rounded-lg border bg-card p-3 shadow-sm">
+      <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-card p-2">
         <Input
           placeholder="Search deals, companies, or contacts…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="h-8 flex-1 border-0 text-sm shadow-none focus-visible:ring-0"
+          className="h-8 min-w-[220px] flex-1 border-0 text-sm shadow-none focus-visible:ring-0"
         />
+        <ToggleGroup type="single" value={viewMode} onValueChange={(value) => value && setViewMode(value as 'board' | 'list')} className="rounded-md border p-0.5">
+          <ToggleGroupItem value="board" className="h-7 gap-1 px-2 text-xs"><KanbanSquare className="h-3.5 w-3.5" />Board</ToggleGroupItem>
+          <ToggleGroupItem value="list" className="h-7 gap-1 px-2 text-xs"><Rows3 className="h-3.5 w-3.5" />List</ToggleGroupItem>
+        </ToggleGroup>
         {stageFilter && (
           <button onClick={() => setStageFilter('')} className="text-xs font-medium text-primary hover:underline">
             Clear filter
@@ -378,11 +293,10 @@ export default function OpportunitiesPage() {
                 const style = STAGE_STYLES[stage.value];
                 return (
                   <div key={stage.value} className="w-[300px] shrink-0 rounded-2xl border bg-card shadow-sm">
-                    <div className="sticky top-0 z-10 rounded-t-2xl border-b bg-card p-4">
+                    <div className="sticky top-0 z-10 rounded-t-2xl border-b bg-card p-3">
                       <div className="flex items-start justify-between gap-3">
                         <div>
                           <div className="text-sm font-semibold">{style.label}</div>
-                          <div className="mt-1 text-xs text-muted-foreground">{style.helper}</div>
                         </div>
                         <div className="rounded-full bg-muted px-2.5 py-1 text-sm font-semibold">{items.length}</div>
                       </div>
@@ -393,7 +307,7 @@ export default function OpportunitiesPage() {
                         />
                       </div>
                     </div>
-                    <div className="min-h-[420px] space-y-3 p-4">
+                    <div className="min-h-[300px] space-y-2 p-2">
                       {items.length ? items.slice(0, 6).map((opportunity) => {
                         const nextStep = stageNextStep(opportunity.stage);
                         const closeInDays = daysToClose(opportunity.expected_close_date);
@@ -401,46 +315,23 @@ export default function OpportunitiesPage() {
                           <button
                             key={opportunity.id}
                             onClick={() => setSelectedOpportunity(opportunity)}
-                            className="w-full rounded-2xl border bg-background p-3 text-left transition-colors hover:bg-muted/20"
+                            className="w-full rounded-lg border bg-background p-3 text-left transition-colors hover:bg-muted/20"
                           >
                             <div className="flex items-start justify-between gap-3">
                               <div className="min-w-0">
                                 <div className="line-clamp-2 text-sm font-semibold">{opportunity.title}</div>
                               <div className="mt-1 text-xs text-muted-foreground">{opportunity.organisation_name || 'Unlinked company'}</div>
-                              {opportunity.product_summary?.length ? (
-                                <div className="mt-2 flex flex-wrap gap-1">
-                                  {opportunity.product_summary.slice(0, 2).map((product) => (
-                                    <span key={product.id} className="inline-flex rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">
-                                      {product.name}
-                                    </span>
-                                  ))}
-                                  {opportunity.product_summary.length > 2 ? (
-                                    <span className="inline-flex rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">
-                                      +{opportunity.product_summary.length - 2}
-                                    </span>
-                                  ) : null}
-                                </div>
-                              ) : null}
+                              {opportunity.attention_status && opportunity.attention_status !== 'healthy' ? <div className="text-[10px] font-semibold uppercase tracking-wide text-rose-600">{opportunity.attention_status.replace('_', ' ')}</div> : null}
                             </div>
                               <span className="text-[10px] font-mono text-muted-foreground">CRM-{opportunity.id}</span>
                             </div>
-                            <div className="mt-3 space-y-2">
-                              <div className="text-sm font-medium">{formatMoney(opportunity.value, opportunity.currency || 'KES')}</div>
-                              {opportunity.contact_name ? (
-                                <div className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
-                                  <UserRound className="h-3 w-3" />
-                                  {opportunity.contact_name}
-                                </div>
-                              ) : null}
-                              {closeInDays !== null ? (
-                                <div className={`inline-flex items-center gap-1 text-[11px] ${closeInDays < 0 ? 'text-rose-700' : closeInDays <= 7 ? 'text-amber-700' : 'text-muted-foreground'}`}>
-                                  {closeInDays <= 7 ? <AlertTriangle className="h-3 w-3" /> : <CalendarClock className="h-3 w-3" />}
-                                  {closeInDays < 0 ? `${Math.abs(closeInDays)}d overdue` : `${closeInDays}d left`}
-                                </div>
-                              ) : null}
+                            <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+                              <span className="font-medium">{formatMoney(opportunity.value, opportunity.currency || 'KES')}</span>
+                              <span className="text-muted-foreground">{opportunity.assigned_to_name || 'Unassigned'}</span>
+                              {closeInDays !== null ? <span className={`${closeInDays < 0 ? 'text-rose-700' : closeInDays <= 7 ? 'text-amber-700' : 'text-muted-foreground'}`}>{closeInDays < 0 ? `${Math.abs(closeInDays)}d overdue` : formatDate(opportunity.expected_close_date)}</span> : null}
                             </div>
-                            <div className="mt-4 flex items-center justify-between gap-2 border-t pt-3">
-                              <div className="text-[11px] text-muted-foreground">{opportunity.assigned_to_name || 'Unassigned'}</div>
+                            <div className="mt-2 flex items-center justify-between gap-2 border-t pt-2">
+                              <div className="text-[11px] text-muted-foreground">{opportunity.next_action || 'No next action'}</div>
                               <span className="inline-flex items-center gap-1 text-[11px] text-primary">
                                 {nextStep.icon}
                                 {nextStep.shortLabel}
@@ -462,7 +353,7 @@ export default function OpportunitiesPage() {
         </div>
       ) : null}
 
-      <div className="rounded-lg border bg-card shadow-sm overflow-hidden">
+      {viewMode === 'list' && <div className="rounded-lg border bg-card shadow-sm overflow-x-auto">
         <Table>
           <TableHeader>
             <TableRow className="bg-muted/50">
@@ -474,12 +365,15 @@ export default function OpportunitiesPage() {
               <TableHead className="text-right">Estimated Value</TableHead>
               <TableHead>Expected Close</TableHead>
               <TableHead>Owner</TableHead>
+              <TableHead>Last Activity</TableHead>
+              <TableHead>Next Action</TableHead>
+              <TableHead>Status</TableHead>
               <TableHead>Next Step</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {isLoading ? (
-              <TableRow><TableCell colSpan={9} className="py-12 text-center text-sm text-muted-foreground animate-pulse">Loading opportunities…</TableCell></TableRow>
+              <TableRow><TableCell colSpan={12} className="py-12 text-center text-sm text-muted-foreground animate-pulse">Loading opportunities…</TableCell></TableRow>
             ) : opportunities.length ? opportunities.map((opportunity: Opportunity) => {
               const style = STAGE_STYLES[opportunity.stage];
               const nextStep = stageNextStep(opportunity.stage);
@@ -520,6 +414,9 @@ export default function OpportunitiesPage() {
                   </TableCell>
                   <TableCell className="text-sm font-mono text-muted-foreground">{opportunity.expected_close_date || '—'}</TableCell>
                   <TableCell className="text-sm text-muted-foreground">{opportunity.assigned_to_name || '—'}</TableCell>
+                  <TableCell className="text-xs text-muted-foreground">{formatDate(opportunity.last_activity)}</TableCell>
+                  <TableCell className="max-w-[180px] text-xs text-muted-foreground">{opportunity.next_action || '—'}{opportunity.next_action_date ? <div>Due {formatDate(opportunity.next_action_date)}</div> : null}</TableCell>
+                  <TableCell className="text-xs font-medium capitalize">{opportunity.attention_status?.replace('_', ' ') || 'Healthy'}</TableCell>
                   <TableCell>
                     <Link href={nextStep.href} className="inline-flex items-center gap-2 text-sm font-medium text-primary hover:underline">
                       {nextStep.icon}
@@ -529,11 +426,11 @@ export default function OpportunitiesPage() {
                 </TableRow>
               );
             }) : (
-              <TableRow><TableCell colSpan={9} className="py-16 text-center text-sm text-muted-foreground">No opportunities found.</TableCell></TableRow>
+              <TableRow><TableCell colSpan={12} className="py-16 text-center text-sm text-muted-foreground">No opportunities found.</TableCell></TableRow>
             )}
           </TableBody>
         </Table>
-      </div>
+      </div>}
 
       <OpportunitySheet
         opportunity={selectedOpportunity}
@@ -603,6 +500,8 @@ function OpportunitySheet({
     value: '',
     currency: 'KES',
     expected_close_date: '',
+    probability: '',
+    loss_reason: '',
     notes: '',
   });
 
@@ -617,6 +516,8 @@ function OpportunitySheet({
       value: opportunity.value != null ? String(opportunity.value) : '',
       currency: opportunity.currency || 'KES',
       expected_close_date: opportunity.expected_close_date || '',
+      probability: opportunity.probability != null ? String(opportunity.probability) : '',
+      loss_reason: opportunity.loss_reason || '',
       notes: opportunity.notes || '',
     });
   }, [opportunity]);
@@ -640,6 +541,11 @@ function OpportunitySheet({
     enabled: open,
   });
   const people = Array.isArray(peopleData) ? peopleData : peopleData?.results ?? [];
+  const { data: history = [] } = useQuery({
+    queryKey: ['crm-opportunity-history', opportunity?.id],
+    queryFn: () => API(`/opportunities/${opportunity?.id}/history/`).then((response) => response.json()),
+    enabled: open && !!opportunity,
+  });
 
   const save = useMutation({
     mutationFn: () => {
@@ -650,12 +556,14 @@ function OpportunitySheet({
       body.products = (body.products || []).map((productId: string) => parseInt(productId, 10));
       if (!body.value) body.value = null;
       if (!body.expected_close_date) body.expected_close_date = null;
+      if (body.probability === '') body.probability = null; else body.probability = Number(body.probability);
       return API(`/opportunities/${opportunity.id}/`, {
         method: 'PATCH',
         body: JSON.stringify(body),
       }).then(async (r) => {
-        if (!r.ok) throw new Error('Could not update opportunity');
-        return r.json();
+        const payload = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(payload?.error || payload?.detail || payload?.loss_reason?.[0] || 'Could not update opportunity');
+        return payload;
       });
     },
     onSuccess: (updated) => {
@@ -672,6 +580,8 @@ function OpportunitySheet({
         value: updated.value != null ? String(updated.value) : '',
         currency: updated.currency || 'KES',
         expected_close_date: updated.expected_close_date || '',
+        probability: updated.probability != null ? String(updated.probability) : '',
+        loss_reason: updated.loss_reason || '',
         notes: updated.notes || '',
       });
     },
@@ -841,6 +751,10 @@ function OpportunitySheet({
                 <label className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Expected Close Date</label>
                 <Input type="date" value={form.expected_close_date} onChange={(e) => setForm((prev) => ({ ...prev, expected_close_date: e.target.value }))} className="font-mono text-sm" />
               </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-1.5"><label className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Win Probability (%)</label><Input type="number" min={0} max={100} value={form.probability} onChange={(e) => setForm((prev) => ({ ...prev, probability: e.target.value }))} /></div>
+                {form.stage === 'lost' ? <div className="space-y-1.5"><label className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Loss Reason *</label><Input value={form.loss_reason} onChange={(e) => setForm((prev) => ({ ...prev, loss_reason: e.target.value }))} /></div> : null}
+              </div>
 
               <div className="space-y-1.5">
                 <label className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Notes</label>
@@ -851,6 +765,7 @@ function OpportunitySheet({
                   placeholder="Add notes, blockers, customer feedback, or next actions..."
                 />
               </div>
+              <div className="space-y-2 border-t pt-4"><div className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Change History</div>{history.length ? history.slice(0, 8).map((item: any) => <div key={item.id} className="grid grid-cols-[120px_1fr_1fr] gap-3 border-b py-2 text-xs"><span className="text-muted-foreground">{new Date(item.changed_at).toLocaleString()}</span><span>{item.change_type} · {item.changed_by__first_name || item.changed_by__username || 'System'}</span><span>{item.old_value || '—'} → {item.new_value || '—'}</span></div>) : <div className="text-sm text-muted-foreground">No changes recorded yet.</div>}</div>
 
               <div className="flex flex-wrap gap-3">
                 <Button onClick={() => save.mutate()} disabled={save.isPending || !form.title} className="font-bold uppercase tracking-wide">
@@ -963,6 +878,8 @@ function AddOpportunityDialog() {
     value: '',
     currency: 'KES',
     expected_close_date: '',
+    probability: '',
+    loss_reason: '',
     notes: '',
   });
 
@@ -996,12 +913,14 @@ function AddOpportunityDialog() {
       body.products = (body.products || []).map((productId: string) => parseInt(productId, 10));
       if (!body.value) body.value = null;
       if (!body.expected_close_date) body.expected_close_date = null;
+      if (body.probability === '') body.probability = null; else body.probability = Number(body.probability);
       return API('/opportunities/', {
         method: 'POST',
         body: JSON.stringify(body),
       }).then(async (r) => {
-        if (!r.ok) throw new Error('Could not create opportunity');
-        return r.json();
+        const payload = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(payload?.error || payload?.detail || payload?.loss_reason?.[0] || 'Could not create opportunity');
+        return payload;
       });
     },
     onSuccess: () => {
@@ -1019,10 +938,12 @@ function AddOpportunityDialog() {
         value: '',
         currency: 'KES',
         expected_close_date: '',
+        probability: '',
+        loss_reason: '',
         notes: '',
       });
     },
-    onError: () => toast({ title: 'Could not save', variant: 'destructive' }),
+    onError: (error: Error) => toast({ title: 'Could not save opportunity', description: error.message, variant: 'destructive' }),
   });
 
   return (
@@ -1053,6 +974,7 @@ function AddOpportunityDialog() {
               </Select>
             </div>
           </div>
+          <div className="grid gap-4 md:grid-cols-2"><div className="space-y-1.5"><label className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Win Probability (%)</label><Input type="number" min={0} max={100} value={form.probability} onChange={(e) => setForm((prev) => ({ ...prev, probability: e.target.value }))} /></div>{form.stage === 'lost' ? <div className="space-y-1.5"><label className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Loss Reason *</label><Input value={form.loss_reason} onChange={(e) => setForm((prev) => ({ ...prev, loss_reason: e.target.value }))} /></div> : null}</div>
           <div className="space-y-1.5">
             <label className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Products & Services</label>
             <ProductSelectionField

@@ -14,8 +14,9 @@ import uuid
 
 from datetime import timedelta
 
-from django.db.models import Q, Count, Sum
+from django.db.models import Q, Count, Sum, Prefetch
 from django.utils import timezone
+from datetime import date
 from rest_framework import serializers, viewsets, filters
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -27,8 +28,9 @@ from Platform_API.modules.mixins import (
     apply_tenant_filter as _apply_tenant_filter,
     resolve_user_tenant as _resolve_user_tenant,
     tenant_or_403 as _tenant_or_403,
+    user_belongs_to_tenant as _user_belongs_to_tenant,
 )
-from SL_CRM.models import Organisation, Contact, Supplier, Lead, Activity
+from SL_CRM.models import Organisation, Contact, Supplier, Lead, Activity, OpportunityHistory
 from SL_Sales.models import Estimate, EstimateLineItem, Product, SalesOrder, SalesOrderLineItem
 from SL_Weighbridge.models import Customer
 
@@ -38,15 +40,16 @@ from SL_Weighbridge.models import Customer
 class OrganisationSerializer(serializers.ModelSerializer):
     contact_count = serializers.SerializerMethodField()
     open_leads    = serializers.SerializerMethodField()
+    assigned_to_name = serializers.ReadOnlyField()
 
     class Meta:
         model  = Organisation
         fields = [
             "id", "name", "type", "industry", "website",
             "email", "phone", "address", "notes",
-            "contact_count", "open_leads", "created_at", "updated_at",
+            "assigned_to", "assigned_to_name", "contact_count", "open_leads", "created_at", "updated_at",
         ]
-        read_only_fields = ["id", "created_at", "updated_at", "contact_count", "open_leads"]
+        read_only_fields = ["id", "assigned_to_name", "created_at", "updated_at", "contact_count", "open_leads"]
 
     def get_contact_count(self, obj):
         return obj.contacts.count()
@@ -54,10 +57,23 @@ class OrganisationSerializer(serializers.ModelSerializer):
     def get_open_leads(self, obj):
         return obj.leads.exclude(stage__in=["won", "lost"]).count()
 
+    def validate_name(self, value):
+        request = self.context.get("request")
+        if request is not None:
+            tenant = _tenant_or_403(request.user)
+            normalized = " ".join(value.split()).casefold()
+            matches = Organisation.objects.filter(tenant=tenant)
+            if self.instance:
+                matches = matches.exclude(pk=self.instance.pk)
+            if any(" ".join(name.split()).casefold() == normalized for name in matches.values_list("name", flat=True)):
+                raise serializers.ValidationError("A company with this name already exists in your organization.")
+        return value.strip()
+
 
 class ContactSerializer(serializers.ModelSerializer):
     organisation_name = serializers.ReadOnlyField()
     full_name         = serializers.ReadOnlyField()
+    assigned_to_name  = serializers.ReadOnlyField()
 
     class Meta:
         model  = Contact
@@ -65,9 +81,28 @@ class ContactSerializer(serializers.ModelSerializer):
             "id", "first_name", "last_name", "full_name",
             "job_title", "email", "phone",
             "organisation", "organisation_name",
-            "notes", "created_at", "updated_at",
+            "assigned_to", "assigned_to_name", "notes", "created_at", "updated_at",
         ]
-        read_only_fields = ["id", "full_name", "organisation_name", "created_at", "updated_at"]
+        read_only_fields = ["id", "full_name", "organisation_name", "assigned_to_name", "created_at", "updated_at"]
+
+    def validate(self, attrs):
+        request = self.context.get("request")
+        if request is None:
+            return attrs
+        tenant = _tenant_or_403(request.user)
+        email = (attrs.get("email", getattr(self.instance, "email", "")) or "").strip()
+        phone = (attrs.get("phone", getattr(self.instance, "phone", "")) or "").strip()
+        matches = Contact.objects.filter(tenant=tenant)
+        if self.instance:
+            matches = matches.exclude(pk=self.instance.pk)
+        errors = {}
+        if email and matches.filter(email__iexact=email).exists():
+            errors["email"] = "A contact with this email already exists in your organization."
+        if phone and matches.filter(phone=phone).exists():
+            errors["phone"] = "A contact with this phone number already exists in your organization."
+        if errors:
+            raise serializers.ValidationError(errors)
+        return attrs
 
 
 class SupplierSerializer(serializers.ModelSerializer):
@@ -90,6 +125,10 @@ class LeadSerializer(serializers.ModelSerializer):
     stage_display     = serializers.CharField(source="get_stage_display", read_only=True)
     products          = serializers.PrimaryKeyRelatedField(queryset=Product.objects.none(), many=True, required=False)
     product_summary   = serializers.SerializerMethodField()
+    last_activity = serializers.SerializerMethodField()
+    next_action = serializers.SerializerMethodField()
+    next_action_date = serializers.SerializerMethodField()
+    attention_status = serializers.SerializerMethodField()
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -108,6 +147,44 @@ class LeadSerializer(serializers.ModelSerializer):
             for product in obj.products.all().order_by("name")
         ]
 
+    def validate(self, attrs):
+        stage = attrs.get("stage", getattr(self.instance, "stage", "new"))
+        loss_reason = attrs.get("loss_reason", getattr(self.instance, "loss_reason", ""))
+        if stage == "lost" and not str(loss_reason or "").strip():
+            raise serializers.ValidationError({"loss_reason": "A loss reason is required when an opportunity is marked lost."})
+        if stage != "lost" and "loss_reason" in attrs:
+            attrs["loss_reason"] = str(attrs["loss_reason"] or "").strip()
+        return attrs
+
+    def _latest_activity(self, obj):
+        return next(iter(obj.activities.all()), None)
+
+    def get_last_activity(self, obj):
+        activity = self._latest_activity(obj)
+        return activity.date if activity else None
+
+    def get_next_action(self, obj):
+        activity = next((item for item in obj.activities.all() if item.status == "open" and item.next_action), None)
+        return activity.next_action if activity else ""
+
+    def get_next_action_date(self, obj):
+        activity = next((item for item in obj.activities.all() if item.status == "open" and item.next_action), None)
+        return activity.next_action_date if activity else None
+
+    def get_attention_status(self, obj):
+        now = timezone.now()
+        next_date = self.get_next_action_date(obj)
+        if next_date and next_date < now:
+            return "overdue"
+        if next_date and next_date.date() == now.date():
+            return "due_today"
+        if obj.expected_close_date and obj.expected_close_date <= (now + timedelta(days=7)).date():
+            return "closing_soon"
+        latest = self._latest_activity(obj)
+        if not latest or latest.date < now - timedelta(days=14):
+            return "stale"
+        return "healthy"
+
     class Meta:
         model  = Lead
         fields = [
@@ -115,7 +192,8 @@ class LeadSerializer(serializers.ModelSerializer):
             "contact", "contact_name",
             "products", "product_summary",
             "stage", "stage_display", "value", "currency",
-            "expected_close_date", "assigned_to", "assigned_to_name",
+            "expected_close_date", "probability", "loss_reason", "last_activity", "next_action", "next_action_date", "attention_status",
+            "assigned_to", "assigned_to_name",
             "notes", "created_at", "updated_at",
         ]
         read_only_fields = [
@@ -130,19 +208,21 @@ class ActivitySerializer(serializers.ModelSerializer):
     organisation_name    = serializers.SerializerMethodField()
     lead_title           = serializers.SerializerMethodField()
     created_by_name      = serializers.SerializerMethodField()
+    assigned_to_name     = serializers.ReadOnlyField()
 
     class Meta:
         model  = Activity
         fields = [
-            "id", "type", "type_display", "summary", "date",
+            "id", "type", "type_display", "summary", "date", "status", "outcome", "notes",
+            "next_action", "next_action_date", "rescheduled_at", "reschedule_reason",
             "contact", "contact_name",
             "lead", "lead_title",
             "organisation", "organisation_name",
-            "created_by", "created_by_name",
+            "created_by", "created_by_name", "assigned_to", "assigned_to_name",
             "created_at", "updated_at",
         ]
         read_only_fields = [
-            "id", "type_display", "contact_name", "lead_title",
+            "id", "type_display", "contact_name", "lead_title", "assigned_to_name",
             "organisation_name", "created_by_name", "created_at", "updated_at",
         ]
 
@@ -381,7 +461,7 @@ class OrganisationViewSet(viewsets.ModelViewSet):
     serializer_class     = OrganisationSerializer
     permission_classes   = [IsAuthenticated]
     filter_backends      = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    filterset_fields     = ["type"]
+    filterset_fields     = ["type", "assigned_to", "industry"]
     search_fields        = ["name", "email", "phone", "industry"]
     ordering_fields      = ["name", "created_at"]
     ordering             = ["name"]
@@ -397,7 +477,33 @@ class OrganisationViewSet(viewsets.ModelViewSet):
         return qs
 
     def perform_create(self, serializer):
-        serializer.save(tenant=_tenant_or_403(self.request.user))
+        tenant = _tenant_or_403(self.request.user)
+        assigned_to = serializer.validated_data.get("assigned_to") or self.request.user
+        if not _user_belongs_to_tenant(assigned_to, tenant):
+            raise serializers.ValidationError({"assigned_to": "Sales owner must belong to the same organization."})
+        serializer.save(tenant=tenant, assigned_to=assigned_to)
+
+    def perform_update(self, serializer):
+        tenant = _tenant_or_403(self.request.user)
+        assigned_to = serializer.validated_data.get("assigned_to", serializer.instance.assigned_to)
+        if assigned_to and not _user_belongs_to_tenant(assigned_to, tenant):
+            raise serializers.ValidationError({"assigned_to": "Sales owner must belong to the same organization."})
+        serializer.save()
+
+    @action(detail=True, methods=["get"])
+    def workspace(self, request, pk=None):
+        company = self.get_object()
+        customer_id = company.weighbridge_customer_id
+        estimates = Estimate.objects.none()
+        orders = SalesOrder.objects.none()
+        if customer_id:
+            estimates = _apply_tenant_filter(Estimate.objects.filter(customer_id=customer_id), request.user).order_by("-issue_date")
+            orders = _apply_tenant_filter(SalesOrder.objects.filter(customer_id=customer_id), request.user).order_by("-order_date")
+        return Response({
+            "company": OrganisationSerializer(company, context={"request": request}).data,
+            "quotes": list(estimates.values("id", "estimate_number", "status", "issue_date", "expiry_date", "total", "created_by__username")[:20]),
+            "orders": list(orders.values("id", "order_number", "status", "order_date", "expected_delivery_date", "total", "created_by__username", "converted_to_invoice__status")[:20]),
+        })
 
 
 class ContactViewSet(viewsets.ModelViewSet):
@@ -406,7 +512,7 @@ class ContactViewSet(viewsets.ModelViewSet):
     serializer_class   = ContactSerializer
     permission_classes = [IsAuthenticated]
     filter_backends    = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    filterset_fields   = ["organisation"]
+    filterset_fields   = ["organisation", "assigned_to", "job_title"]
     search_fields      = ["first_name", "last_name", "email", "phone", "job_title"]
     ordering_fields    = ["first_name", "last_name", "created_at"]
     ordering           = ["first_name"]
@@ -425,12 +531,18 @@ class ContactViewSet(viewsets.ModelViewSet):
         tenant = _tenant_or_403(self.request.user)
         organisation = serializer.validated_data.get("organisation")
         _validate_crm_relationships(tenant=tenant, organisation=organisation)
-        serializer.save(tenant=tenant)
+        assigned_to = serializer.validated_data.get("assigned_to") or self.request.user
+        if not _user_belongs_to_tenant(assigned_to, tenant):
+            raise serializers.ValidationError({"assigned_to": "Sales owner must belong to the same organization."})
+        serializer.save(tenant=tenant, assigned_to=assigned_to)
 
     def perform_update(self, serializer):
         tenant = _tenant_or_403(self.request.user)
         organisation = serializer.validated_data.get("organisation", serializer.instance.organisation)
         _validate_crm_relationships(tenant=tenant, organisation=organisation)
+        assigned_to = serializer.validated_data.get("assigned_to", serializer.instance.assigned_to)
+        if assigned_to and not _user_belongs_to_tenant(assigned_to, tenant):
+            raise serializers.ValidationError({"assigned_to": "Sales owner must belong to the same organization."})
         serializer.save()
 
 
@@ -454,7 +566,7 @@ class SupplierViewSet(viewsets.ModelViewSet):
 
 class LeadViewSet(viewsets.ModelViewSet):
     """Sales opportunities tracked through the pipeline."""
-    queryset           = Lead.objects.select_related("organisation", "contact", "assigned_to").prefetch_related("products")
+    queryset           = Lead.objects.select_related("organisation", "contact", "assigned_to").prefetch_related("products", Prefetch("activities", queryset=Activity.objects.order_by("-date")))
     serializer_class   = LeadSerializer
     permission_classes = [IsAuthenticated]
     filter_backends    = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
@@ -465,7 +577,7 @@ class LeadViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         qs = _apply_tenant_filter(
-            Lead.objects.select_related("organisation", "contact", "assigned_to").prefetch_related("products"),
+            Lead.objects.select_related("organisation", "contact", "assigned_to").prefetch_related("products", Prefetch("activities", queryset=Activity.objects.order_by("-date"))),
             self.request.user,
         )
         stage = self.request.query_params.get("stage")
@@ -483,7 +595,10 @@ class LeadViewSet(viewsets.ModelViewSet):
         tenant = _tenant_or_403(self.request.user)
         organisation = serializer.validated_data.get("organisation")
         contact = serializer.validated_data.get("contact")
+        assigned_to = serializer.validated_data.get("assigned_to")
         _validate_crm_relationships(tenant=tenant, organisation=organisation, contact=contact)
+        if assigned_to and not _user_belongs_to_tenant(assigned_to, tenant):
+            raise serializers.ValidationError({"assigned_to": "Sales owner must belong to the same organization."})
         serializer.save(
             tenant=tenant,
             assigned_to=serializer.validated_data.get("assigned_to") or self.request.user,
@@ -493,8 +608,17 @@ class LeadViewSet(viewsets.ModelViewSet):
         tenant = _tenant_or_403(self.request.user)
         organisation = serializer.validated_data.get("organisation", serializer.instance.organisation)
         contact = serializer.validated_data.get("contact", serializer.instance.contact)
+        assigned_to = serializer.validated_data.get("assigned_to", serializer.instance.assigned_to)
         _validate_crm_relationships(tenant=tenant, organisation=organisation, contact=contact)
-        serializer.save()
+        if assigned_to and not _user_belongs_to_tenant(assigned_to, tenant):
+            raise serializers.ValidationError({"assigned_to": "Sales owner must belong to the same organization."})
+        old_stage = serializer.instance.stage
+        old_owner = serializer.instance.assigned_to_id
+        updated = serializer.save()
+        if updated.stage != old_stage:
+            OpportunityHistory.objects.create(opportunity=updated, change_type="stage", old_value=old_stage, new_value=updated.stage, changed_by=self.request.user)
+        if updated.assigned_to_id != old_owner:
+            OpportunityHistory.objects.create(opportunity=updated, change_type="owner", old_value=str(old_owner or ""), new_value=str(updated.assigned_to_id or ""), changed_by=self.request.user)
 
     @action(detail=False, methods=["get"], url_path="pipeline-summary")
     def pipeline_summary(self, request):
@@ -514,6 +638,14 @@ class LeadViewSet(viewsets.ModelViewSet):
                 "total_value": float(agg["total_value"] or 0),
             })
         return Response({"pipeline": data})
+
+    @action(detail=True, methods=["get"])
+    def history(self, request, pk=None):
+        opportunity = self.get_object()
+        return Response(list(opportunity.history.select_related("changed_by").values(
+            "id", "change_type", "old_value", "new_value", "changed_at",
+            "changed_by__username", "changed_by__first_name", "changed_by__last_name",
+        )))
 
     @action(detail=True, methods=["post"], url_path="convert-to-estimate")
     def convert_to_estimate(self, request, pk=None):
@@ -666,7 +798,7 @@ class LeadViewSet(viewsets.ModelViewSet):
 
 class ActivityViewSet(viewsets.ModelViewSet):
     """Follow-ups — calls, emails, meetings, and notes."""
-    queryset           = Activity.objects.select_related("contact", "lead", "organisation", "created_by")
+    queryset           = Activity.objects.select_related("contact", "lead", "organisation", "created_by", "assigned_to")
     serializer_class   = ActivitySerializer
     permission_classes = [IsAuthenticated]
     filter_backends    = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
@@ -677,7 +809,7 @@ class ActivityViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         return _apply_tenant_filter(
-            Activity.objects.select_related("contact", "lead", "organisation", "created_by"),
+            Activity.objects.select_related("contact", "lead", "organisation", "created_by", "assigned_to"),
             self.request.user,
         )
 
@@ -686,14 +818,18 @@ class ActivityViewSet(viewsets.ModelViewSet):
         organisation = serializer.validated_data.get("organisation")
         contact = serializer.validated_data.get("contact")
         lead = serializer.validated_data.get("lead")
+        assigned_to = serializer.validated_data.get("assigned_to")
         _validate_crm_relationships(
             tenant=tenant,
             organisation=organisation,
             contact=contact,
             lead=lead,
         )
+        if assigned_to and not _user_belongs_to_tenant(assigned_to, tenant):
+            raise serializers.ValidationError({"assigned_to": "Assigned user must belong to the same organization."})
         serializer.save(
             created_by=self.request.user,
+            assigned_to=serializer.validated_data.get("assigned_to") or self.request.user,
             tenant=tenant,
         )
 
@@ -702,13 +838,39 @@ class ActivityViewSet(viewsets.ModelViewSet):
         organisation = serializer.validated_data.get("organisation", serializer.instance.organisation)
         contact = serializer.validated_data.get("contact", serializer.instance.contact)
         lead = serializer.validated_data.get("lead", serializer.instance.lead)
+        assigned_to = serializer.validated_data.get("assigned_to", serializer.instance.assigned_to)
         _validate_crm_relationships(
             tenant=tenant,
             organisation=organisation,
             contact=contact,
             lead=lead,
         )
+        if assigned_to and not _user_belongs_to_tenant(assigned_to, tenant):
+            raise serializers.ValidationError({"assigned_to": "Assigned user must belong to the same organization."})
         serializer.save()
+
+    @action(detail=True, methods=["post"])
+    def complete(self, request, pk=None):
+        activity = self.get_object()
+        payload = {"status": "completed"}
+        for field in ("outcome", "notes", "next_action", "next_action_date"):
+            if field in request.data:
+                payload[field] = request.data[field]
+        serializer = self.get_serializer(activity, data=payload, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
+
+    @action(detail=True, methods=["post"])
+    def reschedule(self, request, pk=None):
+        activity = self.get_object()
+        date = request.data.get("date")
+        if not date:
+            return Response({"date": "A new date and time is required."}, status=400)
+        serializer = self.get_serializer(activity, data={"date": date, "reschedule_reason": request.data.get("reason", "")}, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save(rescheduled_at=timezone.now())
+        return Response(serializer.data)
 
 
 # ── Dashboard ─────────────────────────────────────────────────────────────────
@@ -720,14 +882,20 @@ class CRMDashboardView(APIView):
         now = timezone.now()
         today = now.date()
         month_start = today.replace(day=1)
+        month_end = (month_start + timedelta(days=32)).replace(day=1) - timedelta(days=1)
         week_end = today + timedelta(days=7)
         stale_cutoff = now - timedelta(days=14)
         organisations = _apply_tenant_filter(Organisation.objects.all(), request.user)
         contacts = _apply_tenant_filter(Contact.objects.all(), request.user)
         suppliers = _apply_tenant_filter(Supplier.objects.all(), request.user)
-        leads = _apply_tenant_filter(Lead.objects.all(), request.user)
+        leads = _apply_tenant_filter(
+            Lead.objects.select_related("organisation", "contact", "assigned_to").prefetch_related(
+                Prefetch("activities", queryset=Activity.objects.order_by("-date"))
+            ),
+            request.user,
+        )
         activities = _apply_tenant_filter(
-            Activity.objects.select_related("contact", "lead", "organisation", "created_by"),
+            Activity.objects.select_related("contact", "lead", "organisation", "created_by", "assigned_to"),
             request.user,
         )
 
@@ -738,11 +906,21 @@ class CRMDashboardView(APIView):
         active_opps      = leads.exclude(stage__in=["won", "lost"]).count()
         won_this_month   = leads.filter(stage="won", updated_at__date__gte=month_start).count()
         stale_opps_count = leads.exclude(stage__in=["won", "lost"]).filter(updated_at__lt=stale_cutoff).count()
-        overdue_follow_ups_count = activities.filter(date__lt=now).count()
-        upcoming_follow_ups_count = activities.filter(date__gte=now, date__date__lte=week_end).count()
+        open_activities = activities.filter(status="open")
+        overdue_follow_ups_count = open_activities.filter(date__lt=now).count()
+        upcoming_follow_ups_count = open_activities.filter(date__gte=now, date__date__lte=week_end).count()
         pipeline_value   = leads.exclude(stage__in=["won", "lost"]).aggregate(
             total=Sum("value")
         )["total"] or 0
+        expected_this_month = leads.exclude(stage__in=["won", "lost"]).filter(
+            expected_close_date__range=(month_start, month_end)
+        ).aggregate(total=Sum("value"))["total"] or 0
+        won_value_this_month = leads.filter(
+            stage="won", updated_at__date__gte=month_start
+        ).aggregate(total=Sum("value"))["total"] or 0
+        closing_soon_count = leads.exclude(stage__in=["won", "lost"]).filter(
+            expected_close_date__isnull=False, expected_close_date__lte=week_end
+        ).count()
 
         # Stage breakdown
         stage_data = []
@@ -764,11 +942,11 @@ class CRMDashboardView(APIView):
         ).data
 
         overdue_follow_ups = ActivitySerializer(
-            activities.filter(date__lt=now)[:6],
+            open_activities.filter(date__lt=now)[:6],
             many=True,
         ).data
         upcoming_follow_ups = ActivitySerializer(
-            activities.filter(date__gte=now, date__date__lte=week_end)[:6],
+            open_activities.filter(date__gte=now, date__date__lte=week_end)[:6],
             many=True,
         ).data
 
@@ -783,6 +961,23 @@ class CRMDashboardView(APIView):
             many=True,
         ).data
 
+        performance = []
+        if request.user.is_staff or request.user.is_superuser:
+            performance = list(
+                leads.values("assigned_to_id", "assigned_to__username", "assigned_to__first_name", "assigned_to__last_name")
+                .annotate(
+                    open_count=Count("id", filter=~Q(stage__in=["won", "lost"])),
+                    pipeline_value=Sum("value", filter=~Q(stage__in=["won", "lost"])),
+                    won_count=Count("id", filter=Q(stage="won", updated_at__date__gte=month_start)),
+                )
+                .order_by("-pipeline_value")
+            )
+            for item in performance:
+                item["owner_name"] = " ".join(
+                    part for part in [item.pop("assigned_to__first_name"), item.pop("assigned_to__last_name")] if part
+                ) or item.pop("assigned_to__username") or "Unassigned"
+                item["pipeline_value"] = float(item["pipeline_value"] or 0)
+
         # Companies by type
         companies_by_type = list(
             organisations.values("type").annotate(count=Count("id"))
@@ -796,6 +991,9 @@ class CRMDashboardView(APIView):
                 "open_opportunities": active_opps,
                 "won_this_month":  won_this_month,
                 "pipeline_value":  float(pipeline_value),
+                "expected_this_month": float(expected_this_month),
+                "won_value_this_month": float(won_value_this_month),
+                "closing_soon": closing_soon_count,
                 "stale_opportunities": stale_opps_count,
                 "overdue_follow_ups": overdue_follow_ups_count,
                 "upcoming_follow_ups": upcoming_follow_ups_count,
@@ -809,6 +1007,7 @@ class CRMDashboardView(APIView):
                 "closing_soon": closing_soon,
             },
             "companies_by_type":  companies_by_type,
+            "performance_by_owner": performance,
             "period": {
                 "month_start": str(month_start),
                 "today":       str(today),
@@ -816,3 +1015,56 @@ class CRMDashboardView(APIView):
                 "stale_cutoff": stale_cutoff.date().isoformat(),
             },
         })
+
+
+class CRMPerformanceView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        tenant = _resolve_user_tenant(request.user)
+        from_date = request.query_params.get("from")
+        to_date = request.query_params.get("to")
+        try:
+            from_date = date.fromisoformat(from_date) if from_date else date.today().replace(day=1)
+            to_date = date.fromisoformat(to_date) if to_date else date.today()
+        except ValueError:
+            return Response({"detail": "Dates must use YYYY-MM-DD format."}, status=400)
+
+        leads = _apply_tenant_filter(Lead.objects.all(), request.user)
+        activities = _apply_tenant_filter(Activity.objects.all(), request.user)
+        estimates = _apply_tenant_filter(Estimate.objects.all(), request.user)
+        owner_id = request.query_params.get("assigned_to")
+        if not (request.user.is_staff or request.user.is_superuser):
+            owner_id = request.user.id
+        if owner_id:
+            leads = leads.filter(assigned_to_id=owner_id)
+            activities = activities.filter(assigned_to_id=owner_id)
+            estimates = estimates.filter(created_by_id=owner_id)
+
+        owner_ids = set(leads.values_list("assigned_to_id", flat=True)) | set(activities.values_list("assigned_to_id", flat=True))
+        owner_ids.discard(None)
+        if owner_id:
+            owner_ids = {int(owner_id)}
+        users = {user.id: user for user in User.objects.filter(id__in=owner_ids)}
+        rows = []
+        for user_id in sorted(owner_ids):
+            user = users.get(user_id)
+            owner_leads = leads.filter(assigned_to_id=user_id)
+            won = owner_leads.filter(stage="won", updated_at__date__range=(from_date, to_date))
+            lost = owner_leads.filter(stage="lost", updated_at__date__range=(from_date, to_date))
+            completed = activities.filter(assigned_to_id=user_id, status="completed", updated_at__date__range=(from_date, to_date)).count()
+            overdue = activities.filter(assigned_to_id=user_id, status="open", date__lt=timezone.now()).count()
+            quote_count = estimates.filter(created_by_id=user_id, created_at__date__range=(from_date, to_date)).count()
+            denominator = won.count() + lost.count()
+            rows.append({
+                "assigned_to": user_id,
+                "owner_name": user.get_full_name() or user.username if user else "Unassigned",
+                "open_pipeline": float(owner_leads.exclude(stage__in=["won", "lost"]).aggregate(total=Sum("value"))["total"] or 0),
+                "won_value": float(won.aggregate(total=Sum("value"))["total"] or 0),
+                "deals_won": won.count(),
+                "activities_completed": completed,
+                "overdue_activities": overdue,
+                "quotes_created": quote_count,
+                "conversion_rate": round((won.count() / denominator) * 100, 1) if denominator else 0,
+            })
+        return Response({"from": from_date.isoformat(), "to": to_date.isoformat(), "results": rows})

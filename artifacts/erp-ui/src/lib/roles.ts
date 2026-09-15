@@ -12,6 +12,7 @@ export interface NavItem {
   title: string;
   path: string;
   roles: AppRole[];
+  requiredPermission?: string;
 }
 
 export interface NavSection {
@@ -116,7 +117,7 @@ export const STATIC_NAV: NavSection[] = [
     roles: FINANCE_UP,
     items: [
       { key: 'finance-overview',       title: 'Overview',           path: '/finance/overview',           roles: FINANCE_UP },
-      { key: 'finance-gl',             title: 'General Ledger',     path: '/finance/transactions',       roles: FINANCE_UP },
+      { key: 'finance-journal-entries',title: 'Journal Entries',    path: '/finance/transactions',       roles: FINANCE_UP },
       { key: 'finance-coa',            title: 'Chart of Accounts',  path: '/finance/chart-of-accounts',  roles: ADMIN_UP },
       { key: 'finance-ar',             title: 'Accounts Receivable',path: '/finance/receivables',        roles: FINANCE_UP },
       { key: 'finance-ap',             title: 'Accounts Payable',   path: '/finance/payables',           roles: FINANCE_UP },
@@ -139,6 +140,7 @@ export const STATIC_NAV: NavSection[] = [
       { key: 'suppliers',    title: 'Suppliers',      path: '/crm/suppliers',      roles: OPS },
       { key: 'opportunities',title: 'Opportunities',  path: '/crm/opportunities',  roles: ERP_USERS },
       { key: 'follow-ups',   title: 'Follow-ups',     path: '/crm/follow-ups',     roles: ERP_USERS },
+      { key: 'performance',  title: 'Sales Performance', path: '/crm/performance', roles: ERP_USERS },
     ],
   },
 
@@ -244,27 +246,37 @@ export const STATIC_NAV: NavSection[] = [
 // ── Role detection from Django User object ────────────────────────────────────
 
 /**
- * Maps Django group names → AppRole.
- * Priority: superadmin > tenant_admin > finance > operator
+ * Maps authenticated organization context → the legacy UI persona.
+ * Authorization itself remains permission-driven. Never infer administrator
+ * access from is_staff or a custom role name containing the word "admin".
  */
 export function detectRole(user: {
   is_superuser?: boolean;
   is_staff?: boolean;
+  is_tenant_admin?: boolean;
+  is_org_admin?: boolean;
+  active_role?: string | null;
   groups?: Array<{ name: string } | string>;
 } | null | undefined): AppRole {
   if (!user) return 'guest';
   if (user.is_superuser) return 'superadmin';
+  if (
+    user.is_tenant_admin
+    || user.is_org_admin
+    || ['owner', 'system_admin'].includes(String(user.active_role ?? '').toLowerCase())
+  ) return 'tenant_admin';
+  if (String(user.active_role ?? '').toLowerCase() === 'finance') return 'finance';
+  if (String(user.active_role ?? '').toLowerCase() === 'operator') return 'operator';
 
   const groupNames = (user.groups || []).map(g =>
     (typeof g === 'string' ? g : g.name).toLowerCase().replace(/[^a-z0-9]/g, '_')
   );
 
-  if (groupNames.some(n => /super.?admin|platform.?admin/.test(n))) return 'superadmin';
-  if (groupNames.some(n => /tenant.?admin|admin/.test(n))) return 'tenant_admin';
-  if (groupNames.some(n => /finance|accountant|billing/.test(n))) return 'finance';
-  if (groupNames.some(n => /operator|ops/.test(n))) return 'operator';
+  if (groupNames.some(n => ['superadmin', 'super_admin', 'platform_admin'].includes(n))) return 'superadmin';
+  if (groupNames.some(n => ['tenant_admin', 'organization_admin'].includes(n))) return 'tenant_admin';
+  if (groupNames.some(n => ['finance', 'accountant', 'billing'].includes(n))) return 'finance';
+  if (groupNames.some(n => ['operator', 'operations', 'ops'].includes(n))) return 'operator';
 
-  if (user.is_staff) return 'tenant_admin';
   return 'operator';
 }
 

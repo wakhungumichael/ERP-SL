@@ -33,6 +33,7 @@ import People from '@/pages/crm/people';
 import Suppliers from '@/pages/crm/suppliers';
 import Opportunities from '@/pages/crm/opportunities';
 import FollowUps from '@/pages/crm/follow-ups';
+import SalesPerformance from '@/pages/crm/performance';
 import TicketingOverview from '@/pages/ticketing/overview';
 import TicketingQueue from '@/pages/ticketing/queue';
 import TicketingForms from '@/pages/ticketing/forms';
@@ -360,6 +361,7 @@ function Router() {
       <Route path="/crm/suppliers"><Shell><Suppliers /></Shell></Route>
       <Route path="/crm/opportunities"><Shell><Opportunities /></Shell></Route>
       <Route path="/crm/follow-ups"><Shell><FollowUps /></Shell></Route>
+      <Route path="/crm/performance"><Shell><SalesPerformance /></Shell></Route>
 
       {/* Ticketing */}
       <Route path="/ticketing/overview"><Shell><TicketingOverview /></Shell></Route>

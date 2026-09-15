@@ -86,3 +86,14 @@ class RecordAuditTrailTenantScopingTests(TestCase):
         self.assertGreaterEqual(len(payload["events"]), 1)
         self.assertTrue(all(event["tenant"] == self.tenant_a.id for event in payload["events"]))
         self.assertIsNotNone(payload["summary"]["updated_by_id"])
+
+    def test_tenant_bound_superuser_audit_feed_is_tenant_scoped(self):
+        self.user_a.is_superuser = True
+        self.user_a.save(update_fields=["is_superuser"])
+
+        response = self.client.get(reverse("platform-audit-event-list"))
+
+        self.assertEqual(response.status_code, 200, response.data)
+        events = response.data["data"]
+        self.assertTrue(events)
+        self.assertTrue(all(event["tenant"] == self.tenant_a.id for event in events))

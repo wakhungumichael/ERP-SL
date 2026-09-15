@@ -581,7 +581,7 @@ def _accounting_period_overlap_error(*, tenant, financial_year, start_date, end_
 
 def _posted_lines_queryset(user, *, date_from=None, date_to=None, account_id=None):
     qs = _apply_tenant_filter(
-        JournalEntryLine.objects.select_related("entry", "entry__journal", "account"),
+        JournalEntryLine.objects.select_related("entry", "entry__journal", "account", "account__parent"),
         user,
         filter_field="entry__tenant",
     ).filter(entry__status="posted")
@@ -684,41 +684,101 @@ def _reconciliation_candidate_rows(statement_line):
     return rows[:100]
 
 
-def _trial_balance_rows(user, *, date_to=None):
-    lines = list(_posted_lines_queryset(user, date_to=date_to))
-    grouped = defaultdict(lambda: {"debit": Decimal("0.00"), "credit": Decimal("0.00"), "account": None})
-    for line in lines:
+def _trial_balance_rows(
+    user,
+    *,
+    date_from=None,
+    date_to=None,
+    account_type=None,
+    account_group=None,
+    is_active=None,
+    show_zero_balance=False,
+):
+    """Build a full, unpaged trial balance so its totals always remain auditable."""
+    closing_lines = list(_posted_lines_queryset(user, date_to=date_to))
+    movement_lines = list(_posted_lines_queryset(user, date_from=date_from, date_to=date_to))
+    grouped = defaultdict(lambda: {
+        "opening_debit": Decimal("0.00"),
+        "opening_credit": Decimal("0.00"),
+        "movement_debit": Decimal("0.00"),
+        "movement_credit": Decimal("0.00"),
+        "account": None,
+    })
+
+    for line in closing_lines:
         bucket = grouped[line.account_id]
         bucket["account"] = line.account
-        bucket["debit"] += Decimal(str(line.debit_amount or 0))
-        bucket["credit"] += Decimal(str(line.credit_amount or 0))
+        debit = Decimal(str(line.debit_amount or 0))
+        credit = Decimal(str(line.credit_amount or 0))
+        if date_from and line.entry.entry_date.date() < date_from:
+            bucket["opening_debit"] += debit
+            bucket["opening_credit"] += credit
+
+    for line in movement_lines:
+        bucket = grouped[line.account_id]
+        bucket["account"] = line.account
+        bucket["movement_debit"] += Decimal(str(line.debit_amount or 0))
+        bucket["movement_credit"] += Decimal(str(line.credit_amount or 0))
+
+    if show_zero_balance:
+        accounts = _apply_tenant_filter(Account.objects.select_related("parent"), user)
+        if account_type:
+            accounts = accounts.filter(account_type=account_type)
+        if is_active is not None:
+            accounts = accounts.filter(is_active=is_active)
+        for account in accounts:
+            grouped[account.id]["account"] = account
 
     rows = []
-    total_debits = Decimal("0.00")
-    total_credits = Decimal("0.00")
+    totals = defaultdict(lambda: Decimal("0.00"))
     for account_id in sorted(grouped, key=lambda aid: grouped[aid]["account"].code):
         bucket = grouped[account_id]
         account = bucket["account"]
-        balance = _account_balance_for_type(account.account_type, bucket["debit"], bucket["credit"])
-        presentation = _present_signed_balance(account.account_type, balance)
-        rows.append({
+        if account_type and account.account_type != account_type:
+            continue
+        group_name = account.parent.name if account.parent else account.get_account_type_display()
+        if account_group and group_name != account_group:
+            continue
+        if is_active is not None and account.is_active != is_active:
+            continue
+
+        opening_balance = _account_balance_for_type(account.account_type, bucket["opening_debit"], bucket["opening_credit"])
+        movement_balance = _account_balance_for_type(account.account_type, bucket["movement_debit"], bucket["movement_credit"])
+        closing_debit_total = bucket["opening_debit"] + bucket["movement_debit"]
+        closing_credit_total = bucket["opening_credit"] + bucket["movement_credit"]
+        closing_balance = _account_balance_for_type(account.account_type, closing_debit_total, closing_credit_total)
+        if not show_zero_balance and closing_debit_total == 0 and closing_credit_total == 0:
+            continue
+        presentation = _present_signed_balance(account.account_type, closing_balance)
+        row = {
             "account_id": account.id,
             "code": account.code,
             "name": account.name,
             "account_type": account.account_type,
-            "debit_total": float(bucket["debit"]),
-            "credit_total": float(bucket["credit"]),
-            "balance": float(balance),
+            "account_group": group_name,
+            "is_active": account.is_active,
+            "opening_debit": float(bucket["opening_debit"]),
+            "opening_credit": float(bucket["opening_credit"]),
+            "movement_debit": float(bucket["movement_debit"]),
+            "movement_credit": float(bucket["movement_credit"]),
+            "closing_debit": float(presentation["display_amount"] if presentation["display_side"] == "debit" else 0),
+            "closing_credit": float(presentation["display_amount"] if presentation["display_side"] == "credit" else 0),
+            "debit_total": float(closing_debit_total),
+            "credit_total": float(closing_credit_total),
+            "balance": float(closing_balance),
             **presentation,
-        })
-        total_debits += bucket["debit"]
-        total_credits += bucket["credit"]
+        }
+        rows.append(row)
+        for key in ("opening_debit", "opening_credit", "movement_debit", "movement_credit", "closing_debit", "closing_credit"):
+            totals[key] += Decimal(str(row[key]))
+        totals["total_debits"] += closing_debit_total
+        totals["total_credits"] += closing_credit_total
+
     return {
         "rows": rows,
         "summary": {
-            "total_debits": float(total_debits),
-            "total_credits": float(total_credits),
-            "balanced": abs(total_debits - total_credits) <= Decimal("0.01"),
+            **{key: float(value) for key, value in totals.items()},
+            "balanced": abs(totals["total_debits"] - totals["total_credits"]) <= Decimal("0.01"),
         },
     }
 
@@ -868,6 +928,30 @@ def _ledger_activity_payload(user, *, account, date_from=None, date_to=None):
             "running_balance": float(running_balance),
         })
 
+    # Give account drill-downs a real, comparable six-month movement series.
+    trend_end = date_to or timezone.now().date()
+    trend_months = []
+    for offset in range(5, -1, -1):
+        year = trend_end.year
+        month = trend_end.month - offset
+        while month <= 0:
+            month += 12
+            year -= 1
+        month_start = datetime.date(year, month, 1)
+        next_month = month_start.replace(day=28) + datetime.timedelta(days=4)
+        month_end = next_month - datetime.timedelta(days=next_month.day)
+        movement = Decimal("0.00")
+        for trend_line in _posted_lines_queryset(user, date_from=month_start, date_to=month_end, account_id=account.id):
+            movement += _account_balance_for_type(
+                account.account_type,
+                Decimal(str(trend_line.debit_amount or 0)),
+                Decimal(str(trend_line.credit_amount or 0)),
+            )
+        trend_months.append({
+            "label": month_start.strftime("%b %Y"),
+            "amount": float(movement),
+        })
+
     return {
         "account": {
             "id": account.id,
@@ -882,6 +966,7 @@ def _ledger_activity_payload(user, *, account, date_from=None, date_to=None):
             "credit_total": float(credit_total),
             "closing_balance": float(running_balance),
         },
+        "monthly_trend": trend_months,
     }
 
 
@@ -1051,6 +1136,11 @@ class AccountingDashboardView(APIView):
             "bill_postings": 0.0,
         }
         recent_invoices = []
+        analytics = {
+            "monthly_performance": [],
+            "expense_categories": [],
+            "recent_journal_entries": [],
+        }
 
         if HAS_WEIGHBRIDGE:
             try:
@@ -1137,6 +1227,67 @@ class AccountingDashboardView(APIView):
                     sum(line.debit_amount for line in entry.lines.filter(account__account_type="expense"))
                     for entry in posted_entries.filter(source_type="bill")
                 ))
+
+                # The overview only presents posted accounting activity. Drafts are
+                # deliberately excluded so charts reconcile to financial reports.
+                posted_list = list(posted_entries)
+                month_buckets = []
+                for offset in range(5, -1, -1):
+                    year = today.year
+                    month = today.month - offset
+                    while month <= 0:
+                        month += 12
+                        year -= 1
+                    month_buckets.append((year, month))
+
+                for year, month in month_buckets:
+                    month_start_date = datetime.date(year, month, 1)
+                    next_month = month_start_date.replace(day=28) + datetime.timedelta(days=4)
+                    month_end_date = next_month - datetime.timedelta(days=next_month.day)
+                    revenue = Decimal("0")
+                    expenses = Decimal("0")
+                    for entry in posted_list:
+                        if entry.entry_date.year != year or entry.entry_date.month != month:
+                            continue
+                        for line in entry.lines.all():
+                            if line.account.account_type == "income":
+                                revenue += line.credit_amount - line.debit_amount
+                            elif line.account.account_type == "expense":
+                                expenses += line.debit_amount - line.credit_amount
+                    analytics["monthly_performance"].append({
+                        "label": datetime.date(year, month, 1).strftime("%b %Y"),
+                        "date_from": month_start_date.isoformat(),
+                        "date_to": month_end_date.isoformat(),
+                        "revenue": float(revenue),
+                        "expenses": float(expenses),
+                        "net": float(revenue - expenses),
+                    })
+
+                expense_categories = defaultdict(Decimal)
+                for entry in posted_list:
+                    if entry.entry_date.date() < month_start:
+                        continue
+                    for line in entry.lines.all():
+                        if line.account.account_type == "expense":
+                            expense_categories[line.account.name] += line.debit_amount - line.credit_amount
+                analytics["expense_categories"] = [
+                    {"name": name, "amount": float(amount)}
+                    for name, amount in sorted(expense_categories.items(), key=lambda item: item[1], reverse=True)[:6]
+                    if amount
+                ]
+
+                for entry in posted_list[:8]:
+                    analytics["recent_journal_entries"].append({
+                        "id": entry.id,
+                        "entry_number": entry.entry_number,
+                        "entry_date": entry.entry_date.isoformat(),
+                        "journal_name": entry.journal.name,
+                        "source_type": entry.source_type,
+                        "memo": entry.memo,
+                        "status": entry.status,
+                        "debit_total": float(sum(line.debit_amount for line in entry.lines.all())),
+                        "credit_total": float(sum(line.credit_amount for line in entry.lines.all())),
+                    })
             except Exception:
                 pass
 
@@ -1151,6 +1302,7 @@ class AccountingDashboardView(APIView):
             "bills": bill_summary,
             "journals": journal_summary,
             "recent_invoices": recent_invoices,
+            "analytics": analytics,
         })
 
 
@@ -1895,8 +2047,20 @@ class TrialBalanceReportView(APIView):
             return denied
         _ensure_accounting_seeded(request.user)
         period = _resolve_period(request.user, period_id=request.query_params.get("period_id"))
+        date_from = period.start_date if period else _parse_date_param(request.query_params.get("date_from"))
         date_to = period.end_date if period else (_parse_date_param(request.query_params.get("date_to")) or timezone.now().date())
-        payload = _trial_balance_rows(request.user, date_to=date_to)
+        active_param = request.query_params.get("is_active")
+        is_active = None if active_param not in {"true", "false"} else active_param == "true"
+        payload = _trial_balance_rows(
+            request.user,
+            date_from=date_from,
+            date_to=date_to,
+            account_type=request.query_params.get("account_type") or None,
+            account_group=request.query_params.get("account_group") or None,
+            is_active=is_active,
+            show_zero_balance=request.query_params.get("show_zero_balance") == "true",
+        )
+        payload["date_from"] = date_from.isoformat() if date_from else None
         payload["date_to"] = date_to.isoformat()
         payload["period"] = AccountingPeriodSerializer(period).data if period else None
         return Response(payload)

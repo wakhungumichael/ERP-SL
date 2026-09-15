@@ -683,6 +683,10 @@ def _has_weighbridge_process_permission(user, codename):
         getattr(user, "is_superuser", False)
         or getattr(user, "is_staff", False)
         or _is_weighbridge_tenant_admin(user)
+        # Existing installations may have tenant users created before process
+        # permissions were introduced. Keep those unassigned users operational;
+        # once a role is assigned, its explicit permissions take precedence.
+        or not user.groups.exists()
         or user.has_perm(f"SL_Weighbridge.{codename}")
     )
 

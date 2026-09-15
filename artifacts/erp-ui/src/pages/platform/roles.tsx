@@ -64,7 +64,7 @@ const MODULE_LABELS: Record<string, string> = {
   SL_Inventory: 'Inventory',
   SL_Budgeting: 'Budgeting & Commitments',
   SL_Ticketing: 'Ticketing',
-  Platform_Core: 'Platform Admin',
+  Platform_Core: 'Accounting & Workflows',
   auth: 'User Management',
 };
 const MODULE_ORDER = [
@@ -83,6 +83,17 @@ const HIDDEN_APPS = new Set(['admin', 'authtoken', 'sessions', 'contenttypes']);
 
 // Action permissions that don't fit the add/change/delete/view CRUD pattern
 const ACTION_CODENAMES: Record<string, string> = {
+  can_access_finance_workspace: 'Finance Workspace',
+  can_view_erp_reports: 'ERP Reports',
+  can_view_weighbridge_overview: 'Weighbridge Overview',
+  can_view_sales_overview: 'Sales Overview',
+  can_view_inventory_overview: 'Inventory Overview',
+  can_view_finance_overview: 'Finance Overview',
+  can_view_crm_overview: 'CRM Overview',
+  can_view_ticketing_overview: 'Ticketing Overview',
+  can_view_manufacturing_overview: 'Manufacturing Overview',
+  can_view_retail_overview: 'Retail Overview',
+  can_view_services_overview: 'Services Overview',
   can_access_weighment_entry: 'Weighment Entry',
   can_capture_first_weight: 'First Weight',
   can_capture_second_weight: 'Second Weight',
@@ -416,7 +427,10 @@ function PermissionMatrix({
         // Collect action columns for this section (approve/recall/export etc.)
         const actionCols = Array.from(
           new Set(
-            section.models.flatMap(g => g.actions.map(p => p.codename))
+            [
+              ...section.models.flatMap(g => g.actions.map(p => p.codename)),
+              ...section.standaloneActions.map(p => p.codename),
+            ]
           )
         );
 
@@ -463,18 +477,23 @@ function PermissionMatrix({
                 <tbody className="divide-y">
                   {section.standaloneActions.length > 0 && (
                     <tr className="hover:bg-muted/20">
-                      <td className="px-3 py-2 text-xs text-muted-foreground italic">Actions</td>
+                      <td className="px-3 py-2 text-xs font-medium">Workspace access</td>
                       {CRUD_ACTIONS.map(a => <td key={a} />)}
-                      {section.standaloneActions.map(p => (
-                        <td key={p.id} className="text-center px-2 py-2">
-                          <Checkbox
-                            checked={selected.has(p.id)}
-                            onCheckedChange={() => editable && toggle(p.id)}
-                            className="h-4 w-4"
-                            disabled={!editable}
-                          />
-                        </td>
-                      ))}
+                      {actionCols.map(code => {
+                        const permission = section.standaloneActions.find(p => p.codename === code);
+                        return (
+                          <td key={code} className="text-center px-2 py-2">
+                            {permission ? (
+                              <Checkbox
+                                checked={selected.has(permission.id)}
+                                onCheckedChange={() => editable && toggle(permission.id)}
+                                className="h-4 w-4"
+                                disabled={!editable}
+                              />
+                            ) : <span className="text-muted-foreground/30 text-xs">—</span>}
+                          </td>
+                        );
+                      })}
                     </tr>
                   )}
                   {section.models.map(group => {

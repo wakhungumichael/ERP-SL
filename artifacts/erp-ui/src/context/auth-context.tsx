@@ -81,14 +81,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await queryClient.refetchQueries({ queryKey: ['workspace-nav'], type: 'active' });
   };
 
+  const resetSessionCache = () => {
+    queryClient.clear();
+  };
+
   const setToken = (t: string, userPayload?: Record<string, unknown> | null) => {
     localStorage.setItem('sl-erp-token', t);
     if (userPayload) {
       localStorage.setItem('sl-erp-user', JSON.stringify(userPayload));
       setCachedUser(userPayload);
     }
-    queryClient.removeQueries({ queryKey: ['platform-auth-me'] });
-    queryClient.removeQueries({ queryKey: ['workspace-nav'] });
+    resetSessionCache();
     setTokenState(t);
   };
 
@@ -96,8 +99,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     localStorage.removeItem('sl-erp-token');
     localStorage.removeItem('sl-erp-user');
     setCachedUser(null);
-    queryClient.removeQueries({ queryKey: ['platform-auth-me'] });
-    queryClient.removeQueries({ queryKey: ['workspace-nav'] });
+    resetSessionCache();
     setTokenState(null);
   };
 

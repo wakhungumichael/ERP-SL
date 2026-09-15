@@ -45,6 +45,7 @@ const API = (path: string, opts: RequestInit = {}) => {
     },
   });
 };
+const USERS_API = () => fetch('/api/platform/users/?page_size=200', { headers: { Authorization: `Token ${localStorage.getItem('sl-erp-token')}` } });
 
 const TYPE_BADGE: Record<string, string> = {
   customer: 'bg-emerald-100 text-emerald-800 border-emerald-300',
@@ -74,6 +75,7 @@ type Company = {
   notes?: string | null;
   contact_count: number;
   open_leads: number;
+  assigned_to_name?: string;
   created_at?: string;
   updated_at?: string;
 };
@@ -111,6 +113,7 @@ const ALL_COLUMNS = [
   { key: 'name', label: 'Company' },
   { key: 'type', label: 'Type' },
   { key: 'industry', label: 'Industry' },
+  { key: 'owner', label: 'Sales Owner' },
   { key: 'contact', label: 'Contact' },
   { key: 'website', label: 'Website' },
   { key: 'contact_count', label: 'People' },
@@ -152,6 +155,8 @@ export default function CompaniesPage() {
 
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState('all');
+  const [industryFilter, setIndustryFilter] = useState('');
+  const [ownerFilter, setOwnerFilter] = useState('');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [visibleKeys, setVisibleKeys] = useState<string[]>(loadColumns);
@@ -161,7 +166,7 @@ export default function CompaniesPage() {
   const [form, setForm] = useState<CompanyFormState>(EMPTY_FORM);
 
   const query = useQuery({
-    queryKey: ['crm-companies', search, typeFilter, page, pageSize],
+    queryKey: ['crm-companies', search, typeFilter, industryFilter, ownerFilter, page, pageSize],
     queryFn: async () => {
       const params = new URLSearchParams({
         page: String(page),
@@ -169,14 +174,18 @@ export default function CompaniesPage() {
       });
       if (search.trim()) params.set('search', search.trim());
       if (typeFilter !== 'all') params.set('type', typeFilter);
+      if (industryFilter.trim()) params.set('industry', industryFilter.trim());
+      if (ownerFilter.trim()) params.set('assigned_to', ownerFilter.trim());
       const res = await API(`/companies/?${params.toString()}`);
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body?.error || 'Failed to load companies');
       return body as CompanyResponse | Company[];
     },
   });
+  const { data: usersData } = useQuery({ queryKey: ['crm-owner-picker'], queryFn: () => USERS_API().then((response) => response.json()) });
 
   const companiesData = query.data;
+  const users = usersData?.results ?? [];
   const companies = Array.isArray(companiesData) ? companiesData : companiesData?.results ?? [];
   const totalCount = Array.isArray(companiesData) ? companiesData.length : companiesData?.count ?? 0;
 
@@ -277,6 +286,11 @@ export default function CompaniesPage() {
         key: 'industry',
         label: 'Industry',
         render: (company) => <span className="text-sm text-muted-foreground">{company.industry || '—'}</span>,
+      },
+      owner: {
+        key: 'owner',
+        label: 'Sales Owner',
+        render: (company) => <span className="text-sm text-muted-foreground">{company.assigned_to_name || 'Unassigned'}</span>,
       },
       contact: {
         key: 'contact',
@@ -406,6 +420,8 @@ export default function CompaniesPage() {
                 <SelectItem value="other">Other</SelectItem>
               </SelectContent>
             </Select>
+            <Input className="h-8 w-[150px]" placeholder="Industry" value={industryFilter} onChange={(event) => { setIndustryFilter(event.target.value); setPage(1); }} />
+            <Select value={ownerFilter || 'all'} onValueChange={(value) => { setOwnerFilter(value === 'all' ? '' : value); setPage(1); }}><SelectTrigger className="h-8 w-[150px]"><SelectValue placeholder="Owner" /></SelectTrigger><SelectContent><SelectItem value="all">All owners</SelectItem>{users.map((user: any) => <SelectItem key={user.id} value={String(user.id)}>{user.full_name || user.username || user.email}</SelectItem>)}</SelectContent></Select>
           </div>
           <div className="space-y-2">
             <Label>Industry</Label>
@@ -455,6 +471,7 @@ function CompanyWorkspaceSheet({
   onOpenChange: (open: boolean) => void;
   onEdit: (company: Company) => void;
 }) {
+  const [activeTab, setActiveTab] = useState('overview');
   const { data: peopleData, isLoading: loadingPeople } = useQuery({
     queryKey: ['crm-company-people', company?.id],
     queryFn: async () => {
@@ -481,15 +498,22 @@ function CompanyWorkspaceSheet({
     },
     enabled: open && !!company,
   });
+  const { data: workspaceData } = useQuery({
+    queryKey: ['crm-company-workspace', company?.id],
+    queryFn: async () => (await API(`/companies/${company?.id}/workspace/`)).json(),
+    enabled: open && !!company,
+  });
 
   if (!company) return null;
 
   const people = Array.isArray(peopleData) ? peopleData : peopleData?.results ?? [];
   const opportunities = Array.isArray(opportunitiesData) ? opportunitiesData : opportunitiesData?.results ?? [];
   const activities = Array.isArray(activitiesData) ? activitiesData : activitiesData?.results ?? [];
+  const quotes = workspaceData?.quotes ?? [];
+  const orders = workspaceData?.orders ?? [];
   const openOpportunities = opportunities.filter((item: any) => !['won', 'lost'].includes(item.stage));
   const pipelineValue = openOpportunities.reduce((sum: number, item: any) => sum + Number(item.value ?? 0), 0);
-  const overdueActivities = activities.filter((item: any) => new Date(item.date).getTime() < Date.now());
+  const overdueActivities = activities.filter((item: any) => item.status !== 'completed' && item.status !== 'cancelled' && new Date(item.date).getTime() < Date.now());
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -505,21 +529,21 @@ function CompanyWorkspaceSheet({
         </SheetHeader>
 
         <div className="mt-6 space-y-6">
-          <section className="rounded-3xl border bg-gradient-to-br from-slate-950 via-slate-900 to-sky-950 p-6 text-white">
+          <section id="company-overview" className="rounded-xl border bg-card p-5">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div>
-                <div className={`inline-flex rounded-full border px-3 py-1 text-[10px] font-bold uppercase tracking-[0.22em] ${TYPE_BADGE[company.type] ?? TYPE_BADGE.other}`}>
+                <div className={`inline-flex rounded border px-2 py-1 text-[10px] font-bold uppercase tracking-wide ${TYPE_BADGE[company.type] ?? TYPE_BADGE.other}`}>
                   {company.type}
                 </div>
-                <h2 className="mt-3 text-3xl font-black tracking-tight">{company.name}</h2>
-                <div className="mt-3 flex flex-wrap gap-4 text-sm text-slate-200">
+                <h2 className="mt-3 text-2xl font-semibold tracking-tight text-foreground">{company.name}</h2>
+                <div className="mt-2 flex flex-wrap gap-4 text-sm text-muted-foreground">
                   <span>{company.industry || 'Industry not set'}</span>
                   <span>{company.email || 'No email'}</span>
                   <span>{company.phone || 'No phone'}</span>
                 </div>
               </div>
               <div className="flex flex-wrap gap-2">
-                <Button variant="secondary" onClick={() => onEdit(company)}>Edit Company</Button>
+                <Button variant="outline" onClick={() => onEdit(company)}>Edit Company</Button>
                 <Link href={nextActionHref(company.open_leads)}>
                   <Button className="gap-2">
                     <ArrowRight className="h-4 w-4" />
@@ -529,27 +553,22 @@ function CompanyWorkspaceSheet({
               </div>
             </div>
 
-            <div className="mt-6 grid gap-3 md:grid-cols-4">
-              <div className="rounded-2xl border border-white/10 bg-white/10 p-4">
-                <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-300">People</div>
-                <div className="mt-2 text-2xl font-black">{people.length}</div>
+            <div className="mt-5 grid gap-3 border-t pt-4 md:grid-cols-4">
+              <div className="border-l pl-3"><div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">People</div><div className="mt-1 text-xl font-semibold">{people.length}</div>
               </div>
-              <div className="rounded-2xl border border-white/10 bg-white/10 p-4">
-                <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-300">Open Deals</div>
-                <div className="mt-2 text-2xl font-black">{openOpportunities.length}</div>
+              <div className="border-l pl-3"><div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Open Deals</div><div className="mt-1 text-xl font-semibold">{openOpportunities.length}</div>
               </div>
-              <div className="rounded-2xl border border-white/10 bg-white/10 p-4">
-                <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-300">Pipeline Value</div>
-                <div className="mt-2 text-2xl font-black">{formatMoney(pipelineValue)}</div>
+              <div className="border-l pl-3"><div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Pipeline Value</div><div className="mt-1 text-xl font-semibold">{formatMoney(pipelineValue)}</div>
               </div>
-              <div className="rounded-2xl border border-white/10 bg-white/10 p-4">
-                <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-300">Overdue Follow-ups</div>
-                <div className="mt-2 text-2xl font-black">{overdueActivities.length}</div>
+              <div className="border-l pl-3"><div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Overdue Follow-ups</div><div className="mt-1 text-xl font-semibold">{overdueActivities.length}</div>
               </div>
             </div>
           </section>
+          <nav className="sticky top-0 z-10 flex gap-1 overflow-x-auto border-b bg-background py-2">
+            {[['overview', 'Overview'], ['contacts', 'Contacts'], ['opportunities', 'Opportunities'], ['activities', 'Activities'], ['quotes', 'Quotes'], ['orders', 'Orders']].map(([value, label]) => <button key={value} type="button" onClick={() => { setActiveTab(value); document.getElementById(`company-${value}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }} className={`whitespace-nowrap border-b-2 px-3 py-2 text-sm ${activeTab === value ? 'border-primary font-semibold text-primary' : 'border-transparent text-muted-foreground'}`}>{label}</button>)}
+          </nav>
 
-          <div className="grid gap-6 xl:grid-cols-[1.05fr_0.95fr]">
+          <div id="company-overview-content" className={`${activeTab === 'overview' ? '' : 'hidden'}`}>
             <Card className="shadow-sm">
               <CardContent className="p-5">
                 <div className="flex items-center justify-between">
@@ -580,44 +599,9 @@ function CompanyWorkspaceSheet({
                 </div>
               </CardContent>
             </Card>
-
-            <Card className="shadow-sm">
-              <CardContent className="p-5">
-                <div className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Recommended Actions</div>
-                <div className="mt-4 grid gap-3">
-                  <Link href="/sales/customers" className="rounded-2xl border p-4 transition-colors hover:bg-muted/30">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <div className="font-semibold">Review customer record</div>
-                        <div className="mt-1 text-sm text-muted-foreground">Make sure this CRM account matches the billing and operations record.</div>
-                      </div>
-                      <Building2 className="h-4 w-4 shrink-0 text-sky-600" />
-                    </div>
-                  </Link>
-                  <Link href="/sales/estimates" className="rounded-2xl border p-4 transition-colors hover:bg-muted/30">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <div className="font-semibold">Turn deals into quotes</div>
-                        <div className="mt-1 text-sm text-muted-foreground">Move proposal and negotiation work into formal quotes that the team can track.</div>
-                      </div>
-                      <TrendingUp className="h-4 w-4 shrink-0 text-violet-600" />
-                    </div>
-                  </Link>
-                  <Link href="/sales/orders" className="rounded-2xl border p-4 transition-colors hover:bg-muted/30">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <div className="font-semibold">Start order processing</div>
-                        <div className="mt-1 text-sm text-muted-foreground">Send won business into order handling and fulfillment without re-entering details.</div>
-                      </div>
-                      <ShoppingCart className="h-4 w-4 shrink-0 text-emerald-600" />
-                    </div>
-                  </Link>
-                </div>
-              </CardContent>
-            </Card>
           </div>
 
-          <div className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
+          <div id="company-contacts" className={`${activeTab === 'contacts' ? '' : 'hidden'} grid gap-4 xl:grid-cols-[0.95fr_1.05fr]`}>
             <Card className="shadow-sm">
               <CardContent className="p-5">
                 <div className="flex items-center justify-between">
@@ -686,7 +670,14 @@ function CompanyWorkspaceSheet({
             </Card>
           </div>
 
-          <Card className="shadow-sm">
+          <Card id="company-opportunities" className={`${activeTab === 'opportunities' ? '' : 'hidden'} shadow-sm`}>
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between border-b pb-3"><div className="text-sm font-semibold">Opportunities</div><Link href="/crm/opportunities" className="text-xs text-primary hover:underline">View all deals</Link></div>
+              <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="border-b text-left text-xs text-muted-foreground"><th className="py-2 pr-4">Opportunity</th><th className="py-2 pr-4">Stage</th><th className="py-2 pr-4">Value</th><th className="py-2">Expected Close</th></tr></thead><tbody>{opportunities.length ? opportunities.map((opportunity: any) => <tr key={opportunity.id} className="border-b last:border-0"><td className="py-2 pr-4 font-medium">{opportunity.title}</td><td className="py-2 pr-4"><span className={`inline-flex rounded border px-2 py-0.5 text-[10px] font-semibold ${STAGE_BADGE[opportunity.stage] ?? 'bg-secondary border-border'}`}>{opportunity.stage_display || opportunity.stage}</span></td><td className="py-2 pr-4 whitespace-nowrap">{formatMoney(opportunity.value, opportunity.currency || 'KES')}</td><td className="py-2 whitespace-nowrap text-muted-foreground">{formatDate(opportunity.expected_close_date)}</td></tr>) : <tr><td colSpan={4} className="py-8 text-center text-sm text-muted-foreground">No opportunities linked yet.</td></tr>}</tbody></table></div>
+            </CardContent>
+          </Card>
+
+          <Card id="company-activities" className={`${activeTab === 'activities' ? '' : 'hidden'} shadow-sm`}>
             <CardContent className="p-5">
               <div className="flex items-center justify-between">
                 <div>
@@ -715,6 +706,10 @@ function CompanyWorkspaceSheet({
               </div>
             </CardContent>
           </Card>
+          <div className={`${activeTab === 'quotes' || activeTab === 'orders' ? '' : 'hidden'} grid gap-4 xl:grid-cols-1`}>
+            <Card id="company-quotes" className={`${activeTab === 'quotes' ? '' : 'hidden'} shadow-sm`}><CardContent className="p-4"><div className="flex items-center justify-between border-b pb-3"><div className="text-sm font-semibold">Quotes</div><Link href="/sales/estimates" className="text-xs text-primary hover:underline">Open quotes</Link></div><div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="border-b text-left text-xs text-muted-foreground"><th className="py-2">Reference</th><th className="py-2">Status</th><th className="py-2">Amount</th><th className="py-2">Date</th></tr></thead><tbody>{quotes.length ? quotes.slice(0, 10).map((quote: any) => <tr key={quote.id} className="border-b last:border-0"><td className="py-2 font-medium">{quote.estimate_number}</td><td className="py-2 capitalize text-muted-foreground">{quote.status}</td><td className="py-2 whitespace-nowrap">{formatMoney(quote.total)}</td><td className="py-2 whitespace-nowrap text-muted-foreground">{formatDate(quote.issue_date)}</td></tr>) : <tr><td colSpan={4} className="py-8 text-center text-sm text-muted-foreground">No quotations linked yet.</td></tr>}</tbody></table></div></CardContent></Card>
+            <Card id="company-orders" className={`${activeTab === 'orders' ? '' : 'hidden'} shadow-sm`}><CardContent className="p-4"><div className="flex items-center justify-between border-b pb-3"><div className="text-sm font-semibold">Orders</div><Link href="/sales/orders" className="text-xs text-primary hover:underline">Open orders</Link></div><div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="border-b text-left text-xs text-muted-foreground"><th className="py-2">Reference</th><th className="py-2">Status</th><th className="py-2">Amount</th><th className="py-2">Fulfilment</th><th className="py-2">Date</th></tr></thead><tbody>{orders.length ? orders.slice(0, 10).map((order: any) => <tr key={order.id} className="border-b last:border-0"><td className="py-2 font-medium">{order.order_number}</td><td className="py-2 capitalize text-muted-foreground">{order.status}</td><td className="py-2 whitespace-nowrap">{formatMoney(order.total)}</td><td className="py-2 text-muted-foreground">{order.status === 'fulfilled' ? 'Fulfilled' : 'Pending'}</td><td className="py-2 whitespace-nowrap text-muted-foreground">{formatDate(order.order_date)}</td></tr>) : <tr><td colSpan={5} className="py-8 text-center text-sm text-muted-foreground">No sales orders linked yet.</td></tr>}</tbody></table></div></CardContent></Card>
+          </div>
         </div>
       </SheetContent>
     </Sheet>

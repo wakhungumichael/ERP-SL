@@ -19,7 +19,7 @@ from urllib.parse import urlparse
 from django.conf import settings
 from django.db.models import Q
 from django.http import HttpResponse
-from django.core.mail import EmailMultiAlternatives, get_connection
+from django.core.mail import EmailMultiAlternatives
 from django.utils import timezone
 from rest_framework import generics, serializers, status
 from rest_framework.permissions import IsAuthenticated
@@ -40,14 +40,15 @@ from Platform_Core.documents import (
     render_estimate_document,
     resolve_document_template,
 )
+from Platform_Core.email import get_tenant_smtp_connection
 from Platform_Core.models import TenantSettings
+from Platform_Core.platform import get_active_tenant_module_slugs
 from Platform_API.modules.mixins import (
     apply_tenant_filter as _apply_tenant_filter,
     resolve_user_tenant as _resolve_user_tenant,
     tenant_or_403,
 )
 from Platform_API.modules.payments.views import reconcile_invoice_payment_state
-from SL_Weighbridge.sync import sync_vehicle_type_products_for_tenant
 from SL_Sales.models import (
     Product, Estimate, EstimateLineItem,
     RecurringInvoice, RecurringInvoiceLineItem,
@@ -762,12 +763,14 @@ class ProductListCreateView(generics.ListCreateAPIView):
 
     def get_queryset(self):
         tenant = _tenant_or_400(self.request.user)
-        if tenant is not None:
-            sync_vehicle_type_products_for_tenant(tenant)
         qs = _apply_tenant_filter(
             Product.objects.select_related("income_account", "expense_account"),
             self.request.user,
         ).order_by("name")
+        if tenant is not None:
+            active_modules = get_active_tenant_module_slugs(tenant)
+            if not {"weighbridge", "commercial-weighbridge"}.intersection(active_modules):
+                qs = qs.exclude(code__istartswith="WB-")
         p = self.request.query_params
         if pt := p.get("product_type"):
             qs = qs.filter(product_type=pt)
@@ -934,15 +937,7 @@ class EstimateEmailView(APIView):
             f"Regards,\n{company_name}"
         )
 
-        connection = get_connection(
-            backend="django.core.mail.backends.smtp.EmailBackend",
-            host=settings_obj.smtp_host,
-            port=settings_obj.smtp_port,
-            username=settings_obj.smtp_user,
-            password=settings_obj.smtp_password,
-            use_tls=settings_obj.smtp_use_tls,
-            fail_silently=False,
-        )
+        connection = get_tenant_smtp_connection(settings_obj)
         email = EmailMultiAlternatives(
             subject=subject,
             body=plain_message,

@@ -7,6 +7,7 @@ scope data correctly across plans and subscriptions.
 """
 
 from django.db import models
+from django.core.validators import MinValueValidator, MaxValueValidator
 from django.contrib.auth.models import User
 from Platform_Core.models import AuditMetadataMixin
 
@@ -37,6 +38,9 @@ class Organisation(AuditMetadataMixin, models.Model):
     phone                = models.CharField(max_length=30, blank=True, default="")
     address              = models.TextField(blank=True, default="")
     notes                = models.TextField(blank=True, default="")
+    assigned_to          = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL, related_name="assigned_crm_organisations",
+    )
 
     # Soft-link to Weighbridge customer record (optional, for backward compat)
     weighbridge_customer = models.OneToOneField(
@@ -63,6 +67,12 @@ class Organisation(AuditMetadataMixin, models.Model):
     def __str__(self):
         return self.name
 
+    @property
+    def assigned_to_name(self):
+        if not self.assigned_to:
+            return ""
+        return self.assigned_to.get_full_name() or self.assigned_to.username
+
 
 # ---------------------------------------------------------------------------
 # Contact (Person)
@@ -86,6 +96,9 @@ class Contact(AuditMetadataMixin, models.Model):
         related_name="contacts",
     )
     notes        = models.TextField(blank=True, default="")
+    assigned_to  = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL, related_name="assigned_crm_contacts",
+    )
 
     tenant = models.ForeignKey(
         "Platform_Core.Tenant",
@@ -110,6 +123,12 @@ class Contact(AuditMetadataMixin, models.Model):
     @property
     def organisation_name(self):
         return self.organisation.name if self.organisation else ""
+
+    @property
+    def assigned_to_name(self):
+        if not self.assigned_to:
+            return ""
+        return self.assigned_to.get_full_name() or self.assigned_to.username
 
 
 # ---------------------------------------------------------------------------
@@ -197,6 +216,10 @@ class Lead(AuditMetadataMixin, models.Model):
     )
     currency             = models.CharField(max_length=10, default="KES")
     expected_close_date  = models.DateField(null=True, blank=True)
+    probability           = models.PositiveSmallIntegerField(
+        null=True, blank=True, validators=[MinValueValidator(0), MaxValueValidator(100)],
+    )
+    loss_reason           = models.CharField(max_length=255, blank=True, default="")
     assigned_to          = models.ForeignKey(
         User, null=True, blank=True,
         on_delete=models.SET_NULL, related_name="assigned_leads",
@@ -248,11 +271,25 @@ class Activity(AuditMetadataMixin, models.Model):
         ("meeting", "Meeting"),
         ("note",    "Note"),
         ("task",    "Task"),
+        ("visit",   "Customer Visit"),
+    ]
+
+    STATUS_CHOICES = [
+        ("open", "Open"),
+        ("completed", "Completed"),
+        ("cancelled", "Cancelled"),
     ]
 
     type         = models.CharField(max_length=20, choices=TYPE_CHOICES, default="note")
     summary      = models.TextField()
     date         = models.DateTimeField()
+    status       = models.CharField(max_length=20, choices=STATUS_CHOICES, default="open")
+    outcome      = models.TextField(blank=True, default="")
+    notes        = models.TextField(blank=True, default="")
+    next_action  = models.CharField(max_length=255, blank=True, default="")
+    next_action_date = models.DateTimeField(null=True, blank=True)
+    rescheduled_at = models.DateTimeField(null=True, blank=True)
+    reschedule_reason = models.CharField(max_length=255, blank=True, default="")
     contact      = models.ForeignKey(
         Contact, null=True, blank=True,
         on_delete=models.SET_NULL, related_name="activities",
@@ -276,6 +313,10 @@ class Activity(AuditMetadataMixin, models.Model):
         on_delete=models.CASCADE,
         related_name="crm_activities",
     )
+    assigned_to  = models.ForeignKey(
+        User, null=True, blank=True,
+        on_delete=models.SET_NULL, related_name="assigned_crm_activities",
+    )
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -286,3 +327,21 @@ class Activity(AuditMetadataMixin, models.Model):
 
     def __str__(self):
         return f"{self.get_type_display()} — {self.summary[:60]}"
+
+    @property
+    def assigned_to_name(self):
+        if not self.assigned_to:
+            return ""
+        return self.assigned_to.get_full_name() or self.assigned_to.username
+
+
+class OpportunityHistory(models.Model):
+    opportunity = models.ForeignKey(Lead, on_delete=models.CASCADE, related_name="history")
+    change_type = models.CharField(max_length=30)
+    old_value = models.CharField(max_length=255, blank=True, default="")
+    new_value = models.CharField(max_length=255, blank=True, default="")
+    changed_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL)
+    changed_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-changed_at"]

@@ -7,6 +7,7 @@ from .views import (
     LeadViewSet,
     ActivityViewSet,
     CRMDashboardView,
+    CRMPerformanceView,
 )
 
 router = DefaultRouter()
@@ -18,5 +19,6 @@ router.register(r"follow-ups",    ActivityViewSet,     basename="activity")
 
 urlpatterns = [
     path("dashboard/", CRMDashboardView.as_view(), name="crm-dashboard"),
+    path("performance/", CRMPerformanceView.as_view(), name="crm-performance"),
     path("",            include(router.urls)),
 ]

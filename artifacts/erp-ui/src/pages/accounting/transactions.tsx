@@ -1,7 +1,7 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'wouter';
 import { useQuery } from '@tanstack/react-query';
-import { ArrowRight, BookOpen, CalendarRange, Plus, Search, Send, RotateCcw } from 'lucide-react';
+import { ArrowRight, BookOpen, CalendarRange, ChevronDown, ChevronLeft, ChevronRight, Plus, Search, Send, RotateCcw, X } from 'lucide-react';
 import { useAuth } from '@/context/use-auth';
 import { useToast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
@@ -14,6 +14,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { ProcessFlow } from '@/components/workflow/process-flow';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 
 const BASE_URL = import.meta.env.BASE_URL?.replace(/\/$/, '') ?? '';
 
@@ -37,14 +38,19 @@ type JournalEntry = {
   source_type: string;
   memo: string;
   status: string;
+  source_reference?: string;
   debit_total: number;
   credit_total: number;
   lines: JournalLine[];
+  created_at?: string;
+  updated_at?: string;
 };
 
 type Journal = { id: number; code: string; name: string; journal_type: string };
 type AccountOption = { id: number; code: string; name: string; account_type: string; allow_posting?: boolean };
 type FormLine = { account: string; description: string; debit_amount: string; credit_amount: string };
+type EntryTab = 'all' | 'draft' | 'posted' | 'reversed' | 'recurring' | 'imported';
+type AuditEvent = { id: number; event_type: string; status: string; actor_name?: string | null; note?: string; created_at: string };
 
 const SOURCE_COLORS: Record<string, string> = {
   invoice: 'bg-blue-100 text-blue-700',
@@ -78,14 +84,20 @@ export default function Transactions() {
   const { token } = useAuth();
   const { toast } = useToast();
 
-  const [filterStatus, setFilterStatus] = useState('all');
-  const [filterSource, setFilterSource] = useState('all');
+  const [filterStatus, setFilterStatus] = useState(() => new URLSearchParams(window.location.search).get('status') || 'all');
+  const [filterSource, setFilterSource] = useState(() => new URLSearchParams(window.location.search).get('source_type') || 'all');
   const [filterDateFrom, setFilterDateFrom] = useState('');
   const [filterDateTo, setFilterDateTo] = useState('');
   const [search, setSearch] = useState('');
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [actingId, setActingId] = useState<number | null>(null);
+  const [selectedEntryId, setSelectedEntryId] = useState<number | null>(() => Number(new URLSearchParams(window.location.search).get('entry')) || null);
+  const [detailsDismissed, setDetailsDismissed] = useState(false);
+  const [detailTab, setDetailTab] = useState<'details' | 'lines' | 'audit'>('details');
+  const [entryTab, setEntryTab] = useState<EntryTab>('all');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
 
   const [formJournal, setFormJournal] = useState('');
   const [formDate, setFormDate] = useState(getTodayISO());
@@ -133,6 +145,19 @@ export default function Transactions() {
     },
   });
 
+  const { data: auditTrailData, isLoading: isAuditLoading } = useQuery({
+    queryKey: ['journal-entry-audit', token, selectedEntryId],
+    enabled: !!token && !!selectedEntryId,
+    queryFn: async () => {
+      const params = new URLSearchParams({ model_label: 'Platform_Core.JournalEntry', object_pk: String(selectedEntryId) });
+      const response = await fetch(BASE_URL + '/api/platform/audit/record-trail/?' + params.toString(), { headers: { Authorization: 'Token ' + token } });
+      if (!response.ok) throw new Error('audit trail unavailable');
+      const payload = await response.json();
+      return (payload?.data?.events ?? []) as AuditEvent[];
+    },
+    staleTime: 30_000,
+  });
+
   const entries: JournalEntry[] = data ?? [];
   const journals: Journal[] = journalsData?.journals ?? [];
   const accountOptions: AccountOption[] = (accountsData ?? []).filter((account) => account.allow_posting ?? true);
@@ -148,13 +173,42 @@ export default function Transactions() {
     );
   }, [entries, search]);
 
-  const totalCount = filteredEntries.length;
+  const tabbedEntries = useMemo(() => filteredEntries.filter((entry) => {
+    if (entryTab === 'all') return true;
+    if (entryTab === 'recurring') return entry.source_type === 'recurring';
+    if (entryTab === 'imported') return entry.source_type === 'import';
+    return entry.status === entryTab;
+  }), [entryTab, filteredEntries]);
+  const totalCount = tabbedEntries.length;
   const postedCount = filteredEntries.filter((e) => e.status === 'posted').length;
   const draftCount = filteredEntries.filter((e) => e.status === 'draft').length;
   const reversedCount = filteredEntries.filter((e) => e.status === 'reversed').length;
   const totalPostedDebits = filteredEntries
     .filter((e) => e.status === 'posted')
     .reduce((sum, e) => sum + Number(e.debit_total ?? 0), 0);
+  const totalPostedCredits = filteredEntries
+    .filter((e) => e.status === 'posted')
+    .reduce((sum, e) => sum + Number(e.credit_total ?? 0), 0);
+  const selectedEntry = entries.find((entry) => entry.id === selectedEntryId) ?? null;
+  const auditEvents = auditTrailData ?? [];
+  const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
+  const paginatedEntries = tabbedEntries.slice((page - 1) * pageSize, page * pageSize);
+  const pageStart = totalCount ? (page - 1) * pageSize + 1 : 0;
+  const pageEnd = Math.min(page * pageSize, totalCount);
+
+  useEffect(() => {
+    if (entries.length && !detailsDismissed && !entries.some((entry) => entry.id === selectedEntryId)) {
+      setSelectedEntryId(entries[0].id);
+    }
+  }, [detailsDismissed, entries, selectedEntryId]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [entryTab, filterDateFrom, filterDateTo, filterSource, filterStatus, pageSize, search]);
+
+  useEffect(() => {
+    if (page > totalPages) setPage(totalPages);
+  }, [page, totalPages]);
 
   function updateLine(idx: number, field: keyof FormLine, value: string) {
     setFormLines((lines) => lines.map((line, lineIdx) => (lineIdx === idx ? { ...line, [field]: value } : line)));
@@ -190,7 +244,7 @@ export default function Transactions() {
         entry_date: formDate,
         memo: formMemo,
         source_type: 'manual',
-        status: 'posted',
+        status: 'draft',
         lines: formLines
           .filter((line) => line.account)
           .map((line) => ({
@@ -207,7 +261,7 @@ export default function Transactions() {
       });
       const response = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(response?.error || 'Failed');
-      toast({ title: 'Transaction created successfully' });
+      toast({ title: 'Journal entry saved as draft' });
       refetch();
       setOpen(false);
     } catch (error: any) {
@@ -254,20 +308,42 @@ export default function Transactions() {
   }
 
   return (
-    <div className="space-y-6 p-6">
-      <div className="flex flex-wrap items-end justify-between gap-4">
+    <div className="w-full space-y-5 p-4 md:p-6">
+      <div className="flex flex-wrap items-end justify-between gap-4 border-b pb-5">
         <div>
-          <h1 className="text-3xl font-semibold tracking-tight">Finance Transactions</h1>
+          <p className="mb-1 text-[10px] font-bold uppercase tracking-[0.18em] text-primary">Finance / General Ledger</p>
+          <h1 className="text-2xl font-bold tracking-tight">Journal Entries</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Review journal entries in a cleaner queue, then open each record in a focused finance workspace.
+            Create, review, and post balanced entries that flow into the general ledger.
           </p>
         </div>
-        <Button onClick={openCreate}>
-          <Plus className="mr-2 h-4 w-4" /> Manual Entry
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button onClick={openCreate} className="h-10 font-bold uppercase tracking-wide">
+            <Plus className="mr-2 h-4 w-4" /> Manual Entry
+          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild><Button variant="outline" className="h-10 gap-2 font-semibold">More Actions <ChevronDown className="h-4 w-4" /></Button></DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem asChild><Link href="/finance/reports">Open Financial Reports</Link></DropdownMenuItem>
+              <DropdownMenuItem asChild><Link href="/finance/chart-of-accounts">Open Chart of Accounts</Link></DropdownMenuItem>
+              <DropdownMenuItem asChild><Link href="/finance/posting-rules">Review Posting Rules</Link></DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onSelect={() => window.print()}>Print current view</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      </div>
+
+      <div className="flex gap-5 overflow-x-auto border-b px-1" role="tablist" aria-label="Journal entry status">
+        {[
+          ['all', 'All Entries'], ['draft', 'Drafts'], ['posted', 'Posted'], ['reversed', 'Reversed'], ['recurring', 'Recurring'], ['imported', 'Import Journals'],
+        ].map(([value, label]) => (
+          <button key={value} type="button" role="tab" aria-selected={entryTab === value} onClick={() => setEntryTab(value as EntryTab)} className={`shrink-0 border-b-2 px-1 pb-3 text-xs font-semibold transition-colors ${entryTab === value ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}>{label}</button>
+        ))}
       </div>
 
       <ProcessFlow
+        compact
         title="Journal To Reporting Workflow"
         description="Transactions should move from capture into posting and reporting through one consistent accounting flow."
         stages={[
@@ -298,14 +374,15 @@ export default function Transactions() {
         ]}
       />
 
-      <div className="grid gap-4 md:grid-cols-4">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
         <Card><CardContent className="p-4"><div className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Total Entries</div><div className="mt-2 text-2xl font-semibold">{totalCount}</div></CardContent></Card>
         <Card><CardContent className="p-4"><div className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Posted</div><div className="mt-2 text-2xl font-semibold text-emerald-600">{postedCount}</div></CardContent></Card>
         <Card><CardContent className="p-4"><div className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Draft / Reversed</div><div className="mt-2 text-2xl font-semibold">{draftCount + reversedCount}</div></CardContent></Card>
         <Card><CardContent className="p-4"><div className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Posted Debits</div><div className="mt-2 text-xl font-semibold">{fmt(totalPostedDebits)}</div></CardContent></Card>
+        <Card><CardContent className="p-4"><div className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Posted Credits</div><div className="mt-2 text-xl font-semibold">{fmt(totalPostedCredits)}</div></CardContent></Card>
       </div>
 
-      <div className="rounded-lg border bg-card shadow-sm">
+      <div className="rounded-xl border-2 border-primary/40 bg-card p-1 shadow-sm">
         <div className="flex flex-wrap items-center gap-3 p-3">
           <div className="flex min-w-[220px] flex-1 items-center gap-2">
             <Search className="h-4 w-4 text-muted-foreground shrink-0" />
@@ -341,15 +418,17 @@ export default function Transactions() {
             <Input type="date" value={filterDateFrom} onChange={(e) => setFilterDateFrom(e.target.value)} className="h-8 w-[150px]" />
             <Input type="date" value={filterDateTo} onChange={(e) => setFilterDateTo(e.target.value)} className="h-8 w-[150px]" />
           </div>
+          {(search || filterStatus !== 'all' || filterSource !== 'all' || filterDateFrom || filterDateTo) && <Button variant="ghost" size="sm" className="h-8 text-xs text-muted-foreground hover:text-destructive" onClick={() => { setSearch(''); setFilterStatus('all'); setFilterSource('all'); setFilterDateFrom(''); setFilterDateTo(''); }}>Clear filters</Button>}
         </div>
       </div>
 
-      <Card>
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_310px]">
+      <Card className="min-w-0 overflow-hidden">
         <CardHeader className="flex flex-row items-center justify-between">
-          <CardTitle>Journal Queue</CardTitle>
-          <div className="text-sm text-muted-foreground">{totalCount} transactions</div>
+          <CardTitle>Journal Entries</CardTitle>
+          <div className="text-sm text-muted-foreground">{totalCount} entries</div>
         </CardHeader>
-        <CardContent>
+        <CardContent className="overflow-x-auto">
           {isLoading ? (
             <div className="py-16 text-center text-sm text-muted-foreground">Loading finance transactions…</div>
           ) : filteredEntries.length === 0 ? (
@@ -358,7 +437,7 @@ export default function Transactions() {
               <p className="text-sm">No transactions found for the selected filters.</p>
             </div>
           ) : (
-            <Table>
+            <Table className="min-w-[980px]">
               <TableHeader>
                 <TableRow>
                   <TableHead>Entry #</TableHead>
@@ -374,8 +453,8 @@ export default function Transactions() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredEntries.map((entry) => (
-                  <TableRow key={entry.id} className="hover:bg-muted/40">
+                {paginatedEntries.map((entry) => (
+                  <TableRow key={entry.id} className={`cursor-pointer hover:bg-muted/40 ${selectedEntryId === entry.id ? 'bg-primary/5' : ''}`} onClick={() => { setSelectedEntryId(entry.id); setDetailsDismissed(false); setDetailTab('details'); }}>
                     <TableCell className="font-medium">
                       <Link href={`/finance/transactions/${entry.id}`} className="inline-flex items-center gap-2 text-primary hover:underline">
                         {entry.entry_number}
@@ -425,7 +504,58 @@ export default function Transactions() {
             </Table>
           )}
         </CardContent>
+        {totalCount > 0 && <div className="flex flex-wrap items-center justify-between gap-3 border-t px-4 py-3 text-xs text-muted-foreground">
+          <span>Showing {pageStart}-{pageEnd} of {totalCount} entries</span>
+          <div className="flex items-center gap-2"><Select value={String(pageSize)} onValueChange={(value) => setPageSize(Number(value))}><SelectTrigger className="h-8 w-32 text-xs" aria-label="Records per page"><SelectValue /></SelectTrigger><SelectContent>{[10, 25, 50, 100].map((size) => <SelectItem key={size} value={String(size)}>{size} records</SelectItem>)}</SelectContent></Select><Button variant="outline" size="icon" className="h-8 w-8" disabled={page === 1} onClick={() => setPage(page - 1)}><ChevronLeft className="h-4 w-4" /></Button><span className="min-w-16 text-center">{page} / {totalPages}</span><Button variant="outline" size="icon" className="h-8 w-8" disabled={page === totalPages} onClick={() => setPage(page + 1)}><ChevronRight className="h-4 w-4" /></Button></div>
+        </div>}
       </Card>
+
+      <Card className="h-fit xl:sticky xl:top-4">
+        <CardHeader className="flex flex-row items-start justify-between gap-3 border-b pb-4">
+          <div>
+            <CardTitle className="text-base">Journal Entry Details</CardTitle>
+            {selectedEntry && <p className="mt-1 text-xs text-muted-foreground">{selectedEntry.entry_number}</p>}
+          </div>
+          {selectedEntry && <Badge className={STATUS_COLORS[selectedEntry.status] ?? 'bg-gray-100 text-gray-700'}>{selectedEntry.status}</Badge>}
+          {selectedEntry && <Button variant="ghost" size="icon" className="-mr-2 -mt-2 h-8 w-8" onClick={() => { setSelectedEntryId(null); setDetailsDismissed(true); }} aria-label="Close entry details"><X className="h-4 w-4" /></Button>}
+        </CardHeader>
+        <CardContent className="p-0">
+          {!selectedEntry ? (
+            <div className="flex min-h-60 flex-col items-center justify-center gap-2 px-6 text-center text-sm text-muted-foreground"><BookOpen className="h-8 w-8 opacity-40" />Select a journal entry to review its accounting details.</div>
+          ) : (
+            <>
+              <div className="grid grid-cols-3 border-b px-2" role="tablist" aria-label="Journal entry details">
+                <button type="button" role="tab" aria-selected={detailTab === 'details'} className={`border-b-2 px-1 py-3 text-xs font-bold ${detailTab === 'details' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground'}`} onClick={() => setDetailTab('details')}>Details</button>
+                <button type="button" role="tab" aria-selected={detailTab === 'lines'} className={`border-b-2 px-1 py-3 text-xs font-bold ${detailTab === 'lines' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground'}`} onClick={() => setDetailTab('lines')}>Lines</button>
+                <button type="button" role="tab" aria-selected={detailTab === 'audit'} className={`border-b-2 px-1 py-3 text-xs font-bold ${detailTab === 'audit' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground'}`} onClick={() => setDetailTab('audit')}>Audit Trail</button>
+              </div>
+              {detailTab === 'details' ? (
+                <dl className="space-y-3 p-4 text-xs">
+                  <div className="flex justify-between gap-3"><dt className="text-muted-foreground">Date</dt><dd className="font-medium">{selectedEntry.entry_date}</dd></div>
+                  <div className="flex justify-between gap-3"><dt className="text-muted-foreground">Journal</dt><dd className="text-right font-medium">{selectedEntry.journal_name}</dd></div>
+                  <div className="flex justify-between gap-3"><dt className="text-muted-foreground">Source</dt><dd><Badge className={SOURCE_COLORS[selectedEntry.source_type] ?? 'bg-gray-100 text-gray-700'}>{SOURCE_LABELS[selectedEntry.source_type] ?? selectedEntry.source_type}</Badge></dd></div>
+                  <div className="space-y-1 border-t pt-3"><dt className="text-muted-foreground">Memo</dt><dd className="leading-5">{selectedEntry.memo || 'No memo provided.'}</dd></div>
+                  <div className="space-y-2 border-t pt-3"><div className="flex justify-between"><dt className="text-muted-foreground">Total debit</dt><dd className="font-mono font-semibold">{fmt(Number(selectedEntry.debit_total))}</dd></div><div className="flex justify-between"><dt className="text-muted-foreground">Total credit</dt><dd className="font-mono font-semibold">{fmt(Number(selectedEntry.credit_total))}</dd></div><div className="flex justify-between border-t pt-2"><dt className="font-medium">Balance</dt><dd className={`font-mono font-semibold ${Math.abs(Number(selectedEntry.debit_total) - Number(selectedEntry.credit_total)) < 0.001 ? 'text-emerald-600' : 'text-destructive'}`}>{Math.abs(Number(selectedEntry.debit_total) - Number(selectedEntry.credit_total)) < 0.001 ? 'Balanced' : 'Check totals'}</dd></div></div>
+                </dl>
+              ) : detailTab === 'lines' ? (
+                <div className="divide-y">
+                  {selectedEntry.lines.map((line) => <div key={line.id} className="space-y-1 p-4 text-xs"><p className="font-medium">{line.account_code} - {line.account_name}</p><p className="text-muted-foreground">{line.description || 'No line description'}</p><div className="flex justify-between font-mono"><span>Dr {fmt(Number(line.debit_amount))}</span><span>Cr {fmt(Number(line.credit_amount))}</span></div></div>)}
+                </div>
+              ) : (
+                <div className="space-y-4 p-4 text-xs">
+                  {isAuditLoading ? <p className="text-muted-foreground">Loading audit trail...</p> : auditEvents.length ? auditEvents.map((event) => <div key={event.id} className="border-l-2 border-primary/40 pl-3"><p className="font-semibold capitalize">{event.event_type.replace(/_/g, ' ')}</p><p className="mt-1 text-muted-foreground">{event.actor_name || 'System'} · {new Date(event.created_at).toLocaleString('en-KE', { dateStyle: 'medium', timeStyle: 'short' })}</p>{event.note && <p className="mt-1 leading-5 text-muted-foreground">{event.note}</p>}</div>) : <><div className="border-l-2 border-primary/40 pl-3"><p className="font-semibold">Entry created</p><p className="mt-1 text-muted-foreground">{selectedEntry.created_at ? new Date(selectedEntry.created_at).toLocaleString('en-KE', { dateStyle: 'medium', timeStyle: 'short' }) : 'Timestamp unavailable'}</p></div><div className="border-l-2 border-muted pl-3"><p className="font-semibold capitalize">Current status: {selectedEntry.status}</p><p className="mt-1 text-muted-foreground">{selectedEntry.updated_at ? new Date(selectedEntry.updated_at).toLocaleString('en-KE', { dateStyle: 'medium', timeStyle: 'short' }) : 'No later update recorded'}</p></div><p className="rounded-md bg-muted/50 p-3 leading-5 text-muted-foreground">No additional audit events have been recorded for this entry.</p></>}
+                </div>
+              )}
+              <div className="flex gap-2 border-t p-4">
+                <Link href={`/finance/transactions/${selectedEntry.id}`} className="flex-1"><Button variant="outline" size="sm" className="w-full">View Full Entry</Button></Link>
+                {selectedEntry.status === 'draft' && <Button size="sm" onClick={() => handlePost(selectedEntry.id)} disabled={actingId === selectedEntry.id}>{actingId === selectedEntry.id ? 'Posting...' : 'Post'}</Button>}
+                {selectedEntry.status !== 'reversed' && <Button variant="outline" size="sm" onClick={() => handleReverse(selectedEntry.id)} disabled={actingId === selectedEntry.id}>Reverse</Button>}
+              </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
+      </div>
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">

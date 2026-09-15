@@ -253,9 +253,9 @@ class Ticket(TimeStampedModel):
     class Meta:
         ordering = ["-created_at"]
         indexes = [
-            models.Index(fields=["tenant", "status"]),
-            models.Index(fields=["tenant", "requester_email"]),
-            models.Index(fields=["tenant", "created_at"]),
+            models.Index(fields=["tenant", "status"], name="SL_Ticketin_tenant__b61fa1_idx"),
+            models.Index(fields=["tenant", "requester_email"], name="SL_Ticketin_tenant__d4a9df_idx"),
+            models.Index(fields=["tenant", "created_at"], name="SL_Ticketin_tenant__b123a1_idx"),
         ]
 
     def __str__(self):

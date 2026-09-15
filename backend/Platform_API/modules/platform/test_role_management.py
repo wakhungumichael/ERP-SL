@@ -2,9 +2,14 @@ from django.contrib.auth.models import Group, Permission, User
 from django.test import TestCase
 from django.urls import reverse
 from rest_framework.test import APIClient
+from unittest.mock import patch
 
-from Platform_Core.models import Tenant, TenantUserProfile
-from Platform_API.modules.platform.views import PROTECTED_PERMISSION_APP_LABELS
+from Platform_Core.models import ModuleDefinition, Tenant, TenantModuleActivation, TenantSettings, TenantUserProfile
+from Platform_API.modules.platform.views import (
+    PROTECTED_PERMISSION_APP_LABELS,
+    TENANT_MANAGEABLE_PLATFORM_CORE_MODELS,
+    TENANT_PERMISSION_MODULE_SLUGS,
+)
 from Platform_API.modules.shared_serializers import tenant_role_prefix
 
 
@@ -33,8 +38,9 @@ def _first_tenant_permission():
 
 
 def _first_protected_permission():
-    return Permission.objects.filter(
-        content_type__app_label__in=PROTECTED_PERMISSION_APP_LABELS
+    return Permission.objects.filter(content_type__app_label__in=PROTECTED_PERMISSION_APP_LABELS).exclude(
+        content_type__app_label="Platform_Core",
+        content_type__model__in=TENANT_MANAGEABLE_PLATFORM_CORE_MODELS,
     ).order_by("id").first()
 
 
@@ -43,6 +49,12 @@ class TenantRoleManagementTests(TestCase):
         self.client = APIClient()
         self.tenant_a = _make_tenant("Tenant A", "tenant-a")
         self.tenant_b = _make_tenant("Tenant B", "tenant-b")
+        for module_slug in sorted({slug for slugs in TENANT_PERMISSION_MODULE_SLUGS.values() for slug in slugs}):
+            module, _ = ModuleDefinition.objects.get_or_create(
+                slug=module_slug,
+                defaults={"name": module_slug.replace("-", " ").title(), "is_active": True},
+            )
+            TenantModuleActivation.objects.get_or_create(tenant=self.tenant_a, module=module, defaults={"status": "enabled"})
         self.tenant_admin_a = _make_tenant_admin("tenant_admin_a", self.tenant_a)
         self.tenant_admin_b = _make_tenant_admin("tenant_admin_b", self.tenant_b)
         self.regular_user_a = _make_tenant_user("user_a", self.tenant_a)
@@ -138,6 +150,71 @@ class TenantRoleManagementTests(TestCase):
         self.assertEqual(response.status_code, 403, response.data)
         self.assertIn("do not have permission to assign", str(response.data))
 
+    def test_invite_assigns_existing_tenant_custom_role(self):
+        self.client.force_authenticate(user=self.tenant_admin_a)
+
+        response = self.client.post(
+            reverse("tenant-user-invite", kwargs={"pk": self.tenant_a.pk}),
+            {
+                "first_name": "New",
+                "last_name": "Dispatcher",
+                "email": "new.dispatcher@example.com",
+                "role_group": self.custom_role_a.name,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        invited = User.objects.get(email="new.dispatcher@example.com")
+        self.assertEqual(list(invited.groups.values_list("id", flat=True)), [self.custom_role_a.id])
+        self.assertFalse(response.data["data"]["email_sent"])
+
+    def test_invite_sends_credentials_using_tenant_smtp(self):
+        self.client.force_authenticate(user=self.tenant_admin_a)
+        TenantSettings.objects.create(
+            tenant=self.tenant_a,
+            support_email="support@tenant-a.example",
+            smtp_host="mail.tenant-a.example",
+            smtp_port=465,
+            smtp_user="support@tenant-a.example",
+            smtp_password="mail-secret",
+            smtp_use_tls=False,
+            smtp_use_ssl=True,
+        )
+
+        with patch("django.core.mail.message.EmailMessage.send", return_value=1) as send:
+            response = self.client.post(
+                reverse("tenant-user-invite", kwargs={"pk": self.tenant_a.pk}),
+                {
+                    "first_name": "Emailed",
+                    "last_name": "User",
+                    "email": "emailed.user@example.com",
+                    "role_group": self.custom_role_a.name,
+                },
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertTrue(response.data["data"]["email_sent"])
+        self.assertEqual(response.data["data"]["email_error"], "")
+        send.assert_called_once_with(fail_silently=False)
+
+    def test_invite_rejects_role_owned_by_another_tenant(self):
+        self.client.force_authenticate(user=self.tenant_admin_a)
+
+        response = self.client.post(
+            reverse("tenant-user-invite", kwargs={"pk": self.tenant_a.pk}),
+            {
+                "first_name": "Wrong",
+                "email": "wrong.role@example.com",
+                "role_group": self.custom_role_b.name,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertFalse(User.objects.filter(email="wrong.role@example.com").exists())
+
     def test_tenant_admin_permission_catalog_excludes_protected_apps(self):
         self.client.force_authenticate(user=self.tenant_admin_a)
         protected_permission = _first_protected_permission()
@@ -151,3 +228,32 @@ class TenantRoleManagementTests(TestCase):
         permission_ids = {item["id"] for item in response.data}
         self.assertIn(allowed_permission.id, permission_ids)
         self.assertNotIn(protected_permission.id, permission_ids)
+
+    def test_permission_catalog_includes_unlicensed_tenant_modules_for_role_templates(self):
+        self.client.force_authenticate(user=self.tenant_admin_b)
+
+        response = self.client.get(reverse("platform-permission-list"))
+
+        self.assertEqual(response.status_code, 200, response.data)
+        app_labels = {item["content_type"]["app_label"] for item in response.data}
+        self.assertTrue({"SL_CRM", "SL_HR", "SL_Inventory", "SL_Procurement", "SL_Sales", "SL_Ticketing"}.issubset(app_labels))
+
+    def test_permission_catalog_includes_tenant_accounting_but_not_saas_control(self):
+        self.client.force_authenticate(user=self.tenant_admin_a)
+
+        response = self.client.get(reverse("platform-permission-list"))
+
+        self.assertEqual(response.status_code, 200, response.data)
+        core_models = {
+            item["content_type"]["model"]
+            for item in response.data
+            if item["content_type"]["app_label"] == "Platform_Core"
+        }
+        self.assertIn("journalentry", core_models)
+        self.assertNotIn("tenant", core_models)
+        self.assertNotIn("subscriptionplan", core_models)
+        codenames = {item["codename"] for item in response.data}
+        self.assertIn("can_access_finance_workspace", codenames)
+        self.assertIn("can_view_erp_reports", codenames)
+        self.assertIn("can_view_weighbridge_overview", codenames)
+        self.assertIn("can_view_crm_overview", codenames)

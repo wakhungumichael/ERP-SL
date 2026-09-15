@@ -45,11 +45,24 @@ function api(token: string, path: string, method = 'GET', body?: object) {
   });
 }
 
+function displayGroupName(group: any): string {
+  if (group?.display_name) return group.display_name;
+  const name = String(group?.name ?? '');
+  return name.startsWith('tenant:') ? (name.split(':', 3)[2] || name) : name;
+}
+
 const ROLE_GROUPS = [
   { value: 'Tenant Admin', label: 'Organization Admin' },
   { value: 'Finance', label: 'Finance' },
   { value: 'Operator', label: 'Operator' },
 ];
+
+interface AssignableRole {
+  id?: number;
+  name: string;
+  display_name?: string;
+  is_assignable?: boolean;
+}
 
 const MEMBERSHIP_ROLE_OPTIONS = [
   { value: 'owner', label: 'Owner' },
@@ -152,6 +165,22 @@ function InviteUserDialog({
   });
   const branches = branchData?.data?.branches ?? branchData?.results ?? [];
 
+  const { data: rolesData } = useQuery({
+    queryKey: ['invite-roles', selectedTenantId || effectiveTenantId],
+    queryFn: () => api(token!, '/roles/?page_size=200'),
+    enabled: open && !!token && !!(selectedTenantId || effectiveTenantId),
+  });
+  const apiRoles: AssignableRole[] = rolesData?.results ?? [];
+  const roleTenantId = selectedTenantId || effectiveTenantId;
+  const roleChoices: AssignableRole[] = [
+    ...ROLE_GROUPS.map(option => ({ name: option.value, display_name: option.label, is_assignable: true })),
+    ...apiRoles.filter(candidate =>
+      candidate.is_assignable !== false
+      && !ROLE_GROUPS.some(option => option.value === candidate.name)
+      && (!candidate.name.startsWith('tenant:') || candidate.name.startsWith(`tenant:${roleTenantId}:`)),
+    ),
+  ];
+
   const mutation = useMutation({
     mutationFn: () => {
       const tid = effectiveTenantId || selectedTenantId;
@@ -239,8 +268,8 @@ function InviteUserDialog({
               <Select value={form.role_group} onValueChange={v => setForm(p => ({ ...p, role_group: v }))}>
                 <SelectTrigger><SelectValue placeholder="Select role…" /></SelectTrigger>
                 <SelectContent>
-                  {ROLE_GROUPS.map(r => (
-                    <SelectItem key={r.value} value={r.value}>{r.label}</SelectItem>
+                  {roleChoices.map(r => (
+                    <SelectItem key={r.name} value={r.name}>{r.display_name || r.name}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -295,6 +324,7 @@ function EditUserDialog({
     is_active: true,
     is_tenant_admin: false,
   });
+  const [selectedRoleId, setSelectedRoleId] = useState('');
 
   useEffect(() => {
     if (!user) return;
@@ -309,7 +339,19 @@ function EditUserDialog({
       is_active: Boolean(user.is_active),
       is_tenant_admin: Boolean((user as any).is_org_admin ?? user.is_tenant_admin),
     });
+    setSelectedRoleId(user.groups?.[0]?.id ? String(user.groups[0].id) : '');
   }, [user]);
+
+  const { data: assignableRolesData } = useQuery({
+    queryKey: ['edit-user-roles', user?.organization_id ?? user?.tenant_id],
+    queryFn: () => api(token!, '/roles/?page_size=200'),
+    enabled: open && !!token && !!user,
+  });
+  const editedUserTenantId = String(user?.organization_id ?? user?.tenant_id ?? '');
+  const assignableRoles: AssignableRole[] = (assignableRolesData?.results ?? []).filter(
+    (candidate: AssignableRole) => candidate.is_assignable !== false
+      && (!candidate.name.startsWith('tenant:') || candidate.name.startsWith(`tenant:${editedUserTenantId}:`)),
+  );
 
   const [membershipForm, setMembershipForm] = useState({
     tenant_id: '',
@@ -423,7 +465,14 @@ function EditUserDialog({
       const activeOrganizationId = (user as any)?.organization_id ?? user?.tenant_id;
       if (activeOrganizationId) payload.branch_id = form.branch_id || null;
       if (role === 'superadmin' && activeOrganizationId) payload.is_tenant_admin = form.is_tenant_admin;
-      return api(token!, `/users/${user.id}/update/`, 'PATCH', payload);
+      const updated = await api(token!, `/users/${user.id}/update/`, 'PATCH', payload);
+      if (selectedRoleId) {
+        await api(token!, `/users/${user.id}/assign-roles/`, 'POST', {
+          group_ids: [Number(selectedRoleId)],
+          replace_existing: true,
+        });
+      }
+      return updated;
     },
     onSuccess: (res) => {
       qc.invalidateQueries({ queryKey: ['platform-users'] });
@@ -471,6 +520,22 @@ function EditUserDialog({
             <Label>New Password</Label>
             <Input value={form.password} onChange={f('password')} type="password" placeholder="Leave blank to keep current password" />
           </div>
+          {!form.is_tenant_admin && (
+            <div className="space-y-1.5">
+              <Label>Role</Label>
+              <Select value={selectedRoleId} onValueChange={setSelectedRoleId}>
+                <SelectTrigger><SelectValue placeholder="Select role…" /></SelectTrigger>
+                <SelectContent>
+                  {assignableRoles.map(candidate => (
+                    <SelectItem key={candidate.id} value={String(candidate.id)}>
+                      {candidate.display_name || candidate.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">Custom roles created in Roles &amp; Permissions are available here.</p>
+            </div>
+          )}
           {((user as any)?.organization_id ?? user?.tenant_id) && (
             <>
               <div className="space-y-1.5">
@@ -736,9 +801,15 @@ export default function Users() {
                       {(u.organization_name ?? u.tenant_name) && (
                         <span className="text-xs text-muted-foreground hidden sm:block">{u.organization_name ?? u.tenant_name}</span>
                       )}
-                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${ROLE_COLORS[appRole]}`}>
-                        {ROLE_LABELS[appRole]}
-                      </span>
+                      {(u.groups ?? []).length > 0 ? (u.groups ?? []).map((group: any) => (
+                        <span key={group.id ?? group.name} className={`px-2 py-0.5 rounded text-[10px] font-bold border ${ROLE_COLORS[appRole]}`}>
+                          {displayGroupName(group)}
+                        </span>
+                      )) : (
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${ROLE_COLORS[appRole]}`}>
+                          {ROLE_LABELS[appRole]}
+                        </span>
+                      )}
                       <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${u.is_active ? 'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-900/30 dark:text-emerald-400' : 'bg-gray-100 text-gray-500 border-gray-300'}`}>
                         {u.is_active ? 'Active' : 'Inactive'}
                       </span>

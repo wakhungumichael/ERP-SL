@@ -8,7 +8,7 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 
 from Platform_Core.models import Tenant, TenantUserProfile
-from SL_Sales.models import Estimate, EstimateLineItem, SalesOrder
+from SL_Sales.models import Estimate, EstimateLineItem, Product, SalesOrder
 from SL_Weighbridge.models import Company, Customer, Invoice
 
 
@@ -61,6 +61,27 @@ class SalesOrderFlowTests(TestCase):
         self.assertEqual(order.status, "confirmed")
         self.assertEqual(order.line_items.count(), 1)
         self.assertEqual(order.total, estimate.total)
+
+    def test_tenant_bound_superuser_sees_only_own_products(self):
+        tenant_b = Tenant.objects.create(name="Other Tenant", code="other-tenant", is_active=True, status="active")
+        Product.objects.create(tenant=self.tenant, code="A-1", name="Tenant A Product")
+        Product.objects.create(tenant=tenant_b, code="B-1", name="Tenant B Product")
+        self.user.is_superuser = True
+        self.user.save(update_fields=["is_superuser"])
+
+        response = self.client.get(reverse("sales-product-list"))
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual([product["code"] for product in response.data["results"]], ["A-1"])
+
+    def test_tenant_without_weighbridge_hides_legacy_weighbridge_products(self):
+        Product.objects.create(tenant=self.tenant, code="WB-10-WHEELER", name="Weighbridge Service - 10 Wheeler")
+        Product.objects.create(tenant=self.tenant, code="A-1", name="Tenant A Product")
+
+        response = self.client.get(reverse("sales-product-list"))
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual([product["code"] for product in response.data["results"]], ["A-1"])
 
     def test_sales_order_can_convert_to_invoice(self):
         order = SalesOrder.objects.create(

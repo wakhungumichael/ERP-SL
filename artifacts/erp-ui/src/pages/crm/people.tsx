@@ -27,6 +27,7 @@ const API = (path: string, opts: RequestInit = {}) => {
   const token = localStorage.getItem('sl-erp-token');
   return fetch(`/api/crm${path}`, { ...opts, headers: { Authorization: `Token ${token}`, 'Content-Type': 'application/json', ...(opts.headers as any) } });
 };
+const USERS_API = () => fetch('/api/platform/users/?page_size=200', { headers: { Authorization: `Token ${localStorage.getItem('sl-erp-token')}` } });
 
 const STAGE_BADGE: Record<string, string> = {
   new: 'bg-slate-100 text-slate-700 border-slate-300',
@@ -58,17 +59,24 @@ type Person = {
   organisation?: number | null;
   organisation_name?: string;
   notes?: string;
+  assigned_to_name?: string;
 };
 
 export default function PeoplePage() {
   const [search, setSearch] = useState('');
+  const [companyFilter, setCompanyFilter] = useState('');
+  const [ownerFilter, setOwnerFilter] = useState('');
+  const [roleFilter, setRoleFilter] = useState('');
   const [selectedPerson, setSelectedPerson] = useState<Person | null>(null);
 
   const { data, isLoading } = useQuery({
-    queryKey: ['crm-people', search],
+    queryKey: ['crm-people', search, companyFilter, ownerFilter, roleFilter],
     queryFn: async () => {
       const params = new URLSearchParams();
       if (search) params.set('search', search);
+      if (companyFilter !== 'all') params.set('organisation', companyFilter);
+      if (ownerFilter) params.set('assigned_to', ownerFilter);
+      if (roleFilter) params.set('job_title', roleFilter);
       const res = await API(`/people/?${params}`);
       return res.json();
     },
@@ -81,9 +89,11 @@ export default function PeoplePage() {
       return res.json();
     },
   });
+  const { data: usersData } = useQuery({ queryKey: ['crm-owner-picker'], queryFn: () => USERS_API().then((response) => response.json()) });
 
   const people = Array.isArray(data) ? data : data?.results ?? [];
   const orgs = Array.isArray(orgsData) ? orgsData : orgsData?.results ?? [];
+  const users = usersData?.results ?? [];
 
   useEffect(() => {
     if (!selectedPerson) return;
@@ -115,7 +125,7 @@ export default function PeoplePage() {
         <Card><CardContent className="p-4"><div className="text-xs font-bold uppercase tracking-wide text-muted-foreground">With Phone</div><div className="mt-2 text-2xl font-semibold text-emerald-600">{summary.withPhone}</div></CardContent></Card>
       </div>
 
-      <div className="flex items-center gap-2 max-w-sm bg-card border rounded-lg px-3 shadow-sm">
+      <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-card px-3 py-1 shadow-sm">
         <Search className="h-4 w-4 text-muted-foreground shrink-0" />
         <Input
           placeholder="Search contacts…"
@@ -123,6 +133,9 @@ export default function PeoplePage() {
           onChange={e => setSearch(e.target.value)}
           className="h-9 border-0 shadow-none focus-visible:ring-0 text-sm"
         />
+        <Select value={companyFilter || 'all'} onValueChange={setCompanyFilter}><SelectTrigger className="h-8 w-[170px]"><SelectValue placeholder="Company" /></SelectTrigger><SelectContent><SelectItem value="all">All companies</SelectItem>{orgs.map((org: any) => <SelectItem key={org.id} value={String(org.id)}>{org.name}</SelectItem>)}</SelectContent></Select>
+        <Select value={ownerFilter || 'all'} onValueChange={(value) => setOwnerFilter(value === 'all' ? '' : value)}><SelectTrigger className="h-8 w-[150px]"><SelectValue placeholder="Owner" /></SelectTrigger><SelectContent><SelectItem value="all">All owners</SelectItem>{users.map((user: any) => <SelectItem key={user.id} value={String(user.id)}>{user.full_name || user.username || user.email}</SelectItem>)}</SelectContent></Select>
+        <Input className="h-8 w-[150px]" placeholder="Relationship role" value={roleFilter} onChange={(event) => setRoleFilter(event.target.value)} />
       </div>
 
       <div className="bg-card rounded-lg border shadow-sm overflow-hidden">
@@ -132,13 +145,14 @@ export default function PeoplePage() {
               <TableHead>Name</TableHead>
                 <TableHead>Job Title</TableHead>
                 <TableHead>Company</TableHead>
+                <TableHead>Owner</TableHead>
                 <TableHead>Contact Details</TableHead>
                 <TableHead>Details</TableHead>
               </TableRow>
             </TableHeader>
           <TableBody>
             {isLoading ? (
-              <TableRow><TableCell colSpan={5} className="text-center py-12 text-sm text-muted-foreground animate-pulse">Loading people…</TableCell></TableRow>
+              <TableRow><TableCell colSpan={6} className="text-center py-12 text-sm text-muted-foreground animate-pulse">Loading people…</TableCell></TableRow>
             ) : people.length ? people.map((person: Person) => (
               <TableRow key={person.id} className="hover:bg-muted/30 transition-colors">
                 <TableCell>
@@ -156,6 +170,7 @@ export default function PeoplePage() {
                 </TableCell>
                 <TableCell className="text-sm text-muted-foreground">{person.job_title || '—'}</TableCell>
                 <TableCell className="text-sm font-medium">{person.organisation_name || <span className="text-muted-foreground">—</span>}</TableCell>
+                <TableCell className="text-sm text-muted-foreground">{person.assigned_to_name || 'Unassigned'}</TableCell>
                 <TableCell>
                   <div className="space-y-0.5">
                     {person.email && <div className="flex items-center gap-1 text-xs text-muted-foreground"><Mail className="h-3 w-3" />{person.email}</div>}
@@ -167,7 +182,7 @@ export default function PeoplePage() {
                 </TableCell>
               </TableRow>
             )) : (
-              <TableRow><TableCell colSpan={5} className="text-center py-16 text-sm text-muted-foreground">No people yet. Add your first contact.</TableCell></TableRow>
+              <TableRow><TableCell colSpan={6} className="text-center py-16 text-sm text-muted-foreground">No people yet. Add your first contact.</TableCell></TableRow>
             )}
           </TableBody>
         </Table>
@@ -215,7 +230,7 @@ function PersonWorkspaceSheet({
   const activities = Array.isArray(activitiesData) ? activitiesData : activitiesData?.results ?? [];
   const openDeals = opportunities.filter((item: any) => !['won', 'lost'].includes(item.stage));
   const pipelineValue = openDeals.reduce((sum: number, item: any) => sum + Number(item.value ?? 0), 0);
-  const overdueActivities = activities.filter((item: any) => new Date(item.date).getTime() < Date.now());
+  const overdueActivities = activities.filter((item: any) => item.status !== 'completed' && item.status !== 'cancelled' && new Date(item.date).getTime() < Date.now());
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -230,15 +245,12 @@ function PersonWorkspaceSheet({
           </SheetDescription>
         </SheetHeader>
 
-        <div className="mt-6 space-y-6">
-          <section className="rounded-3xl border bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950 p-6 text-white">
+        <div className="mt-4 space-y-4">
+          <section className="rounded-lg border bg-card p-4">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div>
-                <div className="inline-flex rounded-full border border-white/15 bg-white/10 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.22em] text-slate-200">
-                  Contact Record
-                </div>
-                <h2 className="mt-3 text-3xl font-black tracking-tight">{person.full_name}</h2>
-                <div className="mt-3 flex flex-wrap gap-4 text-sm text-slate-200">
+                <h2 className="text-xl font-semibold tracking-tight">{person.full_name}</h2>
+                <div className="mt-1 flex flex-wrap gap-3 text-sm text-muted-foreground">
                   <span>{person.job_title || 'No job title'}</span>
                   <span>{person.organisation_name || 'No company linked'}</span>
                 </div>
@@ -246,14 +258,14 @@ function PersonWorkspaceSheet({
               <div className="flex flex-wrap gap-2">
                 {person.organisation ? (
                   <Link href="/crm/companies">
-                    <Button variant="secondary" className="gap-2">
+                    <Button variant="outline" className="gap-2">
                       <Building2 className="h-4 w-4" />
                       View Company
                     </Button>
                   </Link>
                 ) : null}
                 <Link href={openDeals.length > 0 ? '/crm/opportunities' : '/crm/follow-ups'}>
-                  <Button className="gap-2">
+                    <Button size="sm" className="gap-2">
                     <ArrowRight className="h-4 w-4" />
                     {openDeals.length > 0 ? 'Work Deals' : 'Plan Follow-up'}
                   </Button>
@@ -261,22 +273,22 @@ function PersonWorkspaceSheet({
               </div>
             </div>
 
-            <div className="mt-6 grid gap-3 md:grid-cols-4">
-              <div className="rounded-2xl border border-white/10 bg-white/10 p-4">
-                <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-300">Open Deals</div>
-                <div className="mt-2 text-2xl font-black">{openDeals.length}</div>
+            <div className="mt-4 grid grid-cols-2 gap-3 border-t pt-3 md:grid-cols-4">
+              <div className="border-l pl-3">
+                <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Open Deals</div>
+                <div className="mt-1 text-lg font-semibold">{openDeals.length}</div>
               </div>
-              <div className="rounded-2xl border border-white/10 bg-white/10 p-4">
-                <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-300">Pipeline Value</div>
-                <div className="mt-2 text-2xl font-black">{formatMoney(pipelineValue)}</div>
+              <div className="border-l pl-3">
+                <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Pipeline</div>
+                <div className="mt-1 text-lg font-semibold">{formatMoney(pipelineValue)}</div>
               </div>
-              <div className="rounded-2xl border border-white/10 bg-white/10 p-4">
-                <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-300">Follow-ups</div>
-                <div className="mt-2 text-2xl font-black">{activities.length}</div>
+              <div className="border-l pl-3">
+                <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Follow-ups</div>
+                <div className="mt-1 text-lg font-semibold">{activities.length}</div>
               </div>
-              <div className="rounded-2xl border border-white/10 bg-white/10 p-4">
-                <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-300">Overdue</div>
-                <div className="mt-2 text-2xl font-black">{overdueActivities.length}</div>
+              <div className="border-l pl-3">
+                <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Overdue</div>
+                <div className="mt-1 text-lg font-semibold">{overdueActivities.length}</div>
               </div>
             </div>
           </section>
@@ -302,40 +314,6 @@ function PersonWorkspaceSheet({
               </CardContent>
             </Card>
 
-            <Card className="shadow-sm">
-              <CardContent className="p-5">
-                <div className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Next Steps</div>
-                <div className="mt-4 grid gap-3">
-                  <Link href="/crm/follow-ups" className="rounded-2xl border p-4 transition-colors hover:bg-muted/30">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <div className="font-semibold">Keep follow-ups on time</div>
-                        <div className="mt-1 text-sm text-muted-foreground">Calls, meetings, and tasks around this person should be visible and timely.</div>
-                      </div>
-                      <CalendarClock className="h-4 w-4 shrink-0 text-sky-600" />
-                    </div>
-                  </Link>
-                  <Link href="/sales/estimates" className="rounded-2xl border p-4 transition-colors hover:bg-muted/30">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <div className="font-semibold">Move active conversations into quotes</div>
-                        <div className="mt-1 text-sm text-muted-foreground">Proposal-stage work should leave the contact note layer and become structured commercial work.</div>
-                      </div>
-                      <TrendingUp className="h-4 w-4 shrink-0 text-violet-600" />
-                    </div>
-                  </Link>
-                  <Link href="/sales/orders" className="rounded-2xl border p-4 transition-colors hover:bg-muted/30">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <div className="font-semibold">Escalate wins into execution</div>
-                        <div className="mt-1 text-sm text-muted-foreground">When this contact helps close a deal, keep the handoff moving into operations.</div>
-                      </div>
-                      <ShoppingCart className="h-4 w-4 shrink-0 text-emerald-600" />
-                    </div>
-                  </Link>
-                </div>
-              </CardContent>
-            </Card>
           </div>
 
           <Card className="shadow-sm">
@@ -432,7 +410,7 @@ function AddPersonDialog({ organisations }: { organisations: any[] }) {
       setOpen(false);
       setForm({ first_name: '', last_name: '', job_title: '', email: '', phone: '', organisation: '' });
     },
-    onError: () => toast({ title: 'Could not save', variant: 'destructive' }),
+    onError: (error: Error) => toast({ title: 'Could not save person', description: error.message, variant: 'destructive' }),
   });
 
   return (

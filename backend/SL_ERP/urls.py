@@ -2,11 +2,25 @@ from django.conf import settings
 from django.conf.urls.static import static
 from django.contrib import admin
 from django.http import JsonResponse
+from django.shortcuts import redirect
 from django.urls import include, path
 
 
 def healthz(request):
     return JsonResponse({"status": "ok"})
+
+
+def frontend_login_redirect(request, tenant_code=None):
+    login_path = f"/login/{tenant_code}" if tenant_code else "/login"
+    frontend_url = settings.ERP_FRONTEND_URL.rstrip("/")
+    if not frontend_url and request.get_host().split(":", 1)[0] in {"localhost", "127.0.0.1"}:
+        frontend_url = "http://localhost:5173"
+    if not frontend_url:
+        return JsonResponse(
+            {"error": "ERP_FRONTEND_URL must be configured for browser login links."},
+            status=503,
+        )
+    return redirect(f"{frontend_url}{login_path}")
 
 
 urlpatterns = [
@@ -38,6 +52,12 @@ urlpatterns = [
     path("api/ticketing/", include("Platform_API.modules.ticketing.urls")),
     # Django admin (accessible at /admin/)
     path("admin/", admin.site.urls),
+]
+
+# Makes older invitation links that pointed at the API host recoverable.
+urlpatterns += [
+    path("login/<slug:tenant_code>", frontend_login_redirect, name="frontend-tenant-login-redirect"),
+    path("login", frontend_login_redirect, name="frontend-login-redirect"),
 ]
 
 if settings.DEBUG:

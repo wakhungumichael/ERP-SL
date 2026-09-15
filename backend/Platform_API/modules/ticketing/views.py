@@ -8,7 +8,7 @@ import urllib.request
 from io import StringIO
 
 from django.contrib.auth.models import User
-from django.core.mail import EmailMultiAlternatives, get_connection
+from django.core.mail import EmailMultiAlternatives
 from django.db.models import Count, Q
 from django.http import HttpResponse
 from django.utils import timezone
@@ -24,6 +24,7 @@ from Platform_API.modules.mixins import (
     tenant_or_403 as _tenant_or_403,
 )
 from Platform_Core.models import TenantSettings
+from Platform_Core.email import get_tenant_smtp_connection
 from SL_Ticketing.models import (
     Ticket,
     TicketEvent,
@@ -112,14 +113,7 @@ def _send_email_message(ticket, message_obj):
     subject_prefix = channel_settings.get("reply_subject_prefix") or f"[{ticket.tenant.name} Support]"
     from_name = channel_settings.get("from_name") or ticket.tenant.name
     subject = f"{subject_prefix} {ticket.public_id} {ticket.subject}".strip()
-    connection = get_connection(
-        backend="django.core.mail.backends.smtp.EmailBackend",
-        host=settings_obj.smtp_host,
-        port=settings_obj.smtp_port or 587,
-        username=settings_obj.smtp_user,
-        password=settings_obj.smtp_password,
-        use_tls=settings_obj.smtp_use_tls,
-    )
+    connection = get_tenant_smtp_connection(settings_obj)
     from_email = settings_obj.support_email or settings_obj.smtp_user
     email = EmailMultiAlternatives(
         subject=subject,

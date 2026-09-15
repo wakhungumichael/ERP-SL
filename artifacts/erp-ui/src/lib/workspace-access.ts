@@ -1,6 +1,7 @@
 import type { AppRole } from '@/lib/roles';
+import { hasMenuPathPermission } from '@/lib/permission-access';
 
-type AccessReason = 'module' | 'role';
+type AccessReason = 'module' | 'role' | 'permission';
 
 type RouteAccessRule = {
   pathPrefix: string;
@@ -110,10 +111,14 @@ export function evaluateWorkspaceRouteAccess({
   path,
   role,
   activeModuleSlugs,
+  permissions = [],
+  isPermissionDrivenRole = false,
 }: {
   path: string;
   role: AppRole;
   activeModuleSlugs: string[];
+  permissions?: string[];
+  isPermissionDrivenRole?: boolean;
 }): RouteAccessResult {
   if (role === 'superadmin') {
     return { allowed: true, rule: null };
@@ -125,11 +130,17 @@ export function evaluateWorkspaceRouteAccess({
     return { allowed: true, rule: null };
   }
 
-  if (rule.roles?.length && !rule.roles.includes(role)) {
+  if (rule.roles?.length && !isPermissionDrivenRole && !rule.roles.includes(role)) {
     return { allowed: false, reason: 'role', rule };
   }
 
-  if (rule.modules?.length) {
+  if (isPermissionDrivenRole && normalizedPath !== '/dashboard') {
+    if (!hasMenuPathPermission(normalizedPath, permissions)) {
+      return { allowed: false, reason: 'permission', rule };
+    }
+  }
+
+  if (rule.modules?.length && role !== 'tenant_admin' && !isPermissionDrivenRole) {
     const activeModules = new Set(activeModuleSlugs);
     const hasModule = rule.modules.some((moduleSlug) => activeModules.has(moduleSlug));
     if (!hasModule) {

@@ -40,6 +40,13 @@ SECRET_KEY = os.getenv(
 
 DEBUG = env_bool("DEBUG", default=True)
 
+# Optional public browser URL used in links sent by email when the API and UI
+# are hosted on different origins (for example, Vite on :5173 in development).
+ERP_FRONTEND_URL = os.getenv(
+    "ERP_FRONTEND_URL",
+    "http://localhost:5173" if DEBUG else "",
+).rstrip("/")
+
 ALLOWED_HOSTS = env_list(
     "ALLOWED_HOSTS",
     ["*"] if DEBUG else ["erp.siakoralabs.co.ke", "217.21.122.58", "localhost", "127.0.0.1"],

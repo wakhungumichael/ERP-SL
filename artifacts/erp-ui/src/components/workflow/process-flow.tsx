@@ -36,20 +36,23 @@ export function ProcessFlow({
   description,
   stages,
   actions,
+  compact = false,
 }: {
   title: string;
   description: string;
   stages: ProcessStage[];
   actions?: ProcessAction[];
+  compact?: boolean;
 }) {
   return (
     <Card className="shadow-sm">
-      <CardHeader className="border-b bg-muted/20 py-3">
+      {!compact && <CardHeader className="border-b bg-muted/20 py-3">
         <CardTitle className="text-sm font-bold uppercase tracking-widest">{title}</CardTitle>
         <p className="text-sm font-normal text-muted-foreground">{description}</p>
-      </CardHeader>
-      <CardContent className="space-y-5 p-5">
-        <div className="flex flex-wrap items-center gap-2">
+      </CardHeader>}
+      <CardContent className="p-0">
+        <div className={cn('grid', actions?.length ? 'xl:grid-cols-[minmax(0,1.25fr)_minmax(420px,1fr)]' : '')}>
+        <div className={cn('flex flex-wrap items-center', compact ? 'gap-2 p-3' : 'gap-3 p-5')}>
           {stages.map((stage, index) => {
             const tone = stage.current
               ? stageClassNames.current
@@ -61,7 +64,8 @@ export function ProcessFlow({
               <div key={stage.label} className="flex items-center gap-2">
                 <div
                   className={cn(
-                    'rounded-full border px-3 py-1.5 text-xs font-bold uppercase tracking-wide transition-colors',
+                    'rounded-full border text-xs font-bold uppercase tracking-wide transition-colors',
+                    compact ? 'px-2.5 py-1' : 'px-3 py-1.5',
                     tone,
                     stage.muted ? 'opacity-70' : '',
                   )}
@@ -77,32 +81,33 @@ export function ProcessFlow({
         </div>
 
         {actions?.length ? (
-          <div className="grid gap-3 lg:grid-cols-3">
+          <div className="grid border-t xl:grid-cols-3 xl:border-l xl:border-t-0">
             {actions.map((action) => (
               <Link
                 key={`${action.href}-${action.label}`}
                 href={action.href}
                 className={cn(
-                  'rounded-xl border p-4 transition-colors hover:bg-muted/30',
+                  'border-b transition-colors hover:bg-muted/30 last:border-b-0 xl:border-b-0 xl:border-r xl:last:border-r-0',
+                  compact ? 'p-3' : 'p-4',
                   actionToneClassNames[action.tone ?? 'default'],
                 )}
               >
-                <div className="flex items-start justify-between gap-3">
+                <div className="flex items-start gap-3">
                   <div>
-                    <div className="mb-2 inline-flex rounded-full bg-white/70 p-2 shadow-sm">
+                    <div className={cn('inline-flex rounded-md bg-white/70 shadow-sm', compact ? 'mb-1 p-1.5' : 'mb-2 p-2')}>
                       {action.icon ?? <ArrowRight className="h-4 w-4" />}
                     </div>
                     <p className="font-semibold">{action.label}</p>
                     {action.helper ? (
-                      <p className="mt-1 text-sm text-current/80">{action.helper}</p>
+                      <p className={cn('text-current/80', compact ? 'mt-0.5 text-xs leading-4' : 'mt-1 text-sm')}>{action.helper}</p>
                     ) : null}
                   </div>
-                  <ArrowRight className="mt-1 h-4 w-4 shrink-0 opacity-70" />
                 </div>
               </Link>
             ))}
           </div>
         ) : null}
+        </div>
       </CardContent>
     </Card>
   );

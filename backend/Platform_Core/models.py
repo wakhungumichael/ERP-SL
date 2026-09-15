@@ -81,6 +81,20 @@ class TimeStampedModel(AuditMetadataMixin, models.Model):
         abstract = True
 
 
+class BackgroundServiceLease(TimeStampedModel):
+    service_name = models.CharField(max_length=120, unique=True)
+    owner_id = models.CharField(max_length=255, blank=True)
+    heartbeat_at = models.DateTimeField(blank=True, null=True)
+    lease_until = models.DateTimeField(blank=True, null=True)
+    metadata = models.JSONField(blank=True, default=dict)
+
+    class Meta:
+        ordering = ["service_name"]
+
+    def __str__(self):
+        return self.service_name
+
+
 class Industry(TimeStampedModel):
     slug = models.SlugField(max_length=100, unique=True)
     name = models.CharField(max_length=150)
@@ -839,11 +853,26 @@ class TenantSettings(TimeStampedModel):
     smtp_user = models.CharField(max_length=255, blank=True)
     smtp_password = models.CharField(max_length=255, blank=True)
     smtp_use_tls = models.BooleanField(default=True)
+    smtp_use_ssl = models.BooleanField(default=False)
+    smtp_allow_insecure_ssl = models.BooleanField(default=False)
     # Invoicing
     default_payment_terms_days = models.PositiveIntegerField(default=30)
 
     class Meta:
         ordering = ["tenant__name"]
+        permissions = [
+            ("can_access_finance_workspace", "Can access the Finance workspace"),
+            ("can_view_erp_reports", "Can view ERP reports"),
+            ("can_view_weighbridge_overview", "Can view the Weighbridge overview"),
+            ("can_view_sales_overview", "Can view the Sales overview"),
+            ("can_view_inventory_overview", "Can view the Inventory overview"),
+            ("can_view_finance_overview", "Can view the Finance overview"),
+            ("can_view_crm_overview", "Can view the CRM overview"),
+            ("can_view_ticketing_overview", "Can view the Ticketing overview"),
+            ("can_view_manufacturing_overview", "Can view the Manufacturing overview"),
+            ("can_view_retail_overview", "Can view the Retail overview"),
+            ("can_view_services_overview", "Can view the Services overview"),
+        ]
 
     def __str__(self):
         return f"Settings for {self.tenant.name}"

@@ -6,7 +6,7 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 from django.utils import timezone
 
-from Platform_Core.models import Tenant, TenantUserProfile
+from Platform_Core.models import OrganizationMembership, Tenant, TenantUserProfile
 from SL_CRM.models import Activity, Contact, Lead, Organisation, Supplier
 
 
@@ -143,6 +143,11 @@ class Command(BaseCommand):
         parser.add_argument("--tenant-id", type=int, default=None)
         parser.add_argument("--tenant-code", type=str, default="demo-metrix")
         parser.add_argument("--clear", action="store_true", help="Clear CRM records for the tenant before seeding.")
+        parser.add_argument(
+            "--performance-demo",
+            action="store_true",
+            help="Add idempotent multi-rep CRM data for the Sales Performance report.",
+        )
 
     def handle(self, *args, **options):
         tenant = self._resolve_tenant(options)
@@ -194,12 +199,18 @@ class Command(BaseCommand):
             for account_index, spec in enumerate(CRM_ACCOUNTS, start=1):
                 customer = Customer.objects.filter(tenant=tenant, name__iexact=spec["name"]).order_by("id").first()
                 if customer is None and spec["type"] == "customer":
+                    customer_email = spec["email"]
+                    if Customer.objects.filter(email__iexact=customer_email).exists():
+                        customer_email = f"primecloud+{tenant.id}+{account_index}@demo.siakora.local"
+                    customer_phone = spec["phone"]
+                    if Customer.objects.filter(phone_number=customer_phone).exists():
+                        customer_phone = f"CRM{tenant.id}{account_index:05d}"[:20]
                     customer = Customer.objects.create(
                         tenant=tenant,
                         name=spec["name"],
-                        email=spec["email"],
+                        email=customer_email,
                         address=spec["address"],
-                        phone_number=spec["phone"],
+                        phone_number=customer_phone,
                     )
 
                 organisation, organisation_created = Organisation.objects.update_or_create(
@@ -332,6 +343,13 @@ class Command(BaseCommand):
                             estimate.converted_to_sales_order = order
                             estimate.save(update_fields=["converted_to_sales_order", "updated_at"])
 
+            performance_summary = None
+            if options["performance_demo"]:
+                performance_summary = self._seed_performance_demo(
+                    tenant=tenant,
+                    assigned_actor=assigned_actor,
+                )
+
             summary = {
                 "tenant": tenant.code,
                 "organisations": Organisation.objects.filter(tenant=tenant).count(),
@@ -351,6 +369,126 @@ class Command(BaseCommand):
                     f"estimates={estimates_created}, orders={orders_created})"
                 )
             )
+            if performance_summary:
+                self.stdout.write(self.style.SUCCESS(f"Performance demo ready: {performance_summary}"))
+
+    def _seed_performance_demo(self, tenant, assigned_actor):
+        from SL_Sales.models import Estimate, SalesOrder
+
+        rep_specs = [
+            {"username": "primecloud.morris", "email": "morris@primecloud.co.ke", "first_name": "Morris", "last_name": "Ochieng"},
+            {"username": "primecloud.jane", "email": "jane@primecloud.co.ke", "first_name": "Jane", "last_name": "Wambui"},
+            {"username": "primecloud.david", "email": "david@primecloud.co.ke", "first_name": "David", "last_name": "Kamau"},
+        ]
+        reps = []
+        for spec in rep_specs:
+            rep, created = User.objects.get_or_create(
+                username=spec["username"],
+                defaults={
+                    "email": spec["email"],
+                    "first_name": spec["first_name"],
+                    "last_name": spec["last_name"],
+                    "is_active": True,
+                },
+            )
+            if created:
+                rep.set_unusable_password()
+                rep.save(update_fields=["password"])
+            TenantUserProfile.objects.get_or_create(
+                user=rep,
+                defaults={"tenant": tenant, "job_title": "Sales Representative"},
+            )
+            OrganizationMembership.objects.get_or_create(
+                user=rep,
+                tenant=tenant,
+                defaults={"role": "member", "is_active": True, "job_title": "Sales Representative"},
+            )
+            reps.append(rep)
+
+        organisations = list(Organisation.objects.filter(tenant=tenant).order_by("id"))
+        contacts = list(Contact.objects.filter(tenant=tenant).order_by("id"))
+        leads = list(Lead.objects.filter(tenant=tenant).order_by("id"))
+        probability_by_stage = {"new": 15, "contacted": 30, "proposal": 55, "negotiation": 70, "won": 100, "lost": 0}
+        for index, lead in enumerate(leads):
+            lead.assigned_to = reps[index % len(reps)]
+            lead.probability = probability_by_stage.get(lead.stage, 25)
+            lead.save(update_fields=["assigned_to", "probability", "updated_at"])
+
+        new_opportunity_specs = [
+            {
+                "title": "PrimeCloud ERP Expansion - Retail Division",
+                "stage": "negotiation",
+                "value": Decimal("3200000.00"),
+                "probability": 70,
+                "expected_close_date": timezone.localdate() + timedelta(days=10),
+                "assigned_to": reps[0],
+                "organisation": organisations[0] if organisations else None,
+                "contact": contacts[0] if contacts else None,
+                "notes": "Expansion opportunity for the retail operating unit.",
+            },
+            {
+                "title": "PrimeCloud Support Retainer",
+                "stage": "lost",
+                "value": Decimal("850000.00"),
+                "probability": 0,
+                "expected_close_date": timezone.localdate() - timedelta(days=20),
+                "assigned_to": reps[1],
+                "organisation": organisations[1] if len(organisations) > 1 else None,
+                "contact": contacts[1] if len(contacts) > 1 else None,
+                "loss_reason": "Budget deferred",
+                "notes": "Retained for conversion-rate and loss-reason reporting.",
+            },
+        ]
+        for spec in new_opportunity_specs:
+            Lead.objects.update_or_create(tenant=tenant, title=spec["title"], defaults=spec)
+
+        now = timezone.now()
+        activity_specs = [
+            ("Performance demo - completed discovery call", "call", -5, "completed", reps[0], "Qualified expansion scope.", "Prepare commercial proposal", 2),
+            ("Performance demo - completed stakeholder meeting", "meeting", -3, "completed", reps[1], "Decision makers aligned on rollout.", "Send implementation timeline", 1),
+            ("Performance demo - completed customer visit", "visit", -1, "completed", reps[2], "Validated branch requirements.", "Book solution review", 3),
+            ("Performance demo - overdue proposal follow-up", "task", -4, "open", reps[0], "Awaiting customer response.", "Call procurement lead", 0),
+            ("Performance demo - upcoming pricing review", "meeting", 2, "open", reps[1], "", "Confirm pricing review attendance", 2),
+            ("Performance demo - overdue renewal email", "email", -2, "open", reps[2], "", "Resend renewal options", 1),
+        ]
+        for summary, activity_type, days_offset, status, rep, outcome, next_action, next_action_days in activity_specs:
+            Activity.objects.update_or_create(
+                tenant=tenant,
+                summary=summary,
+                defaults={
+                    "type": activity_type,
+                    "date": now + timedelta(days=days_offset),
+                    "status": status,
+                    "outcome": outcome,
+                    "notes": "Seeded PrimeCloud performance-report scenario.",
+                    "next_action": next_action,
+                    "next_action_date": now + timedelta(days=next_action_days),
+                    "organisation": organisations[0] if organisations else None,
+                    "contact": contacts[0] if contacts else None,
+                    "lead": leads[0] if leads else None,
+                    "created_by": assigned_actor,
+                    "assigned_to": rep,
+                },
+            )
+
+        crm_estimates = list(Estimate.objects.filter(tenant=tenant, estimate_number__startswith="EST-CRM-").order_by("id"))
+        for index, estimate in enumerate(crm_estimates):
+            estimate.created_by = reps[index % len(reps)]
+            estimate.save(update_fields=["created_by", "updated_at"])
+        crm_orders = list(SalesOrder.objects.filter(tenant=tenant, order_number__startswith="SO-CRM-").order_by("id"))
+        for index, order in enumerate(crm_orders):
+            order.created_by = reps[index % len(reps)]
+            order.save(update_fields=["created_by", "updated_at"])
+
+        return {
+            "sales_reps": len(reps),
+            "opportunities": Lead.objects.filter(tenant=tenant, assigned_to__in=reps).count(),
+            "completed_activities": Activity.objects.filter(tenant=tenant, assigned_to__in=reps, status="completed").count(),
+            "open_activities": Activity.objects.filter(tenant=tenant, assigned_to__in=reps, status="open").count(),
+            "overdue_activities": Activity.objects.filter(tenant=tenant, assigned_to__in=reps, status="open", date__lt=now).count(),
+            "quotes": len(crm_estimates),
+            "orders": len(crm_orders),
+        }
 
     def _resolve_tenant(self, options):
         tenant_id = options.get("tenant_id")

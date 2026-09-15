@@ -43,6 +43,17 @@ function formatMoney(value: number, currency: string, locale: string, masked: bo
   return `${currency} ${value.toLocaleString(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
+function getGreeting(timezone: string) {
+  const hour = Number(new Intl.DateTimeFormat('en-US', {
+    hour: 'numeric',
+    hour12: false,
+    timeZone: timezone,
+  }).format(new Date()));
+  if (hour < 12) return 'Good morning';
+  if (hour < 18) return 'Good afternoon';
+  return 'Good evening';
+}
+
 function moduleIcon(key: string) {
   if (key.includes('weighbridge')) return Scale;
   if (key.includes('finance') || key.includes('accounting')) return ReceiptText;
@@ -437,6 +448,7 @@ export default function Dashboard() {
   }, [weighbridgeQuery.data]);
 
   const greetingName = String((user as any)?.first_name || (user as any)?.username || tenantContext.tenantName || 'there');
+  const greeting = getGreeting(tenantContext.branding.timezone);
   const today = new Intl.DateTimeFormat(tenantContext.branding.locale || 'en-KE', {
     weekday: 'long', day: '2-digit', month: 'short', year: 'numeric', timeZone: tenantContext.branding.timezone,
   }).format(new Date());
@@ -449,7 +461,7 @@ export default function Dashboard() {
     <div className="space-y-4">
       <header className="flex flex-wrap items-end justify-between gap-3 border-b border-border/80 pb-4">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight">Good morning, {greetingName}</h1>
+          <h1 className="text-xl font-semibold tracking-tight">{greeting}, {greetingName}</h1>
           <p className="mt-1 text-xs text-muted-foreground">Here is what is happening across your business today.</p>
         </div>
         <div className="inline-flex items-center gap-2 rounded-md border bg-card px-3 py-2 text-xs text-muted-foreground shadow-sm">

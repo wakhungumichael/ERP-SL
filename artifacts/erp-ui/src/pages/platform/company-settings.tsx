@@ -23,12 +23,13 @@ const BASE = '/api/platform';
 const CURRENCIES = ['KES', 'USD', 'EUR', 'GBP', 'UGX', 'TZS'];
 const TIMEZONES = ['Africa/Nairobi', 'Africa/Kampala', 'Africa/Dar_es_Salaam', 'Africa/Kigali', 'UTC'];
 
-// Roles an organization admin may assign (excludes privileged platform roles)
-const ASSIGNABLE_ROLES = [
-  { value: 'Tenant Admin', label: 'Organization Admin' },
-  { value: 'Finance', label: 'Finance' },
-  { value: 'Operator', label: 'Operator' },
-];
+interface TenantRoleOption {
+  id: number;
+  name: string;
+  display_name?: string;
+  scope?: 'system' | 'tenant';
+  is_assignable?: boolean;
+}
 
 const DOCUMENT_TYPES = [
   { value: 'invoice', label: 'Invoice' },
@@ -124,8 +125,18 @@ function api(token: string, path: string, method = 'GET', body?: object) {
     headers: { Authorization: `Token ${token}`, 'Content-Type': 'application/json' },
     body: body ? JSON.stringify(body) : undefined,
   }).then(async r => {
-    const j = await r.json();
-    if (!r.ok) throw new Error(j?.detail || j?.error || JSON.stringify(j));
+    const responseText = await r.text();
+    let j: any;
+    try {
+      j = responseText ? JSON.parse(responseText) : {};
+    } catch {
+      const contentType = r.headers.get('content-type') ?? '';
+      const hint = contentType.includes('text/html')
+        ? 'The API server returned an HTML page. Restart the Django API server and try again.'
+        : `The API returned an unreadable response (HTTP ${r.status}).`;
+      throw new Error(hint);
+    }
+    if (!r.ok) throw new Error(j?.detail || j?.error || j?.message || JSON.stringify(j));
     return j;
   });
 }
@@ -1044,6 +1055,8 @@ function OrganizationBillingTab({ tenantId, contactPhone }: { tenantId: number; 
 interface InviteResult {
   user: any;
   temp_password: string;
+  email_sent?: boolean;
+  email_error?: string;
 }
 
 function InviteDialog({ tenantId, branches, open, onClose, onInvited }: {
@@ -1066,6 +1079,14 @@ function InviteDialog({ tenantId, branches, open, onClose, onInvited }: {
     password: '',
   });
   const [showPassword, setShowPassword] = useState(false);
+  const { data: rolesData, isLoading: rolesLoading } = useQuery({
+    queryKey: ['tenant-custom-roles', tenantId],
+    queryFn: () => api(token!, '/roles/?page_size=200'),
+    enabled: open && !!token,
+  });
+  const tenantRoles: TenantRoleOption[] = (rolesData?.results ?? []).filter(
+    (candidate: TenantRoleOption) => candidate.scope === 'tenant' && candidate.is_assignable !== false,
+  );
 
   const mutation = useMutation({
     mutationFn: () => {
@@ -1083,14 +1104,24 @@ function InviteDialog({ tenantId, branches, open, onClose, onInvited }: {
     onSuccess: (r) => {
       qc.invalidateQueries({ queryKey: ['my-team', tenantId] });
       const data = r?.data ?? r;
-      onInvited({ user: data.user, temp_password: data.temp_password });
+      onInvited({
+        user: data.user,
+        temp_password: data.temp_password,
+        email_sent: data.email_sent,
+        email_error: data.email_error,
+      });
+      toast({
+        title: data.email_sent ? 'User invited and email sent' : 'User created; email not sent',
+        description: data.email_sent ? `Invitation delivered to ${data.user?.email}.` : data.email_error,
+        variant: data.email_sent ? 'default' : 'destructive',
+      });
       onClose();
     },
     onError: (e: any) => toast({ title: 'Invite failed', description: e.message, variant: 'destructive' }),
   });
 
   const f = (k: string) => (e: React.ChangeEvent<HTMLInputElement>) => setForm(p => ({ ...p, [k]: e.target.value }));
-  const valid = form.first_name.trim() && form.email.trim();
+  const valid = form.first_name.trim() && form.email.trim() && form.role_group;
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
@@ -1112,15 +1143,24 @@ function InviteDialog({ tenantId, branches, open, onClose, onInvited }: {
             <Input value={form.email} onChange={f('email')} type="email" placeholder="jane@company.com" />
           </div>
           <div className="space-y-1.5">
-            <Label>Role</Label>
+            <Label>Organization Role *</Label>
             <Select value={form.role_group} onValueChange={v => setForm(p => ({ ...p, role_group: v }))}>
               <SelectTrigger><SelectValue placeholder="Select a role…" /></SelectTrigger>
               <SelectContent>
-                {ASSIGNABLE_ROLES.map(r => (
-                  <SelectItem key={r.value} value={r.value}>{r.label}</SelectItem>
+                {tenantRoles.map(candidate => (
+                  <SelectItem key={candidate.id} value={candidate.name}>
+                    {candidate.display_name || candidate.name}
+                  </SelectItem>
                 ))}
               </SelectContent>
             </Select>
+            <p className="text-xs text-muted-foreground">
+              {rolesLoading
+                ? 'Loading organization roles…'
+                : tenantRoles.length
+                  ? 'Roles are managed in Roles & Permissions.'
+                  : 'Create an organization role in Roles & Permissions first.'}
+            </p>
           </div>
           <div className="space-y-1.5">
             <Label>Job Title</Label>
@@ -1197,6 +1237,7 @@ function TempPasswordBanner({
   };
 
   const name = [result.user?.first_name, result.user?.last_name].filter(Boolean).join(' ') || result.user?.username || 'User';
+  const emailWasSent = result.email_sent === true;
 
   return (
     <Card className="border-emerald-300 bg-emerald-50 dark:bg-emerald-950/20 dark:border-emerald-800">
@@ -1204,7 +1245,7 @@ function TempPasswordBanner({
         <div className="flex items-start justify-between gap-3">
           <div className="flex-1 min-w-0">
             <p className="text-sm font-semibold text-emerald-800 dark:text-emerald-300">
-              {title ?? `${name} invited — share their temporary password`}
+              {title ?? (emailWasSent ? `${name} invited — email sent` : `${name} created — share their temporary password`)}
             </p>
             <p className="text-xs text-emerald-700 dark:text-emerald-400 mt-0.5">
               Username: <span className="font-mono font-semibold">{result.user?.username}</span>
@@ -1230,7 +1271,9 @@ function TempPasswordBanner({
             </div>
             {copied && <p className="text-xs text-emerald-600 mt-1">Copied to clipboard!</p>}
             <p className="text-xs text-muted-foreground mt-1.5">
-              {description ?? `This password is shown only once. Ask ${name} to change it immediately after first login.`}
+              {description ?? (emailWasSent
+                ? `Credentials were sent to ${result.user?.email}. This password is shown only once as a backup.`
+                : `${result.email_error ? `${result.email_error} ` : ''}This password is shown only once. Ask ${name} to change it immediately after first login.`)}
             </p>
           </div>
           <Button size="sm" variant="ghost" className="h-6 w-6 p-0 shrink-0 text-emerald-700" onClick={onDismiss}>✕</Button>
@@ -1246,12 +1289,14 @@ function TeamEditUserDialog({
   open,
   onClose,
   user,
+  tenantId,
   branches,
   onSaved,
 }: {
   open: boolean;
   onClose: () => void;
   user: any;
+  tenantId: number;
   branches: any[];
   onSaved: (updatedUser: any, password?: string) => void;
 }) {
@@ -1259,6 +1304,7 @@ function TeamEditUserDialog({
   const { toast } = useToast();
   const qc = useQueryClient();
   const [showPassword, setShowPassword] = useState(false);
+  const [selectedRoleId, setSelectedRoleId] = useState('');
   const [form, setForm] = useState({
     first_name: '',
     last_name: '',
@@ -1282,10 +1328,24 @@ function TeamEditUserDialog({
       password: '',
       is_active: user.is_active ?? true,
     });
+    const tenantRole = (user.groups ?? []).find((group: any) =>
+      String(typeof group === 'string' ? group : group?.name ?? '').startsWith(`tenant:${tenantId}:`),
+    );
+    setSelectedRoleId(tenantRole && typeof tenantRole !== 'string' ? String(tenantRole.id) : '');
   }, [user]);
 
+  const { data: rolesData } = useQuery({
+    queryKey: ['tenant-custom-roles', tenantId],
+    queryFn: () => api(token!, '/roles/?page_size=200'),
+    enabled: open && !!token,
+  });
+  const tenantRoles: TenantRoleOption[] = (rolesData?.results ?? []).filter(
+    (candidate: TenantRoleOption) => candidate.scope === 'tenant' && candidate.is_assignable !== false,
+  );
+  const userIsOrganizationAdmin = Boolean(user?.is_org_admin ?? user?.is_tenant_admin);
+
   const mutation = useMutation({
-    mutationFn: () => {
+    mutationFn: async () => {
       const payload: any = {
         first_name: form.first_name,
         last_name: form.last_name,
@@ -1296,7 +1356,14 @@ function TeamEditUserDialog({
         is_active: form.is_active,
       };
       if (form.password.trim()) payload.password = form.password.trim();
-      return api(token!, `/users/${user.id}/update/`, 'PATCH', payload);
+      const updated = await api(token!, `/users/${user.id}/update/`, 'PATCH', payload);
+      if (!userIsOrganizationAdmin && selectedRoleId) {
+        await api(token!, `/users/${user.id}/assign-roles/`, 'POST', {
+          group_ids: [Number(selectedRoleId)],
+          replace_existing: true,
+        });
+      }
+      return updated;
     },
     onSuccess: (response) => {
       qc.invalidateQueries({ queryKey: ['my-team'] });
@@ -1342,6 +1409,22 @@ function TeamEditUserDialog({
             <Label>Job Title</Label>
             <Input value={form.job_title} onChange={field('job_title')} />
           </div>
+          {!userIsOrganizationAdmin && (
+            <div className="space-y-1.5">
+              <Label>Organization Role *</Label>
+              <Select value={selectedRoleId} onValueChange={setSelectedRoleId}>
+                <SelectTrigger><SelectValue placeholder="Select a role…" /></SelectTrigger>
+                <SelectContent>
+                  {tenantRoles.map(candidate => (
+                    <SelectItem key={candidate.id} value={String(candidate.id)}>
+                      {candidate.display_name || candidate.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">Only roles created for this organization are shown.</p>
+            </div>
+          )}
           {branches.length > 0 && (
             <div className="space-y-1.5">
               <Label>Branch</Label>
@@ -1378,7 +1461,7 @@ function TeamEditUserDialog({
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Cancel</Button>
-          <Button onClick={() => mutation.mutate()} disabled={mutation.isPending || !form.username.trim() || (!!form.password && form.password.length < 8)}>
+          <Button onClick={() => mutation.mutate()} disabled={mutation.isPending || !form.username.trim() || (!userIsOrganizationAdmin && !selectedRoleId) || (!!form.password && form.password.length < 8)}>
             {mutation.isPending ? 'Saving…' : 'Save Changes'}
           </Button>
         </DialogFooter>
@@ -1467,6 +1550,7 @@ function TeamTab({ tenantId, branches }: { tenantId: number; branches: any[] }) 
     if (!groups.length) return null;
     return groups
       .map((g: any) => (typeof g === 'string' ? g : g.name))
+      .map((name: string) => name.startsWith('tenant:') ? (name.split(':', 3)[2] || name) : name)
       .map((name: string) => (name === 'Tenant Admin' ? 'System Administrator' : name))
       .join(', ');
   };
@@ -1609,6 +1693,7 @@ function TeamTab({ tenantId, branches }: { tenantId: number; branches: any[] }) 
           open={!!editingUser}
           onClose={() => setEditingUser(null)}
           user={editingUser}
+          tenantId={tenantId}
           branches={branches}
           onSaved={(updatedUser, password) => {
             if (!password) return;
@@ -1748,8 +1833,13 @@ export default function OrganizationSettings() {
     onError: (e: any) => toast({ title: 'Switch failed', description: e.message, variant: 'destructive' }),
   });
 
-  const buildSettingsForm = (source: any) => ({
+  const buildSettingsForm = (source: any) => {
+    const portUsesImplicitSsl = Number(source?.smtp_port) === 465;
+    const normalizeLegacyPort465 = portUsesImplicitSsl && source?.smtp_use_tls !== false;
+    return ({
     ...source,
+    smtp_use_ssl: Boolean(source?.smtp_use_ssl || normalizeLegacyPort465),
+    smtp_use_tls: normalizeLegacyPort465 ? false : (source?.smtp_use_tls ?? true),
     login_page_config: {
       ...DEFAULT_LOGIN_PAGE_CONFIG,
       ...(source?.login_page_config ?? {}),
@@ -1777,6 +1867,7 @@ export default function OrganizationSettings() {
     purchase_order_template_id: source?.purchase_order_template?.id ?? null,
     statement_template_id: source?.statement_template?.id ?? null,
   });
+  };
 
   useEffect(() => {
     if (!tenant?.id) {
@@ -1851,7 +1942,19 @@ export default function OrganizationSettings() {
     onError: (e: any) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
   });
   const testSmtp = useMutation({
-    mutationFn: () => api(token!, `/tenants/${organizationId}/settings/test-smtp/`, 'POST'),
+    mutationFn: async () => {
+      const payload = { ...settingsForm };
+      if (!payload.smtp_password) delete payload.smtp_password;
+      delete payload.logo_file;
+      delete payload.logo_url;
+      delete payload.invoice_template;
+      delete payload.estimate_template;
+      delete payload.receipt_template;
+      delete payload.purchase_order_template;
+      delete payload.statement_template;
+      await api(token!, `/tenants/${organizationId}/settings/`, 'PUT', payload);
+      return api(token!, `/tenants/${organizationId}/settings/test-smtp/`, 'POST');
+    },
     onSuccess: (r) => toast({ title: 'Test email sent', description: r.data?.message }),
     onError: (e: any) => toast({ title: 'Test failed', description: e.message, variant: 'destructive' }),
   });
@@ -2690,9 +2793,36 @@ export default function OrganizationSettings() {
                       <Input value={settingsForm.smtp_password ?? ''} onChange={sf('smtp_password')} type="password" placeholder="Leave blank to keep existing" />
                     </div>
                   </div>
-                  <div className="flex items-center gap-3">
-                    <Switch checked={settingsForm.smtp_use_tls ?? true} onCheckedChange={v => setSettingsForm((p: any) => ({ ...p, smtp_use_tls: v }))} />
-                    <Label>Use TLS</Label>
+                  <div className="space-y-1.5 max-w-sm">
+                    <Label>SMTP Encryption</Label>
+                    <Select
+                      value={settingsForm.smtp_use_ssl ? 'ssl' : settingsForm.smtp_use_tls ? 'starttls' : 'none'}
+                      onValueChange={value => setSettingsForm((p: any) => ({
+                        ...p,
+                        smtp_use_ssl: value === 'ssl',
+                        smtp_use_tls: value === 'starttls',
+                      }))}
+                    >
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="ssl">SSL/TLS (usually port 465)</SelectItem>
+                        <SelectItem value="starttls">STARTTLS (usually port 587)</SelectItem>
+                        <SelectItem value="none">None (not recommended)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">Your cPanel settings use SSL/TLS on port 465.</p>
+                  </div>
+                  <div className="flex items-start gap-3">
+                    <Switch
+                      checked={settingsForm.smtp_allow_insecure_ssl ?? false}
+                      onCheckedChange={value => setSettingsForm((p: any) => ({ ...p, smtp_allow_insecure_ssl: value }))}
+                    />
+                    <div>
+                      <Label>Allow a self-signed SMTP certificate</Label>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Enable only when your mail server uses a private or self-signed certificate. A publicly trusted certificate is safer.
+                      </p>
+                    </div>
                   </div>
                   <div className="flex gap-3">
                     <Button onClick={() => saveSettings.mutate()} disabled={saveSettings.isPending}>

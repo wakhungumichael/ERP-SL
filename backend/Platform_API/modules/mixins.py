@@ -30,9 +30,6 @@ def resolve_user_tenant(user):
     """
     if not getattr(user, "is_authenticated", False):
         return NO_TENANT_ACCESS
-    if getattr(user, "is_superuser", False):
-        return None
-
     try:
         membership = (
             OrganizationMembership.objects.select_related("tenant")
@@ -51,6 +48,9 @@ def resolve_user_tenant(user):
             return profile.tenant
     except Exception:
         pass
+
+    if getattr(user, "is_superuser", False):
+        return None
 
     return NO_TENANT_ACCESS
 

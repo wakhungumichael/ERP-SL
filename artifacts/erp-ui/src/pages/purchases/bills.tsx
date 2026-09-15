@@ -65,7 +65,7 @@ export default function BillsPage() {
   const { toast } = useToast();
   const tenantId = (user as any)?.tenant_id;
 
-  const [filterStatus, setFilterStatus] = useState('');
+  const [filterStatus, setFilterStatus] = useState(() => new URLSearchParams(window.location.search).get('status') || '');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [page, setPage] = useState(1);

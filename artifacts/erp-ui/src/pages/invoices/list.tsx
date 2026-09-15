@@ -721,7 +721,7 @@ export default function InvoicesList() {
   const [, navigate] = useLocation();
   const qc = useQueryClient();
   const [activeTab, setActiveTab]     = useState<'all' | 'debt'>('all');
-  const [statusFilter, setStatusFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState(() => new URLSearchParams(window.location.search).get('status') || '');
   const [search, setSearch]           = useState('');
   const [page, setPage]               = useState(1);
   const [pageSize, setPageSize]       = useState(10);

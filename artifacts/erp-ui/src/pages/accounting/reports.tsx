@@ -1,11 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { Link } from 'wouter';
+import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { useAuth } from '@/context/use-auth';
 import { useToast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -19,7 +22,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { CalendarRange, CheckCircle2, ChevronLeft, ChevronRight, Download, Eye, FileBarChart2, Landmark, Link2, Lock, MoreHorizontal, Pencil, Printer, RefreshCw, Scale, Unlink, Wallet } from 'lucide-react';
+import { ArrowUpRight, CalendarRange, CheckCircle2, ChevronLeft, ChevronRight, Download, Eye, FileBarChart2, Landmark, Link2, Lock, MoreHorizontal, Pencil, Printer, RefreshCw, Scale, Unlink, Wallet, X } from 'lucide-react';
 
 const BASE_URL = import.meta.env.BASE_URL?.replace(/\/$/, '') ?? '';
 const PAGE_SIZE = 8;
@@ -52,12 +55,21 @@ type ReportBalanceRow = {
   debit_total?: number;
   credit_total?: number;
   account_type?: string;
+  account_group?: string;
+  is_active?: boolean;
+  opening_debit?: number;
+  opening_credit?: number;
+  movement_debit?: number;
+  movement_credit?: number;
+  closing_debit?: number;
+  closing_credit?: number;
   display_amount: number;
   display_side: string;
   is_abnormal: boolean;
 };
 
 type TrialBalanceResponse = {
+  date_from: string | null;
   date_to: string;
   period: AccountingPeriod | null;
   rows: Array<ReportBalanceRow>;
@@ -65,6 +77,12 @@ type TrialBalanceResponse = {
     total_debits: number;
     total_credits: number;
     balanced: boolean;
+    opening_debit?: number;
+    opening_credit?: number;
+    movement_debit?: number;
+    movement_credit?: number;
+    closing_debit?: number;
+    closing_credit?: number;
   };
 };
 
@@ -123,6 +141,7 @@ type LedgerResponse = {
     credit_total: number;
     closing_balance: number;
   };
+  monthly_trend: Array<{ label: string; amount: number }>;
 };
 
 type PeriodClosePreview = {
@@ -320,15 +339,22 @@ function TablePager({
   page,
   totalPages,
   onPageChange,
+  pageSize,
+  onPageSizeChange,
+  totalRows,
 }: {
   page: number;
   totalPages: number;
   onPageChange: (page: number) => void;
+  pageSize?: number;
+  onPageSizeChange?: (pageSize: number) => void;
+  totalRows?: number;
 }) {
   return (
     <div className="flex items-center justify-between border-t px-4 py-3 text-sm">
-      <div className="text-muted-foreground">Page {page} of {totalPages}</div>
+      <div className="text-muted-foreground">{typeof totalRows === 'number' ? `${totalRows} record${totalRows === 1 ? '' : 's'} · ` : ''}Page {page} of {totalPages}</div>
       <div className="flex items-center gap-2">
+        {onPageSizeChange && <Select value={String(pageSize ?? PAGE_SIZE)} onValueChange={(value) => onPageSizeChange(Number(value))}><SelectTrigger className="h-8 w-28 text-xs"><SelectValue /></SelectTrigger><SelectContent>{[5, 10, 25, 50].map((size) => <SelectItem key={size} value={String(size)}>{size} / page</SelectItem>)}</SelectContent></Select>}
         <Button variant="outline" size="sm" onClick={() => onPageChange(page - 1)} disabled={page <= 1}>
           <ChevronLeft className="mr-1 h-4 w-4" /> Previous
         </Button>
@@ -358,17 +384,41 @@ function BalanceBadge({ row }: { row: ReportBalanceRow }) {
 export default function AccountingReports() {
   const { token } = useAuth();
   const { toast } = useToast();
+  const drilldown = useMemo(() => {
+    const params = new URLSearchParams(window.location.search);
+    return {
+      type: params.get('drill'),
+      search: params.get('search'),
+      dateFrom: params.get('date_from'),
+      dateTo: params.get('date_to'),
+    };
+  }, []);
 
-  const [dateFrom, setDateFrom] = useState(getYearStartISO());
-  const [dateTo, setDateTo] = useState(getTodayISO());
-  const [activeTab, setActiveTab] = useState('trial-balance');
+  const [dateFrom, setDateFrom] = useState(() => new URLSearchParams(window.location.search).get('date_from') || getYearStartISO());
+  const [dateTo, setDateTo] = useState(() => new URLSearchParams(window.location.search).get('date_to') || getTodayISO());
+  const [activeTab, setActiveTab] = useState(() => new URLSearchParams(window.location.search).get('tab') || 'trial-balance');
   const [selectedAccountId, setSelectedAccountId] = useState('');
+  const [accountDrawerOpen, setAccountDrawerOpen] = useState(false);
+  const [guidanceOpen, setGuidanceOpen] = useState(false);
+  const [comparisonEnabled, setComparisonEnabled] = useState(true);
+  const [accountPanelTab, setAccountPanelTab] = useState<'summary' | 'transactions' | 'documents' | 'analysis'>('summary');
   const [selectedFinancialYearId, setSelectedFinancialYearId] = useState('');
   const [selectedPeriodId, setSelectedPeriodId] = useState('');
-  const [search, setSearch] = useState('');
+  const [search, setSearch] = useState(() => new URLSearchParams(window.location.search).get('search') || '');
   const [tbPage, setTbPage] = useState(1);
+  const [tbPageSize, setTbPageSize] = useState(10);
+  const [tbTableSearch, setTbTableSearch] = useState('');
+  const [tbAccountType, setTbAccountType] = useState('all');
+  const [tbAccountGroup, setTbAccountGroup] = useState('all');
+  const [tbAccountStatus, setTbAccountStatus] = useState('all');
+  const [tbShowZeroBalance, setTbShowZeroBalance] = useState(false);
+  const [tbViewBy, setTbViewBy] = useState<'account' | 'group'>('account');
   const [incomePage, setIncomePage] = useState(1);
   const [expensePage, setExpensePage] = useState(1);
+  const [incomePageSize, setIncomePageSize] = useState(10);
+  const [expensePageSize, setExpensePageSize] = useState(10);
+  const [incomeTableSearch, setIncomeTableSearch] = useState('');
+  const [expenseTableSearch, setExpenseTableSearch] = useState('');
   const [assetPage, setAssetPage] = useState(1);
   const [liabilityPage, setLiabilityPage] = useState(1);
   const [equityPage, setEquityPage] = useState(1);
@@ -442,6 +492,17 @@ export default function AccountingReports() {
 
   const authHeaders = useMemo(() => ({ Authorization: `Token ${token}` }), [token]);
 
+  const { data: dashboardSnapshot } = useQuery({
+    queryKey: ['accounting-report-dashboard-snapshot', token],
+    enabled: !!token,
+    queryFn: async () => {
+      const res = await fetch(`${BASE_URL}/api/accounting/dashboard/`, { headers: authHeaders });
+      if (!res.ok) throw new Error('Failed to load finance summary');
+      return res.json();
+    },
+    staleTime: 60_000,
+  });
+
   const { data: accountOptions = [] } = useQuery({
     queryKey: ['accounting-report-accounts', token],
     enabled: !!token,
@@ -511,12 +572,19 @@ export default function AccountingReports() {
   }, [dateFrom, dateTo, selectedPeriodId]);
 
   const { data: trialBalance, isLoading: tbLoading, refetch: refetchTrialBalance } = useQuery({
-    queryKey: ['trial-balance-report', token, reportQueryParams],
+    queryKey: ['trial-balance-report', token, reportQueryParams, tbAccountType, tbAccountGroup, tbAccountStatus, tbShowZeroBalance],
     enabled: !!token,
     queryFn: async () => {
       const params = new URLSearchParams();
       if (selectedPeriodId) params.set('period_id', selectedPeriodId);
-      else params.set('date_to', dateTo);
+      else {
+        params.set('date_from', dateFrom);
+        params.set('date_to', dateTo);
+      }
+      if (tbAccountType !== 'all') params.set('account_type', tbAccountType);
+      if (tbAccountGroup !== 'all') params.set('account_group', tbAccountGroup);
+      if (tbAccountStatus !== 'all') params.set('is_active', tbAccountStatus === 'active' ? 'true' : 'false');
+      if (tbShowZeroBalance) params.set('show_zero_balance', 'true');
       const res = await fetch(`${BASE_URL}/api/accounting/reports/trial-balance/?${params.toString()}`, { headers: authHeaders });
       if (!res.ok) throw new Error('Failed to load trial balance');
       return (await res.json()) as TrialBalanceResponse;
@@ -646,9 +714,34 @@ export default function AccountingReports() {
   const filterRows = <T extends { code: string; name: string }>(rows: T[]) =>
     rows.filter((row) => !searchTerm || `${row.code} ${row.name}`.toLowerCase().includes(searchTerm));
 
-  const trialBalanceFiltered = filterRows(trialBalance?.rows ?? []);
-  const incomeFiltered = filterRows(incomeStatement?.income ?? []);
-  const expenseFiltered = filterRows(incomeStatement?.expenses ?? []);
+  const trialBalanceSearch = `${search} ${tbTableSearch}`.trim().toLowerCase();
+  const trialBalanceFiltered = (trialBalance?.rows ?? []).filter((row) =>
+    !trialBalanceSearch || `${row.code} ${row.name} ${row.account_group ?? ''} ${row.account_type ?? ''}`.toLowerCase().includes(trialBalanceSearch),
+  );
+  const trialBalanceGroups = useMemo(
+    () => Array.from(new Set((trialBalance?.rows ?? []).map((row) => row.account_group).filter(Boolean) as string[])).sort(),
+    [trialBalance],
+  );
+  const trialBalanceRows = useMemo(() => {
+    const rows = [...trialBalanceFiltered];
+    return rows.sort((left, right) => tbViewBy === 'group'
+      ? `${left.account_group ?? ''} ${left.code}`.localeCompare(`${right.account_group ?? ''} ${right.code}`)
+      : left.code.localeCompare(right.code));
+  }, [trialBalanceFiltered, tbViewBy]);
+  const trialBalanceTotals = useMemo(() => trialBalanceFiltered.reduce((totals, row) => ({
+    opening_debit: totals.opening_debit + Number(row.opening_debit ?? 0),
+    opening_credit: totals.opening_credit + Number(row.opening_credit ?? 0),
+    movement_debit: totals.movement_debit + Number(row.movement_debit ?? 0),
+    movement_credit: totals.movement_credit + Number(row.movement_credit ?? 0),
+    closing_debit: totals.closing_debit + Number(row.closing_debit ?? 0),
+    closing_credit: totals.closing_credit + Number(row.closing_credit ?? 0),
+  }), { opening_debit: 0, opening_credit: 0, movement_debit: 0, movement_credit: 0, closing_debit: 0, closing_credit: 0 }), [trialBalanceFiltered]);
+  const incomeFiltered = filterRows(incomeStatement?.income ?? []).filter((row) => !incomeTableSearch.trim() || `${row.code} ${row.name}`.toLowerCase().includes(incomeTableSearch.trim().toLowerCase()));
+  const expenseFiltered = filterRows(incomeStatement?.expenses ?? []).filter((row) => !expenseTableSearch.trim() || `${row.code} ${row.name}`.toLowerCase().includes(expenseTableSearch.trim().toLowerCase()));
+  const comparisonRows = useMemo(() => new Map([
+    ...(comparativeIncome?.comparison.income ?? []),
+    ...(comparativeIncome?.comparison.expenses ?? []),
+  ].map((row) => [row.account_id, row])), [comparativeIncome]);
   const assetsFiltered = filterRows(balanceSheet?.assets ?? []);
   const liabilitiesFiltered = filterRows(balanceSheet?.liabilities ?? []);
   const equityFiltered = filterRows(balanceSheet?.equity ?? []);
@@ -677,9 +770,9 @@ export default function AccountingReports() {
     `${candidate.entry_number} ${candidate.memo} ${candidate.description} ${candidate.source_reference}`.toLowerCase().includes(searchTerm),
   );
 
-  const tbPaged = paginate(trialBalanceFiltered, tbPage);
-  const incomePaged = paginate(incomeFiltered, incomePage);
-  const expensePaged = paginate(expenseFiltered, expensePage);
+  const tbPaged = paginate(trialBalanceRows, tbPage, tbPageSize);
+  const incomePaged = paginate(incomeFiltered, incomePage, incomePageSize);
+  const expensePaged = paginate(expenseFiltered, expensePage, expensePageSize);
   const assetPaged = paginate(assetsFiltered, assetPage);
   const liabilityPaged = paginate(liabilitiesFiltered, liabilityPage);
   const equityPaged = paginate(equityFiltered, equityPage);
@@ -700,7 +793,13 @@ export default function AccountingReports() {
     setReconciliationSessionPage(1);
     setReconciliationLinePage(1);
     setCandidatePage(1);
-  }, [search, selectedPeriodId, dateFrom, dateTo]);
+  }, [search, selectedPeriodId, dateFrom, dateTo, tbPageSize, tbTableSearch, tbAccountType, tbAccountGroup, tbAccountStatus, tbShowZeroBalance, incomePageSize, expensePageSize, incomeTableSearch, expenseTableSearch]);
+
+  useEffect(() => {
+    if (activeTab === 'income-statement' && !selectedAccountId && incomeFiltered[0]?.account_id) {
+      setSelectedAccountId(String(incomeFiltered[0].account_id));
+    }
+  }, [activeTab, incomeFiltered, selectedAccountId]);
 
   useEffect(() => {
     if (!selectedReconciliationSessionId && reconciliationSessions.length > 0) {
@@ -711,7 +810,8 @@ export default function AccountingReports() {
   function openAccount(accountId: number | null) {
     if (!accountId) return;
     setSelectedAccountId(String(accountId));
-    setActiveTab('general-ledger');
+    setAccountPanelTab('summary');
+    if (activeTab !== 'income-statement') setAccountDrawerOpen(true);
   }
 
   async function refreshAll() {
@@ -1204,15 +1304,13 @@ export default function AccountingReports() {
   const reportRefreshing = tbLoading || isLoadingIncome || bsLoading;
 
   return (
-    <div className="space-y-6 p-6">
+    <div className="w-full space-y-5 p-4 md:p-6">
       <div className="flex flex-col gap-4 border-b pb-4 xl:flex-row xl:items-end xl:justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Financial Reports</h1>
-          <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-            Mature finance reporting works best when reports follow defined financial years and accounting periods. This workspace now supports both period-driven reporting and direct date-driven review.
-          </p>
+          <h1 className="text-2xl font-bold tracking-tight">Financial Reports</h1>
+          <p className="mt-1 max-w-3xl text-sm text-muted-foreground">Analyze financial position, performance, and underlying transactions.</p>
         </div>
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
           <div className="space-y-2">
             <Label>Financial Year</Label>
             <Select value={selectedFinancialYearId || undefined} onValueChange={(value) => {
@@ -1233,7 +1331,7 @@ export default function AccountingReports() {
             </Select>
           </div>
           <div className="space-y-2">
-            <Label>Accounting Period</Label>
+            <Label>Report Period</Label>
             <Select value={selectedPeriodId || 'custom'} onValueChange={(value) => setSelectedPeriodId(value === 'custom' ? '' : value)}>
               <SelectTrigger className="w-56">
                 <SelectValue placeholder="Custom dates" />
@@ -1246,6 +1344,13 @@ export default function AccountingReports() {
                   </SelectItem>
                 ))}
               </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-2">
+            <Label>Comparison</Label>
+            <Select value={comparisonEnabled ? 'previous' : 'none'} onValueChange={(value) => setComparisonEnabled(value === 'previous')}>
+              <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
+              <SelectContent><SelectItem value="previous">Previous comparable period</SelectItem><SelectItem value="none">No comparison</SelectItem></SelectContent>
             </Select>
           </div>
           <div className="space-y-2">
@@ -1266,7 +1371,7 @@ export default function AccountingReports() {
       </div>
 
       <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
-        <div className="flex flex-wrap gap-3">
+        {activeTab !== 'trial-balance' && <div className="flex flex-wrap gap-3">
           <div className="space-y-2">
             <Label htmlFor="report-search">Search</Label>
             <Input
@@ -1277,260 +1382,123 @@ export default function AccountingReports() {
               className="w-80"
             />
           </div>
-        </div>
+        </div>}
         <div className="flex flex-wrap gap-2">
-          <Button variant="outline" onClick={handleExportCurrentView}>
-            <Download className="mr-1 h-4 w-4" /> Export CSV
-          </Button>
-          <Button variant="outline" onClick={handlePrintCurrentView}>
-            <Printer className="mr-1 h-4 w-4" /> Print
-          </Button>
           <Button variant="outline" onClick={refreshAll}>
             <RefreshCw className="mr-1 h-4 w-4" /> {reportRefreshing ? 'Refreshing…' : 'Refresh'}
           </Button>
-          <Button variant="outline" onClick={() => previewPeriodClose()} disabled={previewingClose}>
-            <CalendarRange className="mr-1 h-4 w-4" /> {previewingClose ? 'Preparing…' : 'Preview Period Close'}
-          </Button>
+          <Button variant={comparisonEnabled ? 'secondary' : 'outline'} onClick={() => setComparisonEnabled((enabled) => !enabled)}><Scale className="mr-1 h-4 w-4" /> Compare Period</Button>
+          <Button onClick={handleExportCurrentView}><Download className="mr-1 h-4 w-4" /> Export</Button>
+          <Button variant="outline" onClick={handlePrintCurrentView}><Printer className="mr-1 h-4 w-4" /> Print</Button>
         </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <Card className="shadow-sm">
-          <CardContent className="p-5">
-            <div className="mb-2 flex items-center justify-between">
-              <span className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Trial Balance</span>
-              <Scale className="h-4 w-4 text-sky-600" />
-            </div>
-            <div className="text-lg font-black">{trialBalance?.summary?.balanced ? 'Balanced' : 'Out of balance'}</div>
-            <div className="mt-1 text-xs text-muted-foreground">Debits {money(trialBalance?.summary?.total_debits ?? 0)}</div>
-          </CardContent>
-        </Card>
-        <Card className="shadow-sm">
-          <CardContent className="p-5">
-            <div className="mb-2 flex items-center justify-between">
-              <span className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Net Income</span>
-              <Landmark className="h-4 w-4 text-emerald-600" />
-            </div>
-            <div className="text-lg font-black font-mono">{money(incomeStatement?.summary?.net_income ?? 0)}</div>
-            <div className="mt-1 text-xs text-muted-foreground">
-              {selectedPeriod ? `${selectedPeriod.name}` : `${dateFrom} to ${dateTo}`}
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="shadow-sm">
-          <CardContent className="p-5">
-            <div className="mb-2 flex items-center justify-between">
-              <span className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Assets</span>
-              <Wallet className="h-4 w-4 text-indigo-600" />
-            </div>
-            <div className="text-lg font-black font-mono">{money(balanceSheet?.summary?.total_assets ?? 0)}</div>
-            <div className="mt-1 text-xs text-muted-foreground">As of {selectedPeriod ? selectedPeriod.end_date : dateTo}</div>
-          </CardContent>
-        </Card>
-        <Card className="shadow-sm">
-          <CardContent className="p-5">
-            <div className="mb-2 flex items-center justify-between">
-              <span className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Period Mode</span>
-              <FileBarChart2 className="h-4 w-4 text-orange-600" />
-            </div>
-            <div className="text-sm font-semibold">{selectedPeriod ? `${selectedPeriod.code} • ${selectedPeriod.status}` : 'Custom dates'}</div>
-            <div className="mt-1 text-xs text-muted-foreground">Open and close should normally be period-based in a mature ERP.</div>
-          </CardContent>
-        </Card>
-      </div>
+      {drilldown.type && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-primary/30 bg-primary/5 px-4 py-3 text-sm">
+          <div>
+            <p className="font-semibold">Dashboard drill-down</p>
+            <div className="mt-2 flex flex-wrap gap-1.5 text-xs"><span className="rounded-full border bg-background px-2 py-1">Income Statement</span><span className="rounded-full border bg-background px-2 py-1">{drilldown.type === 'expense-category' ? `Expense: ${drilldown.search || 'selected category'}` : drilldown.type === 'expenses' ? 'Expenses' : drilldown.type === 'profit' ? 'Profit and loss' : 'Revenue'}</span>{drilldown.dateFrom && <span className="rounded-full border bg-background px-2 py-1">From {drilldown.dateFrom}</span>}{drilldown.dateTo && <span className="rounded-full border bg-background px-2 py-1">To {drilldown.dateTo}</span>}</div>
+          </div>
+          <div className="flex gap-2"><Link href="/finance/overview" className="rounded-md border bg-background px-3 py-2 text-xs font-semibold hover:border-primary hover:text-primary">Back to overview</Link><Link href="/finance/reports" className="rounded-md border bg-background px-3 py-2 text-xs font-semibold hover:border-primary hover:text-primary">Clear drill-down</Link></div>
+        </div>
+      )}
 
-      <Card className="border-sky-200 bg-sky-50/60 shadow-sm">
-        <CardHeader className="pb-3">
-          <CardTitle className="text-base">Accounting Interpretation</CardTitle>
-          <CardDescription>
-            Balanced does not mean every displayed balance is positive.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-2 text-sm text-slate-700">
-          <p>A trial balance is balanced when total debits equal total credits. A balance sheet is balanced when assets equal liabilities plus equity.</p>
-          <p>Negative rows can still be valid, especially for contra balances like accumulated depreciation or for current period losses reducing equity.</p>
-          <p>Direct paid weighbridge transactions are shown as <span className="font-semibold">Direct Cash Sale</span>. Debt or invoiced weighbridge items should still flow through receivables and invoicing.</p>
-        </CardContent>
-      </Card>
+      {activeTab !== 'trial-balance' && <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        {[
+          { label: 'Revenue (Period)', value: dashboardSnapshot?.transactions?.total_charge_this_month ?? incomeStatement?.summary?.total_income ?? 0, href: `/finance/reports?tab=income-statement&drill=revenue&date_from=${dateFrom}&date_to=${dateTo}`, tone: 'text-emerald-600 bg-emerald-100' },
+          { label: 'Total Invoiced', value: dashboardSnapshot?.invoices?.total_invoiced ?? 0, href: '/finance/receivables?status=issued', tone: 'text-blue-600 bg-blue-100' },
+          { label: 'Collected', value: dashboardSnapshot?.invoices?.total_paid ?? 0, href: '/finance/receivables?status=paid', tone: 'text-emerald-600 bg-emerald-100' },
+          { label: 'Outstanding', value: dashboardSnapshot?.invoices?.outstanding ?? 0, href: '/finance/receivables?status=overdue', tone: 'text-orange-600 bg-orange-100' },
+          { label: 'Profit (Period)', value: incomeStatement?.summary?.net_income ?? 0, href: `/finance/reports?tab=income-statement&drill=profit&date_from=${dateFrom}&date_to=${dateTo}`, tone: 'text-violet-600 bg-violet-100' },
+        ].map((metric) => <Link key={metric.label} href={metric.href} className="group"><Card className="h-full shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-md"><CardContent className="flex items-center justify-between p-4"><div><p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">{metric.label}</p><p className="mt-2 font-mono text-lg font-black">{money(metric.value)}</p><p className="mt-1 text-[10px] font-medium text-primary">View details <ArrowUpRight className="inline h-3 w-3" /></p></div><div className={`rounded-full p-3 ${metric.tone}`}><Landmark className="h-5 w-5" /></div></CardContent></Card></Link>)}
+      </div>}
+
+      {activeTab !== 'trial-balance' && <div className="flex items-center justify-between rounded-lg border bg-muted/20 px-4 py-2.5">
+        <div className="text-xs text-muted-foreground"><span className="font-semibold text-foreground">Report status:</span> {trialBalance?.summary?.balanced ? 'Trial balance is balanced.' : 'Trial balance needs review.'} {selectedPeriod ? `${selectedPeriod.code} is ${selectedPeriod.status}.` : 'Using custom dates.'}</div>
+        <Button variant="ghost" size="sm" className="text-xs" onClick={() => setGuidanceOpen((open) => !open)}>{guidanceOpen ? 'Hide guidance' : 'Report guidance'}</Button>
+      </div>}
+      {guidanceOpen && <Card className="border-sky-200 bg-sky-50/60 shadow-sm"><CardContent className="space-y-2 p-4 text-sm text-slate-700"><p className="font-semibold">Report Guidance</p><p>A trial balance is balanced when total debits equal total credits. A balance sheet is balanced when assets equal liabilities plus equity.</p><p>Negative rows can be valid for contra balances or current-period losses reducing equity.</p></CardContent></Card>}
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-        <TabsList className="flex h-auto flex-wrap justify-start gap-2 bg-transparent p-0">
-          <TabsTrigger value="trial-balance">Trial Balance</TabsTrigger>
-          <TabsTrigger value="income-statement">Income Statement</TabsTrigger>
-          <TabsTrigger value="balance-sheet">Balance Sheet</TabsTrigger>
-          <TabsTrigger value="general-ledger">General Ledger</TabsTrigger>
-          <TabsTrigger value="reconciliation">Reconciliation</TabsTrigger>
-          <TabsTrigger value="period-close">Period Close</TabsTrigger>
-        </TabsList>
+        <div className="flex items-center justify-between gap-3 border-b">
+          <TabsList className="flex h-auto max-w-full flex-1 justify-start gap-1 overflow-x-auto rounded-none bg-transparent p-0">
+            {[["trial-balance", "Trial Balance"], ["income-statement", "Income Statement"], ["balance-sheet", "Balance Sheet"], ["general-ledger", "General Ledger"], ["reconciliation", "Reconciliation"], ["period-close", "Period Close"]].map(([value, label]) => <TabsTrigger key={value} value={value} className="shrink-0 rounded-none border-b-2 border-transparent px-3 py-3 text-xs data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:text-primary data-[state=active]:shadow-none">{label}</TabsTrigger>)}
+          </TabsList>
+          <Button variant="outline" size="sm" className="shrink-0 text-xs" onClick={() => setGuidanceOpen((open) => !open)}>Report Guidance</Button>
+        </div>
 
-        <TabsContent value="trial-balance">
-          <Card className="shadow-sm">
-            <CardHeader className="border-b bg-muted/20 py-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <CardTitle className="text-sm font-bold uppercase tracking-widest">Trial Balance</CardTitle>
-                  <CardDescription>Searchable and paged account balances with drilldown actions.</CardDescription>
-                </div>
-                <Badge variant={trialBalance?.summary?.balanced ? 'default' : 'destructive'}>
-                  {trialBalance?.summary?.balanced ? 'Balanced' : 'Review Needed'}
-                </Badge>
-              </div>
-            </CardHeader>
-            <CardContent className="p-0">
-              <Table>
+        <TabsContent value="trial-balance" className="space-y-4">
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+            {[
+              { label: 'Trial Balance', value: trialBalance?.summary?.balanced ? 'Balanced' : 'Review needed', detail: trialBalance?.summary?.balanced ? 'Debits equal credits' : 'Debits and credits differ', tone: 'text-emerald-600 bg-emerald-100' },
+              { label: 'Total Debits', value: money(trialBalanceTotals.closing_debit), detail: `Across ${trialBalanceFiltered.length} accounts`, tone: 'text-blue-600 bg-blue-100' },
+              { label: 'Total Credits', value: money(trialBalanceTotals.closing_credit), detail: `Across ${trialBalanceFiltered.length} accounts`, tone: 'text-violet-600 bg-violet-100' },
+              { label: 'Net Difference', value: money(Math.abs(trialBalanceTotals.closing_debit - trialBalanceTotals.closing_credit)), detail: trialBalanceTotals.closing_debit === trialBalanceTotals.closing_credit ? 'No imbalance detected' : 'Investigate before close', tone: 'text-orange-600 bg-orange-100' },
+              { label: 'Period Status', value: selectedPeriod?.status === 'closed' ? 'Closed' : 'Open', detail: selectedPeriod ? selectedPeriod.name : `${dateFrom} to ${dateTo}`, tone: 'text-rose-600 bg-rose-100' },
+            ].map((metric) => <Card key={metric.label} className="shadow-sm"><CardContent className="flex items-center gap-3 p-4"><div className={`rounded-full p-3 ${metric.tone}`}><Scale className="h-5 w-5" /></div><div><p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">{metric.label}</p><p className="mt-1 font-mono text-base font-black">{metric.value}</p><p className="mt-1 text-[10px] text-muted-foreground">{metric.detail}</p></div></CardContent></Card>)}
+          </div>
+
+          <div className="flex flex-col gap-3 rounded-lg border bg-card p-3 xl:flex-row xl:items-center xl:justify-between">
+            <div className="flex flex-1 flex-wrap items-center gap-2">
+              <Input aria-label="Search trial balance accounts" value={tbTableSearch} onChange={(event) => setTbTableSearch(event.target.value)} placeholder="Search accounts, codes, descriptions..." className="h-9 min-w-[220px] flex-1 xl:max-w-sm" />
+              <Select value={tbAccountType} onValueChange={setTbAccountType}><SelectTrigger className="h-9 w-[160px]"><SelectValue placeholder="All account types" /></SelectTrigger><SelectContent><SelectItem value="all">All account types</SelectItem>{Object.entries(accountTypeLabel).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select>
+              <Select value={tbAccountGroup} onValueChange={setTbAccountGroup}><SelectTrigger className="h-9 w-[170px]"><SelectValue placeholder="All account groups" /></SelectTrigger><SelectContent><SelectItem value="all">All account groups</SelectItem>{trialBalanceGroups.map((group) => <SelectItem key={group} value={group}>{group}</SelectItem>)}</SelectContent></Select>
+              <Select value={tbAccountStatus} onValueChange={setTbAccountStatus}><SelectTrigger className="h-9 w-[135px]"><SelectValue placeholder="All statuses" /></SelectTrigger><SelectContent><SelectItem value="all">All statuses</SelectItem><SelectItem value="active">Active</SelectItem><SelectItem value="inactive">Inactive</SelectItem></SelectContent></Select>
+              <label className="flex h-9 items-center gap-2 rounded-md border px-3 text-xs font-medium"><input type="checkbox" checked={tbShowZeroBalance} onChange={(event) => setTbShowZeroBalance(event.target.checked)} className="accent-primary" /> Show zero balance</label>
+              <Button variant="outline" size="sm" onClick={() => { setTbTableSearch(''); setTbAccountType('all'); setTbAccountGroup('all'); setTbAccountStatus('all'); setTbShowZeroBalance(false); }}>Clear filters</Button>
+            </div>
+            <div className="flex items-center gap-3 text-xs font-medium"><span className="text-muted-foreground">View by:</span><label className="flex items-center gap-1.5"><input type="radio" name="trial-balance-view" checked={tbViewBy === 'account'} onChange={() => setTbViewBy('account')} className="accent-primary" /> Account</label><label className="flex items-center gap-1.5"><input type="radio" name="trial-balance-view" checked={tbViewBy === 'group'} onChange={() => setTbViewBy('group')} className="accent-primary" /> Account group</label></div>
+          </div>
+
+          <Card className="overflow-hidden shadow-sm">
+            <CardHeader className="border-b py-3"><div className="flex items-center justify-between"><div><CardTitle className="text-sm font-bold uppercase tracking-widest">Trial Balance</CardTitle><CardDescription>Opening, period movement, and closing balances. Select an account to inspect its ledger.</CardDescription></div><Badge variant={trialBalance?.summary?.balanced ? 'default' : 'destructive'}>{trialBalance?.summary?.balanced ? 'Balanced' : 'Review needed'}</Badge></div></CardHeader>
+            <div className="overflow-x-auto">
+              <Table className="min-w-[1250px]">
                 <TableHeader>
-                  <TableRow>
-                    <TableHead>Code</TableHead>
-                    <TableHead>Account</TableHead>
-                    <TableHead>Type</TableHead>
-                    <TableHead className="text-right">Debits</TableHead>
-                    <TableHead className="text-right">Credits</TableHead>
-                    <TableHead>Balance Nature</TableHead>
-                    <TableHead className="text-right">Balance</TableHead>
-                    <TableHead className="w-[48px]" />
-                  </TableRow>
+                  <TableRow className="bg-muted/30"><TableHead rowSpan={2}>Code</TableHead><TableHead rowSpan={2}>Account</TableHead><TableHead rowSpan={2}>Account Type</TableHead><TableHead rowSpan={2}>Account Group</TableHead><TableHead colSpan={2} className="text-center">Opening Balance (KES)</TableHead><TableHead colSpan={2} className="text-center">Movement (KES)</TableHead><TableHead colSpan={2} className="text-center">Closing Balance (KES)</TableHead><TableHead rowSpan={2} className="w-24 text-right">Action</TableHead></TableRow>
+                  <TableRow className="bg-muted/30"><TableHead className="text-right">Debit</TableHead><TableHead className="text-right">Credit</TableHead><TableHead className="text-right">Debit</TableHead><TableHead className="text-right">Credit</TableHead><TableHead className="text-right">Debit</TableHead><TableHead className="text-right">Credit</TableHead></TableRow>
                 </TableHeader>
                 <TableBody>
-                  {tbPaged.rows.length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={8} className="py-8 text-center text-sm text-muted-foreground">
-                        {tbLoading ? 'Loading trial balance…' : 'No balances found.'}
-                      </TableCell>
-                    </TableRow>
-                  ) : (
-                    tbPaged.rows.map((row) => (
-                      <TableRow key={row.account_id ?? row.code}>
-                        <TableCell className="font-mono">{row.code}</TableCell>
-                        <TableCell className="font-medium">{row.name}</TableCell>
-                        <TableCell>{accountTypeLabel[row.account_type ?? ''] ?? row.account_type}</TableCell>
-                        <TableCell className="text-right font-mono">{money(row.debit_total ?? 0)}</TableCell>
-                        <TableCell className="text-right font-mono">{money(row.credit_total ?? 0)}</TableCell>
-                        <TableCell><BalanceBadge row={row} /></TableCell>
-                        <TableCell className="text-right font-mono">{money(row.display_amount)}</TableCell>
-                        <TableCell>
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /></Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end">
-                              <DropdownMenuItem onClick={() => openAccount(row.account_id)}>
-                                <Eye className="h-4 w-4" /> Open Ledger
-                              </DropdownMenuItem>
-                            </DropdownMenuContent>
-                          </DropdownMenu>
-                        </TableCell>
-                      </TableRow>
-                    ))
-                  )}
-                  <TableRow className="bg-muted/40">
-                    <TableCell />
-                    <TableCell className="font-semibold">Totals</TableCell>
-                    <TableCell />
-                    <TableCell className="text-right font-mono font-semibold">{money(trialBalance?.summary?.total_debits ?? 0)}</TableCell>
-                    <TableCell className="text-right font-mono font-semibold">{money(trialBalance?.summary?.total_credits ?? 0)}</TableCell>
-                    <TableCell />
-                    <TableCell />
-                    <TableCell />
-                  </TableRow>
+                  {tbPaged.rows.length === 0 ? <TableRow><TableCell colSpan={11} className="py-10 text-center text-sm text-muted-foreground">{tbLoading ? 'Loading trial balance...' : 'No accounts match the selected filters.'}</TableCell></TableRow> : tbPaged.rows.map((row) => <TableRow key={row.account_id ?? row.code} className="cursor-pointer hover:bg-muted/40" onClick={() => openAccount(row.account_id)}><TableCell className="font-mono text-xs">{row.code}</TableCell><TableCell className="font-medium"><button type="button" className="text-left text-primary hover:underline">{row.name}</button></TableCell><TableCell className="text-xs">{accountTypeLabel[row.account_type ?? ''] ?? row.account_type}</TableCell><TableCell className="text-xs text-muted-foreground">{row.account_group}</TableCell><TableCell className="text-right font-mono text-xs">{money(row.opening_debit ?? 0)}</TableCell><TableCell className="text-right font-mono text-xs">{money(row.opening_credit ?? 0)}</TableCell><TableCell className="text-right font-mono text-xs">{money(row.movement_debit ?? 0)}</TableCell><TableCell className="text-right font-mono text-xs">{money(row.movement_credit ?? 0)}</TableCell><TableCell className="text-right font-mono text-xs">{money(row.closing_debit ?? 0)}</TableCell><TableCell className="text-right font-mono text-xs">{money(row.closing_credit ?? 0)}</TableCell><TableCell className="text-right"><Button variant="ghost" size="sm" onClick={(event) => { event.stopPropagation(); openAccount(row.account_id); }}><Eye className="mr-1 h-3.5 w-3.5" /> View</Button></TableCell></TableRow>)}
+                  <TableRow className="bg-muted/50 font-semibold"><TableCell /><TableCell>Totals</TableCell><TableCell /><TableCell /><TableCell className="text-right font-mono text-xs">{money(trialBalanceTotals.opening_debit)}</TableCell><TableCell className="text-right font-mono text-xs">{money(trialBalanceTotals.opening_credit)}</TableCell><TableCell className="text-right font-mono text-xs">{money(trialBalanceTotals.movement_debit)}</TableCell><TableCell className="text-right font-mono text-xs">{money(trialBalanceTotals.movement_credit)}</TableCell><TableCell className="text-right font-mono text-xs">{money(trialBalanceTotals.closing_debit)}</TableCell><TableCell className="text-right font-mono text-xs">{money(trialBalanceTotals.closing_credit)}</TableCell><TableCell /></TableRow>
                 </TableBody>
               </Table>
-              <TablePager page={tbPaged.page} totalPages={tbPaged.totalPages} onPageChange={setTbPage} />
-            </CardContent>
+            </div>
+            <TablePager page={tbPaged.page} totalPages={tbPaged.totalPages} onPageChange={setTbPage} pageSize={tbPageSize} onPageSizeChange={setTbPageSize} totalRows={tbPaged.total} />
           </Card>
         </TabsContent>
 
         <TabsContent value="income-statement">
-          <div className="mb-6 grid gap-4 md:grid-cols-3">
-            <Card className="shadow-sm"><CardContent className="p-5"><div className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Current Net Income</div><div className="mt-2 text-xl font-black font-mono">{money(comparativeIncome?.current.summary.net_income ?? 0)}</div><div className="mt-1 text-xs text-muted-foreground">{comparativeIncome?.current.date_from} to {comparativeIncome?.current.date_to}</div></CardContent></Card>
-            <Card className="shadow-sm"><CardContent className="p-5"><div className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Comparison Net Income</div><div className="mt-2 text-xl font-black font-mono">{money(comparativeIncome?.comparison.summary.net_income ?? 0)}</div><div className="mt-1 text-xs text-muted-foreground">{comparativeIncome?.comparison.date_from} to {comparativeIncome?.comparison.date_to}</div></CardContent></Card>
-            <Card className="shadow-sm"><CardContent className="p-5"><div className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Variance</div><div className="mt-2 text-xl font-black font-mono">{money((comparativeIncome?.current.summary.net_income ?? 0) - (comparativeIncome?.comparison.summary.net_income ?? 0))}</div><div className="mt-1 text-xs text-muted-foreground">Current period minus comparison period</div></CardContent></Card>
-          </div>
-          <div className="grid gap-6 xl:grid-cols-2">
-            {[{
-              title: 'Income',
-              rows: incomePaged.rows,
-              page: incomePaged.page,
-              totalPages: incomePaged.totalPages,
-              setPage: setIncomePage,
-              total: incomeStatement?.summary?.total_income ?? 0,
-            }, {
-              title: 'Expenses',
-              rows: expensePaged.rows,
-              page: expensePaged.page,
-              totalPages: expensePaged.totalPages,
-              setPage: setExpensePage,
-              total: incomeStatement?.summary?.total_expenses ?? 0,
-            }].map((section) => (
-              <Card key={section.title} className="shadow-sm">
-                <CardHeader className="border-b bg-muted/20 py-4">
-                  <CardTitle className="text-sm font-bold uppercase tracking-widest">{section.title}</CardTitle>
-                </CardHeader>
-                <CardContent className="p-0">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Code</TableHead>
-                        <TableHead>Account</TableHead>
-                        <TableHead>Balance Nature</TableHead>
-                        <TableHead className="text-right">Amount</TableHead>
-                        <TableHead className="w-[48px]" />
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {section.rows.length === 0 ? (
-                        <TableRow>
-                          <TableCell colSpan={5} className="py-8 text-center text-sm text-muted-foreground">
-                            {isLoadingIncome ? 'Loading statement…' : 'No rows found.'}
-                          </TableCell>
-                        </TableRow>
-                      ) : (
-                        section.rows.map((row) => (
-                          <TableRow key={row.account_id ?? row.code}>
-                            <TableCell className="font-mono">{row.code}</TableCell>
-                            <TableCell className="font-medium">{row.name}</TableCell>
-                            <TableCell><BalanceBadge row={row} /></TableCell>
-                            <TableCell className="text-right font-mono">{money(row.display_amount)}</TableCell>
-                            <TableCell>
-                              <DropdownMenu>
-                                <DropdownMenuTrigger asChild>
-                                  <Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /></Button>
-                                </DropdownMenuTrigger>
-                                <DropdownMenuContent align="end">
-                                  <DropdownMenuItem onClick={() => openAccount(row.account_id)}>
-                                    <Eye className="h-4 w-4" /> Open Ledger
-                                  </DropdownMenuItem>
-                                </DropdownMenuContent>
-                              </DropdownMenu>
-                            </TableCell>
-                          </TableRow>
-                        ))
-                      )}
-                      <TableRow className="bg-muted/40">
-                        <TableCell />
-                        <TableCell className="font-semibold">Total {section.title}</TableCell>
-                        <TableCell />
-                        <TableCell className="text-right font-mono font-semibold">{money(section.total)}</TableCell>
-                        <TableCell />
-                      </TableRow>
-                    </TableBody>
-                  </Table>
-                  <TablePager page={section.page} totalPages={section.totalPages} onPageChange={section.setPage} />
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-
-          <Card className="shadow-sm">
-            <CardContent className="flex items-center justify-between p-5">
-              <div>
-                <div className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Net Income</div>
-                <div className="text-sm text-muted-foreground">
-                  {selectedPeriod ? `For ${selectedPeriod.name}` : `For ${dateFrom} to ${dateTo}`}
-                </div>
+          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(340px,0.5fr)]">
+            <div className="space-y-4">
+              <div className="grid gap-3 md:grid-cols-3">
+                <Card className="border-blue-200 bg-blue-50/50 shadow-sm"><CardContent className="p-4"><p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Current Period</p><p className="mt-2 font-mono text-lg font-black">{money(comparativeIncome?.current.summary.net_income ?? 0)}</p><p className="mt-1 text-[11px] text-muted-foreground">{comparativeIncome?.current.date_from} to {comparativeIncome?.current.date_to}</p></CardContent></Card>
+                <Card className="border-emerald-200 bg-emerald-50/50 shadow-sm"><CardContent className="p-4"><p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Comparison Period</p><p className="mt-2 font-mono text-lg font-black">{money(comparativeIncome?.comparison.summary.net_income ?? 0)}</p><p className="mt-1 text-[11px] text-muted-foreground">{comparativeIncome?.comparison.date_from} to {comparativeIncome?.comparison.date_to}</p></CardContent></Card>
+                <Card className="border-violet-200 bg-violet-50/50 shadow-sm"><CardContent className="p-4"><p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Variance</p><p className="mt-2 font-mono text-lg font-black">{money((comparativeIncome?.current.summary.net_income ?? 0) - (comparativeIncome?.comparison.summary.net_income ?? 0))}</p><p className="mt-1 text-[11px] text-muted-foreground">Current period minus comparison</p></CardContent></Card>
               </div>
-              <div className="text-2xl font-black font-mono">{money(incomeStatement?.summary?.net_income ?? 0)}</div>
-            </CardContent>
-          </Card>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Input aria-label="Search revenue accounts" value={incomeTableSearch} onChange={(event) => setIncomeTableSearch(event.target.value)} placeholder="Search revenue accounts..." className="h-9 text-xs" />
+                <Input aria-label="Search expense accounts" value={expenseTableSearch} onChange={(event) => setExpenseTableSearch(event.target.value)} placeholder="Search expense accounts..." className="h-9 text-xs" />
+              </div>
+              {[{ title: 'Revenue', rows: incomePaged.rows, totalRows: incomeFiltered.length, total: incomeStatement?.summary?.total_income ?? 0, className: 'text-emerald-600', page: incomePaged.page, totalPages: incomePaged.totalPages, pageSize: incomePageSize, setPage: setIncomePage, setPageSize: setIncomePageSize }, { title: 'Expenses', rows: expensePaged.rows, totalRows: expenseFiltered.length, total: incomeStatement?.summary?.total_expenses ?? 0, className: 'text-orange-600', page: expensePaged.page, totalPages: expensePaged.totalPages, pageSize: expensePageSize, setPage: setExpensePage, setPageSize: setExpensePageSize }].map((section) => <Card key={section.title} className="overflow-hidden shadow-sm"><CardHeader className="border-b py-3"><CardTitle className={`text-xs font-bold uppercase tracking-wide ${section.className}`}>{section.title}</CardTitle></CardHeader><div className="overflow-x-auto"><Table className="min-w-[790px]"><TableHeader><TableRow className="bg-muted/40"><TableHead>Account Code</TableHead><TableHead>Account Name</TableHead><TableHead className="text-right">Current Period</TableHead><TableHead className="text-right">% of {section.title}</TableHead><TableHead className="text-right">Comparison</TableHead><TableHead className="text-right">Variance</TableHead><TableHead className="text-right">Variance %</TableHead></TableRow></TableHeader><TableBody>{section.rows.length ? section.rows.map((row) => { const previous = Number(comparisonRows.get(row.account_id)?.display_amount ?? 0); const current = Number(row.display_amount ?? 0); const variance = current - previous; const share = section.total ? (current / Number(section.total)) * 100 : 0; const variancePercent = previous ? (variance / Math.abs(previous)) * 100 : 0; return <TableRow key={row.account_id ?? row.code} className="cursor-pointer hover:bg-muted/40" onClick={() => openAccount(row.account_id)}><TableCell className="font-mono text-xs">{row.code}</TableCell><TableCell className="font-medium"><button type="button" className="text-left hover:text-primary hover:underline">{row.name}</button></TableCell><TableCell className="text-right font-mono text-xs">{money(current)}</TableCell><TableCell className="text-right text-xs">{share.toFixed(1)}%</TableCell><TableCell className="text-right font-mono text-xs">{money(previous)}</TableCell><TableCell className={`text-right font-mono text-xs ${variance >= 0 ? section.title === 'Revenue' ? 'text-emerald-600' : 'text-orange-600' : 'text-destructive'}`}>{money(variance)}</TableCell><TableCell className="text-right text-xs">{previous ? `${variancePercent >= 0 ? '+' : ''}${variancePercent.toFixed(1)}%` : '—'}</TableCell></TableRow>; }) : <TableRow><TableCell colSpan={7} className="py-8 text-center text-sm text-muted-foreground">{isLoadingIncome ? 'Loading statement...' : 'No rows found for the selected filters.'}</TableCell></TableRow>}<TableRow className="bg-muted/40"><TableCell /><TableCell className="font-semibold">Total {section.title}</TableCell><TableCell className="text-right font-mono font-semibold">{money(section.total)}</TableCell><TableCell className="text-right font-semibold">100%</TableCell><TableCell /><TableCell /><TableCell /></TableRow></TableBody></Table></div><TablePager page={section.page} totalPages={section.totalPages} onPageChange={section.setPage} pageSize={section.pageSize} onPageSizeChange={section.setPageSize} totalRows={section.totalRows} /></Card>)}
+              <Card className="border-red-200 bg-red-50/50 shadow-sm"><CardContent className="flex items-center justify-between p-4"><span className="text-xs font-bold uppercase tracking-wide text-red-600">Net Income (Loss)</span><span className="font-mono font-black text-red-600">{money(incomeStatement?.summary?.net_income ?? 0)}</span></CardContent></Card>
+            </div>
+            <Card className="h-fit xl:sticky xl:top-4">
+              <CardHeader className="flex flex-row items-center justify-between border-b py-4"><CardTitle className="text-base">{ledger?.account ? `${ledger.account.name} (${ledger.account.code})` : 'Account Analysis'}</CardTitle>{ledger?.account && <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setSelectedAccountId('')} aria-label="Clear account selection"><X className="h-4 w-4" /></Button>}</CardHeader>
+              <CardContent className="p-0">{ledger?.account ? <>
+                <div className="grid grid-cols-4 border-b" role="tablist" aria-label="Account analysis">
+                  {(['summary', 'transactions', 'documents', 'analysis'] as const).map((tab) => <button key={tab} type="button" role="tab" aria-selected={accountPanelTab === tab} onClick={() => setAccountPanelTab(tab)} className={`border-b-2 px-1 py-3 text-[10px] font-bold capitalize ${accountPanelTab === tab ? 'border-primary text-primary' : 'border-transparent text-muted-foreground'}`}>{tab}</button>)}
+                </div>
+                <div className="space-y-4 p-4">
+                  {accountPanelTab === 'summary' && <><div className="grid grid-cols-3 divide-x rounded-lg border"><div className="p-3"><p className="text-[10px] uppercase text-muted-foreground">Opening</p><p className="mt-1 font-mono text-xs font-bold">{money(ledger.opening_balance)}</p></div><div className="p-3"><p className="text-[10px] uppercase text-muted-foreground">Movement</p><p className="mt-1 font-mono text-xs font-bold">{money(ledger.summary.credit_total - ledger.summary.debit_total)}</p></div><div className="p-3"><p className="text-[10px] uppercase text-muted-foreground">Closing</p><p className="mt-1 font-mono text-xs font-bold">{money(ledger.summary.closing_balance)}</p></div></div><div className="grid grid-cols-4 gap-2 text-xs"><div><p className="text-muted-foreground">Type</p><p className="mt-1 font-semibold capitalize">{ledger.account.account_type}</p></div><div className="col-span-2"><p className="text-muted-foreground">Period</p><p className="mt-1 font-semibold">{dateFrom} to {dateTo}</p></div><div><p className="text-muted-foreground">Status</p><Badge className="mt-1 bg-emerald-100 text-emerald-700">Active</Badge></div></div><div><div className="mb-2 flex items-center justify-between"><p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Monthly Trend (KES)</p><span className="rounded border px-2 py-1 text-[10px]">Last 6 Months</span></div><div className="h-40"><ResponsiveContainer width="100%" height="100%"><LineChart data={ledger.monthly_trend ?? []}><CartesianGrid vertical={false} stroke="#e5e7eb" /><XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fontSize: 9 }} /><YAxis tickLine={false} axisLine={false} tick={{ fontSize: 9 }} tickFormatter={(value) => `${Number(value) / 1000}K`} /><Tooltip formatter={(value: number) => money(value)} /><Line type="monotone" dataKey="amount" stroke="#10b981" strokeWidth={2.5} dot={{ fill: '#10b981', r: 3 }} /></LineChart></ResponsiveContainer></div></div></>}
+                  {accountPanelTab === 'transactions' && <div className="space-y-2">{ledger.entries.slice(0, 8).map((entry) => <Link key={`${entry.entry_id}-${entry.entry_number}`} href={`/finance/transactions/${entry.entry_id}`} className="grid grid-cols-[64px_1fr_auto] gap-2 rounded-md border p-2 text-xs hover:border-primary/40 hover:bg-muted/30"><span>{entry.entry_date.slice(0, 10)}</span><span className="truncate font-mono text-primary">{entry.entry_number}</span><span className="font-mono">{money(entry.credit_amount || entry.debit_amount)}</span></Link>)}{!ledger.entries.length && <p className="py-8 text-center text-sm text-muted-foreground">No activity for this period.</p>}</div>}
+                  {accountPanelTab === 'documents' && <div className="space-y-2">{ledger.entries.length ? ledger.entries.slice(0, 8).map((entry) => <Link key={`document-${entry.entry_id}`} href={`/finance/transactions/${entry.entry_id}`} className="flex items-center justify-between rounded-md border p-3 text-xs hover:border-primary/40"><span className="capitalize">{sourceTypeLabel[entry.source_type] ?? entry.source_type}</span><span className="font-mono text-primary">{entry.entry_number}</span></Link>) : <p className="py-8 text-center text-sm text-muted-foreground">No source documents in this period.</p>}</div>}
+                  {accountPanelTab === 'analysis' && <div className="space-y-3 text-sm"><div className="rounded-md bg-muted/50 p-3"><p className="text-xs text-muted-foreground">Debit movement</p><p className="mt-1 font-mono font-bold">{money(ledger.summary.debit_total)}</p></div><div className="rounded-md bg-muted/50 p-3"><p className="text-xs text-muted-foreground">Credit movement</p><p className="mt-1 font-mono font-bold">{money(ledger.summary.credit_total)}</p></div></div>}
+                  <Button variant="outline" size="sm" className="w-full" onClick={() => setActiveTab('general-ledger')}>View in General Ledger <ArrowUpRight className="ml-1 h-4 w-4" /></Button>
+                </div>
+              </> : <p className="py-12 text-center text-sm text-muted-foreground">Select an account to inspect its activity.</p>}</CardContent>
+            </Card>
+          </div>
         </TabsContent>
 
         <TabsContent value="balance-sheet">
@@ -1588,7 +1556,7 @@ export default function AccountingReports() {
                         section.rows.map((row) => (
                           <TableRow key={`${section.title}-${row.code}`}>
                             <TableCell className="font-mono">{row.code}</TableCell>
-                            <TableCell className="font-medium">{row.name}</TableCell>
+                            <TableCell className="font-medium"><button type="button" onClick={() => openAccount(row.account_id)} className="text-left hover:text-primary hover:underline">{row.name}</button></TableCell>
                             <TableCell><BalanceBadge row={row} /></TableCell>
                             <TableCell className="text-right font-mono">{money(row.display_amount)}</TableCell>
                             <TableCell>
@@ -2252,6 +2220,21 @@ export default function AccountingReports() {
           </div>
         </TabsContent>
       </Tabs>
+
+      <Sheet open={accountDrawerOpen} onOpenChange={setAccountDrawerOpen}>
+        <SheetContent side="right" className="w-full overflow-y-auto p-0 sm:max-w-xl">
+          <SheetHeader className="border-b px-6 py-5 pr-12">
+            <p className="text-xs font-bold uppercase tracking-[0.16em] text-primary">Account activity</p>
+            <SheetTitle>{ledger?.account ? `${ledger.account.code} - ${ledger.account.name}` : 'Loading account activity'}</SheetTitle>
+            <p className="text-sm text-muted-foreground">{dateFrom} to {dateTo}</p>
+          </SheetHeader>
+          {ledger?.account ? <div className="space-y-5 p-6">
+            <div className="grid grid-cols-3 gap-3"><Card><CardContent className="p-3"><p className="text-[10px] font-bold uppercase text-muted-foreground">Opening</p><p className="mt-1 font-mono text-sm font-bold">{money(ledger.opening_balance)}</p></CardContent></Card><Card><CardContent className="p-3"><p className="text-[10px] font-bold uppercase text-muted-foreground">Movement</p><p className="mt-1 font-mono text-sm font-bold">{money(ledger.summary.credit_total - ledger.summary.debit_total)}</p></CardContent></Card><Card><CardContent className="p-3"><p className="text-[10px] font-bold uppercase text-muted-foreground">Closing</p><p className="mt-1 font-mono text-sm font-bold">{money(ledger.summary.closing_balance)}</p></CardContent></Card></div>
+            <div className="flex items-center justify-between"><h3 className="text-sm font-bold uppercase tracking-wide">Underlying transactions</h3><Button variant="outline" size="sm" onClick={() => { setAccountDrawerOpen(false); setActiveTab('general-ledger'); }}>Open full ledger</Button></div>
+            <div className="overflow-hidden rounded-lg border"><Table><TableHeader><TableRow><TableHead>Date</TableHead><TableHead>Reference</TableHead><TableHead>Source</TableHead><TableHead className="text-right">Debit</TableHead><TableHead className="text-right">Credit</TableHead></TableRow></TableHeader><TableBody>{ledger.entries.length ? ledger.entries.map((entry) => <TableRow key={`${entry.entry_id}-${entry.entry_number}`}><TableCell className="text-xs">{entry.entry_date.slice(0, 10)}</TableCell><TableCell><Link href={`/finance/transactions/${entry.entry_id}`} className="font-mono text-xs font-semibold text-primary hover:underline">{entry.entry_number}</Link></TableCell><TableCell className="capitalize text-xs">{sourceTypeLabel[entry.source_type] ?? entry.source_type}</TableCell><TableCell className="text-right font-mono text-xs">{money(entry.debit_amount)}</TableCell><TableCell className="text-right font-mono text-xs">{money(entry.credit_amount)}</TableCell></TableRow>) : <TableRow><TableCell colSpan={5} className="py-10 text-center text-sm text-muted-foreground">{ledgerLoading ? 'Loading activity...' : 'No transactions for the selected filters.'}</TableCell></TableRow>}</TableBody></Table></div>
+          </div> : <div className="p-8 text-sm text-muted-foreground">{ledgerLoading ? 'Loading account activity...' : 'Select an account to inspect its activity.'}</div>}
+        </SheetContent>
+      </Sheet>
 
       <Dialog open={yearDialogOpen} onOpenChange={setYearDialogOpen}>
         <DialogContent>

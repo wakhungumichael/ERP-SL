@@ -25,6 +25,7 @@ from rest_framework.authtoken.models import Token
 from rest_framework.exceptions import PermissionDenied, ValidationError
 
 from Platform_Core.integrations import build_integration_health_snapshot, indicator_source_registry
+from Platform_Core.email import get_tenant_smtp_connection
 from Platform_Core.branch_sync import sync_tenant_branch_to_operational
 from Platform_Core.platform import (
     activate_license,
@@ -124,12 +125,46 @@ from Platform_API.modules.shared_serializers import (
 )
 
 from Platform_API.modules.api import error_response, request_scope, success_response
-from Platform_API.modules.mixins import ModuleAPIViewMixin, TenantScopedQuerysetMixin
+from Platform_API.modules.mixins import (
+    NO_TENANT_ACCESS,
+    ModuleAPIViewMixin,
+    TenantScopedQuerysetMixin,
+    resolve_user_tenant,
+)
 
 
 def _gen_password(length=12):
     alphabet = string.ascii_letters + string.digits
     return ''.join(secrets.choice(alphabet) for _ in range(length))
+
+
+def _smtp_delivery_error(exc):
+    """Return a useful SMTP error without exposing server responses or secrets."""
+    import smtplib
+    import ssl
+
+    if isinstance(exc, smtplib.SMTPAuthenticationError):
+        return "SMTP authentication failed. Check the mailbox username and password."
+    if isinstance(exc, ssl.SSLError):
+        return "The SMTP server rejected the selected encryption or certificate settings."
+    if isinstance(exc, (ConnectionError, TimeoutError, OSError)):
+        return "The SMTP server could not be reached. Check its host, port, and firewall."
+    return "The SMTP server rejected the message."
+
+
+def _frontend_url(request, path):
+    configured_url = getattr(settings, "ERP_FRONTEND_URL", "").rstrip("/")
+    if configured_url:
+        return f"{configured_url}{path}"
+    # During local Vite development the API proxy has a different Host header,
+    # while Origin still points to the browser-facing application.
+    if settings.DEBUG:
+        browser_origin = str(request.headers.get("Origin") or "").rstrip("/")
+        if browser_origin.startswith(("http://localhost:", "http://127.0.0.1:")):
+            return f"{browser_origin}{path}"
+    if request.get_host().split(":", 1)[0] in {"localhost", "127.0.0.1"}:
+        return f"http://localhost:5173{path}"
+    return request.build_absolute_uri(path)
 
 
 # ── Permission helpers ─────────────────────────────────────────────────────────
@@ -400,13 +435,8 @@ def _validate_payment_integration_scope(*, tenant, payload):
 
 
 def _request_tenant_or_none(user):
-    if user.is_superuser:
-        return None
-    membership = _active_organization_membership(user)
-    if membership:
-        return membership.tenant
-    profile = getattr(user, "tenant_profile", None)
-    return getattr(profile, "tenant", None)
+    resolved = resolve_user_tenant(user)
+    return None if resolved is NO_TENANT_ACCESS else resolved
 
 
 PROTECTED_PERMISSION_APP_LABELS = {
@@ -416,6 +446,43 @@ PROTECTED_PERMISSION_APP_LABELS = {
     "authtoken",
     "contenttypes",
     "sessions",
+}
+
+# Platform_Core contains both SaaS-control models and tenant-scoped accounting
+# models.  Only this allow-list is safe for organization administrators to put
+# into their own roles.
+TENANT_MANAGEABLE_PLATFORM_CORE_MODELS = {
+    "account",
+    "accountingperiod",
+    "accountingperiodauditlog",
+    "accountingpostingrule",
+    "bankreconciliationsession",
+    "bankstatementline",
+    "documenttemplate",
+    "financialyear",
+    "journal",
+    "journalentry",
+    "journalentryline",
+    "workflowdefinition",
+    "workflowentitybinding",
+    "workflowinboxitem",
+    "workflownodedefinition",
+    "workflowstepdefinition",
+    "workflowtransitiondefinition",
+}
+
+TENANT_WORKSPACE_PERMISSION_CODENAMES = {
+    "can_access_finance_workspace",
+    "can_view_erp_reports",
+    "can_view_weighbridge_overview",
+    "can_view_sales_overview",
+    "can_view_inventory_overview",
+    "can_view_finance_overview",
+    "can_view_crm_overview",
+    "can_view_ticketing_overview",
+    "can_view_manufacturing_overview",
+    "can_view_retail_overview",
+    "can_view_services_overview",
 }
 
 # Permission content types use Django app labels while subscriptions use module
@@ -539,15 +606,23 @@ def _role_belongs_to_tenant(group, tenant_id):
 
 
 def _tenant_manageable_permissions_queryset(tenant):
-    active_module_slugs = get_active_tenant_module_slugs(tenant)
-    allowed_app_labels = [
-        app_label
-        for app_label, module_slugs in TENANT_PERMISSION_MODULE_SLUGS.items()
-        if active_module_slugs.intersection(module_slugs)
-    ]
+    # The permission editor is a role template, not a subscription screen.  It
+    # must expose every tenant-safe ERP module so roles can be configured before
+    # a module is licensed.  Subscription checks still decide whether that
+    # module appears in the live workspace.
+    tenant_app_labels = list(TENANT_PERMISSION_MODULE_SLUGS)
     return Permission.objects.select_related("content_type").filter(
-        content_type__app_label__in=allowed_app_labels
-    ).exclude(content_type__app_label__in=PROTECTED_PERMISSION_APP_LABELS)
+        Q(content_type__app_label__in=tenant_app_labels)
+        | Q(
+            content_type__app_label="Platform_Core",
+            content_type__model__in=TENANT_MANAGEABLE_PLATFORM_CORE_MODELS,
+        )
+        | Q(
+            content_type__app_label="Platform_Core",
+            content_type__model="tenantsettings",
+            codename__in=TENANT_WORKSPACE_PERMISSION_CODENAMES,
+        )
+    )
 
 
 def _validate_tenant_role_permissions(permission_list, *, tenant):
@@ -595,7 +670,9 @@ def _validate_tenant_role_name(name, *, tenant_id, exclude_group_id=None):
 
 
 def _can_view_global_audit_logs(user):
-    return user.is_superuser or user.has_perm("Platform_Core.view_global_audit_logs")
+    return _request_tenant_or_none(user) is None and (
+        user.is_superuser or user.has_perm("Platform_Core.view_global_audit_logs")
+    )
 
 
 def _can_view_tenant_audit_logs(user):
@@ -603,7 +680,9 @@ def _can_view_tenant_audit_logs(user):
 
 
 def _can_view_global_access_logs(user):
-    return user.is_superuser or user.has_perm("Platform_Core.view_global_access_logs")
+    return _request_tenant_or_none(user) is None and (
+        user.is_superuser or user.has_perm("Platform_Core.view_global_access_logs")
+    )
 
 
 def _can_view_tenant_access_logs(user):
@@ -907,18 +986,11 @@ class ForgotPasswordAPIView(APIView):
         target_user.save(update_fields=["password"])
 
         try:
-            from django.core.mail import EmailMessage, get_connection
+            from django.core.mail import EmailMessage
 
-            connection = get_connection(
-                host=settings_obj.smtp_host,
-                port=settings_obj.smtp_port or 587,
-                username=settings_obj.smtp_user,
-                password=settings_obj.smtp_password,
-                use_tls=settings_obj.smtp_use_tls,
-                fail_silently=False,
-            )
+            connection = get_tenant_smtp_connection(settings_obj)
             login_path = f"/login/{target_tenant.code}" if target_tenant.code else "/login"
-            login_url = request.build_absolute_uri(login_path)
+            login_url = _frontend_url(request, login_path)
             email = EmailMessage(
                 subject=f"{target_tenant.name} password reset",
                 body=(
@@ -2395,6 +2467,29 @@ class TenantUserInviteAPIView(APIView):
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
 
+        # Resolve the requested role before creating the user.  Role names are
+        # tenant scoped internally (tenant:<id>:<label>), so silently creating a
+        # global Django group here would make a role selected in the UI differ
+        # from the role that was actually assigned.
+        role_group = None
+        role_group_id = data.get("role_group_id")
+        role_group_name = str(data.get("role_group") or "").strip()
+        if role_group_id:
+            role_group = Group.objects.filter(pk=role_group_id).first()
+        elif role_group_name:
+            role_group = Group.objects.filter(name=role_group_name).first()
+
+        if role_group is None:
+            return error_response("Select a valid role.", status_code=status.HTTP_400_BAD_REQUEST)
+
+        role_is_for_tenant = _role_belongs_to_tenant(role_group, tenant.id)
+        role_is_shared = role_group.name in (TENANT_ASSIGNABLE_SHARED_ROLE_NAMES | {"Tenant Admin"})
+        if not role_is_for_tenant and not role_is_shared:
+            return error_response(
+                "The selected role is not available to this organization.",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
         # Build unique username
         base_un = (data.get("username") or data["email"].split("@")[0]).lower().replace(".", "_")
         username = base_un
@@ -2404,54 +2499,85 @@ class TenantUserInviteAPIView(APIView):
             counter += 1
 
         temp_password = supplied_password or _gen_password(12)
-        new_user = User.objects.create_user(
-            username=username,
-            email=data["email"],
-            first_name=data.get("first_name", ""),
-            last_name=data.get("last_name", ""),
-            password=temp_password,
-            is_active=True,
-        )
+        with transaction.atomic():
+            new_user = User.objects.create_user(
+                username=username,
+                email=data["email"],
+                first_name=data.get("first_name", ""),
+                last_name=data.get("last_name", ""),
+                password=temp_password,
+                is_active=True,
+            )
+            new_user.groups.add(role_group)
 
-        # Assign group / role
-        role_group_name = data.get("role_group")
-        if role_group_name:
-            group, _ = Group.objects.get_or_create(name=role_group_name)
-            new_user.groups.add(group)
+            # Resolve branch
+            branch = None
+            branch_id = data.get("branch_id")
+            if branch_id:
+                branch = TenantBranch.objects.filter(pk=branch_id, tenant=tenant).first()
 
-        # Resolve branch
-        branch = None
-        branch_id = data.get("branch_id")
-        if branch_id:
-            branch = TenantBranch.objects.filter(pk=branch_id, tenant=tenant).first()
+            is_org_admin = role_group.name == "Tenant Admin"
+            TenantUserProfile.objects.create(
+                user=new_user,
+                tenant=tenant,
+                branch=branch,
+                is_tenant_admin=is_org_admin,
+                job_title=data.get("job_title", ""),
+            )
+            OrganizationMembership.objects.update_or_create(
+                user=new_user,
+                tenant=tenant,
+                defaults={
+                    "branch": branch,
+                    "role": _resolve_membership_role(role_group.name, is_org_admin),
+                    "role_group_name": role_group.name,
+                    "is_org_admin": is_org_admin,
+                    "is_default": not OrganizationMembership.objects.filter(user=new_user, is_active=True).exists(),
+                    "is_active": True,
+                    "job_title": data.get("job_title", ""),
+                },
+            )
+            _sync_legacy_tenant_profile(new_user)
 
-        TenantUserProfile.objects.create(
-            user=new_user,
-            tenant=tenant,
-            branch=branch,
-            is_tenant_admin=role_group_name == "Tenant Admin",
-            job_title=data.get("job_title", ""),
-        )
-        OrganizationMembership.objects.update_or_create(
-            user=new_user,
-            tenant=tenant,
-            defaults={
-                "branch": branch,
-                "role": _resolve_membership_role(role_group_name, role_group_name == "Tenant Admin"),
-                "role_group_name": role_group_name or "",
-                "is_org_admin": role_group_name == "Tenant Admin",
-                "is_default": not OrganizationMembership.objects.filter(user=new_user, is_active=True).exists(),
-                "is_active": True,
-                "job_title": data.get("job_title", ""),
-            },
-        )
-        _sync_legacy_tenant_profile(new_user)
+        email_sent = False
+        email_error = ""
+        settings_obj = TenantSettings.objects.filter(tenant=tenant).first()
+        if not settings_obj or not settings_obj.smtp_host or not settings_obj.smtp_user or not settings_obj.smtp_password:
+            email_error = "Tenant SMTP settings are incomplete. Share the temporary password manually."
+        else:
+            try:
+                from django.core.mail import EmailMessage
+
+                login_path = f"/login/{tenant.code}" if tenant.code else "/login"
+                login_url = _frontend_url(request, login_path)
+                recipient_name = new_user.first_name or new_user.username
+                connection = get_tenant_smtp_connection(settings_obj)
+                email = EmailMessage(
+                    subject=f"Your {tenant.name} ERP account",
+                    body=(
+                        f"Hello {recipient_name},\n\n"
+                        f"An account has been created for you in the {tenant.name} ERP workspace.\n\n"
+                        f"Username: {new_user.username}\n"
+                        f"Temporary password: {temp_password}\n"
+                        f"Login URL: {login_url}\n\n"
+                        "Please sign in and change your password immediately.\n"
+                    ),
+                    from_email=settings_obj.support_email or settings_obj.smtp_user,
+                    to=[new_user.email],
+                    connection=connection,
+                )
+                email.send(fail_silently=False)
+                email_sent = True
+            except Exception as exc:
+                email_error = _smtp_delivery_error(exc)
 
         return success_response(
-            "User invited successfully.",
+            "User invited and email sent successfully." if email_sent else "User created, but the invitation email was not sent.",
             data={
                 "user": UserProfileSerializer(new_user).data,
                 "temp_password": temp_password,
+                "email_sent": email_sent,
+                "email_error": email_error,
             },
         )
 
@@ -2528,28 +2654,33 @@ def test_tenant_smtp(request, pk):
     if denied:
         return denied
 
-    try:
-        from django.core.mail import get_connection, EmailMessage
-        conn = get_connection(
-            backend="django.core.mail.backends.smtp.EmailBackend",
-            host=ts.smtp_host,
-            port=ts.smtp_port,
-            username=ts.smtp_user,
-            password=ts.smtp_password,
-            use_tls=ts.smtp_use_tls,
-            fail_silently=False,
+    if not ts.smtp_host or not ts.smtp_user or not ts.smtp_password:
+        return error_response(
+            "SMTP host, username, and password must be configured before sending a test email.",
+            status_code=status.HTTP_400_BAD_REQUEST,
         )
+    recipient = (ts.support_email or ts.smtp_user or "").strip()
+    if not recipient:
+        return error_response(
+            "Configure a support email or SMTP username to receive the test message.",
+            status_code=status.HTTP_400_BAD_REQUEST,
+        )
+
+    try:
+        from django.core.mail import EmailMessage
+        conn = get_tenant_smtp_connection(ts)
         email = EmailMessage(
             subject=f"SL-ERP SMTP test — {tenant.name}",
             body="This is a test email from your SL-ERP configuration.",
             from_email=ts.support_email or ts.smtp_user,
-            to=[ts.support_email or ts.smtp_user],
+            to=[recipient],
             connection=conn,
         )
         email.send()
-        return success_response("Test email sent successfully.", data={"message": f"Test email sent to {ts.support_email or ts.smtp_user}"})
+        return success_response("Test email sent successfully.", data={"message": f"Test email sent to {recipient}"})
     except Exception as exc:
-        return error_response(f"SMTP test failed: {exc}", status_code=status.HTTP_502_BAD_GATEWAY)
+        message = _smtp_delivery_error(exc)
+        return error_response(f"SMTP test failed: {message}", status_code=status.HTTP_502_BAD_GATEWAY)
 
 
 # ── User update (deactivate/reactivate) ───────────────────────────────────────

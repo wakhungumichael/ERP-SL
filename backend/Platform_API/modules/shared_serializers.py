@@ -866,7 +866,8 @@ class TenantSettingsSerializer(serializers.ModelSerializer):
             "receipt_template", "receipt_template_id",
             "statement_template", "statement_template_id",
             "purchase_order_template", "purchase_order_template_id",
-            "smtp_host", "smtp_port", "smtp_user", "smtp_password", "smtp_use_tls",
+            "smtp_host", "smtp_port", "smtp_user", "smtp_password", "smtp_use_tls", "smtp_use_ssl",
+            "smtp_allow_insecure_ssl",
             "default_payment_terms_days", "created_at", "updated_at",
         )
         read_only_fields = ("id", "tenant", "created_at", "updated_at")
@@ -880,6 +881,15 @@ class TenantSettingsSerializer(serializers.ModelSerializer):
             except Exception:
                 pass
         return obj.logo_url
+
+    def validate(self, attrs):
+        use_tls = attrs.get("smtp_use_tls", getattr(self.instance, "smtp_use_tls", True))
+        use_ssl = attrs.get("smtp_use_ssl", getattr(self.instance, "smtp_use_ssl", False))
+        if use_tls and use_ssl:
+            raise serializers.ValidationError({
+                "smtp_use_ssl": "Choose either SSL/TLS or STARTTLS, not both."
+            })
+        return attrs
 
     def update(self, instance, validated_data):
         password = validated_data.pop("smtp_password", None)

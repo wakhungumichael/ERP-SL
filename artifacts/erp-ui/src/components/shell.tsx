@@ -32,6 +32,7 @@ import { STATIC_NAV, ROLE_LABELS, ROLE_COLORS, type NavSection } from '@/lib/rol
 import type { AppRole } from '@/lib/roles';
 import { useTenantTheme } from '@/hooks/use-tenant-theme';
 import { evaluateWorkspaceRouteAccess } from '@/lib/workspace-access';
+import { hasMenuPathPermission } from '@/lib/permission-access';
 import {
   Select,
   SelectContent,
@@ -169,6 +170,7 @@ function useWorkspaceNav(token: string | null): NavSection[] {
             : item.title ?? item.name ?? item.label,
           path: normalizeWorkspacePath(sourcePath),
           roles: normalizeNavRoles(item.roles ?? s.roles),
+          requiredPermission: item.required_permission || item.requiredPermission || undefined,
         };
       });
       return {
@@ -443,25 +445,52 @@ export function Shell({ children }: { children: React.ReactNode }) {
 
   if (!token) return null;
 
-  const effectiveRole = isLoading && role === 'guest' ? 'tenant_admin' : role;
+  // While identity is loading, default to least privilege. Cached or fetched
+  // organization-admin flags will promote the user when they are authoritative.
+  const effectiveRole = role;
+  const usesPermissionDrivenNavigation = effectiveRole !== 'superadmin' && effectiveRole !== 'tenant_admin';
+  const userPermissions = new Set<string>(
+    Array.isArray((user as any)?.permissions) ? (user as any).permissions.map(String) : [],
+  );
+  const roleCanSeeItem = (item: NavSection['items'][number]) => {
+    if (!usesPermissionDrivenNavigation) return true;
+    if (item.requiredPermission) return userPermissions.has(item.requiredPermission);
+    return hasMenuPathPermission(item.path, Array.from(userPermissions));
+  };
 
   const visibleSections = apiNav
-    .filter(s => !s.roles.length || s.roles.includes(effectiveRole))
+    .filter(s => usesPermissionDrivenNavigation || !s.roles.length || s.roles.includes(effectiveRole))
     .map(s => ({
       ...s,
-      items: s.items.filter(item => !item.roles.length || item.roles.includes(effectiveRole)),
+      items: s.items.filter(item =>
+        roleCanSeeItem(item)
+        && (usesPermissionDrivenNavigation || !item.roles.length || item.roles.includes(effectiveRole)),
+      ),
     }))
     .filter(s => s.items.length > 0);
 
   const staticVisibleSections = STATIC_NAV
-    .filter(s => !s.roles.length || s.roles.includes(effectiveRole))
+    .filter(s => usesPermissionDrivenNavigation || !s.roles.length || s.roles.includes(effectiveRole))
     .map(s => ({
       ...s,
-      items: s.items.filter(item => !item.roles.length || item.roles.includes(effectiveRole)),
+      items: s.items.filter(item =>
+        roleCanSeeItem(item)
+        && (usesPermissionDrivenNavigation || !item.roles.length || item.roles.includes(effectiveRole)),
+      ),
     }))
     .filter(s => s.items.length > 0);
 
-  const resolvedSections = visibleSections.length > 0 ? visibleSections : staticVisibleSections;
+  // Backend workspace records may lag behind newly enabled ERP modules. Merge
+  // the canonical navigation in, then apply role permissions above. This keeps
+  // tenant admins complete and makes a granted permission immediately visible.
+  const resolvedSections = staticVisibleSections.reduce((sections, staticSection) => {
+    const existing = sections.find(section => section.key === staticSection.key);
+    if (!existing) return [...sections, staticSection];
+    const existingPaths = new Set(existing.items.map(item => item.path));
+    return sections.map(section => section.key === staticSection.key
+      ? { ...section, items: [...section.items, ...staticSection.items.filter(item => !existingPaths.has(item.path))] }
+      : section);
+  }, [...visibleSections] as NavSection[]);
   const dashboardSections = resolvedSections.filter(section =>
     section.items.some(item => item.path === '/dashboard'),
   );
@@ -478,8 +507,10 @@ export function Shell({ children }: { children: React.ReactNode }) {
       path: location,
       role: effectiveRole,
       activeModuleSlugs: tenantContext.activeModuleSlugs ?? [],
+      permissions: Array.from(userPermissions),
+      isPermissionDrivenRole: usesPermissionDrivenNavigation,
     }),
-    [effectiveRole, location, tenantContext.activeModuleSlugs],
+    [effectiveRole, location, tenantContext.activeModuleSlugs, (user as any)?.permissions],
   );
 
   const searchIndex = useMemo(
@@ -781,7 +812,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
 
         {/* Page content */}
         <div className="flex-1 overflow-auto bg-muted/20 p-4 md:p-6 lg:p-7">
-          <div className="erp-workspace mx-auto w-full max-w-[1600px]">
+          <div className="erp-workspace w-full">
             {!tenantThemeLoading && !routeAccess.allowed ? (
               <div className="flex min-h-[60vh] items-center justify-center">
                 <div className="w-full max-w-2xl rounded-[28px] border border-border bg-card p-8 shadow-sm">

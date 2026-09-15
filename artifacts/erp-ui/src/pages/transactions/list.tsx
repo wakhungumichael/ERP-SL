@@ -500,7 +500,7 @@ export default function TransactionsList() {
     return p;
   }, [page, pageSize, status, paymentStatus, weightType, debouncedSearch, dateFilter]);
 
-  const qk = ['transactions', params];
+  const qk = ['transactions', token ?? 'anonymous', params];
   const { data, isLoading } = useQuery({
     queryKey: qk,
     queryFn: async () => {
@@ -513,7 +513,6 @@ export default function TransactionsList() {
     },
     enabled: !!token,
     staleTime: 30_000,
-    placeholderData: (prev: any) => prev,
   });
 
   const rows: any[]  = data?.results ?? [];
