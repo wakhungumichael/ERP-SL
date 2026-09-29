@@ -55,6 +55,7 @@ bash scripts/deploy-docker.sh
 
 That script will:
 
+- create a timestamped PostgreSQL backup before an existing deployment is changed
 - build the backend and frontend images
 - start Postgres and Redis
 - run Django behind Gunicorn
@@ -63,6 +64,11 @@ That script will:
 - run `migrate`
 - seed module, plan, and industry data
 - bootstrap the default `slabs` platform superadmin
+
+For a second Ubuntu server, repeat sections 1-4. A fresh database starts from
+the committed migrations. To copy existing business data as well, create a
+dump on the old server with `bash scripts/backup-docker.sh`, transfer the dump
+outside Git, and restore it on the new server using the command in section 6.
 
 ## 5. First Login
 
@@ -90,6 +96,18 @@ bash scripts/deploy-docker.sh
 ```
 
 That is the main Docker advantage here: you do not reinstall dependencies manually on the server. The images are rebuilt with the app and dependency changes, then the containers are restarted with the new version.
+
+Every update writes a PostgreSQL custom-format dump and SHA-256 checksum under
+`backups/docker/` before rebuilding. If no database container exists, the
+script treats the run as a first deployment. Use `SKIP_DB_BACKUP=1` only when
+you have deliberately chosen to deploy without a backup.
+
+Manual backup and restore:
+
+```bash
+bash scripts/backup-docker.sh
+CONFIRM_RESTORE=YES bash scripts/restore-docker.sh backups/docker/sl_erp_DATE_TIME.dump
+```
 
 ## 7. Useful Docker Commands
 
@@ -142,4 +160,5 @@ The workflow file is [deploy-docker.yml](/home/mike/DEVELOPMENT/SIAKORA%20LABS/S
 
 - The deployment script also runs `migrate`, `seed_platform`, and `bootstrap_saas_owner` after containers start.
 - Persistent data is stored in Docker volumes for Postgres, Redis, static files, and media files.
+- Database dumps are ignored by Git. Copy them to encrypted off-server storage for disaster recovery.
 - For internet-facing deployments, put a TLS terminator in front of the stack or change the Nginx container setup accordingly.

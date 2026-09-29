@@ -47,6 +47,7 @@ backend/backups/*
 .env.*
 !.env.example
 !.env.production.example
+!.env.production.docker.example
 backend/.env
 artifacts/erp-ui/.env
 

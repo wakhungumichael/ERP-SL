@@ -60,9 +60,18 @@ Check:
 
 ## Backup Before Risky Changes
 
+Bare-metal PostgreSQL:
+
 ```bash
 cd /srv/sl-erp
 ./scripts/backup-postgres.sh
+```
+
+Docker PostgreSQL:
+
+```bash
+cd /srv/sl-erp
+bash scripts/backup-docker.sh
 ```
 
 Keep the dump before schema-heavy or tenant-data-sensitive releases.
@@ -100,6 +109,9 @@ For Docker-based production or staging:
 cp .env.production.docker.example .env.production
 bash scripts/deploy-docker.sh
 ```
+
+Docker deployments automatically create a database dump before rebuilding and
+running migrations when an existing database container is active.
 
 The Docker stack is defined in [docker-compose.production.yml](/home/mike/DEVELOPMENT/SIAKORA%20LABS/SL-ERP/docker-compose.production.yml:1).
 
