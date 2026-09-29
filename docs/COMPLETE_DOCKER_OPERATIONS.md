@@ -185,16 +185,49 @@ https://erp.siakoralabs.co.ke
 ## 7. Set or Reset the `slabs` Superuser Password
 
 Django stores password hashes, so an existing password cannot be displayed.
-Reset only the `slabs` account interactively:
+Update the server and confirm the containers are running first:
 
 ```bash
 cd /srv/sl-erp
+git pull --ff-only origin main
+docker compose --env-file .env.production -f docker-compose.production.yml ps
+```
+
+Check whether `slabs` exists:
+
+```bash
+docker compose --env-file .env.production -f docker-compose.production.yml \
+  exec -T backend sh -c "cd /app/backend && python manage.py shell -c \"from django.contrib.auth import get_user_model; print(get_user_model().objects.filter(username='slabs').exists())\""
+```
+
+If the command prints `False`, create the owner accounts first:
+
+```bash
+docker compose --env-file .env.production -f docker-compose.production.yml \
+  exec -T backend sh -c "cd /app/backend && python manage.py bootstrap_saas_owner"
+```
+
+The bootstrap command prints generated passwords only when it creates accounts.
+Do not rely on that terminal output as permanent password storage. Reset only
+the `slabs` account interactively:
+
+```bash
 docker compose --env-file .env.production -f docker-compose.production.yml \
   exec backend sh -c "cd /app/backend && python manage.py changepassword slabs"
 ```
 
 Enter a new private password twice when prompted. The input is hidden. Do not
 put this password in Git, this document, chat messages, or `.env.production`.
+Store it in an approved password manager.
+
+If credentials may have been exposed, revoke the existing API token after the
+password reset. This signs current token-based clients out and forces a new
+login:
+
+```bash
+docker compose --env-file .env.production -f docker-compose.production.yml \
+  exec -T backend sh -c "cd /app/backend && python manage.py shell -c \"from django.contrib.auth import get_user_model; from rest_framework.authtoken.models import Token; u=get_user_model().objects.get(username='slabs'); print('revoked', Token.objects.filter(user=u).delete()[0], 'token(s)')\""
+```
 
 Confirm that the account remains a platform superuser:
 
@@ -208,6 +241,11 @@ Expected output:
 ```text
 slabs True True True
 ```
+
+Finally, open the ERP in a private browser window and sign in as `slabs` with
+the new password. Verify that the platform Modules page loads. Repeatedly
+running `bootstrap_saas_owner` without `--default-password` does not overwrite
+the password of an existing `slabs` user.
 
 ## 8. Update an Existing Docker Server
 
