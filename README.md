@@ -14,6 +14,7 @@ SL-ERP is a multi-module ERP and SaaS platform built with Django, Django REST Fr
 
 - Local development: [docs/LOCAL_SETUP.md](/home/mike/DEVELOPMENT/SIAKORA%20LABS/SL-ERP/docs/LOCAL_SETUP.md)
 - Windows/WSL development: [docs/WINDOWS_SETUP.md](/home/mike/DEVELOPMENT/SIAKORA%20LABS/SL-ERP/docs/WINDOWS_SETUP.md)
+- Complete Docker operations: [docs/COMPLETE_DOCKER_OPERATIONS.md](/home/mike/DEVELOPMENT/SIAKORA%20LABS/SL-ERP/docs/COMPLETE_DOCKER_OPERATIONS.md)
 - Ubuntu deployment: [docs/UBUNTU_DEPLOYMENT.md](/home/mike/DEVELOPMENT/SIAKORA%20LABS/SL-ERP/docs/UBUNTU_DEPLOYMENT.md)
 - Production update flow: [docs/PRODUCTION_RUNBOOK.md](/home/mike/DEVELOPMENT/SIAKORA%20LABS/SL-ERP/docs/PRODUCTION_RUNBOOK.md)
 
