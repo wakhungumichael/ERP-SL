@@ -64,7 +64,7 @@ class Company(models.Model):
     name = models.CharField(max_length=255)
     address = models.TextField()
     email = models.EmailField()
-    phone = models.CharField(max_length=20)
+    phone = models.CharField(max_length=50)
     logo = models.ImageField(upload_to='logos/', blank=True, null=True)
 
     def __str__(self):
@@ -86,7 +86,7 @@ class Branch(models.Model):
     name = models.CharField(max_length=255)
     address = models.TextField()
     email = models.EmailField()
-    phone = models.CharField(max_length=20)
+    phone = models.CharField(max_length=50)
 
     def __str__(self):
         return f"{self.name} - {self.company.name}"

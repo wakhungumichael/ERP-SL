@@ -158,7 +158,7 @@ class WeighbridgeReferenceScopingTests(TestCase):
             name="Membership Indicator Branch",
             address="Road 3",
             email="membership-branch@example.test",
-            phone="0700000003",
+            phone="+254 715 488 903 / +254 715 499 582",
             is_active=True,
         )
         self.client.force_authenticate(membership_user)
@@ -168,6 +168,11 @@ class WeighbridgeReferenceScopingTests(TestCase):
         self.assertEqual(response.status_code, 200, response.data)
         results = response.data.get("results", response.data)
         self.assertIn(membership_branch.name, {row["name"] for row in results})
+        operational_branch = Branch.objects.get(
+            tenant=self.tenant_a,
+            name=membership_branch.name,
+        )
+        self.assertEqual(operational_branch.phone, membership_branch.phone)
 
     def test_vehicle_type_list_returns_only_current_tenant_records(self):
         response = self.client.get(reverse("wb-vehicle-types"))
