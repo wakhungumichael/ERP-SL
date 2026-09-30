@@ -3,7 +3,7 @@ from django.test import TestCase
 from django.urls import reverse
 from rest_framework.test import APIClient
 
-from Platform_Core.models import Tenant, TenantBranch, TenantUserProfile
+from Platform_Core.models import OrganizationMembership, Tenant, TenantBranch, TenantUserProfile
 from SL_Weighbridge.models import Branch, Company, Currency, IndicatorConfig, Item, VehicleType, WeighingOperationType
 
 
@@ -138,6 +138,36 @@ class WeighbridgeReferenceScopingTests(TestCase):
         self.assertEqual(response.status_code, 200, response.data)
         results = response.data.get("results", response.data)
         self.assertEqual(results, [])
+
+    def test_branch_list_resolves_membership_without_legacy_profile(self):
+        membership_user = User.objects.create_user(
+            username="membership_wb_admin",
+            password="pass",
+            is_staff=True,
+        )
+        OrganizationMembership.objects.create(
+            user=membership_user,
+            tenant=self.tenant_a,
+            role="system_admin",
+            is_org_admin=True,
+            is_default=True,
+            is_active=True,
+        )
+        membership_branch = TenantBranch.objects.create(
+            tenant=self.tenant_a,
+            name="Membership Indicator Branch",
+            address="Road 3",
+            email="membership-branch@example.test",
+            phone="0700000003",
+            is_active=True,
+        )
+        self.client.force_authenticate(membership_user)
+
+        response = self.client.get(reverse("wb-branches"), {"page_size": 200})
+
+        self.assertEqual(response.status_code, 200, response.data)
+        results = response.data.get("results", response.data)
+        self.assertIn(membership_branch.name, {row["name"] for row in results})
 
     def test_vehicle_type_list_returns_only_current_tenant_records(self):
         response = self.client.get(reverse("wb-vehicle-types"))

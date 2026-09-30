@@ -167,16 +167,15 @@ const emptyIndicator = (): IndicatorCfg => ({
 });
 
 function IndicatorConfigTab() {
-  const { token, user } = useAuth();
+  const { token } = useAuth();
   const { toast } = useToast();
   const qc = useQueryClient();
-  const organizationId = Number((user as any)?.organization_id ?? (user as any)?.tenant_id) || undefined;
   const invalidate = useCallback(() => qc.invalidateQueries({ queryKey: ['/api/commercial-weighbridge/indicator-configs/'] }), [qc]);
 
   const { data: _configsRaw, isLoading } = useFetch<any>('/api/commercial-weighbridge/indicator-configs/', token);
   const { data: branches = [] } = useQuery({
-    queryKey: [...ERP_BRANCHES_QUERY_KEY, organizationId ?? 'active'],
-    queryFn: () => fetchErpBranches(token!, organizationId),
+    queryKey: ERP_BRANCHES_QUERY_KEY,
+    queryFn: () => fetchErpBranches(token!),
     enabled: !!token,
     staleTime: 0,
     refetchOnMount: 'always',
