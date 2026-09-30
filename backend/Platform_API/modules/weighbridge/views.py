@@ -20,7 +20,7 @@ from rest_framework.views import APIView
 from Platform_Core.documents import render_business_document, render_transaction_receipt
 from Platform_Core.branch_sync import get_operational_branches_for_tenant
 from Platform_Core.accounting import assert_posting_allowed, sync_transaction_posting
-from Platform_Core.models import OrganizationMembership, TenantUserProfile
+from Platform_Core.models import OrganizationMembership, Tenant, TenantUserProfile
 from Platform_API.modules.mixins import (
     NO_TENANT_ACCESS,
     apply_tenant_filter as _shared_apply_tenant_filter,
@@ -1834,6 +1834,15 @@ class BranchListView(generics.ListAPIView):
         resolved = _resolve_user_tenant(self.request.user)
         if isinstance(resolved, _NoTenantProfile):
             return Branch.objects.none()
+        requested_tenant_id = self.request.query_params.get("tenant_id")
+        if requested_tenant_id:
+            if resolved is None and self.request.user.is_superuser:
+                requested_tenant = Tenant.objects.filter(pk=requested_tenant_id).first()
+                if requested_tenant is None:
+                    return Branch.objects.none()
+                return get_operational_branches_for_tenant(requested_tenant)
+            if resolved is None or str(resolved.pk) != str(requested_tenant_id):
+                return Branch.objects.none()
         if resolved is None:
             return Branch.objects.all().order_by("name")
         return get_operational_branches_for_tenant(resolved)

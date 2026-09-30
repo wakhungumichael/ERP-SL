@@ -20,8 +20,10 @@ export function normalizeBranchList(payload: any): ErpBranch[] {
   return [];
 }
 
-export async function fetchErpBranches(token: string): Promise<ErpBranch[]> {
-  const res = await fetch(ERP_BRANCHES_ENDPOINT, {
+export async function fetchErpBranches(token: string, tenantId?: number): Promise<ErpBranch[]> {
+  const params = new URLSearchParams({ page_size: '200' });
+  if (tenantId) params.set('tenant_id', String(tenantId));
+  const res = await fetch(`${ERP_BRANCHES_ENDPOINT}?${params.toString()}`, {
     headers: { Authorization: `Token ${token}` },
   });
   if (!res.ok) throw new Error(`${res.status}`);

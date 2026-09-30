@@ -119,6 +119,24 @@ const DEFAULT_SUPPORT_PAGE_CONFIG = {
 const ORGANIZATION_CURRENCIES = ['KES', 'USD', 'EUR', 'GBP', 'UGX', 'TZS'];
 const PAGINATION_PAGE_SIZES = [5, 10, 25, 50];
 
+const BRANDING_SETTINGS_FIELDS = ['primary_color'] as const;
+const PUBLIC_SITE_SETTINGS_FIELDS = ['login_page_config', 'landing_page_config', 'footer_menu'] as const;
+const EMAIL_SETTINGS_FIELDS = [
+  'support_email', 'smtp_host', 'smtp_port', 'smtp_user', 'smtp_password',
+  'smtp_use_tls', 'smtp_use_ssl', 'smtp_allow_insecure_ssl',
+] as const;
+const INVOICE_SETTINGS_FIELDS = [
+  'invoice_prefix', 'default_payment_terms_days', 'footer_text', 'default_tax_name',
+  'default_tax_rate', 'invoice_template_id', 'estimate_template_id', 'receipt_template_id',
+  'statement_template_id', 'purchase_order_template_id',
+] as const;
+
+function buildSettingsPayload(source: any, fields: readonly string[]) {
+  const payload = Object.fromEntries(fields.map((field) => [field, source?.[field]]));
+  if (!payload.smtp_password) delete payload.smtp_password;
+  return payload;
+}
+
 function api(token: string, path: string, method = 'GET', body?: object) {
   return fetch(`${BASE}${path}`, {
     method,
@@ -1722,7 +1740,7 @@ export default function OrganizationSettings() {
     queryFn: () => api(token!, `/tenants/self/`),
     enabled: !!token,
   });
-  const { data: settingsData, isLoading: settingsLoading } = useQuery({
+  const { data: settingsData, isLoading: settingsLoading, dataUpdatedAt: settingsDataUpdatedAt } = useQuery({
     queryKey: ['my-tenant-settings', organizationId],
     queryFn: () => api(token!, `/tenants/${organizationId}/settings/`),
     enabled: !!organizationId,
@@ -1893,7 +1911,7 @@ export default function OrganizationSettings() {
     const hasSettingsPayload = settings && typeof settings === 'object';
     if (!hasSettingsPayload) return;
     setSettingsForm(buildSettingsForm(settings));
-  }, [activeMembershipId, organizationId, settingsLoading, settings]);
+  }, [activeMembershipId, organizationId, settingsLoading, settingsDataUpdatedAt]);
 
   const saveTenant = useMutation({
     mutationFn: () => api(token!, `/tenants/self/`, 'PATCH', {
@@ -1926,32 +1944,23 @@ export default function OrganizationSettings() {
     onError: (e: any) => toast({ title: 'Create failed', description: e.message, variant: 'destructive' }),
   });
   const saveSettings = useMutation({
-    mutationFn: () => {
-      const payload = { ...settingsForm };
-      if (!payload.smtp_password) delete payload.smtp_password;
-      delete payload.logo_file;
-      delete payload.logo_url;
-      delete payload.invoice_template;
-      delete payload.estimate_template;
-      delete payload.receipt_template;
-      delete payload.purchase_order_template;
-      delete payload.statement_template;
-      return api(token!, `/tenants/${organizationId}/settings/`, 'PUT', payload);
+    mutationFn: (fields: readonly string[]) => api(
+      token!,
+      `/tenants/${organizationId}/settings/`,
+      'PUT',
+      buildSettingsPayload(settingsForm, fields),
+    ),
+    onSuccess: (response) => {
+      const saved = response?.data ?? response;
+      setSettingsForm(buildSettingsForm(saved));
+      toast({ title: 'Settings saved' });
+      qc.setQueryData(['my-tenant-settings', organizationId], response);
     },
-    onSuccess: () => { toast({ title: 'Settings saved' }); qc.invalidateQueries({ queryKey: ['my-tenant-settings'] }); },
     onError: (e: any) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
   });
   const testSmtp = useMutation({
     mutationFn: async () => {
-      const payload = { ...settingsForm };
-      if (!payload.smtp_password) delete payload.smtp_password;
-      delete payload.logo_file;
-      delete payload.logo_url;
-      delete payload.invoice_template;
-      delete payload.estimate_template;
-      delete payload.receipt_template;
-      delete payload.purchase_order_template;
-      delete payload.statement_template;
+      const payload = buildSettingsPayload(settingsForm, EMAIL_SETTINGS_FIELDS);
       await api(token!, `/tenants/${organizationId}/settings/`, 'PUT', payload);
       return api(token!, `/tenants/${organizationId}/settings/test-smtp/`, 'POST');
     },
@@ -2437,7 +2446,7 @@ export default function OrganizationSettings() {
                           <div className="mt-4 h-2 rounded-full" style={{ backgroundColor: settingsForm.primary_color ?? '#E85D26' }} />
                         </div>
                       </div>
-                      <Button onClick={() => saveSettings.mutate()} disabled={saveSettings.isPending}>
+                      <Button onClick={() => saveSettings.mutate(BRANDING_SETTINGS_FIELDS)} disabled={saveSettings.isPending}>
                         {saveSettings.isPending ? 'Saving…' : 'Save Branding'}
                       </Button>
                     </div>
@@ -2752,7 +2761,7 @@ export default function OrganizationSettings() {
                       </div>
                     </div>
 
-                    <Button onClick={() => saveSettings.mutate()} disabled={saveSettings.isPending}>
+                    <Button onClick={() => saveSettings.mutate(PUBLIC_SITE_SETTINGS_FIELDS)} disabled={saveSettings.isPending}>
                       {saveSettings.isPending ? 'Saving…' : 'Save Public Site Settings'}
                     </Button>
                   </>
@@ -2825,7 +2834,7 @@ export default function OrganizationSettings() {
                     </div>
                   </div>
                   <div className="flex gap-3">
-                    <Button onClick={() => saveSettings.mutate()} disabled={saveSettings.isPending}>
+                    <Button onClick={() => saveSettings.mutate(EMAIL_SETTINGS_FIELDS)} disabled={saveSettings.isPending}>
                       {saveSettings.isPending ? 'Saving…' : 'Save Email Config'}
                     </Button>
                     <Button variant="outline" onClick={() => testSmtp.mutate()} disabled={testSmtp.isPending}>
@@ -2937,7 +2946,7 @@ export default function OrganizationSettings() {
                       </Select>
                     </div>
                   </div>
-                  <Button onClick={() => saveSettings.mutate()} disabled={saveSettings.isPending}>
+                  <Button onClick={() => saveSettings.mutate(INVOICE_SETTINGS_FIELDS)} disabled={saveSettings.isPending}>
                     {saveSettings.isPending ? 'Saving…' : 'Save Invoice Settings'}
                   </Button>
                 </>

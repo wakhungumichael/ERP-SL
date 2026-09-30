@@ -29,7 +29,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
-import { ERP_BRANCHES_ENDPOINT, ERP_BRANCHES_QUERY_KEY, normalizeBranchList } from '@/lib/branches';
+import { ERP_BRANCHES_ENDPOINT, ERP_BRANCHES_QUERY_KEY, fetchErpBranches, normalizeBranchList } from '@/lib/branches';
 import {
   Plus, Pencil, Trash2, Settings2, Truck, Package, Tag, ShieldAlert, Camera, PlugZap,
 } from 'lucide-react';
@@ -167,15 +167,21 @@ const emptyIndicator = (): IndicatorCfg => ({
 });
 
 function IndicatorConfigTab() {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const { toast } = useToast();
   const qc = useQueryClient();
+  const organizationId = Number((user as any)?.organization_id ?? (user as any)?.tenant_id) || undefined;
   const invalidate = useCallback(() => qc.invalidateQueries({ queryKey: ['/api/commercial-weighbridge/indicator-configs/'] }), [qc]);
 
   const { data: _configsRaw, isLoading } = useFetch<any>('/api/commercial-weighbridge/indicator-configs/', token);
-  const { data: _branchesRaw } = useFetch<any>(ERP_BRANCHES_ENDPOINT, token);
+  const { data: branches = [] } = useQuery({
+    queryKey: [...ERP_BRANCHES_QUERY_KEY, organizationId ?? 'active'],
+    queryFn: () => fetchErpBranches(token!, organizationId),
+    enabled: !!token,
+    staleTime: 0,
+    refetchOnMount: 'always',
+  });
   const configs: IndicatorCfg[] = Array.isArray(_configsRaw?.results) ? _configsRaw.results : Array.isArray(_configsRaw) ? _configsRaw : [];
-  const branches: any[] = Array.isArray(_branchesRaw?.results) ? _branchesRaw.results : Array.isArray(_branchesRaw) ? _branchesRaw : [];
 
   const [open, setOpen]   = useState(false);
   const [form, setForm]   = useState<IndicatorCfg>(emptyIndicator());

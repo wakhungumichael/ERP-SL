@@ -106,6 +106,39 @@ class WeighbridgeReferenceScopingTests(TestCase):
             live_weight_url="https://tenant-b.example/live",
         )
 
+    def test_branch_list_syncs_new_organization_branch_for_indicator_dropdown(self):
+        tenant_branch = TenantBranch.objects.create(
+            tenant=self.tenant_a,
+            name="New Indicator Branch",
+            address="Road 2",
+            email="indicator-branch@example.test",
+            phone="0700000002",
+            is_active=True,
+        )
+
+        response = self.client.get(
+            reverse("wb-branches"),
+            {"tenant_id": self.tenant_a.id, "page_size": 200},
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        results = response.data.get("results", response.data)
+        names = {row["name"] for row in results}
+        self.assertIn(tenant_branch.name, names)
+        self.assertTrue(
+            Branch.objects.filter(tenant=self.tenant_a, name=tenant_branch.name).exists()
+        )
+
+    def test_branch_list_rejects_another_tenant_id(self):
+        response = self.client.get(
+            reverse("wb-branches"),
+            {"tenant_id": self.tenant_b.id, "page_size": 200},
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        results = response.data.get("results", response.data)
+        self.assertEqual(results, [])
+
     def test_vehicle_type_list_returns_only_current_tenant_records(self):
         response = self.client.get(reverse("wb-vehicle-types"))
 
