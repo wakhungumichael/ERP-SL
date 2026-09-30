@@ -12,6 +12,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Building2, ChevronLeft, ChevronRight, Pencil, Plus, Users } from 'lucide-react';
+import { hasPermission } from '@/lib/permissions';
 
 const BASE_URL = import.meta.env.BASE_URL?.replace(/\/$/, '') ?? '';
 
@@ -40,7 +41,7 @@ const emptyForm = (): FormState => ({
 });
 
 export default function CustomersPage() {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const { toast } = useToast();
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
@@ -49,6 +50,8 @@ export default function CustomersPage() {
   const [saving, setSaving] = useState(false);
   const [editTarget, setEditTarget] = useState<Customer | null>(null);
   const [form, setForm] = useState<FormState>(emptyForm());
+  const canAddCustomer = hasPermission(user as any, 'SL_Weighbridge.add_customer');
+  const canChangeCustomer = hasPermission(user as any, 'SL_Weighbridge.change_customer');
 
   const { data, isLoading, refetch } = useQuery({
     queryKey: ['sales-customers', token, search],
@@ -134,10 +137,12 @@ export default function CustomersPage() {
             Manage shared customer records used across CRM, sales, invoices, and operations.
           </p>
         </div>
-        <Button onClick={openCreate} className="gap-2">
-          <Plus className="h-4 w-4" />
-          New Customer
-        </Button>
+        {canAddCustomer ? (
+          <Button onClick={openCreate} className="gap-2">
+            <Plus className="h-4 w-4" />
+            New Customer
+          </Button>
+        ) : null}
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
@@ -205,7 +210,7 @@ export default function CustomersPage() {
                   <TableHead>Phone</TableHead>
                   <TableHead>Email</TableHead>
                   <TableHead>Usage</TableHead>
-                  <TableHead>Actions</TableHead>
+                  {canChangeCustomer ? <TableHead>Actions</TableHead> : null}
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -228,11 +233,13 @@ export default function CustomersPage() {
                         <Badge variant="outline">{customer.invoice_count} invoices</Badge>
                       </div>
                     </TableCell>
-                    <TableCell>
-                      <Button size="sm" variant="ghost" onClick={() => openEdit(customer)}>
-                        <Pencil className="h-4 w-4" />
-                      </Button>
-                    </TableCell>
+                    {canChangeCustomer ? (
+                      <TableCell>
+                        <Button size="sm" variant="ghost" onClick={() => openEdit(customer)}>
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                      </TableCell>
+                    ) : null}
                   </TableRow>
                 ))}
               </TableBody>

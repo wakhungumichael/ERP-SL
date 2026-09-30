@@ -22,6 +22,7 @@ from django.http import HttpResponse
 from django.core.mail import EmailMultiAlternatives
 from django.utils import timezone
 from rest_framework import generics, serializers, status
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -67,8 +68,8 @@ def _tenant_or_400(user):
     return tenant_or_403(user, "No organization linked to this account.")
 
 
-def _can_view_customer_statements(user):
-    if user.is_superuser or user.has_perm("SL_Weighbridge.can_view_customer_statements"):
+def _is_customer_admin(user):
+    if user.is_superuser:
         return True
     try:
         if user.tenant_profile.is_tenant_admin:
@@ -76,6 +77,18 @@ def _can_view_customer_statements(user):
     except Exception:
         pass
     return user.organization_memberships.filter(is_active=True, is_org_admin=True).exists()
+
+
+def _require_customer_permission(user, codename):
+    if _is_customer_admin(user) or user.has_perm(f"SL_Weighbridge.{codename}"):
+        return
+    raise PermissionDenied("You do not have permission to perform this customer action.")
+
+
+def _can_view_customer_statements(user):
+    if _is_customer_admin(user) or user.has_perm("SL_Weighbridge.can_view_customer_statements"):
+        return True
+    return False
 
 
 def _get_tenant_default_tax_rate(tenant):
@@ -1740,6 +1753,7 @@ class SalesCustomerListView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        _require_customer_permission(request.user, "view_customer")
         qs = _apply_tenant_filter(Customer.objects.all(), request.user).order_by("name", "id")
         if q := request.query_params.get("search"):
             qs = qs.filter(
@@ -1752,6 +1766,7 @@ class SalesCustomerListView(APIView):
         return Response({"customers": serializer.data})
 
     def post(self, request):
+        _require_customer_permission(request.user, "add_customer")
         tenant = _tenant_or_400(request.user)
         serializer = SalesCustomerSerializer(data=request.data)
         if not serializer.is_valid():
@@ -1770,12 +1785,14 @@ class SalesCustomerDetailView(APIView):
             return None
 
     def get(self, request, pk):
+        _require_customer_permission(request.user, "view_customer")
         customer = self._get_customer(request.user, pk)
         if customer is None:
             return Response({"error": "Customer not found."}, status=status.HTTP_404_NOT_FOUND)
         return Response(SalesCustomerSerializer(customer).data)
 
     def patch(self, request, pk):
+        _require_customer_permission(request.user, "change_customer")
         customer = self._get_customer(request.user, pk)
         if customer is None:
             return Response({"error": "Customer not found."}, status=status.HTTP_404_NOT_FOUND)

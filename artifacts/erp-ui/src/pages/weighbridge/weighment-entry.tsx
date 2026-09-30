@@ -16,9 +16,10 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
 import LiveIndicator from '@/components/weighbridge/live-indicator';
-import { Camera, Check, ChevronsUpDown, Plus, RefreshCw, Scale, Search, WifiOff } from 'lucide-react';
+import { Camera, Check, ChevronsUpDown, LockKeyhole, Package, Plus, RefreshCw, Scale, Search, Truck, UserRound, WifiOff } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { ERPPageHeader } from '@/components/erp/workspace/workspace-ui';
+import { hasPermission } from '@/lib/permissions';
 
 type RouteFlow = 'first' | 'second';
 
@@ -174,8 +175,8 @@ function CameraPanel({ branchId, snapshotVersion, onRefresh }: { branchId: strin
   const selectedCamera = previews.find((camera) => String(camera.id) === selectedCameraId) ?? previews[0];
 
   return (
-    <Card className="overflow-hidden border-border/70 shadow-sm">
-      <CardHeader className="flex flex-row items-center justify-between border-b bg-muted/15 px-4 py-3">
+    <Card className="overflow-hidden border-primary/20 shadow-sm">
+      <CardHeader className="flex flex-row items-center justify-between border-b border-primary/15 bg-primary/5 px-4 py-3">
         <CardTitle className="flex items-center gap-2 text-sm font-semibold">
           <Camera className="h-4 w-4" />
           Camera View
@@ -275,6 +276,9 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
   const queryClient = useQueryClient();
   const { user } = useAuth();
   const create = useCreateTransaction();
+  const canAddCustomer = hasPermission(user as any, 'SL_Weighbridge.add_customer');
+  const canAddVehicle = hasPermission(user as any, 'SL_Weighbridge.add_vehicle');
+  const canAddItem = hasPermission(user as any, 'SL_Weighbridge.add_item');
 
   const [operationTypeId, setOperationTypeId] = useState('');
   const [branchId, setBranchId] = useState('');
@@ -357,6 +361,10 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
   const itemList = Array.isArray(items) ? items : (items as any)?.results ?? [];
   const vehicleTypeList = Array.isArray(vehicleTypesRaw) ? vehicleTypesRaw : (vehicleTypesRaw as any)?.results ?? [];
   const operationTypeList: OperationType[] = (Array.isArray(operationTypesRaw) ? operationTypesRaw : (operationTypesRaw as any)?.results ?? []).filter((row: any) => row.is_active);
+  const selectedVehicleRecord = vehicleList.find((vehicle: any) => String(vehicle.id) === vehicleId) ?? null;
+  const lockedVehicleTypeName = selectedVehicleRecord?.vehicle_type_name
+    || vehicleTypeList.find((row: any) => String(row.id) === vehicleTypeId)?.name
+    || '';
   const selectedOperation = operationTypeList.find((row) => String(row.id) === operationTypeId) ?? null;
   const isSecondFlow = selectedOperation?.flow_kind === 'second';
   const activeVehicleId = isSecondFlow ? selectedVehicle?.id ?? null : (vehicleId ? parseInt(vehicleId, 10) : null);
@@ -428,9 +436,6 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
     const defaults = workflowContext?.latest_transaction_defaults;
     if (!defaults) return;
 
-    if (defaults.vehicle_type_id) {
-      setVehicleTypeId(String(defaults.vehicle_type_id));
-    }
     setItemId(defaults.item_id ? String(defaults.item_id) : '');
     setDestination(defaults.destination ?? '');
     setDriverName(defaults.driver_name ?? '');
@@ -634,8 +639,8 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
       <WeighmentStepper isSecondFlow={isSecondFlow} />
 
       <form onSubmit={handleSubmit} className="grid gap-5 xl:grid-cols-[minmax(0,1.15fr)_minmax(360px,0.85fr)]">
-          <Card className="overflow-hidden border-border/70 shadow-sm">
-            <CardHeader className="flex-row items-center justify-between border-b bg-muted/15 px-4 py-3">
+          <Card className="overflow-hidden border-primary/20 shadow-sm">
+            <CardHeader className="flex-row items-center justify-between border-b border-primary/15 bg-primary/5 px-4 py-3">
               <CardTitle className="text-sm font-semibold">Live Weight</CardTitle>
               <Badge className={cn(
                 'border-0 hover:bg-transparent',
@@ -654,7 +659,7 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
                   }}
                   className={cn(
                     'flex h-8 items-center gap-1.5 rounded-full border px-2.5 py-0 text-[11px] font-bold uppercase tracking-wide',
-                    manualMode ? 'border-orange-300 bg-orange-100 text-orange-700' : 'border-border bg-card text-muted-foreground',
+                    manualMode ? 'border-primary/40 bg-primary/10 text-primary' : 'border-border bg-card text-muted-foreground hover:border-primary/30 hover:text-primary',
                   )}
                 >
                   <WifiOff className="h-3 w-3" />
@@ -705,14 +710,15 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
 
           <CameraPanel branchId={effectiveBranchId} snapshotVersion={snapshotVersion} onRefresh={refreshCameraPreviews} />
 
-          <Card className="overflow-hidden border-border/70 shadow-sm xl:col-span-2">
-            <CardHeader className="border-b bg-muted/20 py-3">
-              <CardTitle className="text-sm font-bold uppercase tracking-widest">
+          <Card className="overflow-hidden border-primary/20 shadow-sm xl:col-span-2">
+            <CardHeader className="border-b border-primary/15 bg-gradient-to-r from-primary/10 via-primary/5 to-transparent py-3">
+              <CardTitle className="flex items-center gap-2 text-sm font-bold uppercase tracking-widest">
+                <span className="h-2 w-2 rounded-full bg-primary" />
                 Vehicle and Transaction Details
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4 p-5">
-              <div className={cn('grid gap-3', shouldShowBranchSelector ? 'md:grid-cols-2 xl:grid-cols-4' : 'md:grid-cols-2 xl:grid-cols-4')}>
+              <div className="grid gap-4 rounded-xl border border-primary/20 bg-primary/[0.04] p-4 md:grid-cols-2 xl:grid-cols-[minmax(240px,0.8fr)_minmax(240px,0.8fr)_1fr]">
                 <div className="space-y-1.5">
                   <Label>Operation Type</Label>
                   <Select value={operationTypeId} onValueChange={setOperationTypeId}>
@@ -742,6 +748,10 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
                     <p className="text-xs text-muted-foreground">Only your active assigned branches are available for weighment entry.</p>
                   </div>
                 ) : null}
+                <div className="hidden items-center gap-3 rounded-lg border border-dashed border-primary/25 bg-background/70 px-4 text-sm text-muted-foreground xl:flex">
+                  <Scale className="h-5 w-5 text-primary" />
+                  <span>Select the vehicle details, capture a stable weight, then submit the ticket.</span>
+                </div>
               </div>
 
               {isSecondFlow ? (
@@ -825,96 +835,52 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
                   ) : null}
                 </>
               ) : (
-                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                  <div className="space-y-1.5">
-                    <div className="flex items-center justify-between gap-3">
-                      <Label>Customer</Label>
-                      <Button type="button" variant="outline" size="sm" className="gap-1" onClick={() => setCustomerOpen(true)}>
-                        <Plus className="h-3.5 w-3.5" /> Add Customer
-                      </Button>
+                <div className="space-y-5">
+                  <section className="rounded-xl border border-primary/15 bg-card p-4 shadow-sm">
+                    <div className="mb-4 flex items-center gap-3">
+                      <span className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-sm font-bold text-primary-foreground">1</span>
+                      <div>
+                        <h3 className="flex items-center gap-2 font-semibold"><Truck className="h-4 w-4 text-primary" />Vehicle account</h3>
+                        <p className="text-xs text-muted-foreground">Choose the customer and registered vehicle for this ticket.</p>
+                      </div>
                     </div>
-                    <SearchSelect
-                      value={customerId}
-                      onChange={(value) => {
-                        setCustomerId(value);
-                        setVehicleId('');
-                        setItemId('');
-                        setDestination('');
-                        setDriverName('');
-                        setDriverPhone('');
-                        setPrefillVehicleKey('');
-                      }}
-                      placeholder="Search customer"
-                      searchPlaceholder="Search customer"
-                      emptyLabel="No customers found"
-                      options={customerOptions}
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <div className="flex items-center justify-between gap-3">
-                      <Label>Vehicle</Label>
-                      <Button type="button" variant="outline" size="sm" className="gap-1" onClick={() => setVehicleOpen(true)} disabled={!customerId}>
-                        <Plus className="h-3.5 w-3.5" /> Add Vehicle
-                      </Button>
+                    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                      <div className="space-y-1.5">
+                        <div className="flex min-h-8 items-center justify-between gap-3">
+                          <Label>Customer</Label>
+                          {canAddCustomer ? <Button type="button" variant="outline" size="sm" className="h-8 gap-1 border-primary/25 text-primary hover:bg-primary/10 hover:text-primary" onClick={() => setCustomerOpen(true)}><Plus className="h-3.5 w-3.5" /> Add Customer</Button> : null}
+                        </div>
+                        <SearchSelect value={customerId} onChange={(value) => { setCustomerId(value); setVehicleId(''); setVehicleTypeId(''); setItemId(''); setDestination(''); setDriverName(''); setDriverPhone(''); setPrefillVehicleKey(''); }} placeholder="Search customer" searchPlaceholder="Search customer" emptyLabel="No customers found" options={customerOptions} />
+                      </div>
+                      <div className="space-y-1.5">
+                        <div className="flex min-h-8 items-center justify-between gap-3">
+                          <Label>Vehicle</Label>
+                          {canAddVehicle ? <Button type="button" variant="outline" size="sm" className="h-8 gap-1 border-primary/25 text-primary hover:bg-primary/10 hover:text-primary" onClick={() => setVehicleOpen(true)} disabled={!customerId}><Plus className="h-3.5 w-3.5" /> Add Vehicle</Button> : null}
+                        </div>
+                        <SearchSelect value={vehicleId} onChange={(value) => { setPrefillVehicleKey(''); setVehicleId(value); const selected = vehicleList.find((vehicle: any) => String(vehicle.id) === value); setVehicleTypeId(selected?.vehicle_type ? String(selected.vehicle_type) : ''); }} placeholder={customerId ? 'Search vehicle' : 'Select customer first'} searchPlaceholder="Search vehicle" emptyLabel="No vehicles found" disabled={!customerId} options={vehicleOptions} />
+                      </div>
+                      <div className="space-y-1.5">
+                        <div className="flex min-h-8 items-center gap-2"><Label>Vehicle Type</Label><Badge variant="outline" className="border-primary/20 bg-primary/5 px-1.5 text-[10px] font-semibold uppercase tracking-wide text-primary">Locked</Badge></div>
+                        <div className={cn('flex h-9 items-center gap-2 rounded-md border px-3 text-sm shadow-sm', lockedVehicleTypeName ? 'border-primary/20 bg-primary/5 text-foreground' : 'border-input bg-muted/40 text-muted-foreground')}>
+                          <LockKeyhole className="h-4 w-4 shrink-0 text-primary" /><span className="truncate">{lockedVehicleTypeName || 'Select a registered vehicle first'}</span>
+                        </div>
+                        <p className="text-[11px] text-muted-foreground">Set on the vehicle record and cannot be changed during weighment.</p>
+                      </div>
+                      {duplicateOpenFirstWeight ? <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 md:col-span-2 xl:col-span-3">Open draft found for this vehicle: <span className="font-mono font-bold">TX-{String(duplicateOpenFirstWeight.id).padStart(5, '0')}</span>. Complete or approve that {duplicateOpenFirstWeight.operation_type_name.toLowerCase()} record before saving another one.</div> : null}
                     </div>
-                    <SearchSelect
-                      value={vehicleId}
-                      onChange={(value) => {
-                        setPrefillVehicleKey('');
-                        setVehicleId(value);
-                        const selected = vehicleList.find((vehicle: any) => String(vehicle.id) === value);
-                        if (selected?.vehicle_type) setVehicleTypeId(String(selected.vehicle_type));
-                      }}
-                      placeholder={customerId ? 'Search vehicle' : 'Select customer first'}
-                      searchPlaceholder="Search vehicle"
-                      emptyLabel="No vehicles found"
-                      disabled={!customerId}
-                      options={vehicleOptions}
-                    />
-                  </div>
-                  {duplicateOpenFirstWeight ? (
-                    <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 md:col-span-2">
-                      Open draft found for this vehicle: <span className="font-mono font-bold">TX-{String(duplicateOpenFirstWeight.id).padStart(5, '0')}</span>. Complete or approve that {duplicateOpenFirstWeight.operation_type_name.toLowerCase()} record before saving another one.
-                    </div>
-                  ) : null}
-                  <div className="space-y-1.5">
-                    <Label>Vehicle type</Label>
-                    <Select value={vehicleTypeId} onValueChange={setVehicleTypeId}>
-                      <SelectTrigger><SelectValue placeholder="Select vehicle type" /></SelectTrigger>
-                      <SelectContent>
-                        {vehicleTypeList.map((row: any) => (
-                          <SelectItem key={row.id} value={String(row.id)}>{row.name}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-1.5">
-                    <div className="flex items-center justify-between gap-3">
-                      <Label>Commodity</Label>
-                      <Button type="button" variant="outline" size="sm" className="gap-1" onClick={() => setItemOpen(true)}>
-                        <Plus className="h-3.5 w-3.5" /> Add Item
-                      </Button>
-                    </div>
-                    <Select value={itemId} onValueChange={setItemId}>
-                      <SelectTrigger><SelectValue placeholder="Select commodity" /></SelectTrigger>
-                      <SelectContent>
-                        {itemList.map((row: any) => (
-                          <SelectItem key={row.id} value={String(row.id)}>{row.name}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>Destination</Label>
-                    <Input value={destination} onChange={(event) => setDestination(event.target.value)} placeholder="Optional destination" />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>Driver Name</Label>
-                    <Input value={driverName} onChange={(event) => setDriverName(event.target.value)} placeholder="Driver name" />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>Driver Phone</Label>
-                    <Input value={driverPhone} onChange={(event) => setDriverPhone(event.target.value)} placeholder="Driver phone" />
+                  </section>
+                  <div className="grid gap-5 xl:grid-cols-2">
+                    <section className="rounded-xl border border-primary/15 bg-card p-4 shadow-sm">
+                      <div className="mb-4 flex items-center gap-3"><span className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-sm font-bold text-primary-foreground">2</span><div><h3 className="flex items-center gap-2 font-semibold"><Package className="h-4 w-4 text-primary" />Load details</h3><p className="text-xs text-muted-foreground">Record what the vehicle is carrying and where it is going.</p></div></div>
+                      <div className="grid gap-4 sm:grid-cols-2">
+                        <div className="space-y-1.5"><div className="flex min-h-8 items-center justify-between gap-3"><Label>Commodity</Label>{canAddItem ? <Button type="button" variant="outline" size="sm" className="h-8 gap-1 border-primary/25 text-primary hover:bg-primary/10 hover:text-primary" onClick={() => setItemOpen(true)}><Plus className="h-3.5 w-3.5" /> Add Item</Button> : null}</div><Select value={itemId} onValueChange={setItemId}><SelectTrigger><SelectValue placeholder="Select commodity" /></SelectTrigger><SelectContent>{itemList.map((row: any) => <SelectItem key={row.id} value={String(row.id)}>{row.name}</SelectItem>)}</SelectContent></Select></div>
+                        <div className="space-y-1.5"><div className="flex min-h-8 items-center"><Label>Destination</Label></div><Input value={destination} onChange={(event) => setDestination(event.target.value)} placeholder="Optional destination" /></div>
+                      </div>
+                    </section>
+                    <section className="rounded-xl border border-primary/15 bg-card p-4 shadow-sm">
+                      <div className="mb-4 flex items-center gap-3"><span className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-sm font-bold text-primary-foreground">3</span><div><h3 className="flex items-center gap-2 font-semibold"><UserRound className="h-4 w-4 text-primary" />Driver details</h3><p className="text-xs text-muted-foreground">Optional contact details for ticket follow-up.</p></div></div>
+                      <div className="grid gap-4 sm:grid-cols-2"><div className="space-y-1.5"><div className="flex min-h-8 items-center"><Label>Driver Name</Label></div><Input value={driverName} onChange={(event) => setDriverName(event.target.value)} placeholder="Driver name" /></div><div className="space-y-1.5"><div className="flex min-h-8 items-center"><Label>Driver Phone</Label></div><Input type="tel" value={driverPhone} onChange={(event) => setDriverPhone(event.target.value)} placeholder="Driver phone" /></div></div>
+                    </section>
                   </div>
                 </div>
               )}
@@ -934,17 +900,20 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
             </CardContent>
           </Card>
 
-          <div className="flex items-center justify-end gap-3 xl:col-span-2">
+          <div className="sticky bottom-3 z-10 flex items-center justify-between gap-3 rounded-xl border border-primary/20 bg-background/95 p-3 shadow-lg backdrop-blur xl:col-span-2">
+            <p className="hidden text-sm text-muted-foreground sm:block">Review the vehicle and captured weight before saving.</p>
+            <div className="ml-auto flex items-center gap-3">
             <Button type="button" variant="outline" onClick={() => setLocation('/weighbridge/transactions')}>
               Close
             </Button>
-            <Button type="submit" disabled={create.isPending || hasDuplicateOpenTransaction}>
+            <Button type="submit" className="h-11 min-w-48 bg-primary px-6 text-primary-foreground shadow-sm hover:bg-primary/90" disabled={create.isPending || hasDuplicateOpenTransaction}>
               {create.isPending
                 ? 'Saving…'
                 : isSecondFlow
                   ? 'Complete Second Weight'
                   : 'Submit First Weight'}
             </Button>
+            </div>
           </div>
       </form>
 

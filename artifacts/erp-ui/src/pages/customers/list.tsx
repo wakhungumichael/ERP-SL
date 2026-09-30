@@ -17,6 +17,7 @@ import { ERPBulkActions } from '@/components/erp/listing/bulk-actions';
 import { ERPDataTable, type ERPTableColumn } from '@/components/erp/listing/data-table';
 import { ERPFormDialog } from '@/components/erp/forms/form-dialog';
 import { ERPWorkspacePage } from '@/components/erp/workspace/workspace-page';
+import { hasPermission } from '@/lib/permissions';
 
 const BASE_URL = import.meta.env.BASE_URL?.replace(/\/$/, '') ?? '';
 const STORAGE_COL_KEY = 'sl-erp-customer-columns';
@@ -89,7 +90,7 @@ function saveColumns(keys: string[]) {
 }
 
 export default function CustomersList() {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const { toast } = useToast();
 
   const [search, setSearch] = useState('');
@@ -105,6 +106,10 @@ export default function CustomersList() {
   const [saving, setSaving] = useState(false);
   const [editTarget, setEditTarget] = useState<Customer | null>(null);
   const [form, setForm] = useState<CustomerFormState>(EMPTY_FORM);
+  const canAddCustomer = hasPermission(user as any, 'SL_Weighbridge.add_customer');
+  const canChangeCustomer = hasPermission(user as any, 'SL_Weighbridge.change_customer');
+  const canDeleteCustomer = hasPermission(user as any, 'SL_Weighbridge.delete_customer');
+  const canSelectCustomers = canChangeCustomer || canDeleteCustomer;
 
   const query = useQuery({
     queryKey: ['weighbridge-customers', token, search, statusFilter, discountedFilter, page, pageSize],
@@ -288,11 +293,11 @@ export default function CustomersList() {
       name: {
         key: 'name',
         label: 'Customer',
-        render: (customer) => (
+        render: (customer) => canChangeCustomer ? (
           <button className="text-left" onClick={() => openEdit(customer)}>
             <div className="font-medium text-primary hover:underline">{customer.name}</div>
           </button>
-        ),
+        ) : <div className="font-medium">{customer.name}</div>,
       },
       phone_number: {
         key: 'phone_number',
@@ -339,12 +344,12 @@ export default function CustomersList() {
     return visibleKeys
       .map((key) => renderers[key])
       .filter(Boolean);
-  }, [visibleKeys]);
+  }, [canChangeCustomer, visibleKeys]);
 
   return (
     <ERPWorkspacePage
       title="Customer Directory"
-      actions={<Button onClick={openCreate} className="gap-2"><Plus className="h-4 w-4" /> Register Customer</Button>}
+      actions={canAddCustomer ? <Button onClick={openCreate} className="gap-2"><Plus className="h-4 w-4" /> Register Customer</Button> : undefined}
     >
       <div className="grid gap-4 md:grid-cols-4">
         <Card><CardContent className="p-4"><div className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Filtered Total</div><div className="mt-2 text-2xl font-semibold">{summary.total}</div></CardContent></Card>
@@ -390,15 +395,15 @@ export default function CustomersList() {
       />
 
       <ERPBulkActions
-        visible={selectedIds.length > 0}
+        visible={canSelectCustomers && selectedIds.length > 0}
         summary={`${selectedIds.length} record(s) selected`}
         actionSlot={(
           <Select value={bulkAction} onValueChange={setBulkAction}>
             <SelectTrigger className="h-8 w-[190px]"><SelectValue placeholder="Choose action" /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="activate">Activate selected</SelectItem>
-              <SelectItem value="deactivate">Deactivate selected</SelectItem>
-              <SelectItem value="soft_delete">Soft delete selected</SelectItem>
+              {canChangeCustomer ? <SelectItem value="activate">Activate selected</SelectItem> : null}
+              {canChangeCustomer ? <SelectItem value="deactivate">Deactivate selected</SelectItem> : null}
+              {canDeleteCustomer ? <SelectItem value="soft_delete">Soft delete selected</SelectItem> : null}
             </SelectContent>
           </Select>
         )}
@@ -415,33 +420,34 @@ export default function CustomersList() {
           <ERPDataTable
             columns={columns}
             rows={customers}
-            selectedIds={selectedIds}
-            onToggleSelected={toggleSelected}
-            onToggleSelectAllPage={toggleSelectAllPage}
-            rowActions={(customer) => (
+            selectedIds={canSelectCustomers ? selectedIds : undefined}
+            onToggleSelected={canSelectCustomers ? toggleSelected : undefined}
+            onToggleSelectAllPage={canSelectCustomers ? toggleSelectAllPage : undefined}
+            rowActions={canSelectCustomers ? (customer) => (
               <div className="flex justify-end gap-2">
-                <Button size="sm" variant="outline" onClick={() => openEdit(customer)}>Open</Button>
-                {!customer.is_deleted && customer.is_active ? (
+                {canChangeCustomer ? <Button size="sm" variant="outline" onClick={() => openEdit(customer)}>Open</Button> : null}
+                {canChangeCustomer && !customer.is_deleted && customer.is_active ? (
                   <Button size="sm" variant="outline" onClick={() => runSingleAction(customer, 'deactivate')}>
                     <UserX className="mr-1 h-4 w-4" /> Deactivate
                   </Button>
                 ) : null}
-                {!customer.is_deleted && !customer.is_active ? (
+                {canChangeCustomer && !customer.is_deleted && !customer.is_active ? (
                   <Button size="sm" variant="outline" onClick={() => runSingleAction(customer, 'activate')}>
                     <UserCheck className="mr-1 h-4 w-4" /> Activate
                   </Button>
                 ) : null}
-                {!customer.is_deleted ? (
+                {canDeleteCustomer && !customer.is_deleted ? (
                   <Button size="sm" variant="outline" onClick={() => runSingleAction(customer, 'soft_delete')}>
                     <Trash2 className="mr-1 h-4 w-4" /> Soft Delete
                   </Button>
-                ) : (
+                ) : null}
+                {canChangeCustomer && customer.is_deleted ? (
                   <Button size="sm" variant="outline" onClick={() => runSingleAction(customer, 'activate')}>
                     <UserCheck className="mr-1 h-4 w-4" /> Restore
                   </Button>
-                )}
+                ) : null}
               </div>
-            )}
+            ) : undefined}
             loading={query.isLoading}
             loadingLabel="Loading customers…"
             emptyState="No customer records found for the selected filters."

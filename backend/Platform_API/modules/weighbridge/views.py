@@ -691,6 +691,17 @@ def _has_weighbridge_process_permission(user, codename):
     )
 
 
+def _require_weighbridge_model_permission(user, codename):
+    """Enforce record-level role assignments while retaining organization-admin access."""
+    if (
+        getattr(user, "is_superuser", False)
+        or _is_weighbridge_tenant_admin(user)
+        or user.has_perm(f"SL_Weighbridge.{codename}")
+    ):
+        return
+    raise PermissionDenied("You do not have permission to perform this action.")
+
+
 # ── Views ─────────────────────────────────────────────────────────────────────
 
 class WeighbridgeDashboardView(APIView):
@@ -868,6 +879,7 @@ class TransactionListCreateView(generics.ListCreateAPIView):
         try:
             tx = serializer.save(
                 tenant=user_tenant,
+                vehicle_type=vehicle.vehicle_type,
                 created_by=self.request.user,
                 last_modified_by=self.request.user,
             )
@@ -2206,6 +2218,14 @@ class CustomerListCreateView(generics.ListCreateAPIView):
             return CustomerInputSerializer
         return CustomerSerializer
 
+    def list(self, request, *args, **kwargs):
+        _require_weighbridge_model_permission(request.user, "view_customer")
+        return super().list(request, *args, **kwargs)
+
+    def create(self, request, *args, **kwargs):
+        _require_weighbridge_model_permission(request.user, "add_customer")
+        return super().create(request, *args, **kwargs)
+
     def get_queryset(self):
         qs = Customer.objects.all().order_by("name")
 
@@ -2260,6 +2280,14 @@ class CustomerDetailView(generics.RetrieveUpdateDestroyAPIView):
     serializer_class = CustomerSerializer
     permission_classes = [IsAuthenticated]
 
+    def retrieve(self, request, *args, **kwargs):
+        _require_weighbridge_model_permission(request.user, "view_customer")
+        return super().retrieve(request, *args, **kwargs)
+
+    def update(self, request, *args, **kwargs):
+        _require_weighbridge_model_permission(request.user, "change_customer")
+        return super().update(request, *args, **kwargs)
+
     def get_queryset(self):
         qs = Customer.objects.all()
         # ── Tenant scoping ────────────────────────────────────────────────────
@@ -2273,6 +2301,7 @@ class CustomerDetailView(generics.RetrieveUpdateDestroyAPIView):
         return qs
 
     def destroy(self, request, *args, **kwargs):
+        _require_weighbridge_model_permission(request.user, "delete_customer")
         instance = self.get_object()
         instance.is_active = False
         instance.is_deleted = True
@@ -2289,6 +2318,8 @@ class CustomerBulkActionView(APIView):
 
         ids = serializer.validated_data["ids"]
         action = serializer.validated_data["action"]
+        permission = "delete_customer" if action == "soft_delete" else "change_customer"
+        _require_weighbridge_model_permission(request.user, permission)
 
         qs = Customer.objects.filter(id__in=ids)
         resolved = _resolve_user_tenant(request.user)
@@ -2313,6 +2344,14 @@ class VehicleListCreateView(generics.ListCreateAPIView):
     serializer_class = VehicleSerializer
     permission_classes = [IsAuthenticated]
     pagination_class = StandardPagination
+
+    def list(self, request, *args, **kwargs):
+        _require_weighbridge_model_permission(request.user, "view_vehicle")
+        return super().list(request, *args, **kwargs)
+
+    def create(self, request, *args, **kwargs):
+        _require_weighbridge_model_permission(request.user, "add_vehicle")
+        return super().create(request, *args, **kwargs)
 
     def get_queryset(self):
         qs = Vehicle.objects.select_related("customer", "vehicle_type").order_by("number_plate")
@@ -2356,6 +2395,18 @@ class VehicleListCreateView(generics.ListCreateAPIView):
 class VehicleDetailView(generics.RetrieveUpdateDestroyAPIView):
     serializer_class = VehicleSerializer
     permission_classes = [IsAuthenticated]
+
+    def retrieve(self, request, *args, **kwargs):
+        _require_weighbridge_model_permission(request.user, "view_vehicle")
+        return super().retrieve(request, *args, **kwargs)
+
+    def update(self, request, *args, **kwargs):
+        _require_weighbridge_model_permission(request.user, "change_vehicle")
+        return super().update(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        _require_weighbridge_model_permission(request.user, "delete_vehicle")
+        return super().destroy(request, *args, **kwargs)
 
     def get_queryset(self):
         qs = Vehicle.objects.select_related("customer", "vehicle_type")

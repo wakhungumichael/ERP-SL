@@ -120,6 +120,9 @@ function extractCrudAction(codename: string): string | null {
 }
 
 function modelDisplayFromPerm(perm: Perm): string {
+  if (perm.content_type.app_label === 'SL_Weighbridge' && perm.content_type.model === 'customer') {
+    return 'Customers (Sales & Weighbridge)';
+  }
   // "Can view vehicle type" → "Vehicle type" → capitalise first
   const match = perm.name.match(/^Can (?:add|change|delete|view) (.+)$/i);
   const raw = match ? match[1] : perm.content_type.model;

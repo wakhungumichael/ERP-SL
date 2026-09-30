@@ -14,6 +14,7 @@ import { useToast } from '@/hooks/use-toast';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { hasPermission } from '@/lib/permissions';
 
 async function fetchList(url: string, token: string | null) {
   const res = await fetch(url, { headers: { Authorization: `Token ${token}` } });
@@ -284,7 +285,7 @@ function Pagination({
 }
 
 export default function VehiclesList() {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -300,6 +301,8 @@ export default function VehiclesList() {
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [bulkAction, setBulkAction] = useState<BulkAction | ''>('');
   const [bulkRunning, setBulkRunning] = useState(false);
+  const canAddVehicle = hasPermission(user as any, 'SL_Weighbridge.add_vehicle');
+  const canChangeVehicle = hasPermission(user as any, 'SL_Weighbridge.change_vehicle');
 
   const handleColumnsChange = useCallback((keys: string[]) => {
     setVisibleKeys(keys);
@@ -461,7 +464,7 @@ export default function VehiclesList() {
           <h1 className="text-2xl font-bold tracking-tight">Fleet Registry</h1>
           <p className="mt-1 text-sm text-muted-foreground">Manage registered vehicles, customer ownership, and fleet classification.</p>
         </div>
-        <CreateVehicleDialog />
+        {canAddVehicle ? <CreateVehicleDialog /> : null}
       </div>
 
       <div className="rounded-xl border-2 border-primary/40 bg-card p-1 shadow-sm">
@@ -547,7 +550,7 @@ export default function VehiclesList() {
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border-2 border-primary/40 bg-card px-3 py-2 shadow-sm">
+      {canChangeVehicle ? <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border-2 border-primary/40 bg-card px-3 py-2 shadow-sm">
         <div className="flex flex-wrap items-center gap-3">
           {search && <Badge variant="secondary" className="gap-1.5 rounded-md px-2 py-1 text-xs">Search: {search}<button type="button" onClick={() => setSearch('')} aria-label="Clear search"><X className="h-3 w-3" /></button></Badge>}
           {customerId && <Badge variant="secondary" className="gap-1.5 rounded-md px-2 py-1 text-xs">Client: {(customersRaw as any[]).find((customer) => String(customer.id) === customerId)?.name ?? customerId}<button type="button" onClick={() => setCustomerId('')} aria-label="Clear client filter"><X className="h-3 w-3" /></button></Badge>}
@@ -593,20 +596,22 @@ export default function VehiclesList() {
             {bulkRunning ? 'Running…' : 'Run'}
           </Button>
         </div>
-      </div>
+      </div> : null}
 
       <div className="overflow-hidden rounded-xl border bg-card shadow-sm">
         <div className="overflow-x-auto">
           <Table className="min-w-max">
             <TableHeader>
               <TableRow className="bg-muted/50 hover:bg-muted/50">
-                <TableHead className="h-11 w-12 px-3 text-center align-middle">
-                  <Checkbox
-                    checked={allPageSelected ? true : somePageSelected ? 'indeterminate' : false}
-                    onCheckedChange={(checked) => toggleSelectAllPage(checked === true)}
-                    aria-label="Select all rows on this page"
-                  />
-                </TableHead>
+                {canChangeVehicle ? (
+                  <TableHead className="h-11 w-12 px-3 text-center align-middle">
+                    <Checkbox
+                      checked={allPageSelected ? true : somePageSelected ? 'indeterminate' : false}
+                      onCheckedChange={(checked) => toggleSelectAllPage(checked === true)}
+                      aria-label="Select all rows on this page"
+                    />
+                  </TableHead>
+                ) : null}
                 {visibleColumns.map((column) => (
                   <TableHead key={column.key} style={{ width: column.width }} className="h-11 whitespace-nowrap px-3 text-left align-middle text-[10px] font-bold uppercase tracking-widest">
                     {column.label}
@@ -617,26 +622,28 @@ export default function VehiclesList() {
             <TableBody>
               {error ? (
                 <TableRow>
-                  <TableCell colSpan={visibleColumns.length + 1} className="py-12 text-center text-sm text-destructive">
+                  <TableCell colSpan={visibleColumns.length + (canChangeVehicle ? 1 : 0)} className="py-12 text-center text-sm text-destructive">
                     Could not load fleet records. If activation was just added, run the latest backend migration and reload this page.
                   </TableCell>
                 </TableRow>
               ) : isLoading ? (
                 <TableRow>
-                  <TableCell colSpan={visibleColumns.length + 1} className="py-12 text-center font-mono text-sm text-muted-foreground animate-pulse">
+                  <TableCell colSpan={visibleColumns.length + (canChangeVehicle ? 1 : 0)} className="py-12 text-center font-mono text-sm text-muted-foreground animate-pulse">
                     Scanning registry...
                   </TableCell>
                 </TableRow>
               ) : rows.length ? (
                 rows.map((vehicle: any) => (
                   <TableRow key={vehicle.id} className="transition-colors hover:bg-muted/30">
-                    <TableCell className="px-3 text-center">
-                      <Checkbox
-                        checked={selectedRowSet.has(vehicle.id)}
-                        onCheckedChange={(checked) => toggleSelected(vehicle.id, checked === true)}
-                        aria-label={`Select vehicle ${vehicle.number_plate}`}
-                      />
-                    </TableCell>
+                    {canChangeVehicle ? (
+                      <TableCell className="px-3 text-center">
+                        <Checkbox
+                          checked={selectedRowSet.has(vehicle.id)}
+                          onCheckedChange={(checked) => toggleSelected(vehicle.id, checked === true)}
+                          aria-label={`Select vehicle ${vehicle.number_plate}`}
+                        />
+                      </TableCell>
+                    ) : null}
                     {visibleColumns.map((column) => (
                       <TableCell key={column.key} className="px-3 py-3 align-middle">
                         {column.render(vehicle)}
@@ -646,7 +653,7 @@ export default function VehiclesList() {
                 ))
               ) : (
                 <TableRow>
-                  <TableCell colSpan={visibleColumns.length + 1} className="py-16 text-center font-mono text-sm text-muted-foreground">
+                  <TableCell colSpan={visibleColumns.length + (canChangeVehicle ? 1 : 0)} className="py-16 text-center font-mono text-sm text-muted-foreground">
                     No fleet records found.
                   </TableCell>
                 </TableRow>
