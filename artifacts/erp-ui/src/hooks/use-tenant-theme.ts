@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '@/context/use-auth';
 import type { DashboardTenantContextValue } from '@/components/dashboard/types';
 import type { NavSection } from '@/lib/roles';
+import { fetchPublicSiteConfig } from '@/lib/public-site';
 
 function hexToHsl(hex: string) {
   let normalized = hex.replace('#', '').trim();
@@ -69,13 +70,16 @@ export function useTenantTheme() {
   const { token, role, user } = useAuth();
   const organizationId = (((user as any)?.organization_id ?? (user as any)?.tenant_id) as number | null | undefined) ?? null;
   const userId = ((user as any)?.id as number | null | undefined) ?? null;
+  const rememberedTenantCode = typeof window === 'undefined'
+    ? ''
+    : window.localStorage.getItem('sl-erp-tenant-code') || '';
 
   const tenantQuery = useQuery({
     queryKey: ['dashboard-tenant-self', organizationId, token],
     enabled: !!token && !!organizationId,
     staleTime: 300000,
     queryFn: async () => {
-      const res = await fetch('/api/platform/tenants/self/', {
+      const res = await fetch(`/api/platform/tenants/self/?tenant_id=${encodeURIComponent(String(organizationId))}`, {
         headers: { Authorization: `Token ${token}` },
       });
       if (!res.ok) throw new Error(`${res.status}`);
@@ -115,17 +119,29 @@ export function useTenantTheme() {
   const tenant = tenantQuery.data ?? {};
   const settings = settingsQuery.data ?? {};
   const workspace = workspaceQuery.data ?? {};
+  const tenantCode = tenant.code || rememberedTenantCode;
+
+  const publicSiteQuery = useQuery({
+    queryKey: ['public-site-config', tenantCode],
+    queryFn: () => fetchPublicSiteConfig(tenantCode),
+    enabled: !!tenantCode,
+    retry: false,
+    staleTime: 5 * 60_000,
+  });
+
+  const publicSite = publicSiteQuery.data;
+  const publicBranding = publicSite?.branding ?? {};
 
   const tenantContext = useMemo<DashboardTenantContextValue>(() => {
-    const primaryColor = settings.primary_color || '#E85D26';
+    const primaryColor = settings.primary_color || publicBranding.primary_color || '#E85D26';
     const displayName = (user as any)?.first_name
       ? `${(user as any).first_name} ${(user as any)?.last_name ?? ''}`.trim()
       : ((user as any)?.username ?? 'ERP User');
 
     return {
       tenantId: organizationId,
-      tenantName: tenant.name || (user as any)?.organization_name || (user as any)?.tenant_name || 'Organization Workspace',
-      tenantCode: tenant.code || '',
+      tenantName: tenant.name || publicSite?.tenant?.name || (user as any)?.organization_name || (user as any)?.tenant_name || 'Organization Workspace',
+      tenantCode,
       role,
       userId,
       displayName,
@@ -137,16 +153,16 @@ export function useTenantTheme() {
           : [],
       sections: normalizeSections(workspace),
       branding: {
-        logoUrl: settings.logo_url || '',
+        logoUrl: settings.logo_url || publicBranding.logo_url || '',
         primaryColor,
         currency: tenant.default_currency || 'KES',
         locale: tenant.default_currency === 'USD' ? 'en-US' : 'en-KE',
         timezone: tenant.timezone || 'Africa/Nairobi',
-        footerText: settings.footer_text || '',
-        supportEmail: settings.support_email || '',
+        footerText: settings.footer_text || publicBranding.footer_text || '',
+        supportEmail: settings.support_email || publicBranding.support_email || '',
       },
     };
-  }, [organizationId, role, settings, tenant, user, userId, workspace]);
+  }, [organizationId, publicBranding, publicSite?.tenant?.name, role, settings, tenant, tenantCode, user, userId, workspace]);
 
   useEffect(() => {
     const root = document.documentElement;
