@@ -14,6 +14,9 @@ interface Reading {
   stable: boolean;
   source: string;
   timestamp: string;
+  configured: boolean;
+  connected: boolean;
+  status: 'connected' | 'offline' | 'not_configured';
 }
 
 interface Props {
@@ -26,11 +29,13 @@ interface Props {
 
 const POLL_MS = 2000;
 
-function fetchLive(branchId: string | number): Promise<Reading> {
+async function fetchLive(branchId: string | number): Promise<Reading> {
   const token = localStorage.getItem('sl-erp-token');
-  return fetch(`/api/commercial-weighbridge/live-weight/?branch_id=${branchId}`, {
+  const response = await fetch(`/api/commercial-weighbridge/live-weight/?branch_id=${branchId}`, {
     headers: { Authorization: `Token ${token}` },
-  }).then(r => r.json());
+  });
+  if (!response.ok) throw new Error(`Indicator request failed (${response.status})`);
+  return response.json();
 }
 
 export default function LiveIndicator({ branchId, label = 'Weight', onCapture, capturedWeight, disabled }: Props) {
@@ -63,7 +68,8 @@ export default function LiveIndicator({ branchId, label = 'Weight', onCapture, c
 
   const displayWeight = reading?.weight ?? null;
   const isStable     = reading?.stable ?? false;
-  const isConnected  = !error && reading !== null;
+  const isConfigured = reading?.configured !== false;
+  const isConnected  = !error && reading?.connected === true;
   const panelStateClass = !branchId
     ? 'border-border opacity-50'
     : !isConnected
@@ -78,7 +84,11 @@ export default function LiveIndicator({ branchId, label = 'Weight', onCapture, c
       <div className="flex items-center justify-between mb-3">
         <span className="text-xs font-bold uppercase tracking-widest text-primary">{label}</span>
         <div className="flex items-center gap-1.5">
-          {!branchId ? null : !isConnected ? (
+          {!branchId ? null : !isConfigured ? (
+            <span className="flex items-center gap-1 text-[10px] font-bold text-muted-foreground uppercase tracking-wide">
+              <WifiOff className="h-3 w-3" /> No indicator configured
+            </span>
+          ) : !isConnected ? (
             <span className="flex items-center gap-1 text-[10px] font-bold text-destructive uppercase tracking-wide">
               <WifiOff className="h-3 w-3" /> No signal
             </span>
@@ -93,7 +103,7 @@ export default function LiveIndicator({ branchId, label = 'Weight', onCapture, c
               Settling…
             </span>
           )}
-          {reading?.source && (
+          {reading?.configured && reading.source && (
             <span className="text-[10px] text-muted-foreground font-mono ml-1 opacity-60 flex items-center gap-0.5">
               <Wifi className="h-2.5 w-2.5" /> {reading.source}
             </span>
@@ -133,6 +143,7 @@ export default function LiveIndicator({ branchId, label = 'Weight', onCapture, c
         >
           <Zap className="h-4 w-4 mr-2" />
           {capturing       ? 'Captured!' :
+           !isConfigured   ? 'No indicator configured' :
            !isConnected    ? 'Indicator offline' :
            !isStable        ? 'Waiting for stable reading…' :
            displayWeight == null || displayWeight === 0 ? 'No reading on scale' :

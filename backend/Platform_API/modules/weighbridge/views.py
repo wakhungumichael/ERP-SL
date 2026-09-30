@@ -1245,14 +1245,13 @@ class CaptureWeightView(APIView):
         stable = False
         source = "stub"
         indicator_meta = {}
+        cfg = None
 
         # 1. Local IndicatorConfig HTTP URL (stable_weight_url first, then live_weight_url)
         try:
-            cfg = (
-                IndicatorConfig.objects.filter(branch=branch).first()
-                if branch
-                else IndicatorConfig.objects.first()
-            )
+            cfg = IndicatorConfig.objects.filter(branch=branch).first() if branch else None
+            if cfg:
+                source = cfg.indicator_name
             if cfg and cfg.connection_type == "HTTP":
                 url = (cfg.stable_weight_url or cfg.live_weight_url or "").strip()
                 if url:
@@ -1263,18 +1262,40 @@ class CaptureWeightView(APIView):
         except Exception:
             pass
 
-        # 2. Platform_Core integration fallback
+        # A tenant branch must be configured explicitly; never fall back to a
+        # deployment-wide or another branch's indicator.
+        if cfg is None:
+            return Response({
+                "captured_weight": None,
+                "unit": "kg",
+                "stable": False,
+                "source": "unconfigured",
+                "configured": False,
+                "connected": False,
+                "status": "not_configured",
+                "branch_id": branch.id if branch else None,
+                "transaction_id": tx.id if tx else None,
+                "applied": False,
+                "transaction": None,
+                "indicator_meta": {},
+                "timestamp": timezone.now().isoformat(),
+            })
         if captured_weight is None:
-            try:
-                from Platform_Core.integrations import resolve_indicator_for_branch
-                if branch:
-                    reading = resolve_indicator_for_branch(branch)
-                    captured_weight = reading.get("weight")
-                    stable = reading.get("stable", False)
-                    source = reading.get("source", "integration")
-                    indicator_meta = reading.get("meta", {})
-            except Exception:
-                pass
+            return Response({
+                "captured_weight": None,
+                "unit": "kg",
+                "stable": False,
+                "source": cfg.indicator_name,
+                "configured": True,
+                "connected": False,
+                "status": "offline",
+                "branch_id": branch.id if branch else None,
+                "transaction_id": tx.id if tx else None,
+                "applied": False,
+                "transaction": None,
+                "indicator_meta": {},
+                "timestamp": timezone.now().isoformat(),
+            })
 
         # ── Optionally apply stable weight to transaction ─────────────────────
         updated_transaction = None
@@ -1334,6 +1355,9 @@ class CaptureWeightView(APIView):
             "unit": "kg",
             "stable": stable,
             "source": source,
+            "configured": True,
+            "connected": True,
+            "status": "connected",
             "branch_id": branch.id if branch else None,
             "transaction_id": tx.id if tx else None,
             "applied": updated_transaction is not None,
@@ -2370,13 +2394,11 @@ class LiveWeightView(APIView):
             except Branch.DoesNotExist:
                 pass
 
-        # 1. Try local IndicatorConfig HTTP URL (preferred — always works without Platform_Core)
+        cfg = IndicatorConfig.objects.filter(branch=branch).first() if branch else None
+
+        # Tenant readings are strictly branch-scoped. Never borrow another
+        # branch's config or a deployment-wide indicator URL.
         try:
-            cfg = (
-                IndicatorConfig.objects.filter(branch=branch).first()
-                if branch
-                else IndicatorConfig.objects.first()
-            )
             if cfg and cfg.connection_type == "HTTP" and cfg.live_weight_url:
                 reading = _fetch_indicator_url(cfg.live_weight_url)
                 return Response({
@@ -2384,57 +2406,12 @@ class LiveWeightView(APIView):
                     "unit": "kg",
                     "stable": reading["stable"],
                     "source": cfg.indicator_name,
+                    "configured": True,
+                    "connected": True,
+                    "status": "connected",
                     "branch_id": branch.id if branch else None,
                     "timestamp": timezone.now().isoformat(),
                 })
-        except Exception:
-            pass
-
-        # 2. Try Platform_Core integration resolution
-        try:
-            from Platform_Core.integrations import resolve_indicator_for_branch
-            if branch:
-                reading = resolve_indicator_for_branch(branch)
-                return Response({
-                    "weight": reading.get("weight"),
-                    "unit": reading.get("unit", "kg"),
-                    "stable": reading.get("stable", False),
-                    "source": reading.get("source", "integration"),
-                    "branch_id": branch.id,
-                    "timestamp": timezone.now().isoformat(),
-                })
-        except Exception:
-            pass
-
-        # 3. Settings-based global URL fallback (INDICATOR_LIVE_WEIGHT_URL)
-        try:
-            from django.conf import settings as django_settings
-            url = getattr(django_settings, "INDICATOR_LIVE_WEIGHT_URL", None)
-            if url:
-                reading = _fetch_indicator_url(
-                    url,
-                    timeout=getattr(django_settings, "INDICATOR_REQUEST_TIMEOUT", 5),
-                )
-                return Response({
-                    "weight": reading["weight"],
-                    "unit": "kg",
-                    "stable": reading["stable"],
-                    "source": getattr(django_settings, "INDICATOR_API_BASE_URL", url),
-                    "branch_id": branch.id if branch else None,
-                    "timestamp": timezone.now().isoformat(),
-                })
-        except Exception:
-            pass
-
-        # 4. Stub fallback (offline / not configured)
-        cfg_name = "offline"
-        try:
-            cfg = (
-                IndicatorConfig.objects.filter(branch=branch).first()
-                if branch
-                else IndicatorConfig.objects.first()
-            )
-            cfg_name = cfg.indicator_name if cfg else "offline"
         except Exception:
             pass
 
@@ -2442,11 +2419,13 @@ class LiveWeightView(APIView):
             "weight": None,
             "unit": "kg",
             "stable": False,
-            "source": cfg_name,
+            "source": cfg.indicator_name if cfg else "unconfigured",
+            "configured": cfg is not None,
+            "connected": False,
+            "status": "offline" if cfg else "not_configured",
             "branch_id": branch.id if branch else None,
             "timestamp": timezone.now().isoformat(),
         })
-
 
 class TransactionReceivePaymentView(APIView):
     """

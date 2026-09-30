@@ -640,7 +640,7 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
               <Badge className={cn(
                 'border-0 hover:bg-transparent',
                 effectiveBranchId ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700',
-              )}>{effectiveBranchId ? 'Indicator connected' : 'Select branch'}</Badge>
+              )}>{effectiveBranchId ? 'Branch selected' : 'Select branch'}</Badge>
             </CardHeader>
             <CardContent className="space-y-3 p-4">
               <div className="flex flex-wrap items-center justify-between gap-2">

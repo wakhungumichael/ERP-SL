@@ -1,5 +1,5 @@
 from django.contrib.auth.models import User
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.urls import reverse
 from rest_framework.test import APIClient
 
@@ -225,6 +225,34 @@ class WeighbridgeReferenceScopingTests(TestCase):
 
         self.assertEqual(response.status_code, 403, response.data)
         self.assertIn("do not have permission", str(response.data))
+
+    @override_settings(INDICATOR_LIVE_WEIGHT_URL="https://global-indicator.example/live")
+    def test_live_weight_without_branch_config_does_not_use_global_fallback(self):
+        branch = _make_branch(self.tenant_a, "without-indicator")
+
+        response = self.client.get(reverse("wb-live-weight"), {"branch_id": branch.id})
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertIsNone(response.data["weight"])
+        self.assertFalse(response.data["configured"])
+        self.assertFalse(response.data["connected"])
+        self.assertEqual(response.data["status"], "not_configured")
+
+    @override_settings(INDICATOR_LIVE_WEIGHT_URL="https://global-indicator.example/live")
+    def test_capture_weight_without_branch_config_does_not_use_global_fallback(self):
+        branch = _make_branch(self.tenant_a, "capture-without-indicator")
+
+        response = self.client.post(
+            reverse("wb-capture-weight"),
+            {"branch_id": branch.id},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertIsNone(response.data["captured_weight"])
+        self.assertFalse(response.data["configured"])
+        self.assertFalse(response.data["connected"])
+        self.assertEqual(response.data["status"], "not_configured")
 
     def test_default_operation_type_only_allows_activation_style_updates(self):
         op_type = WeighingOperationType.objects.create(

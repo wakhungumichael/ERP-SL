@@ -10,6 +10,9 @@ interface WeightReading {
   unit: string;
   stable: boolean;
   source: string;
+  configured: boolean;
+  connected: boolean;
+  status: 'connected' | 'offline' | 'not_configured';
   branch_id: number | null;
   timestamp: string;
 }
@@ -143,7 +146,7 @@ export default function LiveWeight() {
       if (!res.ok) throw new Error(`${res.status}`);
       const data: WeightReading = await res.json();
       setReading(data);
-      setConnected(data.weight != null);
+      setConnected(data.connected);
       setError(null);
 
       // animate when weight changes
@@ -178,6 +181,7 @@ export default function LiveWeight() {
   const activeBranch = branches.find(b => b.id === branchId);
   const isOnline     = connected === true;
   const isOffline    = connected === false;
+  const isConfigured = reading?.configured !== false;
 
   // Stats from history
   const validWeights = history.map(h => h.weight).filter(w => w != null) as number[];
@@ -204,7 +208,7 @@ export default function LiveWeight() {
             {isOnline  ? <Wifi    className="h-3.5 w-3.5" /> :
              isOffline ? <WifiOff className="h-3.5 w-3.5" /> :
                          <RefreshCw className="h-3.5 w-3.5 animate-spin" />}
-            {isOnline ? 'Online' : isOffline ? 'Offline' : 'Connecting…'}
+            {!isConfigured ? 'No indicator configured' : isOnline ? 'Online' : isOffline ? 'Offline' : 'Connecting…'}
           </div>
         </div>
       </div>
@@ -250,7 +254,7 @@ export default function LiveWeight() {
             {activeBranch?.name ?? 'All Branches'}
           </div>
           <div className="text-xs font-mono uppercase tracking-widest text-primary/70">
-            {reading?.source ? `SRC: ${reading.source}` : ''}
+            {reading?.configured && reading.source ? `SRC: ${reading.source}` : ''}
           </div>
         </div>
 
@@ -275,7 +279,7 @@ export default function LiveWeight() {
             <div className={`w-2.5 h-2.5 rounded-full ${
               reading?.stable ? 'bg-emerald-500' : 'bg-orange-500 animate-pulse'
             }`} />
-            {reading == null ? 'Waiting' : reading.stable ? 'Stable' : 'Settling'}
+            {reading == null ? 'Waiting' : !reading.configured ? 'Not configured' : reading.stable ? 'Stable' : 'Settling'}
           </div>
 
           {/* Timestamp */}
