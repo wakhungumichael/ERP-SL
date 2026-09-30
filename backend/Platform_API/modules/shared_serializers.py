@@ -875,9 +875,7 @@ class TenantSettingsSerializer(serializers.ModelSerializer):
     def get_logo_url(self, obj):
         if getattr(obj, "logo_file", None):
             try:
-                request = self.context.get("request")
-                url = obj.logo_file.url
-                return request.build_absolute_uri(url) if request else url
+                return obj.logo_file.url
             except Exception:
                 pass
         return obj.logo_url
