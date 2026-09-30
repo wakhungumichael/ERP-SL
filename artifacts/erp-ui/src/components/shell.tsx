@@ -458,31 +458,47 @@ export function Shell({ children }: { children: React.ReactNode }) {
     return hasMenuPathPermission(item.path, Array.from(userPermissions));
   };
 
+  const activeModuleSlugs = new Set(tenantContext.activeModuleSlugs ?? []);
+  const subscriptionCanSeeSection = (section: NavSection) => {
+    if (effectiveRole === 'superadmin') return true;
+    const requiredModules = STATIC_SECTION_MODULES[section.key];
+    if (!requiredModules) return true;
+    return requiredModules.some((moduleSlug) => activeModuleSlugs.has(moduleSlug));
+  };
+  const canSeeItem = (item: NavSection['items'][number]) =>
+    roleCanSeeItem(item)
+    && evaluateWorkspaceRouteAccess({
+      path: item.path,
+      role: effectiveRole,
+      activeModuleSlugs: Array.from(activeModuleSlugs),
+      permissions: Array.from(userPermissions),
+      isPermissionDrivenRole: usesPermissionDrivenNavigation,
+    }).allowed;
+
   const visibleSections = apiNav
-    .filter(s => usesPermissionDrivenNavigation || !s.roles.length || s.roles.includes(effectiveRole))
+    .filter(s => subscriptionCanSeeSection(s) && (usesPermissionDrivenNavigation || !s.roles.length || s.roles.includes(effectiveRole)))
     .map(s => ({
       ...s,
       items: s.items.filter(item =>
-        roleCanSeeItem(item)
+        canSeeItem(item)
         && (usesPermissionDrivenNavigation || !item.roles.length || item.roles.includes(effectiveRole)),
       ),
     }))
     .filter(s => s.items.length > 0);
 
   const staticVisibleSections = STATIC_NAV
-    .filter(s => usesPermissionDrivenNavigation || !s.roles.length || s.roles.includes(effectiveRole))
+    .filter(s => subscriptionCanSeeSection(s) && (usesPermissionDrivenNavigation || !s.roles.length || s.roles.includes(effectiveRole)))
     .map(s => ({
       ...s,
       items: s.items.filter(item =>
-        roleCanSeeItem(item)
+        canSeeItem(item)
         && (usesPermissionDrivenNavigation || !item.roles.length || item.roles.includes(effectiveRole)),
       ),
     }))
     .filter(s => s.items.length > 0);
 
   // Backend workspace records may lag behind newly enabled ERP modules. Merge
-  // the canonical navigation in, then apply role permissions above. This keeps
-  // tenant admins complete and makes a granted permission immediately visible.
+  // canonical routes only after subscription, role, and permission checks.
   const resolvedSections = staticVisibleSections.reduce((sections, staticSection) => {
     const existing = sections.find(section => section.key === staticSection.key);
     if (!existing) return [...sections, staticSection];

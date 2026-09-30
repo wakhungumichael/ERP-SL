@@ -140,7 +140,7 @@ export function evaluateWorkspaceRouteAccess({
     }
   }
 
-  if (rule.modules?.length && role !== 'tenant_admin' && !isPermissionDrivenRole) {
+  if (rule.modules?.length) {
     const activeModules = new Set(activeModuleSlugs);
     const hasModule = rule.modules.some((moduleSlug) => activeModules.has(moduleSlug));
     if (!hasModule) {
