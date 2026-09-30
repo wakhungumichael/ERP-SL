@@ -177,6 +177,11 @@ export function useTenantTheme() {
     }
   }, [tenantContext.branding.logoUrl]);
 
+  useEffect(() => {
+    if (typeof window === 'undefined' || !tenantContext.tenantCode) return;
+    window.localStorage.setItem('sl-erp-tenant-code', tenantContext.tenantCode);
+  }, [tenantContext.tenantCode]);
+
   return {
     tenantContext,
     isLoading: tenantQuery.isLoading || settingsQuery.isLoading || workspaceQuery.isLoading,

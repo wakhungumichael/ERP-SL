@@ -389,17 +389,20 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const appSubtitle = ((user as any)?.role === 'superadmin'
     ? 'SaaS Control Center'
     : 'Operations Platform');
+  const tenantLoginPath = tenantContext.tenantCode
+    ? `/login/${encodeURIComponent(tenantContext.tenantCode)}`
+    : '/login';
 
   useEffect(() => {
-    if (!token && location !== '/login') setLocation('/login');
-  }, [token, location, setLocation]);
+    if (!token && !location.startsWith('/login')) setLocation(tenantLoginPath);
+  }, [location, setLocation, tenantLoginPath, token]);
 
   useEffect(() => {
     if (!token || isLoading || user) return;
     if (authErrorStatus === 401 || authErrorStatus === 403) {
-      setLocation('/login');
+      setLocation(tenantLoginPath);
     }
-  }, [authErrorStatus, isLoading, setLocation, token, user]);
+  }, [authErrorStatus, isLoading, setLocation, tenantLoginPath, token, user]);
 
   useEffect(() => {
     setMobileNavOpen(false);
@@ -419,7 +422,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
     logout.mutate(undefined, {
       onSettled: () => {
         clearToken();
-        setLocation('/login');
+        setLocation(tenantLoginPath);
       },
     });
   };

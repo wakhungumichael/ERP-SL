@@ -67,7 +67,10 @@ function recommendPlanForIndustry(plans: any[], industryId?: number | null) {
 export default function Login() {
   const [, setLocation] = useLocation();
   const [, params] = useRoute('/login/:tenantCode');
-  const tenantCode = params?.tenantCode;
+  const rememberedTenantCode = typeof window !== 'undefined'
+    ? window.localStorage.getItem('sl-erp-tenant-code')
+    : null;
+  const tenantCode = params?.tenantCode ?? rememberedTenantCode ?? undefined;
   const searchParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
   const requestedIntent = searchParams?.get('intent');
   const requestedPlanId = searchParams?.get('plan') ?? '';

@@ -67,6 +67,17 @@ def _tenant_or_400(user):
     return tenant_or_403(user, "No organization linked to this account.")
 
 
+def _can_view_customer_statements(user):
+    if user.is_superuser or user.has_perm("SL_Weighbridge.can_view_customer_statements"):
+        return True
+    try:
+        if user.tenant_profile.is_tenant_admin:
+            return True
+    except Exception:
+        pass
+    return user.organization_memberships.filter(is_active=True, is_org_admin=True).exists()
+
+
 def _get_tenant_default_tax_rate(tenant):
     if tenant is None:
         return Decimal("0.00")
@@ -1343,6 +1354,11 @@ class CustomerStatementView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, customer_id):
+        if not _can_view_customer_statements(request.user):
+            return Response(
+                {"error": "You do not have permission to view customer statements."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
         tenant = _tenant_or_400(request.user)
         _, settings_obj = resolve_document_template(tenant=tenant, document_type="statement")
         cust_qs = _apply_tenant_filter(Customer.objects.all(), request.user)

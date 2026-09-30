@@ -1956,6 +1956,7 @@ export default function OrganizationSettings() {
       toast({ title: 'Settings saved' });
       qc.setQueryData(['my-tenant-settings', organizationId], response);
       qc.setQueryData(['dashboard-tenant-settings', organizationId, token], saved);
+      void qc.invalidateQueries({ queryKey: ['public-site-config'] });
     },
     onError: (e: any) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
   });
@@ -2122,6 +2123,7 @@ export default function OrganizationSettings() {
       toast({ title: 'Logo uploaded' });
       qc.setQueryData(['my-tenant-settings', organizationId], j);
       qc.setQueryData(['dashboard-tenant-settings', organizationId, token], saved);
+      void qc.invalidateQueries({ queryKey: ['public-site-config'] });
       setSettingsForm(buildSettingsForm(saved));
     } catch (e: any) {
       toast({ title: 'Logo upload failed', description: e.message, variant: 'destructive' });

@@ -16,7 +16,7 @@ const PATH_PERMISSION_RULES: Array<{ prefix: string; permissions: string[] }> = 
   { prefix: '/sales/recurring', permissions: ['SL_Sales.*_recurringinvoice'] },
   { prefix: '/sales/products', permissions: ['SL_Sales.*_product'] },
   { prefix: '/sales/customers', permissions: ['SL_Weighbridge.*_customer'] },
-  { prefix: '/sales/statements', permissions: ['SL_Weighbridge.*_invoice', 'SL_Weighbridge.*_customer'] },
+  { prefix: '/sales/statements', permissions: ['SL_Weighbridge.can_view_customer_statements'] },
   { prefix: '/sales/overview', permissions: ['Platform_Core.can_view_sales_overview'] },
 
   { prefix: '/inventory/warehouses', permissions: ['SL_Inventory.*_warehouse'] },
