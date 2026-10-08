@@ -21,6 +21,8 @@ import { cn } from '@/lib/utils';
 import { ERPPageHeader } from '@/components/erp/workspace/workspace-ui';
 import { hasPermission } from '@/lib/permissions';
 import { apiErrorFromResponse, formatApiError } from '@/lib/api-errors';
+import { InlineFormError, FormErrorSummary } from '@/components/erp/forms/form-errors';
+import { useFormErrors } from '@/hooks/use-form-errors';
 
 type RouteFlow = 'first' | 'second';
 
@@ -281,6 +283,9 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
   const queryClient = useQueryClient();
   const { user } = useAuth();
   const create = useCreateTransaction();
+  const customerErrors = useFormErrors();
+  const vehicleErrors = useFormErrors();
+  const itemErrors = useFormErrors();
   const canAddCustomer = hasPermission(user as any, 'SL_Weighbridge.add_customer');
   const canAddVehicle = hasPermission(user as any, 'SL_Weighbridge.add_vehicle');
   const canAddItem = hasPermission(user as any, 'SL_Weighbridge.add_item');
@@ -496,6 +501,7 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
     setCustomerId(String(json.id));
     setCustomerOpen(false);
     setCustomerForm({ name: '', phone_number: '', email: '', address: '' });
+    customerErrors.clear();
     queryClient.invalidateQueries();
   };
 
@@ -515,6 +521,7 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
     if (json.vehicle_type) setVehicleTypeId(String(json.vehicle_type));
     setVehicleOpen(false);
     setVehicleForm({ number_plate: '', vehicle_type: '' });
+    vehicleErrors.clear();
     queryClient.invalidateQueries();
   };
 
@@ -529,6 +536,7 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
     setItemId(String(json.id));
     setItemOpen(false);
     setItemForm({ name: '', description: '' });
+    itemErrors.clear();
     queryClient.invalidateQueries();
   };
 
@@ -1080,28 +1088,37 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
         </section>
       </form>
 
-      <Dialog open={customerOpen} onOpenChange={setCustomerOpen}>
+      <Dialog open={customerOpen} onOpenChange={(open) => { setCustomerOpen(open); if (!open) customerErrors.clear(); }}>
         <DialogContent className="max-w-md">
           <DialogHeader><DialogTitle>Add Customer</DialogTitle></DialogHeader>
-          <form className="grid gap-3" onSubmit={(event) => {
+          <form className="grid gap-3" noValidate onSubmit={(event) => {
             event.preventDefault();
-            createCustomer().catch((err) => toast({ title: 'Could not add customer', description: formatApiError(err), variant: 'destructive' }));
+            if (!customerErrors.validateRequired({
+              name: { value: customerForm.name, label: 'Customer name' },
+              phone_number: { value: customerForm.phone_number, label: 'Phone number' },
+            })) return;
+            createCustomer().catch(customerErrors.apply);
           }}>
+            <FormErrorSummary errors={customerErrors.errors} title="Customer could not be saved" />
             <div className="space-y-1.5">
               <Label required htmlFor="new-customer-name">Customer name</Label>
-              <Input id="new-customer-name" required autoFocus placeholder="Enter customer name" value={customerForm.name} onChange={(event) => setCustomerForm((current) => ({ ...current, name: event.target.value }))} />
+              <Input id="new-customer-name" name="name" required autoFocus aria-invalid={!!customerErrors.errors.fields.name} aria-describedby={customerErrors.errors.fields.name ? 'new-customer-name-error' : undefined} placeholder="Enter customer name" value={customerForm.name} onChange={(event) => { setCustomerForm((current) => ({ ...current, name: event.target.value })); customerErrors.clearField('name'); }} />
+              <InlineFormError id="new-customer-name-error" messages={customerErrors.errors.fields.name} />
             </div>
             <div className="space-y-1.5">
               <Label required htmlFor="new-customer-phone">Phone number</Label>
-              <Input id="new-customer-phone" required type="tel" placeholder="Enter phone number" value={customerForm.phone_number} onChange={(event) => setCustomerForm((current) => ({ ...current, phone_number: event.target.value }))} />
+              <Input id="new-customer-phone" name="phone_number" required type="tel" aria-invalid={!!customerErrors.errors.fields.phone_number} aria-describedby={customerErrors.errors.fields.phone_number ? 'new-customer-phone-error' : undefined} placeholder="Enter phone number" value={customerForm.phone_number} onChange={(event) => { setCustomerForm((current) => ({ ...current, phone_number: event.target.value })); customerErrors.clearField('phone_number'); }} />
+              <InlineFormError id="new-customer-phone-error" messages={customerErrors.errors.fields.phone_number} />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="new-customer-email">Email address</Label>
-              <Input id="new-customer-email" type="email" placeholder="Optional email address" value={customerForm.email} onChange={(event) => setCustomerForm((current) => ({ ...current, email: event.target.value }))} />
+              <Input id="new-customer-email" name="email" type="email" aria-invalid={!!customerErrors.errors.fields.email} aria-describedby={customerErrors.errors.fields.email ? 'new-customer-email-error' : undefined} placeholder="Optional email address" value={customerForm.email} onChange={(event) => { setCustomerForm((current) => ({ ...current, email: event.target.value })); customerErrors.clearField('email'); }} />
+              <InlineFormError id="new-customer-email-error" messages={customerErrors.errors.fields.email} />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="new-customer-address">Address</Label>
-              <Textarea id="new-customer-address" placeholder="Optional address" value={customerForm.address} onChange={(event) => setCustomerForm((current) => ({ ...current, address: event.target.value }))} rows={2} />
+              <Textarea id="new-customer-address" name="address" aria-invalid={!!customerErrors.errors.fields.address} aria-describedby={customerErrors.errors.fields.address ? 'new-customer-address-error' : undefined} placeholder="Optional address" value={customerForm.address} onChange={(event) => { setCustomerForm((current) => ({ ...current, address: event.target.value })); customerErrors.clearField('address'); }} rows={2} />
+              <InlineFormError id="new-customer-address-error" messages={customerErrors.errors.fields.address} />
             </div>
             <p className="text-xs text-muted-foreground"><span className="font-bold text-destructive">*</span> Required fields</p>
             <Button type="submit">
@@ -1111,27 +1128,35 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
         </DialogContent>
       </Dialog>
 
-      <Dialog open={vehicleOpen} onOpenChange={setVehicleOpen}>
+      <Dialog open={vehicleOpen} onOpenChange={(open) => { setVehicleOpen(open); if (!open) vehicleErrors.clear(); }}>
         <DialogContent className="max-w-md">
           <DialogHeader><DialogTitle>Add Vehicle</DialogTitle></DialogHeader>
-          <form className="grid gap-3" onSubmit={(event) => {
+          <form className="grid gap-3" noValidate onSubmit={(event) => {
             event.preventDefault();
-            createVehicle().catch((err) => toast({ title: 'Could not add vehicle', description: formatApiError(err), variant: 'destructive' }));
+            if (!vehicleErrors.validateRequired({
+              number_plate: { value: vehicleForm.number_plate, label: 'Number plate' },
+              vehicle_type: { value: vehicleForm.vehicle_type || vehicleTypeId, label: 'Vehicle type' },
+            })) return;
+            createVehicle().catch(vehicleErrors.apply);
           }}>
+            <FormErrorSummary errors={vehicleErrors.errors} title="Vehicle could not be saved" />
+            <InlineFormError messages={vehicleErrors.errors.fields.customer} />
             <div className="space-y-1.5">
               <Label required htmlFor="new-vehicle-plate">Number plate</Label>
-              <Input id="new-vehicle-plate" required autoFocus placeholder="Enter number plate" value={vehicleForm.number_plate} onChange={(event) => setVehicleForm((current) => ({ ...current, number_plate: event.target.value.toUpperCase() }))} />
+              <Input id="new-vehicle-plate" name="number_plate" required autoFocus aria-invalid={!!vehicleErrors.errors.fields.number_plate} aria-describedby={vehicleErrors.errors.fields.number_plate ? 'new-vehicle-plate-error' : undefined} placeholder="Enter number plate" value={vehicleForm.number_plate} onChange={(event) => { setVehicleForm((current) => ({ ...current, number_plate: event.target.value.toUpperCase() })); vehicleErrors.clearField('number_plate'); }} />
+              <InlineFormError id="new-vehicle-plate-error" messages={vehicleErrors.errors.fields.number_plate} />
             </div>
             <div className="space-y-1.5">
               <Label required>Vehicle type</Label>
-            <Select value={vehicleForm.vehicle_type || vehicleTypeId} onValueChange={(value) => setVehicleForm((current) => ({ ...current, vehicle_type: value }))}>
-              <SelectTrigger aria-required="true"><SelectValue placeholder="Select vehicle type…" /></SelectTrigger>
+            <Select value={vehicleForm.vehicle_type || vehicleTypeId} onValueChange={(value) => { setVehicleForm((current) => ({ ...current, vehicle_type: value })); vehicleErrors.clearField('vehicle_type'); }}>
+              <SelectTrigger name="vehicle_type" aria-required="true" aria-invalid={!!vehicleErrors.errors.fields.vehicle_type} aria-describedby={vehicleErrors.errors.fields.vehicle_type ? 'new-vehicle-type-error' : undefined}><SelectValue placeholder="Select vehicle type…" /></SelectTrigger>
               <SelectContent>
                 {vehicleTypeList.map((vehicleType: any) => (
                   <SelectItem key={vehicleType.id} value={String(vehicleType.id)}>{vehicleType.name}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
+              <InlineFormError id="new-vehicle-type-error" messages={vehicleErrors.errors.fields.vehicle_type} />
             </div>
             <Button type="submit" disabled={!customerId || !(vehicleForm.vehicle_type || vehicleTypeId)}>
               Save Vehicle
@@ -1140,20 +1165,24 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
         </DialogContent>
       </Dialog>
 
-      <Dialog open={itemOpen} onOpenChange={setItemOpen}>
+      <Dialog open={itemOpen} onOpenChange={(open) => { setItemOpen(open); if (!open) itemErrors.clear(); }}>
         <DialogContent className="max-w-md">
           <DialogHeader><DialogTitle>Add Item</DialogTitle></DialogHeader>
-          <form className="grid gap-3" onSubmit={(event) => {
+          <form className="grid gap-3" noValidate onSubmit={(event) => {
             event.preventDefault();
-            createItem().catch((err) => toast({ title: 'Could not add commodity', description: formatApiError(err), variant: 'destructive' }));
+            if (!itemErrors.validateRequired({ name: { value: itemForm.name, label: 'Commodity name' } })) return;
+            createItem().catch(itemErrors.apply);
           }}>
+            <FormErrorSummary errors={itemErrors.errors} title="Commodity could not be saved" />
             <div className="space-y-1.5">
               <Label required htmlFor="new-item-name">Commodity name</Label>
-              <Input id="new-item-name" required autoFocus placeholder="Enter commodity name" value={itemForm.name} onChange={(event) => setItemForm((current) => ({ ...current, name: event.target.value }))} />
+              <Input id="new-item-name" name="name" required autoFocus aria-invalid={!!itemErrors.errors.fields.name} aria-describedby={itemErrors.errors.fields.name ? 'new-item-name-error' : undefined} placeholder="Enter commodity name" value={itemForm.name} onChange={(event) => { setItemForm((current) => ({ ...current, name: event.target.value })); itemErrors.clearField('name'); }} />
+              <InlineFormError id="new-item-name-error" messages={itemErrors.errors.fields.name} />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="new-item-description">Description</Label>
-              <Textarea id="new-item-description" placeholder="Optional description" value={itemForm.description} onChange={(event) => setItemForm((current) => ({ ...current, description: event.target.value }))} rows={2} />
+              <Textarea id="new-item-description" name="description" aria-invalid={!!itemErrors.errors.fields.description} aria-describedby={itemErrors.errors.fields.description ? 'new-item-description-error' : undefined} placeholder="Optional description" value={itemForm.description} onChange={(event) => { setItemForm((current) => ({ ...current, description: event.target.value })); itemErrors.clearField('description'); }} rows={2} />
+              <InlineFormError id="new-item-description-error" messages={itemErrors.errors.fields.description} />
             </div>
             <Button type="submit">
               Save Item

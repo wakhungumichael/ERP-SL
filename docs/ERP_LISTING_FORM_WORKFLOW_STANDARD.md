@@ -131,6 +131,46 @@ Each core form should also aim to have:
 6. finance-aware fields where relevant
 7. audit-sensitive restrictions once a document is finalized
 
+### Shared inline validation pattern
+
+New and updated forms must render validation messages inside the form, next to the field that needs attention. Toasts are reserved for request-wide failures and success messages; they must not be the only place a field validation error appears.
+
+Use these shared building blocks:
+
+- `useFormErrors()` from `@/hooks/use-form-errors` to validate required values, preserve API field mappings, clear corrected fields, and hold form-level errors.
+- `InlineFormError` from `@/components/erp/forms/form-errors` directly below each input.
+- `FormErrorSummary` for errors that do not belong to one field.
+- `apiErrorFromResponse()` for failed `fetch` responses. It returns an `ApiFormError` without losing backend field names.
+
+Each input with an error must set `aria-invalid` and connect its message using `aria-describedby`. Clear only that field's error in its change handler so unrelated errors remain visible.
+
+```tsx
+const formErrors = useFormErrors();
+
+<form noValidate onSubmit={(event) => {
+  event.preventDefault();
+  if (!formErrors.validateRequired({
+    name: { value: form.name, label: 'Name' },
+  })) return;
+  saveRecord().catch(formErrors.apply);
+}}>
+  <FormErrorSummary errors={formErrors.errors} />
+  <Input
+    name="name"
+    aria-invalid={!!formErrors.errors.fields.name}
+    aria-describedby={formErrors.errors.fields.name ? 'name-error' : undefined}
+    value={form.name}
+    onChange={(event) => {
+      setForm({ ...form, name: event.target.value });
+      formErrors.clearField('name');
+    }}
+  />
+  <InlineFormError id="name-error" messages={formErrors.errors.fields.name} />
+</form>
+```
+
+Backend validation keys and frontend field `name` values should match. This lets the same pattern work consistently in all feature modules without page-specific error parsing.
+
 ## 5. Standard Workflow Connection Requirements
 
 A listing or form is not complete if it is isolated.

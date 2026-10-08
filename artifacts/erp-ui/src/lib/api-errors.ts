@@ -1,4 +1,19 @@
-const GENERIC_ERROR_KEYS = new Set(['detail', 'error', 'errors', 'message', 'non_field_errors']);
+const GENERIC_ERROR_KEYS = new Set(['detail', 'error', 'errors', 'message', 'non_field_errors', 'nonFieldErrors', '__all__']);
+
+export type FormValidationErrors = {
+  fields: Record<string, string[]>;
+  form: string[];
+};
+
+export class ApiFormError extends Error {
+  validationErrors: FormValidationErrors;
+
+  constructor(message: string, validationErrors: FormValidationErrors) {
+    super(message);
+    this.name = 'ApiFormError';
+    this.validationErrors = validationErrors;
+  }
+}
 
 const FIELD_LABELS: Record<string, string> = {
   phone_number: 'Phone number',
@@ -43,39 +58,78 @@ function friendlyFieldMessage(field: string | null, message: string) {
   return `${clean.charAt(0).toUpperCase()}${clean.slice(1)}`;
 }
 
-function flattenErrors(value: unknown, field: string | null = null): string[] {
-  if (value == null) return [];
-  if (value instanceof Error) return flattenErrors(value.message, field);
+function collectErrors(value: unknown, field: string | null, result: FormValidationErrors) {
+  if (value == null) return;
+  if (value instanceof ApiFormError) {
+    Object.entries(value.validationErrors.fields).forEach(([key, messages]) => {
+      result.fields[key] = [...(result.fields[key] ?? []), ...messages];
+    });
+    result.form.push(...value.validationErrors.form);
+    return;
+  }
+  if (value instanceof Error) {
+    collectErrors(value.message, field, result);
+    return;
+  }
   if (typeof value === 'string') {
     const trimmed = value.trim();
-    if (!trimmed || trimmed.startsWith('<!DOCTYPE html>')) return [];
+    if (!trimmed || trimmed.startsWith('<!DOCTYPE html>')) return;
     if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
       try {
-        return flattenErrors(JSON.parse(trimmed), field);
+        collectErrors(JSON.parse(trimmed), field, result);
+        return;
       } catch {
         // Treat malformed JSON as a normal server message.
       }
     }
-    return [friendlyFieldMessage(field, trimmed)].filter(Boolean);
+    const message = friendlyFieldMessage(field, trimmed);
+    if (message) {
+      if (field) result.fields[field] = [...(result.fields[field] ?? []), message];
+      else result.form.push(message);
+    }
+    return;
   }
-  if (Array.isArray(value)) return value.flatMap((entry) => flattenErrors(entry, field));
+  if (Array.isArray(value)) {
+    value.forEach((entry) => collectErrors(entry, field, result));
+    return;
+  }
   if (typeof value === 'object') {
     const candidate = value as Record<string, unknown>;
     const responseData = (candidate as any)?.response?.data ?? (candidate as any)?.data ?? (candidate as any)?.body;
-    if (responseData != null) return flattenErrors(responseData, field);
-    return Object.entries(candidate).flatMap(([key, entry]) => (
-      flattenErrors(entry, GENERIC_ERROR_KEYS.has(key) ? field : key)
-    ));
+    if (responseData != null) {
+      collectErrors(responseData, field, result);
+      return;
+    }
+    Object.entries(candidate).forEach(([key, entry]) => {
+      collectErrors(entry, GENERIC_ERROR_KEYS.has(key) ? field : key, result);
+    });
+    return;
   }
-  return [friendlyFieldMessage(field, String(value))].filter(Boolean);
+  collectErrors(String(value), field, result);
+}
+
+export function parseFormErrors(value: unknown): FormValidationErrors {
+  const result: FormValidationErrors = { fields: {}, form: [] };
+  collectErrors(value, null, result);
+  Object.keys(result.fields).forEach((field) => {
+    result.fields[field] = Array.from(new Set(result.fields[field]));
+  });
+  result.form = Array.from(new Set(result.form));
+  return result;
 }
 
 export function formatApiError(value: unknown, fallback = 'The request could not be completed. Please check the form and try again.') {
-  const messages = Array.from(new Set(flattenErrors(value)));
+  const errors = parseFormErrors(value);
+  const messages = Array.from(new Set([...Object.values(errors.fields).flat(), ...errors.form]));
   return messages.length > 0 ? messages.join(' ') : fallback;
 }
 
 export async function apiErrorFromResponse(response: Response, fallback?: string) {
   const raw = await response.text().catch(() => '');
-  return new Error(formatApiError(raw, fallback));
+  const validationErrors = parseFormErrors(raw);
+  const message = formatApiError(validationErrors, fallback);
+  if (Object.keys(validationErrors.fields).length === 0 && validationErrors.form.length === 0) {
+    validationErrors.form = [message];
+  }
+  return new ApiFormError(message, validationErrors);
 }
