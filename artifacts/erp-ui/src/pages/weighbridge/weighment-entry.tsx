@@ -393,6 +393,9 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
     : null;
   const hasDuplicateOpenTransaction = Boolean(duplicateOpenFirstWeight || duplicateOpenSecondWeight);
   const effectiveBranchId = isSecondFlow ? String(firstTransaction?.branch ?? '') : branchId;
+  const effectiveBranchName = isSecondFlow
+    ? firstTransaction?.branch_name ?? ''
+    : branchList.find((branch: any) => String(branch.id) === effectiveBranchId)?.name ?? '';
   const effectiveWeight = manualMode ? (parseInt(manualWeight, 10) || null) : capturedWeight;
   const shouldShowBranchSelector = !isSecondFlow && selectableBranchList.length > 1;
   const netWeight = isSecondFlow && firstTransaction && effectiveWeight
@@ -748,12 +751,10 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
       <form onSubmit={handleSubmit} className="grid min-w-0 items-stretch gap-4 xl:min-h-[calc(100vh-19rem)] xl:grid-cols-[minmax(280px,0.68fr)_minmax(0,1.72fr)]">
         <aside className="grid min-w-0 gap-4 xl:grid-rows-2">
           <Card className="flex h-full flex-col overflow-hidden border-primary/20 shadow-sm">
-            <CardHeader className="flex-row items-center justify-between border-b border-primary/15 bg-primary/5 px-4 py-3">
-              <CardTitle className="text-sm font-semibold">Live Weight</CardTitle>
-              <Badge className={cn(
-                'border-0 hover:bg-transparent',
-                effectiveBranchId ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700',
-              )}>{effectiveBranchId ? 'Branch selected' : 'Select branch'}</Badge>
+            <CardHeader className="border-b border-primary/15 bg-primary/5 px-4 py-3">
+              <CardTitle className={cn('text-sm font-semibold', !effectiveBranchName && 'text-amber-700')}>
+                {effectiveBranchName || 'Select branch'}
+              </CardTitle>
             </CardHeader>
             <CardContent className="flex flex-1 flex-col justify-center space-y-3 p-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
