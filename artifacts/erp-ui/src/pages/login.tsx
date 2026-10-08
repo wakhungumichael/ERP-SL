@@ -361,7 +361,7 @@ export default function Login() {
         <div className="flex flex-col justify-between px-8 py-10 sm:px-12 lg:px-14">
           <div className="flex items-center">
             <div className="flex items-center">
-              <div className="flex h-24 w-64 items-center justify-start overflow-hidden">
+              <div className="flex h-36 w-96 max-w-full items-center justify-start overflow-hidden">
                 {logoUrl ? (
                   <img src={logoUrl} alt={`${site.tenant?.name ?? 'Organization'} logo`} className="h-full w-full object-contain object-left" />
                 ) : (
@@ -414,19 +414,17 @@ export default function Login() {
 
         <div className="flex items-center justify-center px-8 py-10 sm:px-12 lg:px-14">
           <div className="w-full max-w-md rounded-[32px] border border-white/10 bg-white p-8 text-slate-950 shadow-[0_35px_120px_rgba(0,0,0,0.35)]">
-            <div className="flex items-center gap-4">
-              <div className="flex h-16 w-24 shrink-0 items-center justify-center overflow-hidden">
+            <div className="space-y-5">
+              <div className="flex h-24 w-full items-center justify-start overflow-hidden">
                 {logoUrl ? (
-                  <img src={logoUrl} alt={`${site.tenant?.name ?? 'Organization'} logo`} className="h-full w-full object-contain" />
+                  <img src={logoUrl} alt={`${site.tenant?.name ?? 'Organization'} logo`} className="h-full w-full object-contain object-left" />
                 ) : (
-                  <div className="flex h-full w-full items-center justify-center rounded-xl text-sm font-black tracking-[0.2em] text-white" style={{ backgroundColor: brand }}>
+                  <div className="flex h-20 w-20 items-center justify-center rounded-2xl text-lg font-black tracking-[0.2em] text-white" style={{ backgroundColor: brand }}>
                     SL
                   </div>
                 )}
               </div>
-              <div className="flex min-h-[56px] items-center">
-                <h2 className="text-2xl font-black leading-none tracking-tight">Sign in</h2>
-              </div>
+              <h2 className="text-2xl font-black leading-none tracking-tight">Sign in</h2>
             </div>
 
             <form onSubmit={handleSubmit} className="mt-8 space-y-5">
