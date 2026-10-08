@@ -256,17 +256,27 @@ export default function FirstWeightPage() {
   const canSubmit = Boolean(effectiveWeight && branchId && customerId && vehicleId);
 
   const createCustomer = async () => {
+    const payload = {
+      name: customerForm.name.trim(),
+      phone_number: customerForm.phone_number.trim(),
+      address: customerForm.address.trim(),
+      ...(customerForm.email.trim() ? { email: customerForm.email.trim() } : {}),
+    };
     const res = await fetch('/api/commercial-weighbridge/customers/', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Token ${fetchToken()}` },
-      body: JSON.stringify(customerForm),
+      body: JSON.stringify(payload),
     });
     if (!res.ok) throw await apiErrorFromResponse(res, 'The customer could not be added.');
-    const json = await res.json();
-    setCustomerId(String(json.id));
+    const response = await res.json();
+    const customer = response?.data ?? response;
+    if (!customer?.id) throw new Error('Customer was created, but no customer record was returned.');
+    await queryClient.invalidateQueries({ queryKey: ['wb-customers'] });
+    await queryClient.refetchQueries({ queryKey: ['wb-customers'], type: 'active' });
+    setCustomerId(String(customer.id));
+    setVehicleId('');
     setCustomerOpen(false);
     setCustomerForm({ name: '', phone_number: '', email: '', address: '' });
-    queryClient.invalidateQueries();
   };
 
   const createVehicle = async () => {
@@ -295,11 +305,14 @@ export default function FirstWeightPage() {
       body: JSON.stringify(itemForm),
     });
     if (!res.ok) throw await apiErrorFromResponse(res, 'The commodity could not be added.');
-    const json = await res.json();
-    setItemId(String(json.id));
+    const response = await res.json();
+    const item = response?.data ?? response;
+    if (!item?.id) throw new Error('Commodity was created, but no commodity record was returned.');
+    await queryClient.invalidateQueries({ queryKey: ['items-picker'] });
+    await queryClient.refetchQueries({ queryKey: ['items-picker'], type: 'active' });
+    setItemId(String(item.id));
     setItemOpen(false);
     setItemForm({ name: '', description: '' });
-    queryClient.invalidateQueries();
   };
 
   return (
@@ -386,9 +399,9 @@ export default function FirstWeightPage() {
             </div>
 
             <div className="space-y-1.5">
-              <div className="flex items-center justify-between gap-3">
+              <div className="flex min-h-8 flex-wrap items-center justify-between gap-2">
                 <label className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Item / Commodity</label>
-                <Button type="button" variant="outline" size="sm" className="gap-1" onClick={() => setItemOpen(true)}>
+                <Button type="button" variant="outline" size="sm" className="shrink-0 gap-1 whitespace-nowrap" onClick={() => setItemOpen(true)}>
                   <Plus className="h-3.5 w-3.5" /> Add Item
                 </Button>
               </div>
@@ -541,9 +554,9 @@ export default function FirstWeightPage() {
         <DialogContent className="max-w-md">
           <DialogHeader><DialogTitle>Add Customer</DialogTitle></DialogHeader>
           <div className="grid gap-3">
-            <Input placeholder="Customer name" value={customerForm.name} onChange={e => setCustomerForm(previous => ({ ...previous, name: e.target.value }))} />
-            <Input placeholder="Phone number" value={customerForm.phone_number} onChange={e => setCustomerForm(previous => ({ ...previous, phone_number: e.target.value }))} />
-            <Input placeholder="Email address" value={customerForm.email} onChange={e => setCustomerForm(previous => ({ ...previous, email: e.target.value }))} />
+            <Input placeholder="Customer name *" value={customerForm.name} onChange={e => setCustomerForm(previous => ({ ...previous, name: e.target.value }))} />
+            <Input placeholder="Phone number *" value={customerForm.phone_number} onChange={e => setCustomerForm(previous => ({ ...previous, phone_number: e.target.value }))} />
+            <Input type="email" placeholder="Email address (optional)" value={customerForm.email} onChange={e => setCustomerForm(previous => ({ ...previous, email: e.target.value }))} />
             <Textarea placeholder="Address" value={customerForm.address} onChange={e => setCustomerForm(previous => ({ ...previous, address: e.target.value }))} rows={3} />
             <Button type="button" onClick={() => createCustomer().catch(err => toast({ title: 'Could not add customer', description: formatApiError(err), variant: 'destructive' }))}>Save Customer</Button>
           </div>

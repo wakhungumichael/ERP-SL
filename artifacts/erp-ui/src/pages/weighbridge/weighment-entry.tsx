@@ -492,18 +492,34 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
   );
 
   const createCustomer = async () => {
+    const payload = {
+      name: customerForm.name.trim(),
+      phone_number: customerForm.phone_number.trim(),
+      address: customerForm.address.trim(),
+      ...(customerForm.email.trim() ? { email: customerForm.email.trim() } : {}),
+    };
     const res = await fetch('/api/commercial-weighbridge/customers/', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...authHeaders() },
-      body: JSON.stringify(customerForm),
+      body: JSON.stringify(payload),
     });
     if (!res.ok) throw await apiErrorFromResponse(res, 'The customer could not be added.');
-    const json = await res.json();
-    setCustomerId(String(json.id));
+    const response = await res.json();
+    const customer = response?.data ?? response;
+    if (!customer?.id) throw new Error('Customer was created, but no customer record was returned.');
+    await queryClient.invalidateQueries({ queryKey: ['wb-customers-entry'] });
+    await queryClient.refetchQueries({ queryKey: ['wb-customers-entry'], type: 'active' });
+    setCustomerId(String(customer.id));
+    setVehicleId('');
+    setItemId('');
+    setDestination('');
+    setDriverName('');
+    setDriverPhone('');
+    setDriverDetailsPrefilled(false);
+    setPrefillVehicleKey('');
     setCustomerOpen(false);
     setCustomerForm({ name: '', phone_number: '', email: '', address: '' });
     customerErrors.clear();
-    queryClient.invalidateQueries();
   };
 
   const createVehicle = async () => {
@@ -533,12 +549,15 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
       body: JSON.stringify(itemForm),
     });
     if (!res.ok) throw await apiErrorFromResponse(res, 'The commodity could not be added.');
-    const json = await res.json();
-    setItemId(String(json.id));
+    const response = await res.json();
+    const item = response?.data ?? response;
+    if (!item?.id) throw new Error('Commodity was created, but no commodity record was returned.');
+    await queryClient.invalidateQueries({ queryKey: ['wb-items-entry'] });
+    await queryClient.refetchQueries({ queryKey: ['wb-items-entry'], type: 'active' });
+    setItemId(String(item.id));
     setItemOpen(false);
     setItemForm({ name: '', description: '' });
     itemErrors.clear();
-    queryClient.invalidateQueries();
   };
 
   async function populateVehicleHistoryDefaults(vehicleId: number | string) {

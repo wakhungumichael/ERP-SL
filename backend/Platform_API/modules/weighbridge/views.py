@@ -2308,12 +2308,12 @@ class VehicleTypeCreateUpdateDeleteView(generics.RetrieveUpdateDestroyAPIView):
         return _tenant_scoped_reference_queryset(self.queryset, self.request.user)
 
     def perform_update(self, serializer):
-        _require_reference_write_access(self.request.user)
+        _require_reference_write_access(self.request.user, VehicleType, "change")
         instance = serializer.save()
         _sync_vehicle_type_product(instance, self.request.user)
 
     def perform_destroy(self, instance):
-        _require_reference_write_access(self.request.user)
+        _require_reference_write_access(self.request.user, VehicleType, "delete")
         instance.delete()
 
 
@@ -2329,7 +2329,7 @@ class VehicleTypeListView(generics.ListCreateAPIView):
         return _tenant_scoped_reference_queryset(super().get_queryset(), self.request.user)
 
     def perform_create(self, serializer):
-        _require_reference_write_access(self.request.user)
+        _require_reference_write_access(self.request.user, VehicleType, "add")
         instance = serializer.save(tenant=_get_request_user_tenant(self.request.user))
         _sync_vehicle_type_product(instance, self.request.user)
 
@@ -2343,7 +2343,7 @@ class ItemListCreateView(generics.ListCreateAPIView):
         return _tenant_scoped_reference_queryset(self.queryset, self.request.user)
 
     def perform_create(self, serializer):
-        _require_reference_write_access(self.request.user)
+        _require_reference_write_access(self.request.user, Item, "add")
         serializer.save(tenant=_get_request_user_tenant(self.request.user))
 
 
@@ -2356,11 +2356,11 @@ class ItemDetailView(generics.RetrieveUpdateDestroyAPIView):
         return _tenant_scoped_reference_queryset(self.queryset, self.request.user)
 
     def perform_update(self, serializer):
-        _require_reference_write_access(self.request.user)
+        _require_reference_write_access(self.request.user, Item, "change")
         serializer.save()
 
     def perform_destroy(self, instance):
-        _require_reference_write_access(self.request.user)
+        _require_reference_write_access(self.request.user, Item, "delete")
         instance.delete()
 
 
@@ -2927,11 +2927,17 @@ def _allowed_branch_ids(user):
     return get_operational_branches_for_tenant(resolved).values_list("id", flat=True)
 
 
-def _require_reference_write_access(user):
-    if getattr(user, "is_superuser", False) or _is_weighbridge_tenant_admin(user):
+def _require_reference_write_access(user, model, action):
+    """Allow tenant admins or roles with the model-specific Django permission."""
+    permission = f"{model._meta.app_label}.{action}_{model._meta.model_name}"
+    if (
+        getattr(user, "is_superuser", False)
+        or _is_weighbridge_tenant_admin(user)
+        or user.has_perm(permission)
+    ):
         return
     raise PermissionDenied(
-        "Only organization administrators can modify organization reference data."
+        "You do not have permission to modify this weighbridge reference data."
     )
 
 
