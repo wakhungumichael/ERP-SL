@@ -405,9 +405,6 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const appLogoUrl = tenantContext.branding.logoUrl || '';
   const appPrimaryColor = tenantContext.branding.primaryColor || '#E85D26';
   const appTitle = activeOrganizationName || 'SL-ERP';
-  const appSubtitle = ((user as any)?.role === 'superadmin'
-    ? 'SaaS Control Center'
-    : 'Operations Platform');
   const tenantLoginPath = tenantContext.tenantCode
     ? `/login/${encodeURIComponent(tenantContext.tenantCode)}`
     : '/login';
@@ -653,10 +650,10 @@ export function Shell({ children }: { children: React.ReactNode }) {
         className={`${sidebarCollapsed ? 'w-16' : 'w-60'} h-screen overflow-hidden transition-all duration-200 bg-sidebar text-sidebar-foreground border-r border-sidebar-border flex-col hidden md:flex shrink-0`}
       >
         {/* Logo */}
-        <div className="h-[4.5rem] flex items-center px-3 border-b border-sidebar-border shrink-0 gap-2">
-          <Link href="/dashboard" className="flex min-w-0 flex-1 items-center gap-3">
+        <div className={`${sidebarCollapsed ? 'h-16 px-2' : 'h-24 px-3'} flex items-center border-b border-sidebar-border shrink-0 gap-2`}>
+          <Link href="/dashboard" className="flex min-w-0 flex-1 items-center justify-center">
             <div
-              className={sidebarCollapsed ? 'flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-lg' : 'flex h-12 w-20 shrink-0 items-center justify-center overflow-hidden'}
+              className={sidebarCollapsed ? 'flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-lg' : 'flex h-20 w-full items-center justify-center overflow-hidden'}
               style={{ backgroundColor: appLogoUrl ? 'transparent' : appPrimaryColor }}
             >
               {appLogoUrl ? (
@@ -665,12 +662,6 @@ export function Shell({ children }: { children: React.ReactNode }) {
                 <Scale className="h-5 w-5 text-primary-foreground" />
               )}
             </div>
-            {!sidebarCollapsed && (
-              <div className="min-w-0 flex-1">
-                <div className="truncate font-bold text-[15px] tracking-tight text-sidebar-foreground leading-none">{appTitle}</div>
-                <div className="truncate text-[9px] font-medium text-sidebar-foreground/40 uppercase tracking-widest mt-0.5">{appSubtitle}</div>
-              </div>
-            )}
           </Link>
           <button
             onClick={() => setSidebarCollapsed(c => !c)}
@@ -893,10 +884,10 @@ export function Shell({ children }: { children: React.ReactNode }) {
             <SheetDescription>Browse modules and pages on mobile.</SheetDescription>
           </SheetHeader>
           <div className="flex h-full flex-col">
-            <div className="flex h-[4.5rem] items-center gap-3 border-b border-sidebar-border px-4">
-              <Link href="/dashboard" className="flex min-w-0 flex-1 items-center gap-3" onClick={() => setMobileNavOpen(false)}>
+            <div className="flex h-24 items-center border-b border-sidebar-border px-4">
+              <Link href="/dashboard" className="flex min-w-0 flex-1 items-center justify-center" onClick={() => setMobileNavOpen(false)}>
                 <div
-                  className="flex h-12 w-20 shrink-0 items-center justify-center overflow-hidden"
+                  className="flex h-20 w-full shrink-0 items-center justify-center overflow-hidden"
                   style={{ backgroundColor: appLogoUrl ? 'transparent' : appPrimaryColor }}
                 >
                   {appLogoUrl ? (
@@ -904,10 +895,6 @@ export function Shell({ children }: { children: React.ReactNode }) {
                   ) : (
                     <Scale className="h-5 w-5 text-primary-foreground" />
                   )}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="truncate font-bold text-[15px] leading-none tracking-tight text-sidebar-foreground">{appTitle}</div>
-                  <div className="mt-0.5 truncate text-[9px] font-medium uppercase tracking-widest text-sidebar-foreground/40">{appSubtitle}</div>
                 </div>
               </Link>
             </div>
