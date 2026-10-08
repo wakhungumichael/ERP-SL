@@ -299,6 +299,7 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
   const [driverName, setDriverName] = useState('');
   const [driverPhone, setDriverPhone] = useState('');
   const [prefillVehicleKey, setPrefillVehicleKey] = useState('');
+  const [driverDetailsPrefilled, setDriverDetailsPrefilled] = useState(false);
   const [plateInput, setPlateInput] = useState('');
   const [selectedVehicle, setSelectedVehicle] = useState<any>(null);
   const [showVehicleResults, setShowVehicleResults] = useState(false);
@@ -444,18 +445,27 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
   }, [effectiveBranchId]);
 
   useEffect(() => {
-    if (isSecondFlow) return;
-    if (!vehicleId || prefillVehicleKey === vehicleId) return;
+    if (!activeVehicleId || !workflowContext) return;
 
-    const defaults = workflowContext?.latest_transaction_defaults;
-    if (!defaults) return;
+    const activePrefillKey = `${isSecondFlow ? 'second' : 'first'}:${activeVehicleId}`;
+    if (prefillVehicleKey === activePrefillKey) return;
 
-    setItemId(defaults.item_id ? String(defaults.item_id) : '');
-    setDestination(defaults.destination ?? '');
-    setDriverName(defaults.driver_name ?? '');
-    setDriverPhone(defaults.driver_phone ?? '');
-    setPrefillVehicleKey(vehicleId);
-  }, [isSecondFlow, vehicleId, prefillVehicleKey, workflowContext]);
+    const defaults = workflowContext.latest_transaction_defaults;
+    if (!isSecondFlow) {
+      setItemId(defaults?.item_id ? String(defaults.item_id) : '');
+      setDestination(defaults?.destination ?? '');
+    }
+
+    // A second weight belongs to the pending first-weight ticket, so its driver
+    // takes precedence over older vehicle history. Operators can still edit it.
+    const driverSource = isSecondFlow && firstTransaction ? firstTransaction : defaults;
+    const nextDriverName = driverSource?.driver_name ?? '';
+    const nextDriverPhone = driverSource?.driver_phone ?? '';
+    setDriverName(nextDriverName);
+    setDriverPhone(nextDriverPhone);
+    setDriverDetailsPrefilled(Boolean(nextDriverName || nextDriverPhone));
+    setPrefillVehicleKey(activePrefillKey);
+  }, [activeVehicleId, firstTransaction, isSecondFlow, prefillVehicleKey, workflowContext]);
 
   const customerOptions = useMemo(
     () => customerList.map((customer: any) => ({
@@ -527,6 +537,9 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
     setVehicleForm((current) => ({ ...current, number_plate: String(vehicle.number_plate ?? '').toUpperCase() }));
     setShowVehicleResults(false);
     setPrefillVehicleKey('');
+    setDriverName('');
+    setDriverPhone('');
+    setDriverDetailsPrefilled(false);
     if (isSecondFlow) {
       setSelectedVehicle(vehicle);
       setCapturedWeight(null);
@@ -622,6 +635,10 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
     setSelectedVehicle(null);
     setShowVehicleResults(false);
     setPlateRecognition(null);
+    setDriverName('');
+    setDriverPhone('');
+    setDriverDetailsPrefilled(false);
+    setPrefillVehicleKey('');
   }
 
   function handleSubmit(event: React.FormEvent) {
@@ -894,6 +911,10 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
                           setShowVehicleResults(true);
                           setSelectedVehicle(null);
                           setPlateRecognition(null);
+                          setDriverName('');
+                          setDriverPhone('');
+                          setDriverDetailsPrefilled(false);
+                          setPrefillVehicleKey('');
                         }}
                         onFocus={() => setShowVehicleResults(true)}
                       />
@@ -997,14 +1018,14 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
                           <Label required>Customer</Label>
                           {canAddCustomer ? <Button type="button" variant="outline" size="sm" className="h-8 gap-1 border-primary/25 text-primary hover:bg-primary/10 hover:text-primary" onClick={() => setCustomerOpen(true)}><Plus className="h-3.5 w-3.5" /> Add Customer</Button> : null}
                         </div>
-                        <SearchSelect value={customerId} onChange={(value) => { setCustomerId(value); setVehicleId(''); setVehicleTypeId(''); setItemId(''); setDestination(''); setDriverName(''); setDriverPhone(''); setPrefillVehicleKey(''); setPlateRecognition(null); }} placeholder="Search customer" searchPlaceholder="Search customer" emptyLabel="No customers found" options={customerOptions} />
+                        <SearchSelect value={customerId} onChange={(value) => { setCustomerId(value); setVehicleId(''); setVehicleTypeId(''); setItemId(''); setDestination(''); setDriverName(''); setDriverPhone(''); setDriverDetailsPrefilled(false); setPrefillVehicleKey(''); setPlateRecognition(null); }} placeholder="Search customer" searchPlaceholder="Search customer" emptyLabel="No customers found" options={customerOptions} />
                       </div>
                       <div className="space-y-1.5">
                         <div className="flex min-h-8 items-center justify-between gap-3">
                           <Label required>Vehicle</Label>
                           {canAddVehicle ? <Button type="button" variant="outline" size="sm" className="h-8 gap-1 border-primary/25 text-primary hover:bg-primary/10 hover:text-primary" onClick={() => { setVehicleForm((current) => ({ ...current, number_plate: plateInput.trim().toUpperCase() })); setVehicleOpen(true); }} disabled={!customerId}><Plus className="h-3.5 w-3.5" /> Add Vehicle</Button> : null}
                         </div>
-                        <SearchSelect value={vehicleId} onChange={(value) => { setPrefillVehicleKey(''); setVehicleId(value); const selected = vehicleList.find((vehicle: any) => String(vehicle.id) === value); setVehicleTypeId(selected?.vehicle_type ? String(selected.vehicle_type) : ''); setPlateInput(selected?.number_plate ?? ''); setPlateRecognition(null); }} placeholder={customerId ? 'Search vehicle' : 'Select customer first'} searchPlaceholder="Search vehicle" emptyLabel="No vehicles found" disabled={!customerId} options={vehicleOptions} />
+                        <SearchSelect value={vehicleId} onChange={(value) => { setPrefillVehicleKey(''); setDriverName(''); setDriverPhone(''); setDriverDetailsPrefilled(false); setVehicleId(value); const selected = vehicleList.find((vehicle: any) => String(vehicle.id) === value); setVehicleTypeId(selected?.vehicle_type ? String(selected.vehicle_type) : ''); setPlateInput(selected?.number_plate ?? ''); setPlateRecognition(null); }} placeholder={customerId ? 'Search vehicle' : 'Select customer first'} searchPlaceholder="Search vehicle" emptyLabel="No vehicles found" disabled={!customerId} options={vehicleOptions} />
                       </div>
                       {duplicateOpenFirstWeight ? <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 md:col-span-2">Open draft found for this vehicle: <span className="font-mono font-bold">TX-{String(duplicateOpenFirstWeight.id).padStart(5, '0')}</span>. Complete or approve that {duplicateOpenFirstWeight.operation_type_name.toLowerCase()} record before saving another one.</div> : null}
                     </div>
@@ -1018,8 +1039,8 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
                       </div>
                     </section>
                     <section className="rounded-xl border border-primary/15 bg-card p-3 shadow-sm">
-                      <div className="mb-3 flex items-center gap-3"><span className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-sm font-bold text-primary-foreground">3</span><div><h3 className="flex items-center gap-2 font-semibold"><UserRound className="h-4 w-4 text-primary" />Driver details</h3><p className="text-xs text-muted-foreground">Optional contact details for ticket follow-up.</p></div></div>
-                      <div className="grid gap-3 sm:grid-cols-2"><div className="space-y-1.5"><div className="flex min-h-8 items-center"><Label>Driver Name</Label></div><Input value={driverName} onChange={(event) => setDriverName(event.target.value)} placeholder="Driver name" /></div><div className="space-y-1.5"><div className="flex min-h-8 items-center"><Label>Driver Phone</Label></div><Input type="tel" value={driverPhone} onChange={(event) => setDriverPhone(event.target.value)} placeholder="Driver phone" /></div></div>
+                      <div className="mb-3 flex items-center gap-3"><span className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-sm font-bold text-primary-foreground">3</span><div><h3 className="flex items-center gap-2 font-semibold"><UserRound className="h-4 w-4 text-primary" />Driver details</h3><p className="text-xs text-muted-foreground">{driverDetailsPrefilled ? 'Loaded from this vehicle’s latest ticket. You can edit the details.' : 'Optional contact details for ticket follow-up.'}</p></div></div>
+                      <div className="grid gap-3 sm:grid-cols-2"><div className="space-y-1.5"><div className="flex min-h-8 items-center"><Label>Driver Name</Label></div><Input value={driverName} onChange={(event) => { setDriverName(event.target.value); setDriverDetailsPrefilled(false); }} placeholder="Driver name" /></div><div className="space-y-1.5"><div className="flex min-h-8 items-center"><Label>Driver Phone</Label></div><Input type="tel" value={driverPhone} onChange={(event) => { setDriverPhone(event.target.value); setDriverDetailsPrefilled(false); }} placeholder="Driver phone" /></div></div>
                     </section>
                   </div>
                 </div>
@@ -1027,13 +1048,14 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
 
               {isSecondFlow ? (
                 <div className="grid gap-4 md:grid-cols-2">
+                  {driverDetailsPrefilled ? <p className="text-xs text-muted-foreground md:col-span-2">Driver details were loaded from the pending first-weight ticket. You can edit them before completing the transaction.</p> : null}
                   <div className="space-y-1.5">
                     <Label>Driver Name</Label>
-                    <Input value={driverName} onChange={(event) => setDriverName(event.target.value)} placeholder="Driver name" />
+                    <Input value={driverName} onChange={(event) => { setDriverName(event.target.value); setDriverDetailsPrefilled(false); }} placeholder="Driver name" />
                   </div>
                   <div className="space-y-1.5">
                     <Label>Driver Phone</Label>
-                    <Input value={driverPhone} onChange={(event) => setDriverPhone(event.target.value)} placeholder="Driver phone" />
+                    <Input type="tel" value={driverPhone} onChange={(event) => { setDriverPhone(event.target.value); setDriverDetailsPrefilled(false); }} placeholder="Driver phone" />
                   </div>
                 </div>
               ) : null}
