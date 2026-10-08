@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { parseFormErrors, type FormValidationErrors } from '@/lib/api-errors';
+import { formatApiError, parseFormErrors, type FormValidationErrors } from '@/lib/api-errors';
 
 const EMPTY_ERRORS: FormValidationErrors = { fields: {}, form: [] };
 
@@ -35,6 +35,12 @@ export function useFormErrors() {
 
   function apply(error: unknown) {
     const parsed = parseFormErrors(error);
+    if (Object.keys(parsed.fields).length === 0 && parsed.form.length === 0) {
+      parsed.form = [formatApiError(
+        error,
+        'The server could not save this form. Please try again or contact your administrator if the problem continues.',
+      )];
+    }
     setErrors(parsed);
     focusFirstInvalidField(Object.keys(parsed.fields));
     return parsed;

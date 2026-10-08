@@ -286,6 +286,7 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
   const customerErrors = useFormErrors();
   const vehicleErrors = useFormErrors();
   const itemErrors = useFormErrors();
+  const transactionErrors = useFormErrors();
   const canAddCustomer = hasPermission(user as any, 'SL_Weighbridge.add_customer');
   const canAddVehicle = hasPermission(user as any, 'SL_Weighbridge.add_vehicle');
   const canAddItem = hasPermission(user as any, 'SL_Weighbridge.add_item');
@@ -635,6 +636,7 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
 
   function handleCapture(weight: number) {
     setCapturedWeight(weight);
+    transactionErrors.clearField('gross_weight');
     refreshCameraPreviews();
   }
 
@@ -651,26 +653,27 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
 
   function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
+    transactionErrors.clear();
     if (!selectedOperation) {
-      toast({ title: 'Choose operation type', variant: 'destructive' });
+      transactionErrors.apply({ operation_type: ['Choose the operation type before saving.'] });
       return;
     }
     if (!effectiveWeight || effectiveWeight <= 0) {
-      toast({
-        title: 'No weight captured',
-        description: manualMode ? 'Enter the weight manually.' : 'Capture the live weight first.',
-        variant: 'destructive',
+      transactionErrors.apply({
+        gross_weight: [manualMode
+          ? 'Enter a positive weight in kilograms before saving.'
+          : 'Capture a stable live weight, or switch to manual mode to enter it.'],
       });
       return;
     }
     if (manualMode && !weightReason.trim()) {
-      toast({ title: 'Reason required', description: 'Enter a reason for manual weight entry.', variant: 'destructive' });
+      transactionErrors.apply({ weight_reason: ['Explain why this weight was captured manually before saving.'] });
       return;
     }
 
     if (isSecondFlow) {
       if (!selectedVehicle || !workflowContext?.has_pending_first_weight || !firstTransaction) {
-        toast({ title: 'Pending first weight required', description: 'Search and select a vehicle with a pending first weight.', variant: 'destructive' });
+        transactionErrors.apply({ paired_first_transaction: ['Select a vehicle with an unpaired first weight that is still within the branch age limit.'] });
         return;
       }
 
@@ -708,23 +711,19 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
           resetSecondFlowState();
           setLocation('/weighbridge/transactions');
         },
-        onError: (err: any) => toast({
-          title: 'Could not complete second weight',
-          description: formatApiError(err, 'The server rejected this second-weight entry. Check the vehicle workflow and required fields.'),
-          variant: 'destructive',
-        }),
+        onError: transactionErrors.apply,
       });
       return;
     }
 
-    if (!branchId || !customerId || !vehicleId || !vehicleTypeId || !itemId || !destination.trim()) {
-      toast({
-        title: 'Complete the required fields',
-        description: !vehicleTypeId && vehicleId
-          ? 'The selected vehicle has no vehicle type. Update its vehicle record before weighing.'
-          : 'Branch, customer, vehicle, commodity, and destination are required.',
-        variant: 'destructive',
-      });
+    if (!transactionErrors.validateRequired({
+      branch: { value: branchId, label: 'Branch' },
+      customer: { value: customerId, label: 'Customer' },
+      vehicle: { value: vehicleId, label: 'Vehicle' },
+      vehicle_type: { value: vehicleTypeId, label: 'Vehicle type' },
+      item: { value: itemId, label: 'Commodity' },
+      destination: { value: destination, label: 'Destination' },
+    })) {
       return;
     }
 
@@ -759,11 +758,7 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
         setCapturedCameraImage(null);
         setLocation('/weighbridge/transactions');
       },
-      onError: (err: any) => toast({
-        title: 'Could not log first weight',
-        description: formatApiError(err, 'The server rejected this first-weight entry. Check the weight, vehicle setup, and required fields.'),
-        variant: 'destructive',
-      }),
+      onError: transactionErrors.apply,
     });
   }
 
@@ -773,7 +768,7 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
         title={<span className="flex items-center gap-2"><Scale className="h-5 w-5 text-primary" />Weighment Entry</span>}
       />
 
-      <form onSubmit={handleSubmit} className="grid min-w-0 items-stretch gap-4 xl:min-h-[calc(100vh-19rem)] xl:grid-cols-[minmax(280px,0.68fr)_minmax(0,1.72fr)]">
+      <form noValidate onSubmit={handleSubmit} className="grid min-w-0 items-stretch gap-4 xl:min-h-[calc(100vh-19rem)] xl:grid-cols-[minmax(280px,0.68fr)_minmax(0,1.72fr)]">
         <aside className="grid min-w-0 gap-4 xl:grid-rows-2">
           <Card className="flex h-full flex-col overflow-hidden border-primary/20 shadow-sm">
             <CardHeader className="border-b border-primary/15 bg-primary/5 px-4 py-3">
@@ -792,6 +787,8 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
                     setManualMode((current) => !current);
                     setCapturedWeight(null);
                     setManualWeight('');
+                    transactionErrors.clearField('gross_weight');
+                    transactionErrors.clearField('weight_reason');
                   }}
                   className={cn(
                     'flex h-8 items-center gap-1.5 rounded-full border px-2.5 py-0 text-[11px] font-bold uppercase tracking-wide',
@@ -806,11 +803,13 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
                 <div className="grid gap-4 md:grid-cols-2">
                   <div className="space-y-1.5">
                     <Label required>{isSecondFlow ? 'Tare weight (kg)' : 'Gross weight (kg)'}</Label>
-                    <Input required type="number" min="1" value={manualWeight} onChange={(event) => setManualWeight(event.target.value)} placeholder="Enter weight" />
+                    <Input name="gross_weight" required type="number" min="1" aria-invalid={!!transactionErrors.errors.fields.gross_weight} aria-describedby={transactionErrors.errors.fields.gross_weight ? 'manual-weight-error' : undefined} value={manualWeight} onChange={(event) => { setManualWeight(event.target.value); transactionErrors.clearField('gross_weight'); }} placeholder="Enter weight" />
+                    <InlineFormError id="manual-weight-error" messages={transactionErrors.errors.fields.gross_weight} />
                   </div>
                   <div className="space-y-1.5 md:col-span-2">
                     <Label required>Reason</Label>
-                    <Textarea required rows={2} value={weightReason} onChange={(event) => setWeightReason(event.target.value)} placeholder="Reason for manual capture" />
+                    <Textarea name="weight_reason" required rows={2} aria-invalid={!!transactionErrors.errors.fields.weight_reason} aria-describedby={transactionErrors.errors.fields.weight_reason ? 'manual-reason-error' : undefined} value={weightReason} onChange={(event) => { setWeightReason(event.target.value); transactionErrors.clearField('weight_reason'); }} placeholder="Reason for manual capture" />
+                    <InlineFormError id="manual-reason-error" messages={transactionErrors.errors.fields.weight_reason} />
                   </div>
                 </div>
               ) : (
@@ -822,6 +821,7 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
                     onCapture={handleCapture}
                     disabled={isSecondFlow ? !workflowContext?.has_pending_first_weight : !branchId}
                   />
+                  <InlineFormError messages={transactionErrors.errors.fields.gross_weight} />
                 </div>
               )}
 
@@ -869,11 +869,12 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-3 p-4">
+              <FormErrorSummary errors={transactionErrors.errors} title={isSecondFlow ? 'Second weight could not be saved' : 'First weight could not be saved'} />
               <div className="grid gap-3 rounded-xl border border-primary/20 bg-primary/[0.04] p-3 md:grid-cols-2">
                 <div className="space-y-1.5">
                   <Label required>Operation Type</Label>
-                  <Select value={operationTypeId} onValueChange={setOperationTypeId}>
-                    <SelectTrigger aria-required="true">
+                  <Select value={operationTypeId} onValueChange={(value) => { setOperationTypeId(value); transactionErrors.clearField('operation_type'); }}>
+                    <SelectTrigger name="operation_type" aria-required="true" aria-invalid={!!transactionErrors.errors.fields.operation_type} aria-describedby={transactionErrors.errors.fields.operation_type ? 'operation-type-error' : undefined}>
                       <SelectValue placeholder="Select operation type" />
                     </SelectTrigger>
                     <SelectContent>
@@ -884,18 +885,20 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
                       ))}
                     </SelectContent>
                   </Select>
+                  <InlineFormError id="operation-type-error" messages={transactionErrors.errors.fields.operation_type} />
                 </div>
                 {shouldShowBranchSelector ? (
                   <div className="space-y-1.5">
                     <Label required>Branch</Label>
-                    <Select value={branchId} onValueChange={setBranchId}>
-                      <SelectTrigger aria-required="true"><SelectValue placeholder="Select branch" /></SelectTrigger>
+                    <Select value={branchId} onValueChange={(value) => { setBranchId(value); transactionErrors.clearField('branch'); }}>
+                      <SelectTrigger name="branch" aria-required="true" aria-invalid={!!transactionErrors.errors.fields.branch} aria-describedby={transactionErrors.errors.fields.branch ? 'branch-error' : undefined}><SelectValue placeholder="Select branch" /></SelectTrigger>
                       <SelectContent>
                         {selectableBranchList.map((branch: any) => (
                           <SelectItem key={branch.id} value={String(branch.id)}>{branch.name}</SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
+                    <InlineFormError id="branch-error" messages={transactionErrors.errors.fields.branch} />
                   </div>
                 ) : (
                   <div className="flex items-center rounded-lg border border-dashed border-primary/25 bg-background/70 px-3 text-xs text-muted-foreground">
@@ -911,6 +914,9 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
                     <div className="flex items-center gap-2 rounded-lg border px-3 py-2 focus-within:ring-2 focus-within:ring-primary">
                       <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
                       <input
+                        name="paired_first_transaction"
+                        aria-invalid={!!transactionErrors.errors.fields.paired_first_transaction}
+                        aria-describedby={transactionErrors.errors.fields.paired_first_transaction ? 'paired-first-error' : undefined}
                         className="flex-1 bg-transparent font-mono text-lg font-bold uppercase tracking-widest outline-none placeholder:font-normal placeholder:tracking-normal"
                         placeholder="Type plate to search"
                         value={plateInput}
@@ -923,6 +929,7 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
                           setDriverPhone('');
                           setDriverDetailsPrefilled(false);
                           setPrefillVehicleKey('');
+                          transactionErrors.clearField('paired_first_transaction');
                         }}
                         onFocus={() => setShowVehicleResults(true)}
                       />
@@ -951,6 +958,7 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
                       </div>
                     )}
                   </div>
+                  <InlineFormError id="paired-first-error" messages={transactionErrors.errors.fields.paired_first_transaction} />
 
                   {selectedVehicle ? (
                     <div className={cn(
@@ -1026,14 +1034,17 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
                           <Label required>Customer</Label>
                           {canAddCustomer ? <Button type="button" variant="outline" size="sm" className="h-8 gap-1 border-primary/25 text-primary hover:bg-primary/10 hover:text-primary" onClick={() => setCustomerOpen(true)}><Plus className="h-3.5 w-3.5" /> Add Customer</Button> : null}
                         </div>
-                        <SearchSelect value={customerId} onChange={(value) => { setCustomerId(value); setVehicleId(''); setVehicleTypeId(''); setItemId(''); setDestination(''); setDriverName(''); setDriverPhone(''); setDriverDetailsPrefilled(false); setPrefillVehicleKey(''); setPlateRecognition(null); }} placeholder="Search customer" searchPlaceholder="Search customer" emptyLabel="No customers found" options={customerOptions} />
+                        <SearchSelect value={customerId} onChange={(value) => { setCustomerId(value); setVehicleId(''); setVehicleTypeId(''); setItemId(''); setDestination(''); setDriverName(''); setDriverPhone(''); setDriverDetailsPrefilled(false); setPrefillVehicleKey(''); setPlateRecognition(null); transactionErrors.clearField('customer'); transactionErrors.clearField('vehicle'); transactionErrors.clearField('vehicle_type'); }} placeholder="Search customer" searchPlaceholder="Search customer" emptyLabel="No customers found" options={customerOptions} />
+                        <InlineFormError messages={transactionErrors.errors.fields.customer} />
                       </div>
                       <div className="space-y-1.5">
                         <div className="flex min-h-8 items-center justify-between gap-3">
                           <Label required>Vehicle</Label>
                           {canAddVehicle ? <Button type="button" variant="outline" size="sm" className="h-8 gap-1 border-primary/25 text-primary hover:bg-primary/10 hover:text-primary" onClick={() => { setVehicleForm((current) => ({ ...current, number_plate: plateInput.trim().toUpperCase() })); setVehicleOpen(true); }} disabled={!customerId}><Plus className="h-3.5 w-3.5" /> Add Vehicle</Button> : null}
                         </div>
-                        <SearchSelect value={vehicleId} onChange={(value) => { setPrefillVehicleKey(''); setDriverName(''); setDriverPhone(''); setDriverDetailsPrefilled(false); setVehicleId(value); const selected = vehicleList.find((vehicle: any) => String(vehicle.id) === value); setVehicleTypeId(selected?.vehicle_type ? String(selected.vehicle_type) : ''); setPlateInput(selected?.number_plate ?? ''); setPlateRecognition(null); }} placeholder={customerId ? 'Search vehicle' : 'Select customer first'} searchPlaceholder="Search vehicle" emptyLabel="No vehicles found" disabled={!customerId} options={vehicleOptions} />
+                        <SearchSelect value={vehicleId} onChange={(value) => { setPrefillVehicleKey(''); setDriverName(''); setDriverPhone(''); setDriverDetailsPrefilled(false); setVehicleId(value); const selected = vehicleList.find((vehicle: any) => String(vehicle.id) === value); setVehicleTypeId(selected?.vehicle_type ? String(selected.vehicle_type) : ''); setPlateInput(selected?.number_plate ?? ''); setPlateRecognition(null); transactionErrors.clearField('vehicle'); transactionErrors.clearField('vehicle_type'); }} placeholder={customerId ? 'Search vehicle' : 'Select customer first'} searchPlaceholder="Search vehicle" emptyLabel="No vehicles found" disabled={!customerId} options={vehicleOptions} />
+                        <InlineFormError messages={transactionErrors.errors.fields.vehicle} />
+                        <InlineFormError messages={transactionErrors.errors.fields.vehicle_type} />
                       </div>
                       {duplicateOpenFirstWeight ? <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 md:col-span-2">Open draft found for this vehicle: <span className="font-mono font-bold">TX-{String(duplicateOpenFirstWeight.id).padStart(5, '0')}</span>. Complete or approve that {duplicateOpenFirstWeight.operation_type_name.toLowerCase()} record before saving another one.</div> : null}
                     </div>
@@ -1042,8 +1053,8 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
                     <section className="rounded-xl border border-primary/15 bg-card p-3 shadow-sm">
                       <div className="mb-3 flex items-center gap-3"><span className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-sm font-bold text-primary-foreground">2</span><div><h3 className="flex items-center gap-2 font-semibold"><Package className="h-4 w-4 text-primary" />Load details</h3><p className="text-xs text-muted-foreground">Record what the vehicle is carrying and where it is going.</p></div></div>
                       <div className="grid gap-3 sm:grid-cols-2">
-                        <div className="space-y-1.5"><div className="flex min-h-8 items-center justify-between gap-3"><Label required>Commodity</Label>{canAddItem ? <Button type="button" variant="outline" size="sm" className="h-8 gap-1 border-primary/25 text-primary hover:bg-primary/10 hover:text-primary" onClick={() => setItemOpen(true)}><Plus className="h-3.5 w-3.5" /> Add Item</Button> : null}</div><Select value={itemId} onValueChange={setItemId}><SelectTrigger aria-required="true"><SelectValue placeholder="Select commodity" /></SelectTrigger><SelectContent>{itemList.map((row: any) => <SelectItem key={row.id} value={String(row.id)}>{row.name}</SelectItem>)}</SelectContent></Select></div>
-                        <div className="space-y-1.5"><div className="flex min-h-8 items-center"><Label required>Destination</Label></div><Input required value={destination} onChange={(event) => setDestination(event.target.value)} placeholder="Enter destination" /></div>
+                        <div className="space-y-1.5"><div className="flex min-h-8 items-center justify-between gap-3"><Label required>Commodity</Label>{canAddItem ? <Button type="button" variant="outline" size="sm" className="h-8 gap-1 border-primary/25 text-primary hover:bg-primary/10 hover:text-primary" onClick={() => setItemOpen(true)}><Plus className="h-3.5 w-3.5" /> Add Item</Button> : null}</div><Select value={itemId} onValueChange={(value) => { setItemId(value); transactionErrors.clearField('item'); }}><SelectTrigger name="item" aria-required="true" aria-invalid={!!transactionErrors.errors.fields.item} aria-describedby={transactionErrors.errors.fields.item ? 'item-error' : undefined}><SelectValue placeholder="Select commodity" /></SelectTrigger><SelectContent>{itemList.map((row: any) => <SelectItem key={row.id} value={String(row.id)}>{row.name}</SelectItem>)}</SelectContent></Select><InlineFormError id="item-error" messages={transactionErrors.errors.fields.item} /></div>
+                        <div className="space-y-1.5"><div className="flex min-h-8 items-center"><Label required>Destination</Label></div><Input name="destination" required aria-invalid={!!transactionErrors.errors.fields.destination} aria-describedby={transactionErrors.errors.fields.destination ? 'destination-error' : undefined} value={destination} onChange={(event) => { setDestination(event.target.value); transactionErrors.clearField('destination'); }} placeholder="Enter destination" /><InlineFormError id="destination-error" messages={transactionErrors.errors.fields.destination} /></div>
                       </div>
                     </section>
                     <section className="rounded-xl border border-primary/15 bg-card p-3 shadow-sm">

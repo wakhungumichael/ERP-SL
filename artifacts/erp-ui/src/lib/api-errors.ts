@@ -73,7 +73,10 @@ function collectErrors(value: unknown, field: string | null, result: FormValidat
   }
   if (typeof value === 'string') {
     const trimmed = value.trim();
-    if (!trimmed || trimmed.startsWith('<!DOCTYPE html>')) return;
+    // Django's debug 500 pages are HTML documents, sometimes preceded by a
+    // transport prefix such as "HTML 500 Internal Server Error:". Never show
+    // that technical markup to an ERP user.
+    if (!trimmed || /<!doctype html|<html[\s>]/i.test(trimmed)) return;
     if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
       try {
         collectErrors(JSON.parse(trimmed), field, result);
