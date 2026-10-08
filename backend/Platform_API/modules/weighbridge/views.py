@@ -490,6 +490,7 @@ DEFAULT_WEIGHING_OPERATION_TYPES = [
 
 OPEN_TRANSACTION_STATUSES = ["Draft", "Recalled"]
 REVIEWABLE_TRANSACTION_STATUSES = ["Draft", "Recalled", "Rejected"]
+PENDING_FIRST_WEIGHT_STATUSES = ["Draft", "Recalled", "Completed"]
 
 
 def _ensure_default_weighing_operation_types(tenant):
@@ -530,20 +531,46 @@ def _flow_filter_q(flow_kind):
     return Q(operation_type__flow_kind=flow_kind)
 
 
+def _max_first_weight_age_days(branch):
+    """Return the pairing window configured for the first weight's branch."""
+    try:
+        cfg = IndicatorConfig.objects.filter(branch=branch).only("max_first_weight_age_days").first()
+        if cfg is not None and cfg.max_first_weight_age_days is not None:
+            return max(0, int(cfg.max_first_weight_age_days))
+    except (TypeError, ValueError):
+        pass
+    return 3
+
+
+def _is_pending_first_weight(transaction, *, now=None):
+    """A first weight remains pairable until paired, rejected, or outside its branch window."""
+    if transaction is None or _resolve_transaction_flow(transaction) != "first":
+        return False
+    if transaction.paired or transaction.status not in PENDING_FIRST_WEIGHT_STATUSES:
+        return False
+    recorded_at = transaction.created_at
+    if not recorded_at:
+        return False
+    return recorded_at >= (now or timezone.now()) - timedelta(days=_max_first_weight_age_days(transaction.branch))
+
+
 def _find_open_transaction_duplicate(*, tenant, vehicle, flow_kind, exclude_pk=None):
-    qs = Transaction.objects.filter(
-        vehicle=vehicle,
-        status__in=OPEN_TRANSACTION_STATUSES,
-    )
+    qs = Transaction.objects.filter(vehicle=vehicle)
     if tenant is None:
         qs = qs.filter(tenant__isnull=True)
     else:
         qs = qs.filter(tenant=tenant)
     if exclude_pk is not None:
         qs = qs.exclude(pk=exclude_pk)
-    if flow_kind == "second":
-        qs = qs.filter(_flow_filter_q(flow_kind))
-    return qs.select_related("operation_type", "item").order_by("-updated_at", "-created_at", "-id").first()
+    qs = qs.select_related("operation_type", "item", "branch").order_by("-updated_at", "-created_at", "-id")
+
+    if flow_kind == "first":
+        for transaction in qs.filter(_flow_filter_q("first"), paired=False, status__in=PENDING_FIRST_WEIGHT_STATUSES):
+            if _is_pending_first_weight(transaction):
+                return transaction
+        return None
+
+    return qs.filter(_flow_filter_q(flow_kind), status__in=OPEN_TRANSACTION_STATUSES).first()
 
 
 def _transaction_prefill_defaults(transaction):
@@ -923,6 +950,15 @@ class TransactionListCreateView(generics.ListCreateAPIView):
         if not _has_weighbridge_process_permission(self.request.user, capture_permission):
             raise PermissionDenied("You do not have permission for this weight-capture step.")
 
+        if flow_kind == "second":
+            first_weight = validated.get("paired_first_transaction")
+            if not first_weight or first_weight.vehicle_id != vehicle.id or not _is_pending_first_weight(first_weight):
+                raise serializers.ValidationError({
+                    "paired_first_transaction": (
+                        "Select an unpaired first weight for this vehicle that is within the branch's maximum first-weight age."
+                    )
+                })
+
         duplicate = _find_open_transaction_duplicate(
             tenant=user_tenant,
             vehicle=vehicle,
@@ -930,13 +966,18 @@ class TransactionListCreateView(generics.ListCreateAPIView):
         )
         if duplicate:
             flow_label = (getattr(getattr(duplicate, "operation_type", None), "name", None) or duplicate.weight_type or flow_kind).strip()
+            if flow_kind == "first":
+                message = (
+                    f"Vehicle {vehicle.number_plate} already has a pending {flow_label} "
+                    f"(TX-{duplicate.id:05d}). Capture its second weight before recording another first weight."
+                )
+            else:
+                message = (
+                    f"Vehicle {vehicle.number_plate} already has an active open {flow_label} transaction "
+                    f"(TX-{duplicate.id:05d}) in {duplicate.status}. Complete, recall, or deactivate that record before creating another one."
+                )
             raise serializers.ValidationError(
-                {
-                    "vehicle": (
-                        f"Vehicle {vehicle.number_plate} already has an active open {flow_label} transaction "
-                        f"(TX-{duplicate.id:05d}) in {duplicate.status}. Complete, recall, or deactivate that record before creating another one."
-                    )
-                }
+                {"vehicle": message}
             )
 
         try:
@@ -1006,17 +1047,6 @@ class WorkflowContextView(APIView):
         except Vehicle.DoesNotExist:
             return Response({"error": f"Vehicle {vehicle_id} not found."}, status=status.HTTP_404_NOT_FOUND)
 
-        # Determine the configurable age window for matching first weights
-        max_age_days = 3
-        try:
-            cfg = IndicatorConfig.objects.filter(branch__isnull=False).first() or IndicatorConfig.objects.first()
-            if cfg and cfg.max_first_weight_age_days:
-                max_age_days = cfg.max_first_weight_age_days
-        except Exception:
-            pass
-
-        age_cutoff = timezone.now() - timedelta(days=max_age_days)
-
         # ── Tenant isolation for vehicle and transaction lookup ───────────────
         # After resolving the vehicle, we verify it has at least one transaction
         # belonging to the requesting user's tenant — this prevents cross-tenant
@@ -1032,18 +1062,19 @@ class WorkflowContextView(APIView):
             # tenant-scoped users (including profileless non-superusers).
             if not request.user.is_superuser:
                 return Response({"error": f"Vehicle {vehicle_id} not found."}, status=status.HTTP_404_NOT_FOUND)
-        first_weight_tx = (
+        pending_first_weights = (
             tx_qs
             .filter(
                 Q(operation_type__flow_kind="first") | Q(weight_type="First Weight"),
                 vehicle=vehicle,
-                status__in=OPEN_TRANSACTION_STATUSES,
+                status__in=PENDING_FIRST_WEIGHT_STATUSES,
                 paired=False,
-                created_at__gte=age_cutoff,
             )
+            .select_related("branch")
             .order_by("-created_at")
-            .first()
         )
+        first_weight_tx = next((tx for tx in pending_first_weights if _is_pending_first_weight(tx)), None)
+        max_age_days = _max_first_weight_age_days(first_weight_tx.branch) if first_weight_tx else 3
 
         latest_tx = (
             tx_qs

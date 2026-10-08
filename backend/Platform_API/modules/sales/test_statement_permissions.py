@@ -37,7 +37,7 @@ class CustomerStatementPermissionTests(TestCase):
 
     def test_explicit_statement_permission_allows_endpoint(self):
         permission = Permission.objects.get(
-            content_type__app_label="SL_Weighbridge",
+            content_type__app_label="SL_Sales",
             codename="can_view_customer_statements",
         )
         self.user.user_permissions.add(permission)
@@ -54,3 +54,41 @@ class CustomerStatementPermissionTests(TestCase):
         response = self.client.get(self.url)
 
         self.assertEqual(response.status_code, 404, response.data)
+
+
+class SalesCustomerPermissionTests(TestCase):
+    def setUp(self):
+        self.tenant = Tenant.objects.create(
+            name="Sales Customer Permission Tenant",
+            code="sales-customer-permission-tenant",
+            is_active=True,
+            status="active",
+        )
+        self.user = User.objects.create_user(username="sales_customer_user", password="pass")
+        TenantUserProfile.objects.create(
+            user=self.user,
+            tenant=self.tenant,
+            is_tenant_admin=False,
+        )
+        self.client = APIClient()
+        self.client.force_authenticate(self.user)
+
+    def test_sales_customer_permission_does_not_grant_weighbridge_access(self):
+        permission = Permission.objects.get(
+            content_type__app_label="SL_Sales",
+            codename="view_salescustomer",
+        )
+        self.user.user_permissions.add(permission)
+
+        self.assertEqual(self.client.get(reverse("sales-customers")).status_code, 200)
+        self.assertEqual(self.client.get(reverse("wb-customers")).status_code, 403)
+
+    def test_weighbridge_customer_permission_does_not_grant_sales_access(self):
+        permission = Permission.objects.get(
+            content_type__app_label="SL_Weighbridge",
+            codename="view_customer",
+        )
+        self.user.user_permissions.add(permission)
+
+        self.assertEqual(self.client.get(reverse("wb-customers")).status_code, 200)
+        self.assertEqual(self.client.get(reverse("sales-customers")).status_code, 403)

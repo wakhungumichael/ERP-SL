@@ -50,8 +50,8 @@ export default function CustomersPage() {
   const [saving, setSaving] = useState(false);
   const [editTarget, setEditTarget] = useState<Customer | null>(null);
   const [form, setForm] = useState<FormState>(emptyForm());
-  const canAddCustomer = hasPermission(user as any, 'SL_Weighbridge.add_customer');
-  const canChangeCustomer = hasPermission(user as any, 'SL_Weighbridge.change_customer');
+  const canAddCustomer = hasPermission(user as any, 'SL_Sales.add_salescustomer');
+  const canChangeCustomer = hasPermission(user as any, 'SL_Sales.change_salescustomer');
 
   const { data, isLoading, refetch } = useQuery({
     queryKey: ['sales-customers', token, search],

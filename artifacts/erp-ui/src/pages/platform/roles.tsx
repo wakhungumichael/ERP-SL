@@ -105,6 +105,7 @@ const ACTION_CODENAMES: Record<string, string> = {
   can_approve_pending_transactions: 'Approve',
   can_recall_completed_transactions: 'Recall',
   can_export_transaction: 'Export',
+  can_view_customer_statements: 'Customer Statements',
 };
 
 const CRUD_ACTIONS = ['view', 'add', 'change', 'delete'] as const;
@@ -121,7 +122,10 @@ function extractCrudAction(codename: string): string | null {
 
 function modelDisplayFromPerm(perm: Perm): string {
   if (perm.content_type.app_label === 'SL_Weighbridge' && perm.content_type.model === 'customer') {
-    return 'Customers (Sales & Weighbridge)';
+    return 'Weighbridge Customers';
+  }
+  if (perm.content_type.app_label === 'SL_Sales' && perm.content_type.model === 'salescustomer') {
+    return 'Sales Customers';
   }
   // "Can view vehicle type" → "Vehicle type" → capitalise first
   const match = perm.name.match(/^Can (?:add|change|delete|view) (.+)$/i);

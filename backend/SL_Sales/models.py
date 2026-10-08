@@ -8,6 +8,19 @@ from django.conf import settings
 from django.db import models
 from django.utils import timezone
 from Platform_Core.models import AuditMetadataMixin
+from SL_Weighbridge.models import Customer as SharedCustomer
+
+
+class SalesCustomer(SharedCustomer):
+    """Permission proxy for the shared customer master used by Sales."""
+
+    class Meta:
+        proxy = True
+        verbose_name = "sales customer"
+        verbose_name_plural = "sales customers"
+        permissions = [
+            ("can_view_customer_statements", "Can view customer statements"),
+        ]
 
 
 # ── Product / Service catalogue ───────────────────────────────────────────────

@@ -186,9 +186,6 @@ class Customer(models.Model):
 
     class Meta:
         ordering = ['name']
-        permissions = [
-            ("can_view_customer_statements", "Can view customer statements"),
-        ]
 
     def __str__(self):
         return self.name
