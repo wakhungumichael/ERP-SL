@@ -24,6 +24,7 @@ const FIELD_LABELS: Record<string, string> = {
   tare_weight: 'Tare weight',
   weight_reason: 'Weight reason',
   camera_snapshot: 'Camera image',
+  paired_first_transaction: 'Pending first weight',
 };
 
 function fieldLabel(field: string) {
@@ -65,6 +66,13 @@ function collectErrors(value: unknown, field: string | null, result: FormValidat
       result.fields[key] = [...(result.fields[key] ?? []), ...messages];
     });
     result.form.push(...value.validationErrors.form);
+    return;
+  }
+  // Generated API errors extend Error but retain the DRF response body on
+  // `data`. Read it before the generic Error message so a useful validation
+  // response is not reduced to "HTTP 400 Bad Request".
+  if (value instanceof Error && (value as any).data != null) {
+    collectErrors((value as any).data, field, result);
     return;
   }
   if (value instanceof Error) {
