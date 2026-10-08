@@ -30,6 +30,7 @@ from Platform_Core.models import OrganizationMembership, Tenant, TenantSettings,
 from Platform_API.modules.mixins import (
     NO_TENANT_ACCESS,
     apply_tenant_filter as _shared_apply_tenant_filter,
+    require_workspace_permission,
     resolve_user_tenant as _shared_resolve_user_tenant,
 )
 from SL_Weighbridge.sync import (
@@ -885,6 +886,7 @@ class WeighbridgeDashboardView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        require_workspace_permission(request.user, "can_view_weighbridge_overview")
         today = timezone.now().date()
         month_start = today.replace(day=1)
 

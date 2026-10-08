@@ -223,6 +223,9 @@ class HRDashboardView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        from Platform_API.modules.mixins import require_workspace_permission
+
+        require_workspace_permission(request.user, "can_view_hr_overview")
         tenant = _resolved_tenant_or_403(request.user)
         memberships = OrganizationMembership.objects.filter(tenant=tenant, is_active=True)
         user_ids = memberships.values_list("user_id", flat=True)

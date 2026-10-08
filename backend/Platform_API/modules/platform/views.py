@@ -476,6 +476,7 @@ TENANT_MANAGEABLE_PLATFORM_CORE_MODELS = {
 }
 
 TENANT_WORKSPACE_PERMISSION_CODENAMES = {
+    "can_view_workspace_dashboard",
     "can_access_finance_workspace",
     "can_view_erp_reports",
     "can_view_weighbridge_overview",
@@ -487,6 +488,9 @@ TENANT_WORKSPACE_PERMISSION_CODENAMES = {
     "can_view_manufacturing_overview",
     "can_view_retail_overview",
     "can_view_services_overview",
+    "can_view_procurement_overview",
+    "can_view_budgeting_overview",
+    "can_view_hr_overview",
 }
 
 # Permission content types use Django app labels while subscriptions use module

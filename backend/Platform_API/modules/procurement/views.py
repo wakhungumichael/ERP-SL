@@ -856,6 +856,9 @@ class ProcurementDashboardView(APIView):
         ).distinct()
 
     def get(self, request):
+        from Platform_API.modules.mixins import require_workspace_permission
+
+        require_workspace_permission(request.user, "can_view_procurement_overview")
         if not HAS_PROCUREMENT_MODELS:
             return Response({
                 "counts": {"total": 0, "draft": 0, "submitted": 0, "approved": 0, "received": 0, "cancelled": 0},

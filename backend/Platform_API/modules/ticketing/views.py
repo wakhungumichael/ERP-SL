@@ -709,6 +709,9 @@ class TicketingDashboardView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        from Platform_API.modules.mixins import require_workspace_permission
+
+        require_workspace_permission(request.user, "can_view_ticketing_overview")
         tenant = _tenant_or_403(request.user)
         tickets = Ticket.objects.filter(tenant=tenant)
         return Response(

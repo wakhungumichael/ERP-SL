@@ -254,6 +254,8 @@ class TenantRoleManagementTests(TestCase):
         self.assertNotIn("subscriptionplan", core_models)
         codenames = {item["codename"] for item in response.data}
         self.assertIn("can_access_finance_workspace", codenames)
+        self.assertIn("can_view_workspace_dashboard", codenames)
         self.assertIn("can_view_erp_reports", codenames)
         self.assertIn("can_view_weighbridge_overview", codenames)
         self.assertIn("can_view_crm_overview", codenames)
+        self.assertIn("can_view_procurement_overview", codenames)

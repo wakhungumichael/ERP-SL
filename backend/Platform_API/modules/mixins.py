@@ -71,6 +71,23 @@ def tenant_or_403(user, message="No organization linked to this account."):
     return resolved
 
 
+def require_workspace_permission(user, codename):
+    """Require a dashboard/overview permission while retaining administrator access."""
+    if getattr(user, "is_superuser", False) or getattr(user, "is_staff", False):
+        return
+    if OrganizationMembership.objects.filter(user=user, is_active=True, is_org_admin=True).exists():
+        return
+    try:
+        profile = user.tenant_profile
+        if profile and profile.is_tenant_admin:
+            return
+    except Exception:
+        pass
+    if user.has_perm(f"Platform_Core.{codename}"):
+        return
+    raise PermissionDenied("You do not have permission to view this dashboard.")
+
+
 def user_belongs_to_tenant(user, tenant):
     if tenant is None:
         return False

@@ -10,6 +10,7 @@ from Platform_API.modules.mixins import (
     NO_TENANT_ACCESS as _NO_TENANT_ACCESS,
     apply_tenant_filter as _shared_apply_tenant_filter,
     resolve_user_tenant as _resolve_user_tenant,
+    require_workspace_permission,
     tenant_or_403 as _tenant_or_403,
 )
 from SL_Inventory.models import InventoryBalance, InventoryMovement, InventoryReservation, Warehouse
@@ -137,6 +138,7 @@ class InventoryDashboardView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        require_workspace_permission(request.user, "can_view_inventory_overview")
         warehouses = _apply_tenant_filter(Warehouse.objects.all(), request.user)
         balances = _apply_tenant_filter(InventoryBalance.objects.select_related("warehouse", "product"), request.user)
         movements = _apply_tenant_filter(InventoryMovement.objects.select_related("warehouse", "product"), request.user)

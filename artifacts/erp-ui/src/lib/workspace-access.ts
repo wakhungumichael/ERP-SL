@@ -134,7 +134,7 @@ export function evaluateWorkspaceRouteAccess({
     return { allowed: false, reason: 'role', rule };
   }
 
-  if (isPermissionDrivenRole && normalizedPath !== '/dashboard') {
+  if (isPermissionDrivenRole) {
     if (!hasMenuPathPermission(normalizedPath, permissions)) {
       return { allowed: false, reason: 'permission', rule };
     }

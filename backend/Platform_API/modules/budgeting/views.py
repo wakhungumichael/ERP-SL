@@ -152,6 +152,9 @@ class BudgetDashboardView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        from Platform_API.modules.mixins import require_workspace_permission
+
+        require_workspace_permission(request.user, "can_view_budgeting_overview")
         budgets = _apply_tenant_filter(Budget.objects.all(), request.user)
         lines = _apply_budget_line_tenant_filter(BudgetLine.objects.select_related("budget"), request.user)
         commitments = _apply_tenant_filter(BudgetCommitment.objects.all(), request.user)

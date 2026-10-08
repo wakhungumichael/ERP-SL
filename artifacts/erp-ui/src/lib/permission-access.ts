@@ -1,4 +1,5 @@
 const PATH_PERMISSION_RULES: Array<{ prefix: string; permissions: string[] }> = [
+  { prefix: '/dashboard', permissions: ['Platform_Core.can_view_workspace_dashboard'] },
   { prefix: '/workspace/operations/dashboard', permissions: ['Platform_Core.can_view_weighbridge_overview'] },
   { prefix: '/weighbridge/weighment-entry', permissions: ['SL_Weighbridge.can_access_weighment_entry'] },
   { prefix: '/weighbridge/transactions', permissions: ['SL_Weighbridge.*_transaction'] },
@@ -75,7 +76,7 @@ function permissionMatches(permission: string, requirement: string) {
 }
 
 export function hasMenuPathPermission(path: string, permissions: string[]) {
-  if (path === '/' || path === '/dashboard') return true;
+  if (path === '/') return true;
   const cleanPath = path.split('?')[0]?.split('#')[0] ?? path;
   const rule = PATH_PERMISSION_RULES.find(candidate => pathMatches(cleanPath, candidate.prefix));
   if (!rule) return false;

@@ -1104,6 +1104,9 @@ class AccountingDashboardView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        from Platform_API.modules.mixins import require_workspace_permission
+
+        require_workspace_permission(request.user, "can_view_finance_overview")
         _, denied = _accounting_enabled_or_response(request.user)
         if denied is not None:
             return denied

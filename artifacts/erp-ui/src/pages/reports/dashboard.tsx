@@ -376,7 +376,7 @@ function SummaryCard({ label, value }: { label: string; value: string }) {
   );
 }
 
-export default function ReportsDashboard() {
+function ReportsDashboardContent() {
   const { token, role } = useAuth();
   const { toast } = useToast();
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
@@ -1248,4 +1248,24 @@ export default function ReportsDashboard() {
       ) : null}
     </ERPWorkspacePage>
   );
+}
+
+export default function ReportsDashboard() {
+  const { user, role } = useAuth();
+  const granted = new Set<string>(Array.isArray((user as any)?.permissions) ? (user as any).permissions.map(String) : []);
+  const canViewReports = role === 'superadmin' || role === 'tenant_admin' || granted.has('Platform_Core.can_view_erp_reports');
+
+  if (!canViewReports) {
+    return (
+      <div className="mx-auto flex min-h-[55vh] max-w-xl flex-col items-center justify-center gap-4 text-center">
+        <div className="rounded-full bg-muted p-4"><FileSpreadsheet className="h-8 w-8 text-muted-foreground" /></div>
+        <div>
+          <h1 className="text-2xl font-bold">Reports access is not assigned</h1>
+          <p className="mt-2 text-sm text-muted-foreground">Ask an administrator to grant your role the ERP Reports permission.</p>
+        </div>
+      </div>
+    );
+  }
+
+  return <ReportsDashboardContent />;
 }

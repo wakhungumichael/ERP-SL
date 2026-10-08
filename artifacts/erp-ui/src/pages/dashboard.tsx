@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Link } from 'wouter';
+import { Link, useLocation } from 'wouter';
 import {
   AlertTriangle,
   ArrowRight,
@@ -183,12 +183,16 @@ function DashboardChart({
 
 export default function Dashboard() {
   const { token, user } = useAuth();
+  const [, setLocation] = useLocation();
   const { tenantContext, isLoading } = useTenantTheme();
-  const { hasPermission, canViewSensitive } = useDashboardAccess();
+  const { hasPermission, hasWorkspacePermission, canViewSensitive } = useDashboardAccess();
 
-  const hasWeighbridge = tenantContext.sections.some((section) => section.key === 'weighbridge');
-  const hasProcurement = tenantContext.sections.some((section) => section.key === 'procurement');
-  const canViewFinance = hasPermission('view_financials');
+  const canViewDashboard = hasPermission('view_dashboard');
+  const hasWeighbridge = tenantContext.sections.some((section) => section.key === 'weighbridge')
+    && hasWorkspacePermission('can_view_weighbridge_overview');
+  const hasProcurement = tenantContext.sections.some((section) => section.key === 'procurement')
+    && hasWorkspacePermission('can_view_procurement_overview');
+  const canViewFinance = hasWorkspacePermission('can_view_finance_overview');
   const canViewWorkflow = hasPermission('view_workflow_inbox');
   const canViewAudit = hasPermission('view_audit_trail');
 
@@ -218,7 +222,7 @@ export default function Dashboard() {
 
   const weighbridgeQuery = useQuery({
     queryKey: ['dashboard-simple-weighbridge', tenantContext.tenantId],
-    enabled: !!token && hasWeighbridge,
+    enabled: !!token && canViewDashboard && hasWeighbridge,
     staleTime: 60000,
     queryFn: async () => {
       const res = await fetch('/api/commercial-weighbridge/dashboard/', { headers: buildHeaders(token) });
@@ -229,7 +233,7 @@ export default function Dashboard() {
 
   const accountingQuery = useQuery({
     queryKey: ['dashboard-simple-accounting', tenantContext.tenantId],
-    enabled: !!token && canViewFinance,
+    enabled: !!token && canViewDashboard && canViewFinance,
     staleTime: 60000,
     queryFn: async () => {
       const res = await fetch('/api/accounting/dashboard/', { headers: buildHeaders(token) });
@@ -240,7 +244,7 @@ export default function Dashboard() {
 
   const procurementQuery = useQuery({
     queryKey: ['dashboard-simple-procurement', tenantContext.tenantId],
-    enabled: !!token && hasProcurement,
+    enabled: !!token && canViewDashboard && hasProcurement,
     staleTime: 60000,
     queryFn: async () => {
       const res = await fetch('/api/procurement/dashboard/', { headers: buildHeaders(token) });
@@ -455,6 +459,19 @@ export default function Dashboard() {
 
   if (isLoading) {
     return <div className="p-12 text-center font-mono text-sm text-muted-foreground animate-pulse">Loading dashboard…</div>;
+  }
+
+  if (!canViewDashboard) {
+    return (
+      <div className="mx-auto flex min-h-[55vh] max-w-xl flex-col items-center justify-center gap-4 text-center">
+        <div className="rounded-full bg-muted p-4"><LayoutGrid className="h-8 w-8 text-muted-foreground" /></div>
+        <div>
+          <h1 className="text-2xl font-bold">Dashboard access is not assigned</h1>
+          <p className="mt-2 text-sm text-muted-foreground">Ask an administrator to grant your role the Workspace Dashboard permission. Cashier accounts can continue directly to their operational screens.</p>
+        </div>
+        <button onClick={() => setLocation('/weighbridge/weighment-entry')} className="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground">Open Weighment Entry</button>
+      </div>
+    );
   }
 
   return (

@@ -83,6 +83,7 @@ const HIDDEN_APPS = new Set(['admin', 'authtoken', 'sessions', 'contenttypes']);
 
 // Action permissions that don't fit the add/change/delete/view CRUD pattern
 const ACTION_CODENAMES: Record<string, string> = {
+  can_view_workspace_dashboard: 'Workspace Dashboard',
   can_access_finance_workspace: 'Finance Workspace',
   can_view_erp_reports: 'ERP Reports',
   can_view_weighbridge_overview: 'Weighbridge Overview',
@@ -94,6 +95,9 @@ const ACTION_CODENAMES: Record<string, string> = {
   can_view_manufacturing_overview: 'Manufacturing Overview',
   can_view_retail_overview: 'Retail Overview',
   can_view_services_overview: 'Services Overview',
+  can_view_procurement_overview: 'Procurement Overview',
+  can_view_budgeting_overview: 'Budgeting Overview',
+  can_view_hr_overview: 'HR Overview',
   can_access_weighment_entry: 'Weighment Entry',
   can_capture_first_weight: 'First Weight',
   can_capture_second_weight: 'Second Weight',

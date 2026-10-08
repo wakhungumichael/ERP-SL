@@ -7,7 +7,7 @@ const FINANCE_ROLES = new Set(['superadmin', 'tenant_admin', 'finance']);
 const OPS_ROLES = new Set(['superadmin', 'tenant_admin', 'operator']);
 
 const PERMISSION_ALIASES: Record<DashboardPermission, string[]> = {
-  view_dashboard: [],
+  view_dashboard: ['Platform_Core.can_view_workspace_dashboard'],
   customize_dashboard: [],
   view_financials: [
     'Platform_Core.view_journalentry',
@@ -43,11 +43,15 @@ export function useDashboardAccess() {
     return new Set(perms);
   }, [user]);
 
-  const hasPermission = (permission: DashboardPermission) => {
+  const hasPermission = (permission: DashboardPermission): boolean => {
     const aliases = PERMISSION_ALIASES[permission] as string[];
 
-    if (permission === 'view_dashboard' || permission === 'customize_dashboard' || permission === 'view_workflow_inbox' || permission === 'view_shortcuts' || permission === 'view_company_health' || permission === 'view_operational_alerts' || permission === 'view_department_activity') {
-      return role !== 'guest';
+    if (permission === 'view_dashboard') {
+      return ADMIN_ROLES.has(role) || aliases.some((entry) => granted.has(entry));
+    }
+
+    if (permission === 'customize_dashboard' || permission === 'view_workflow_inbox' || permission === 'view_shortcuts' || permission === 'view_company_health' || permission === 'view_operational_alerts' || permission === 'view_department_activity') {
+      return role !== 'guest' && hasPermission('view_dashboard');
     }
 
     if (permission === 'view_financials') {
@@ -70,11 +74,14 @@ export function useDashboardAccess() {
   };
 
   const canViewSensitive = hasPermission('view_financials_sensitive');
+  const hasWorkspacePermission = (codename: string) =>
+    ADMIN_ROLES.has(role) || granted.has(`Platform_Core.${codename}`);
 
   return {
     role,
     grantedPermissions: [...granted],
     hasPermission,
+    hasWorkspacePermission,
     canViewSensitive,
   };
 }

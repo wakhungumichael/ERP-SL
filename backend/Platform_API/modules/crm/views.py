@@ -879,6 +879,9 @@ class CRMDashboardView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        from Platform_API.modules.mixins import require_workspace_permission
+
+        require_workspace_permission(request.user, "can_view_crm_overview")
         now = timezone.now()
         today = now.date()
         month_start = today.replace(day=1)
