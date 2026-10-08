@@ -105,6 +105,7 @@ const ACTION_CODENAMES: Record<string, string> = {
   can_approve_pending_transactions: 'Approve',
   can_recall_completed_transactions: 'Recall',
   can_export_transaction: 'Export',
+  can_reprint_recent_weighbridge_receipts: 'Receipt Reprint',
   can_view_customer_statements: 'Customer Statements',
 };
 

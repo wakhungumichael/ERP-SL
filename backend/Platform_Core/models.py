@@ -857,6 +857,10 @@ class TenantSettings(TimeStampedModel):
     smtp_allow_insecure_ssl = models.BooleanField(default=False)
     # Invoicing
     default_payment_terms_days = models.PositiveIntegerField(default=30)
+    # Weighbridge tellers can be limited to a small, recent receipt window.
+    # A value of zero leaves the respective limit disabled.
+    teller_receipt_latest_records = models.PositiveIntegerField(default=0)
+    teller_receipt_max_age_hours = models.PositiveIntegerField(default=0)
 
     class Meta:
         ordering = ["tenant__name"]

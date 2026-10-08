@@ -10,7 +10,7 @@ from django.utils import timezone
 from PIL import Image
 from rest_framework.test import APIClient
 
-from Platform_Core.models import Tenant, TenantUserProfile
+from Platform_Core.models import Tenant, TenantSettings, TenantUserProfile
 from SL_Weighbridge.models import (
     Branch,
     Company,
@@ -378,3 +378,86 @@ class FirstWeightPairingWorkflowTests(TestCase):
 
         self.assertEqual(response.status_code, 400, response.data)
         self.assertIn("vehicle", response.data)
+
+
+class TellerReceiptWindowTests(TestCase):
+    def setUp(self):
+        self.tenant = Tenant.objects.create(
+            name="Receipt Window Tenant",
+            code="receipt-window-tenant",
+            is_active=True,
+            status="active",
+        )
+        TenantSettings.objects.create(
+            tenant=self.tenant,
+            teller_receipt_latest_records=2,
+            teller_receipt_max_age_hours=0,
+        )
+        self.user = User.objects.create_user(username="receipt_teller", password="pass")
+        TenantUserProfile.objects.create(user=self.user, tenant=self.tenant, is_tenant_admin=False)
+        self.customer = Customer.objects.create(tenant=self.tenant, name="Receipt Customer", phone_number="0700000400")
+        self.currency = Currency.objects.create(tenant=self.tenant, name="Kenya Shilling", code="KES", symbol="KSh")
+        self.vehicle_type = VehicleType.objects.create(
+            tenant=self.tenant, name="Receipt Vehicle", charge=500, currency=self.currency, max_tare_weight=30000,
+        )
+        self.vehicle = Vehicle.objects.create(
+            tenant=self.tenant, customer=self.customer, vehicle_type=self.vehicle_type, number_plate="KDE404E",
+        )
+        self.item = Item.objects.create(tenant=self.tenant, name="Receipt Item", currency=self.currency)
+        self.branch = Branch.objects.create(
+            tenant=self.tenant,
+            name="Receipt Branch",
+            address="Road 4",
+            email="receipt-branch@example.test",
+            phone="0700000401",
+        )
+        self.client = APIClient()
+        self.client.force_authenticate(self.user)
+
+    def create_transaction(self, offset_hours):
+        transaction = Transaction.objects.create(
+            tenant=self.tenant,
+            branch=self.branch,
+            customer=self.customer,
+            vehicle=self.vehicle,
+            vehicle_type=self.vehicle_type,
+            item=self.item,
+            operator="Receipt Teller",
+            weight_type="First Weight",
+            payment_mode="Cash",
+            payment_status="Paid",
+            destination="Receipt Yard",
+            gross_weight=10000,
+            status="Completed",
+        )
+        Transaction.objects.filter(pk=transaction.pk).update(created_at=timezone.now() - timedelta(hours=offset_hours))
+        transaction.refresh_from_db()
+        return transaction
+
+    def test_teller_can_only_list_the_configured_latest_records(self):
+        oldest = self.create_transaction(3)
+        middle = self.create_transaction(2)
+        newest = self.create_transaction(1)
+
+        response = self.client.get(reverse("wb-transactions"))
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["count"], 2)
+        self.assertEqual([row["id"] for row in response.data["results"]], [newest.id, middle.id])
+        self.assertNotIn(oldest.id, [row["id"] for row in response.data["results"]])
+        self.assertEqual(self.client.get(reverse("wb-transaction-detail", kwargs={"pk": oldest.id})).status_code, 404)
+
+    def test_teller_requires_reprint_permission_for_allowed_receipt(self):
+        transaction = self.create_transaction(1)
+
+        denied = self.client.get(reverse("wb-transaction-receipt", kwargs={"pk": transaction.id}))
+        self.assertEqual(denied.status_code, 403)
+
+        self.user.user_permissions.add(
+            Permission.objects.get(
+                content_type__app_label="SL_Weighbridge",
+                codename="can_reprint_recent_weighbridge_receipts",
+            )
+        )
+        allowed = self.client.get(reverse("wb-transaction-receipt", kwargs={"pk": transaction.id}))
+        self.assertEqual(allowed.status_code, 200)

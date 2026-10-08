@@ -97,7 +97,10 @@ export function ReceiptDialog({ transaction: t, open, onOpenChange, token }: Rec
       headers: { Authorization: `Token ${token}` },
     })
       .then(async (res) => {
-        if (!res.ok) throw new Error(`Failed to open receipt (${res.status})`);
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body?.error ?? `Failed to open receipt (${res.status})`);
+        }
         const html = await res.text();
         const blob = new Blob([html], { type: 'text/html' });
         const url = URL.createObjectURL(blob);
@@ -105,7 +108,12 @@ export function ReceiptDialog({ transaction: t, open, onOpenChange, token }: Rec
         if (!win) throw new Error('Popup was blocked by the browser');
         setTimeout(() => URL.revokeObjectURL(url), 60_000);
       })
-      .catch(() => {
+      .catch((error: Error) => {
+        // Do not bypass server-side teller receipt restrictions with a local print.
+        if (error.message.includes('does not allow receipt reprints') || error.message.includes('outside your allowed teller receipt window')) {
+          setEmailResult({ ok: false, msg: error.message });
+          return;
+        }
         if (!printRef.current) return;
         const content = printRef.current.innerHTML;
         const win = window.open('', '_blank', 'width=720,height=900');

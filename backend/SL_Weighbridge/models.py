@@ -443,6 +443,7 @@ class Transaction(models.Model):
     class Meta:
             permissions = [
                 ("can_export_transaction", "Can export transactions to CSV"),
+                ("can_reprint_recent_weighbridge_receipts", "Can reprint recent weighbridge receipts"),
                 ("can_approve_pending_transactions", "Can approve pending transactions"),
                 ("can_recall_completed_transactions", "Can recall completed transactions"),
                 # Process permissions are separate from record CRUD so roles can

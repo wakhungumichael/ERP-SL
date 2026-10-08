@@ -868,7 +868,9 @@ class TenantSettingsSerializer(serializers.ModelSerializer):
             "purchase_order_template", "purchase_order_template_id",
             "smtp_host", "smtp_port", "smtp_user", "smtp_password", "smtp_use_tls", "smtp_use_ssl",
             "smtp_allow_insecure_ssl",
-            "default_payment_terms_days", "created_at", "updated_at",
+            "default_payment_terms_days",
+            "teller_receipt_latest_records", "teller_receipt_max_age_hours",
+            "created_at", "updated_at",
         )
         read_only_fields = ("id", "tenant", "created_at", "updated_at")
 

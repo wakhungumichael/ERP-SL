@@ -8,7 +8,7 @@
  *   4. Customer Discounts    — per-customer per-vehicle-type override charges
  *   5. Surveillance          — vehicle presence threshold + HikVision camera config
  */
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
 import { useAuth } from '@/context/use-auth';
 import { useToast } from '@/hooks/use-toast';
@@ -31,7 +31,7 @@ import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import { ERP_BRANCHES_ENDPOINT, ERP_BRANCHES_QUERY_KEY, fetchErpBranches, normalizeBranchList } from '@/lib/branches';
 import {
-  Plus, Pencil, Trash2, Settings2, Truck, Package, Tag, ShieldAlert, Camera, PlugZap,
+  Plus, Pencil, Trash2, Settings2, Truck, Package, Tag, ShieldAlert, Camera, PlugZap, ReceiptText,
 } from 'lucide-react';
 import { ERPDataTable, type ERPTableColumn } from '@/components/erp/listing/data-table';
 import { formatApiError } from '@/lib/api-errors';
@@ -1829,6 +1829,105 @@ function SurveillanceTab() {
 // Root page
 // ══════════════════════════════════════════════════════════════════════════════
 
+type TellerReceiptSettings = {
+  teller_receipt_latest_records: number;
+  teller_receipt_max_age_hours: number;
+};
+
+function TellerReceiptAccessTab() {
+  const { token, user } = useAuth();
+  const { toast } = useToast();
+  const tenantId = (user as any)?.tenant_id as number | undefined;
+  const [form, setForm] = useState<TellerReceiptSettings>({
+    teller_receipt_latest_records: 0,
+    teller_receipt_max_age_hours: 0,
+  });
+  const [saving, setSaving] = useState(false);
+  const { data, isLoading } = useQuery({
+    queryKey: ['weighbridge-teller-receipt-settings', tenantId],
+    enabled: !!token && !!tenantId,
+    queryFn: async () => {
+      const response = await fetch(`/api/platform/tenants/${tenantId}/settings/`, {
+        headers: { Authorization: `Token ${token}` },
+      });
+      if (!response.ok) throw new Error('Could not load receipt access settings.');
+      const payload = await response.json();
+      return (payload?.data ?? payload) as TellerReceiptSettings;
+    },
+  });
+
+  useEffect(() => {
+    if (!data) return;
+    setForm({
+      teller_receipt_latest_records: Number(data.teller_receipt_latest_records ?? 0),
+      teller_receipt_max_age_hours: Number(data.teller_receipt_max_age_hours ?? 0),
+    });
+  }, [data]);
+
+  async function save() {
+    if (!tenantId || !token) return;
+    setSaving(true);
+    try {
+      const response = await fetch(`/api/platform/tenants/${tenantId}/settings/`, {
+        method: 'PUT',
+        headers: { Authorization: `Token ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(form),
+      });
+      if (!response.ok) throw new Error(await response.text());
+      toast({ title: 'Teller receipt access saved' });
+    } catch (error) {
+      toast({ title: 'Could not save teller receipt access', description: parseErrors(String(error)), variant: 'destructive' });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!tenantId) {
+    return <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">Select a tenant workspace to configure teller receipt access.</p>;
+  }
+
+  return (
+    <div className="max-w-2xl space-y-5 rounded-lg border bg-card p-5">
+      <div>
+        <h3 className="font-semibold">Teller Receipt Access</h3>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Restrict operational users to recent transactions for receipt printing. Tenant administrators and reporting staff always retain the full history.
+        </p>
+      </div>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div className="space-y-1.5">
+          <Label htmlFor="teller-receipt-latest-records">Latest records visible</Label>
+          <Input
+            id="teller-receipt-latest-records"
+            type="number"
+            min="0"
+            value={form.teller_receipt_latest_records}
+            disabled={isLoading}
+            onChange={(event) => setForm((current) => ({ ...current, teller_receipt_latest_records: Math.max(0, Number(event.target.value) || 0) }))}
+          />
+          <p className="text-xs text-muted-foreground">Set `0` for no record-count limit. Example: `10` shows only the newest 10 tickets.</p>
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="teller-receipt-max-age">Maximum receipt age (hours)</Label>
+          <Input
+            id="teller-receipt-max-age"
+            type="number"
+            min="0"
+            value={form.teller_receipt_max_age_hours}
+            disabled={isLoading}
+            onChange={(event) => setForm((current) => ({ ...current, teller_receipt_max_age_hours: Math.max(0, Number(event.target.value) || 0) }))}
+          />
+          <p className="text-xs text-muted-foreground">Set `0` for no time limit. Example: `24` prevents reprints after one day.</p>
+        </div>
+      </div>
+      <div className="rounded-md border border-dashed bg-muted/30 p-3 text-sm text-muted-foreground">
+        Assign <strong className="text-foreground">Weighbridge → Receipt Reprint</strong> in Platform Admin → Roles to each teller who may print or email receipts inside this window.
+      </div>
+      <Button onClick={save} disabled={saving || isLoading}>{saving ? 'Saving…' : 'Save receipt access'}</Button>
+    </div>
+  );
+}
+
 export default function WeighbridgeSettings() {
   return (
     <div className="space-y-6 max-w-5xl">
@@ -1859,6 +1958,9 @@ export default function WeighbridgeSettings() {
           <TabsTrigger value="surveillance" className="gap-1.5">
             <ShieldAlert className="h-3.5 w-3.5" /> Surveillance
           </TabsTrigger>
+          <TabsTrigger value="teller-receipts" className="gap-1.5">
+            <ReceiptText className="h-3.5 w-3.5" /> Teller Receipts
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="indicator"><IndicatorConfigTab /></TabsContent>
@@ -1867,6 +1969,7 @@ export default function WeighbridgeSettings() {
         <TabsContent value="items"><ItemsTab /></TabsContent>
         <TabsContent value="discounts"><DiscountsTab /></TabsContent>
         <TabsContent value="surveillance"><SurveillanceTab /></TabsContent>
+        <TabsContent value="teller-receipts"><TellerReceiptAccessTab /></TabsContent>
       </Tabs>
     </div>
   );

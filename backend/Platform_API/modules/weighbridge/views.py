@@ -26,7 +26,7 @@ from PIL import Image, UnidentifiedImageError
 from Platform_Core.documents import render_business_document, render_transaction_receipt
 from Platform_Core.branch_sync import get_operational_branches_for_tenant
 from Platform_Core.accounting import assert_posting_allowed, sync_transaction_posting
-from Platform_Core.models import OrganizationMembership, Tenant, TenantUserProfile
+from Platform_Core.models import OrganizationMembership, Tenant, TenantSettings, TenantUserProfile
 from Platform_API.modules.mixins import (
     NO_TENANT_ACCESS,
     apply_tenant_filter as _shared_apply_tenant_filter,
@@ -812,6 +812,48 @@ def _can_view_weighbridge_team_dashboard(user):
     ])
 
 
+def _has_unrestricted_weighbridge_history_access(user):
+    """Administrators and reporting staff retain the complete transaction history."""
+    return bool(
+        getattr(user, "is_superuser", False)
+        or getattr(user, "is_staff", False)
+        or _is_weighbridge_tenant_admin(user)
+        or user.has_perm("SL_Weighbridge.can_manage_weighbridge_reports")
+        or user.has_perm("SL_Weighbridge.can_export_transaction")
+    )
+
+
+def _teller_receipt_window_ids(user, tenant):
+    """Return IDs a teller may access, or None when no receipt window applies."""
+    if tenant is None or _has_unrestricted_weighbridge_history_access(user):
+        return None
+
+    settings_obj, _ = TenantSettings.objects.get_or_create(tenant=tenant)
+    latest_records = max(0, int(settings_obj.teller_receipt_latest_records or 0))
+    max_age_hours = max(0, int(settings_obj.teller_receipt_max_age_hours or 0))
+    if not latest_records and not max_age_hours:
+        return None
+
+    qs = Transaction.objects.filter(tenant=tenant)
+    if max_age_hours:
+        qs = qs.filter(created_at__gte=timezone.now() - timedelta(hours=max_age_hours))
+    if latest_records:
+        qs = qs.order_by("-created_at", "-id")[:latest_records]
+    return qs.values("pk")
+
+
+def _apply_teller_receipt_window(qs, user, tenant):
+    allowed_ids = _teller_receipt_window_ids(user, tenant)
+    return qs if allowed_ids is None else qs.filter(pk__in=allowed_ids)
+
+
+def _can_reprint_weighbridge_receipt(user):
+    return bool(
+        _has_unrestricted_weighbridge_history_access(user)
+        or user.has_perm("SL_Weighbridge.can_reprint_recent_weighbridge_receipts")
+    )
+
+
 def _has_weighbridge_process_permission(user, codename):
     """Tenant admins retain operational access; custom roles need the named process permission."""
     return bool(
@@ -909,6 +951,7 @@ class TransactionListCreateView(generics.ListCreateAPIView):
             if tenant_code_param and tenant_code_param != resolved.code:
                 return qs.none()
             qs = qs.filter(tenant=resolved)
+            qs = _apply_teller_receipt_window(qs, self.request.user, resolved)
 
         if branch_id := params.get("branch_id"):
             # For non-superusers, verify the requested branch is associated
@@ -1055,7 +1098,11 @@ class TransactionDetailView(generics.RetrieveUpdateAPIView):
 
     def get_queryset(self):
         qs = Transaction.objects.select_related("branch", "customer", "vehicle", "item", "vehicle_type", "created_by", "last_modified_by")
-        return _apply_tenant_filter(qs, self.request.user)
+        qs = _apply_tenant_filter(qs, self.request.user)
+        resolved = _resolve_user_tenant(self.request.user)
+        if resolved is not None and not isinstance(resolved, _NoTenantProfile):
+            qs = _apply_teller_receipt_window(qs, self.request.user, resolved)
+        return qs
 
     def perform_update(self, serializer):
         current = self.get_object()
@@ -1690,6 +1737,16 @@ class TransactionEmailReceiptView(APIView):
         except Transaction.DoesNotExist:
             return Response({"error": f"Transaction {pk} not found."}, status=status.HTTP_404_NOT_FOUND)
 
+        if not _can_reprint_weighbridge_receipt(request.user):
+            return Response(
+                {"error": "Your role does not allow receipt reprints. Ask an administrator to grant the Receipt reprint permission."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        resolved = _resolve_user_tenant(request.user)
+        if resolved is not None and not isinstance(resolved, _NoTenantProfile):
+            if not _apply_teller_receipt_window(Transaction.objects.filter(pk=tx.pk), request.user, resolved).exists():
+                return Response({"error": "This receipt is outside your allowed teller receipt window."}, status=status.HTTP_403_FORBIDDEN)
+
         if not _receipt_allowed(tx):
             return Response(
                 {"error": "Receipt is available only after payment is received, unless the transaction is on debt terms."},
@@ -1840,6 +1897,16 @@ class TransactionReceiptDocumentView(APIView):
             )
         except Transaction.DoesNotExist:
             return Response({"error": f"Transaction {pk} not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        if not _can_reprint_weighbridge_receipt(request.user):
+            return Response(
+                {"error": "Your role does not allow receipt reprints. Ask an administrator to grant the Receipt reprint permission."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        resolved = _resolve_user_tenant(request.user)
+        if resolved is not None and not isinstance(resolved, _NoTenantProfile):
+            if not _apply_teller_receipt_window(Transaction.objects.filter(pk=tx.pk), request.user, resolved).exists():
+                return Response({"error": "This receipt is outside your allowed teller receipt window."}, status=status.HTTP_403_FORBIDDEN)
 
         if not _receipt_allowed(tx):
             return Response(
