@@ -8,6 +8,7 @@ from .views import (
     BackupPolicyListCreateAPIView,
     BackupPolicyDownloadAPIView,
     BackupPolicyRunAPIView,
+    ChangePasswordAPIView,
     CurrentUserAPIView,
     DocumentTemplateDetailAPIView,
     DocumentTemplateListCreateAPIView,
@@ -108,6 +109,7 @@ urlpatterns = [
     path("auth/token/", TokenLoginAPIView.as_view(), name="platform-auth-token"),
     path("auth/forgot-password/", ForgotPasswordAPIView.as_view(), name="platform-auth-forgot-password"),
     path("auth/me/", CurrentUserAPIView.as_view(), name="platform-auth-me"),
+    path("auth/change-password/", ChangePasswordAPIView.as_view(), name="platform-auth-change-password"),
     path("auth/switch-organization/", SwitchOrganizationAPIView.as_view(), name="platform-auth-switch-organization"),
     path("auth/logout/", TokenLogoutAPIView.as_view(), name="platform-auth-logout"),
     # Workspace / nav

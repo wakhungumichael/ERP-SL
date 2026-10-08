@@ -813,7 +813,7 @@ export default function Users() {
                       <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${u.is_active ? 'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-900/30 dark:text-emerald-400' : 'bg-gray-100 text-gray-500 border-gray-300'}`}>
                         {u.is_active ? 'Active' : 'Inactive'}
                       </span>
-                      {!u.is_superuser && (
+                      {!u.is_superuser && u.id !== (user as any)?.id && (
                         <Button
                           size="sm"
                           variant="ghost"
@@ -824,7 +824,7 @@ export default function Users() {
                           <Pencil className="h-3.5 w-3.5 text-muted-foreground" />
                         </Button>
                       )}
-                      {!u.is_superuser && (
+                      {!u.is_superuser && u.id !== (user as any)?.id && (
                         <Button
                           size="sm"
                           variant="ghost"

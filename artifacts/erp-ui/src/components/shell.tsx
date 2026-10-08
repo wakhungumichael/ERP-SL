@@ -393,6 +393,9 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const [sidebarSearch, setSidebarSearch] = useState('');
   const [globalSearch, setGlobalSearch] = useState('');
   const [profileOpen, setProfileOpen] = useState(false);
+  const [profileForm, setProfileForm] = useState({ first_name: '', last_name: '', email: '', username: '' });
+  const [passwordForm, setPasswordForm] = useState({ current_password: '', new_password: '', new_password_confirmation: '' });
+  const [profileMessage, setProfileMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const apiNav = useWorkspaceNav(token);
   const memberships = Array.isArray((user as any)?.memberships) ? (user as any).memberships : [];
   const activeMembershipId = (user as any)?.active_membership_id ? String((user as any).active_membership_id) : '';
@@ -460,6 +463,54 @@ export function Shell({ children }: { children: React.ReactNode }) {
     onSuccess: async () => {
       await refreshUser();
     },
+  });
+
+  useEffect(() => {
+    if (!profileOpen) return;
+    setProfileForm({
+      first_name: String((user as any)?.first_name ?? ''),
+      last_name: String((user as any)?.last_name ?? ''),
+      email: String((user as any)?.email ?? ''),
+      username: String((user as any)?.username ?? ''),
+    });
+    setPasswordForm({ current_password: '', new_password: '', new_password_confirmation: '' });
+    setProfileMessage(null);
+  }, [profileOpen, user]);
+
+  const updateProfileMutation = useMutation({
+    mutationFn: async () => {
+      const response = await fetch('/api/platform/auth/me/', {
+        method: 'PATCH',
+        headers: { Authorization: `Token ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(profileForm),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload?.message || payload?.detail || payload?.error || 'Could not update your profile.');
+      return payload;
+    },
+    onSuccess: async () => {
+      await refreshUser();
+      setProfileMessage({ type: 'success', text: 'Your profile details have been updated.' });
+    },
+    onError: (error: Error) => setProfileMessage({ type: 'error', text: error.message }),
+  });
+
+  const changePasswordMutation = useMutation({
+    mutationFn: async () => {
+      const response = await fetch('/api/platform/auth/change-password/', {
+        method: 'POST',
+        headers: { Authorization: `Token ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(passwordForm),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload?.message || payload?.detail || payload?.error || 'Could not change your password.');
+      return payload;
+    },
+    onSuccess: () => {
+      setPasswordForm({ current_password: '', new_password: '', new_password_confirmation: '' });
+      setProfileMessage({ type: 'success', text: 'Your password has been changed.' });
+    },
+    onError: (error: Error) => setProfileMessage({ type: 'error', text: error.message }),
   });
 
   if (!token) return null;
@@ -936,15 +987,54 @@ export function Shell({ children }: { children: React.ReactNode }) {
           <DialogHeader>
             <DialogTitle>Profile</DialogTitle>
             <DialogDescription>
-              Quick account details for the current signed-in user.
+              Manage your account details and password.
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4">
+            {profileMessage && (
+              <div role="alert" className={`rounded-lg border px-3 py-2 text-sm ${profileMessage.type === 'success' ? 'border-emerald-300 bg-emerald-50 text-emerald-800' : 'border-destructive/40 bg-destructive/10 text-destructive'}`}>
+                {profileMessage.text}
+              </div>
+            )}
+
             <div className="rounded-xl border bg-muted/30 p-4">
-              <div className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">User</div>
-              <div className="mt-2 text-lg font-semibold">{displayName}</div>
-              <div className="mt-1 text-sm text-muted-foreground">{email}</div>
+              <div className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">Personal details</div>
+              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                <label className="space-y-1 text-sm font-medium">First name
+                  <Input value={profileForm.first_name} onChange={(event) => setProfileForm(current => ({ ...current, first_name: event.target.value }))} />
+                </label>
+                <label className="space-y-1 text-sm font-medium">Last name
+                  <Input value={profileForm.last_name} onChange={(event) => setProfileForm(current => ({ ...current, last_name: event.target.value }))} />
+                </label>
+                <label className="space-y-1 text-sm font-medium sm:col-span-2">Email address
+                  <Input type="email" value={profileForm.email} onChange={(event) => setProfileForm(current => ({ ...current, email: event.target.value }))} />
+                </label>
+                <label className="space-y-1 text-sm font-medium sm:col-span-2">Username
+                  <Input value={profileForm.username} onChange={(event) => setProfileForm(current => ({ ...current, username: event.target.value }))} />
+                </label>
+              </div>
+              <Button className="mt-3" size="sm" onClick={() => updateProfileMutation.mutate()} disabled={updateProfileMutation.isPending || !profileForm.username.trim()}>
+                {updateProfileMutation.isPending ? 'Saving...' : 'Save profile'}
+              </Button>
+            </div>
+
+            <div className="rounded-xl border p-4">
+              <div className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">Change password</div>
+              <div className="mt-3 space-y-3">
+                <label className="block space-y-1 text-sm font-medium">Current password
+                  <Input type="password" autoComplete="current-password" value={passwordForm.current_password} onChange={(event) => setPasswordForm(current => ({ ...current, current_password: event.target.value }))} />
+                </label>
+                <label className="block space-y-1 text-sm font-medium">New password
+                  <Input type="password" autoComplete="new-password" value={passwordForm.new_password} onChange={(event) => setPasswordForm(current => ({ ...current, new_password: event.target.value }))} />
+                </label>
+                <label className="block space-y-1 text-sm font-medium">Confirm new password
+                  <Input type="password" autoComplete="new-password" value={passwordForm.new_password_confirmation} onChange={(event) => setPasswordForm(current => ({ ...current, new_password_confirmation: event.target.value }))} />
+                </label>
+              </div>
+              <Button className="mt-3" size="sm" variant="outline" onClick={() => changePasswordMutation.mutate()} disabled={changePasswordMutation.isPending || !passwordForm.current_password || !passwordForm.new_password}>
+                {changePasswordMutation.isPending ? 'Changing...' : 'Change password'}
+              </Button>
             </div>
 
             {memberships.length > 0 && (

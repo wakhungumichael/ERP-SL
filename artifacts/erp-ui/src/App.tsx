@@ -53,6 +53,7 @@ import Workspace from '@/pages/platform/workspace';
 import WorkflowCenter from '@/pages/platform/workflows';
 import Backups from '@/pages/platform/backups';
 import OrganizationSettings from '@/pages/platform/company-settings';
+import Users from '@/pages/platform/users';
 import AuditLogsPage from '@/pages/platform/audit-logs';
 import WeighbridgeSettings from '@/pages/weighbridge/settings';
 import OverweightLog from '@/pages/weighbridge/overweight-log';
@@ -437,7 +438,7 @@ function Router() {
 
       {/* Platform Admin — superadmin + tenant_admin pages */}
       <Route path="/platform/users">
-        <Shell><RoleGuard allowedRoles={['superadmin', 'tenant_admin']}><OrganizationSettings /></RoleGuard></Shell>
+        <Shell><RoleGuard allowedRoles={['superadmin', 'tenant_admin']}><Users /></RoleGuard></Shell>
       </Route>
       <Route path="/platform/roles">
         <Shell><RoleGuard allowedRoles={['superadmin', 'tenant_admin']}><Roles /></RoleGuard></Shell>

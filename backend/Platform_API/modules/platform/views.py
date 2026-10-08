@@ -7,6 +7,8 @@ from types import SimpleNamespace
 from django.contrib.auth.models import Group, Permission, User
 from django.contrib.auth import logout
 from django.conf import settings
+from django.core.exceptions import ValidationError as DjangoValidationError
+from django.core.validators import validate_email
 from django.db import transaction
 from django.db.models import Prefetch, Q
 from django.shortcuts import get_object_or_404
@@ -1005,9 +1007,15 @@ class ForgotPasswordAPIView(APIView):
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
 
+        if not target_user.email:
+            # Keep the response non-enumerating while avoiding a reset that the
+            # account holder could never receive.
+            return success_response(
+                "If the account exists, a password reset message will be sent shortly.",
+                data={"email_sent": False},
+            )
+
         temp_password = _gen_password(12)
-        target_user.set_password(temp_password)
-        target_user.save(update_fields=["password"])
 
         try:
             from django.core.mail import EmailMessage
@@ -1030,6 +1038,9 @@ class ForgotPasswordAPIView(APIView):
                 connection=connection,
             )
             email.send()
+            # Do not invalidate the current password unless delivery succeeded.
+            target_user.set_password(temp_password)
+            target_user.save(update_fields=["password"])
         except Exception as exc:
             return error_response(
                 f"Password reset email could not be sent: {exc}",
@@ -1050,6 +1061,68 @@ class CurrentUserAPIView(APIView):
             "Current user loaded successfully.",
             data=UserProfileSerializer(request.user).data,
         )
+
+    def patch(self, request):
+        """Allow every signed-in user to maintain their own account details."""
+        user = request.user
+        update_fields = []
+
+        for field in ("first_name", "last_name"):
+            if field in request.data:
+                setattr(user, field, str(request.data.get(field) or "").strip())
+                update_fields.append(field)
+
+        if "email" in request.data:
+            email = str(request.data.get("email") or "").strip()
+            if email:
+                try:
+                    validate_email(email)
+                except DjangoValidationError:
+                    return error_response("Enter a valid email address.", status_code=status.HTTP_400_BAD_REQUEST)
+                if User.objects.exclude(pk=user.pk).filter(email__iexact=email).exists():
+                    return error_response("A user with this email already exists.", status_code=status.HTTP_400_BAD_REQUEST)
+            user.email = email
+            update_fields.append("email")
+
+        if "username" in request.data:
+            username = str(request.data.get("username") or "").strip()
+            if not username:
+                return error_response("Username cannot be blank.", status_code=status.HTTP_400_BAD_REQUEST)
+            if User.objects.exclude(pk=user.pk).filter(username__iexact=username).exists():
+                return error_response("A user with this username already exists.", status_code=status.HTTP_400_BAD_REQUEST)
+            user.username = username
+            update_fields.append("username")
+
+        if update_fields:
+            user.save(update_fields=update_fields)
+
+        return success_response("Profile updated successfully.", data=UserProfileSerializer(user).data)
+
+
+class ChangePasswordAPIView(APIView):
+    permission_classes = (IsAuthenticated,)
+
+    def post(self, request):
+        current_password = str(request.data.get("current_password") or "")
+        new_password = str(request.data.get("new_password") or "")
+        confirmation = str(request.data.get("new_password_confirmation") or "")
+
+        if not current_password or not new_password:
+            return error_response("Enter your current password and a new password.", status_code=status.HTTP_400_BAD_REQUEST)
+        if not request.user.check_password(current_password):
+            return error_response("Your current password is incorrect.", status_code=status.HTTP_400_BAD_REQUEST)
+        if len(new_password) < 8:
+            return error_response("Your new password must be at least 8 characters long.", status_code=status.HTTP_400_BAD_REQUEST)
+        if not confirmation:
+            return error_response("Confirm your new password.", status_code=status.HTTP_400_BAD_REQUEST)
+        if new_password != confirmation:
+            return error_response("Your new password and confirmation do not match.", status_code=status.HTTP_400_BAD_REQUEST)
+        if current_password == new_password:
+            return error_response("Choose a new password that differs from your current password.", status_code=status.HTTP_400_BAD_REQUEST)
+
+        request.user.set_password(new_password)
+        request.user.save(update_fields=["password"])
+        return success_response("Password changed successfully. You can continue using your current session.")
 
 
 class SwitchOrganizationAPIView(APIView):
@@ -2718,6 +2791,16 @@ class PlatformUserUpdateAPIView(APIView):
         except User.DoesNotExist:
             return error_response("User not found.", status_code=status.HTTP_404_NOT_FOUND)
 
+        is_self_update = request.user.pk == user.pk
+        if is_self_update:
+            protected_fields = {"is_active", "is_tenant_admin", "branch_id", "job_title"}
+            attempted_protected_fields = protected_fields.intersection(request.data.keys())
+            if attempted_protected_fields:
+                return error_response(
+                    "Use your Profile to update personal details. Organization access can only be changed by another administrator.",
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                )
+
         # Superadmin can update anyone. Tenant-admin can only update users within
         # their own tenant. A user can always update themselves.
         if request.user.pk != user.pk:
@@ -2780,6 +2863,11 @@ class PlatformUserUpdateAPIView(APIView):
             if password is not None:
                 password = str(password)
                 if password.strip():
+                    if is_self_update and not request.user.check_password(str(request.data.get("current_password") or "")):
+                        return error_response(
+                            "Enter your current password to change it. You can do this from the Profile menu.",
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                        )
                     if len(password) < 8:
                         return error_response(
                             "Password must be at least 8 characters long.",
