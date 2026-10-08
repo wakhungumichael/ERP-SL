@@ -98,6 +98,32 @@ class WeighbridgeMutationPermissionTests(TestCase):
         self.assertFalse(self.customer.is_deleted)
         self.assertEqual(self.customer.name, "View Only Customer")
 
+    def test_customer_create_returns_the_new_customer_for_quick_selection(self):
+        self.user.user_permissions.add(
+            Permission.objects.get(content_type__app_label="SL_Weighbridge", codename="add_customer")
+        )
+
+        response = self.client.post(
+            reverse("wb-customers"),
+            {
+                "name": "Quick Add Customer",
+                "phone_number": "+254700000303",
+                "address": "",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertTrue(response.data["success"])
+        self.assertEqual(response.data["data"]["name"], "Quick Add Customer")
+        self.assertTrue(response.data["data"]["id"])
+        self.assertTrue(
+            Customer.objects.filter(
+                tenant=self.tenant,
+                pk=response.data["data"]["id"],
+            ).exists()
+        )
+
     def test_vehicle_mutations_require_change_or_delete_permission(self):
         deactivate = self.client.patch(
             reverse("wb-vehicle-detail", kwargs={"pk": self.vehicle.id}),

@@ -33,6 +33,7 @@ from Platform_API.modules.mixins import (
     require_workspace_permission,
     resolve_user_tenant as _shared_resolve_user_tenant,
 )
+from Platform_API.modules.api import success_response
 from SL_Weighbridge.sync import (
     sync_vehicle_type_product_for_tenant,
     sync_vehicle_type_products_for_tenant,
@@ -2446,7 +2447,21 @@ class CustomerListCreateView(generics.ListCreateAPIView):
 
     def create(self, request, *args, **kwargs):
         _require_weighbridge_model_permission(request.user, "add_customer")
-        return super().create(request, *args, **kwargs)
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
+
+        # Keep the create response stable for quick-add forms.  They need the
+        # newly created record's ID to select it immediately in the transaction.
+        customer = CustomerSerializer(
+            serializer.instance,
+            context=self.get_serializer_context(),
+        ).data
+        return success_response(
+            "Customer created.",
+            data=customer,
+            status=status.HTTP_201_CREATED,
+        )
 
     def get_queryset(self):
         qs = Customer.objects.all().order_by("name")
