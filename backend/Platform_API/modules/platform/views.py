@@ -1,4 +1,5 @@
 from datetime import timedelta
+import logging
 import secrets
 import string
 from pathlib import Path
@@ -135,6 +136,9 @@ from Platform_API.modules.mixins import (
 )
 
 
+logger = logging.getLogger(__name__)
+
+
 def _gen_password(length=12):
     alphabet = string.ascii_letters + string.digits
     return ''.join(secrets.choice(alphabet) for _ in range(length))
@@ -143,13 +147,20 @@ def _gen_password(length=12):
 def _smtp_delivery_error(exc):
     """Return a useful SMTP error without exposing server responses or secrets."""
     import smtplib
+    import socket
     import ssl
 
     if isinstance(exc, smtplib.SMTPAuthenticationError):
         return "SMTP authentication failed. Check the mailbox username and password."
+    if isinstance(exc, socket.gaierror):
+        return "The SMTP hostname could not be resolved. Check the hostname and DNS settings."
+    if isinstance(exc, (TimeoutError, socket.timeout)):
+        return "The SMTP server did not respond in time. Check the port and server firewall."
+    if isinstance(exc, (ConnectionRefusedError, smtplib.SMTPConnectError, smtplib.SMTPServerDisconnected)):
+        return "The SMTP server refused or closed the connection. Check the host, port, and encryption setting."
     if isinstance(exc, ssl.SSLError):
         return "The SMTP server rejected the selected encryption or certificate settings."
-    if isinstance(exc, (ConnectionError, TimeoutError, OSError)):
+    if isinstance(exc, (ConnectionError, OSError)):
         return "The SMTP server could not be reached. Check its host, port, and firewall."
     return "The SMTP server rejected the message."
 
@@ -2776,6 +2787,16 @@ def test_tenant_smtp(request, pk):
         email.send()
         return success_response("Test email sent successfully.", data={"message": f"Test email sent to {recipient}"})
     except Exception as exc:
+        # Retain the original exception in protected server logs. The response
+        # remains safe to show to users and never exposes SMTP credentials.
+        logger.exception(
+            "Tenant SMTP test failed for tenant=%s host=%s port=%s ssl=%s starttls=%s",
+            tenant.id,
+            ts.smtp_host,
+            ts.smtp_port,
+            ts.smtp_use_ssl,
+            ts.smtp_use_tls,
+        )
         message = _smtp_delivery_error(exc)
         return error_response(f"SMTP test failed: {message}", status_code=status.HTTP_502_BAD_GATEWAY)
 
