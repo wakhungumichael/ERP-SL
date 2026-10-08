@@ -5,12 +5,13 @@ from django.test import SimpleTestCase
 from Platform_API.modules.weighbridge.views import _blocks_new_first_weight
 
 
-def first_weight(*, status="Completed", payment_status="Paid", paired=False):
+def first_weight(*, status="Completed", payment_status="Paid", payment_mode="Cash", paired=False):
     return SimpleNamespace(
         operation_type=SimpleNamespace(flow_kind="first"),
         weight_type="First Weight",
         status=status,
         payment_status=payment_status,
+        payment_mode=payment_mode,
         paired=paired,
     )
 
@@ -24,6 +25,11 @@ class FirstWeightDuplicateRuleTests(SimpleTestCase):
 
     def test_pending_payment_first_weight_blocks_another_first_weight(self):
         self.assertTrue(_blocks_new_first_weight(first_weight(payment_status="Pending")))
+
+    def test_pending_debt_first_weight_does_not_block_another_first_weight(self):
+        self.assertFalse(_blocks_new_first_weight(
+            first_weight(payment_status="Pending", payment_mode="Debt")
+        ))
 
     def test_paired_first_weight_does_not_block_another_first_weight(self):
         self.assertFalse(_blocks_new_first_weight(first_weight(status="Draft", paired=True)))

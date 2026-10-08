@@ -591,13 +591,21 @@ def _is_pending_first_weight(transaction, *, now=None):
 
 
 def _blocks_new_first_weight(transaction):
-    """Only unfinished or unpaid first weights prevent another first capture."""
+    """Block unfinished or unsettled non-credit first weights only.
+
+    A debt transaction remains payment-pending by design, but it is a valid
+    completed credit sale. It must be printable and recorded on the customer
+    statement without preventing the vehicle from making later visits.
+    """
     if transaction is None or _resolve_transaction_flow(transaction) != "first" or transaction.paired:
         return False
 
     status = (transaction.status or "").strip().lower()
     payment_status = (transaction.payment_status or "").strip().lower()
-    return status == "draft" or payment_status == "pending"
+    payment_mode = (transaction.payment_mode or "").strip().lower()
+    return status == "draft" or (
+        payment_status == "pending" and payment_mode != "debt"
+    )
 
 
 def _find_open_transaction_duplicate(*, tenant, vehicle, flow_kind, exclude_pk=None):
@@ -1058,8 +1066,9 @@ class TransactionListCreateView(generics.ListCreateAPIView):
             flow_label = (getattr(getattr(duplicate, "operation_type", None), "name", None) or duplicate.weight_type or flow_kind).strip()
             if flow_kind == "first":
                 message = (
-                    f"Vehicle {vehicle.number_plate} already has an unfinished or unpaid {flow_label} "
-                    f"(TX-{duplicate.id:05d}). Complete the draft or process its payment before recording another first weight."
+                    f"Vehicle {vehicle.number_plate} already has an unfinished or unsettled {flow_label} "
+                    f"(TX-{duplicate.id:05d}). Complete the draft or record payment before capturing another first weight. "
+                    "Debt transactions remain printable and do not block future visits."
                 )
             else:
                 message = (
