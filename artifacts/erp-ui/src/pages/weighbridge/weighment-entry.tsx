@@ -16,7 +16,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
 import LiveIndicator from '@/components/weighbridge/live-indicator';
-import { Camera, Check, ChevronsUpDown, Package, Plus, RefreshCw, Scale, Search, Trash2, Truck, UserRound, WifiOff } from 'lucide-react';
+import { Camera, Check, ChevronsUpDown, Loader2, Package, Plus, RefreshCw, ScanLine, Scale, Search, Trash2, Truck, UserRound, WifiOff } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { ERPPageHeader } from '@/components/erp/workspace/workspace-ui';
 import { hasPermission } from '@/lib/permissions';
@@ -38,6 +38,15 @@ type CameraPreview = {
   camera_type: string;
   available: boolean;
   image_data_url: string | null;
+};
+
+type PlateRecognition = {
+  detected: boolean;
+  plate: string;
+  confidence: number;
+  matched: boolean;
+  vehicle: any | null;
+  message: string;
 };
 
 type WorkflowContextDefaults = {
@@ -138,6 +147,9 @@ function CameraPanel({
   onRefresh,
   onCaptureImage,
   onClearImage,
+  onRecognizePlate,
+  isRecognizingPlate,
+  plateRecognition,
 }: {
   branchId: string;
   snapshotVersion: number;
@@ -145,6 +157,9 @@ function CameraPanel({
   onRefresh: () => void;
   onCaptureImage: (image: string) => void;
   onClearImage: () => void;
+  onRecognizePlate: (image: string) => void;
+  isRecognizingPlate: boolean;
+  plateRecognition: PlateRecognition | null;
 }) {
   const [selectedCameraId, setSelectedCameraId] = useState('');
   const { data, isLoading, isFetching } = useQuery({
@@ -202,9 +217,20 @@ function CameraPanel({
           </div>
         )}
         <div className="mt-2 flex flex-wrap items-center justify-end gap-2">
+          {plateRecognition?.detected ? (
+            <Badge variant="outline" className={cn('mr-auto font-mono', plateRecognition.matched ? 'border-emerald-400 text-emerald-700' : 'border-amber-400 text-amber-700')}>
+              <ScanLine className="mr-1.5 h-3.5 w-3.5" />{plateRecognition.plate}
+            </Badge>
+          ) : null}
           {capturedImage ? (
             <Button type="button" size="sm" variant="ghost" className="h-7 px-2 text-xs text-destructive hover:text-destructive" onClick={onClearImage}>
               <Trash2 className="mr-1.5 h-3.5 w-3.5" />Remove
+            </Button>
+          ) : null}
+          {capturedImage ? (
+            <Button type="button" size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={() => onRecognizePlate(capturedImage)} disabled={isRecognizingPlate}>
+              {isRecognizingPlate ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <ScanLine className="mr-1.5 h-3.5 w-3.5" />}
+              {isRecognizingPlate ? 'Reading plate…' : 'Detect plate'}
             </Button>
           ) : null}
           <Button type="button" size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={onRefresh} disabled={!branchId || isFetching}>
@@ -278,6 +304,8 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
   const [showVehicleResults, setShowVehicleResults] = useState(false);
   const [snapshotVersion, setSnapshotVersion] = useState(0);
   const [capturedCameraImage, setCapturedCameraImage] = useState<string | null>(null);
+  const [plateRecognition, setPlateRecognition] = useState<PlateRecognition | null>(null);
+  const [isRecognizingPlate, setIsRecognizingPlate] = useState(false);
   const [customerOpen, setCustomerOpen] = useState(false);
   const [vehicleOpen, setVehicleOpen] = useState(false);
   const [itemOpen, setItemOpen] = useState(false);
@@ -404,10 +432,12 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
     setManualWeight('');
     setWeightReason('');
     setCapturedCameraImage(null);
+    setPlateRecognition(null);
   }, [operationTypeId]);
 
   useEffect(() => {
     setCapturedCameraImage(null);
+    setPlateRecognition(null);
   }, [effectiveBranchId]);
 
   useEffect(() => {
@@ -489,6 +519,92 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
     queryClient.invalidateQueries();
   };
 
+  function selectRecognizedVehicle(vehicle: any) {
+    setPlateInput(String(vehicle.number_plate ?? '').toUpperCase());
+    setVehicleForm((current) => ({ ...current, number_plate: String(vehicle.number_plate ?? '').toUpperCase() }));
+    setShowVehicleResults(false);
+    setPrefillVehicleKey('');
+    if (isSecondFlow) {
+      setSelectedVehicle(vehicle);
+      setCapturedWeight(null);
+      setManualWeight('');
+      return;
+    }
+    setCustomerId(String(vehicle.customer));
+    setVehicleId(String(vehicle.id));
+    setVehicleTypeId(vehicle.vehicle_type ? String(vehicle.vehicle_type) : '');
+  }
+
+  async function recognizePlate(image: string) {
+    setIsRecognizingPlate(true);
+    try {
+      const res = await fetch('/api/commercial-weighbridge/camera-configs/recognize-plate/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ image, branch_id: effectiveBranchId || undefined }),
+      });
+      if (!res.ok) throw await apiErrorFromResponse(res, 'The number plate could not be read.');
+      const result = await res.json() as PlateRecognition;
+      setPlateRecognition(result);
+      if (!result.detected) {
+        toast({ title: 'Plate not detected', description: result.message, variant: 'destructive' });
+        return;
+      }
+
+      setPlateInput(result.plate);
+      setVehicleForm((current) => ({ ...current, number_plate: result.plate }));
+      if (result.vehicle) {
+        selectRecognizedVehicle(result.vehicle);
+        toast({ title: `Vehicle ${result.plate} found`, description: result.message });
+      } else {
+        if (isSecondFlow) setSelectedVehicle(null);
+        if (!isSecondFlow) {
+          setVehicleId('');
+          setVehicleTypeId('');
+        }
+        toast({ title: `Plate ${result.plate} detected`, description: result.message });
+      }
+    } catch (error) {
+      setPlateRecognition(null);
+      toast({ title: 'Could not detect number plate', description: formatApiError(error), variant: 'destructive' });
+    } finally {
+      setIsRecognizingPlate(false);
+    }
+  }
+
+  async function findVehicleByPlate() {
+    const plate = plateInput.trim().toUpperCase();
+    if (!plate) {
+      toast({ title: 'Enter a number plate', variant: 'destructive' });
+      return;
+    }
+    try {
+      const res = await fetch(`/api/commercial-weighbridge/vehicles/?search=${encodeURIComponent(plate)}&page_size=50`, { headers: authHeaders() });
+      if (!res.ok) throw await apiErrorFromResponse(res, 'The vehicle lookup failed.');
+      const payload = await res.json();
+      const results = Array.isArray(payload) ? payload : payload?.results ?? [];
+      const normalizedPlate = plate.replace(/[^A-Z0-9]/g, '');
+      const vehicle = results.find((candidate: any) => String(candidate.number_plate ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '') === normalizedPlate);
+      if (vehicle) {
+        selectRecognizedVehicle(vehicle);
+        setPlateRecognition({ detected: true, plate: vehicle.number_plate, confidence: 100, matched: true, vehicle, message: 'Registered vehicle found. Review the populated details before continuing.' });
+        toast({ title: `Vehicle ${vehicle.number_plate} found` });
+        return;
+      }
+      setPlateRecognition({ detected: true, plate, confidence: 0, matched: false, vehicle: null, message: 'No registered vehicle was found. Correct the plate or add a vehicle.' });
+      setVehicleForm((current) => ({ ...current, number_plate: plate }));
+      toast({ title: 'Vehicle not registered', description: 'Select a customer, then add this vehicle or correct the plate.', variant: 'destructive' });
+    } catch (error) {
+      toast({ title: 'Could not find vehicle', description: formatApiError(error), variant: 'destructive' });
+    }
+  }
+
+  function captureCameraImage(image: string) {
+    setCapturedCameraImage(image);
+    setPlateRecognition(null);
+    void recognizePlate(image);
+  }
+
   function refreshCameraPreviews() {
     setSnapshotVersion((current) => current + 1);
   }
@@ -502,6 +618,7 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
     setPlateInput('');
     setSelectedVehicle(null);
     setShowVehicleResults(false);
+    setPlateRecognition(null);
   }
 
   function handleSubmit(event: React.FormEvent) {
@@ -706,8 +823,14 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
             snapshotVersion={snapshotVersion}
             capturedImage={capturedCameraImage}
             onRefresh={refreshCameraPreviews}
-            onCaptureImage={setCapturedCameraImage}
-            onClearImage={() => setCapturedCameraImage(null)}
+            onCaptureImage={captureCameraImage}
+            onClearImage={() => {
+              setCapturedCameraImage(null);
+              setPlateRecognition(null);
+            }}
+            onRecognizePlate={recognizePlate}
+            isRecognizingPlate={isRecognizingPlate}
+            plateRecognition={plateRecognition}
           />
         </aside>
 
@@ -769,6 +892,7 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
                           setPlateInput(event.target.value.toUpperCase());
                           setShowVehicleResults(true);
                           setSelectedVehicle(null);
+                          setPlateRecognition(null);
                         }}
                         onFocus={() => setShowVehicleResults(true)}
                       />
@@ -784,11 +908,8 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
                             type="button"
                             className="flex w-full items-center justify-between border-b px-4 py-3 text-left transition-colors hover:bg-muted/60 last:border-b-0"
                             onClick={() => {
-                              setSelectedVehicle(vehicle);
-                              setPlateInput(vehicle.number_plate);
-                              setShowVehicleResults(false);
-                              setCapturedWeight(null);
-                              setManualWeight('');
+                              selectRecognizedVehicle(vehicle);
+                              setPlateRecognition(null);
                             }}
                           >
                             <span className="font-mono font-bold uppercase tracking-wide">{vehicle.number_plate}</span>
@@ -846,20 +967,43 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
                         <p className="text-xs text-muted-foreground">Choose the customer and registered vehicle for this ticket.</p>
                       </div>
                     </div>
+                    <div className="mb-3 grid gap-1.5">
+                      <Label htmlFor="vehicle-plate-lookup">Vehicle plate</Label>
+                      <div className="flex gap-2">
+                        <Input
+                          id="vehicle-plate-lookup"
+                          className="font-mono font-bold uppercase tracking-wider"
+                          value={plateInput}
+                          onChange={(event) => {
+                            const plate = event.target.value.toUpperCase();
+                            setPlateInput(plate);
+                            setVehicleForm((current) => ({ ...current, number_plate: plate }));
+                            setPlateRecognition(null);
+                          }}
+                          placeholder="Detected plate or type manually"
+                        />
+                        <Button type="button" variant="outline" className="shrink-0" onClick={() => void findVehicleByPlate()}>
+                          <Search className="mr-1.5 h-4 w-4" />Find vehicle
+                        </Button>
+                      </div>
+                      {plateRecognition ? (
+                        <p className={cn('text-xs', plateRecognition.matched ? 'text-emerald-700' : 'text-amber-700')}>{plateRecognition.message}</p>
+                      ) : null}
+                    </div>
                     <div className="grid gap-3 md:grid-cols-2">
                       <div className="space-y-1.5">
                         <div className="flex min-h-8 items-center justify-between gap-3">
                           <Label required>Customer</Label>
                           {canAddCustomer ? <Button type="button" variant="outline" size="sm" className="h-8 gap-1 border-primary/25 text-primary hover:bg-primary/10 hover:text-primary" onClick={() => setCustomerOpen(true)}><Plus className="h-3.5 w-3.5" /> Add Customer</Button> : null}
                         </div>
-                        <SearchSelect value={customerId} onChange={(value) => { setCustomerId(value); setVehicleId(''); setVehicleTypeId(''); setItemId(''); setDestination(''); setDriverName(''); setDriverPhone(''); setPrefillVehicleKey(''); }} placeholder="Search customer" searchPlaceholder="Search customer" emptyLabel="No customers found" options={customerOptions} />
+                        <SearchSelect value={customerId} onChange={(value) => { setCustomerId(value); setVehicleId(''); setVehicleTypeId(''); setItemId(''); setDestination(''); setDriverName(''); setDriverPhone(''); setPrefillVehicleKey(''); setPlateRecognition(null); }} placeholder="Search customer" searchPlaceholder="Search customer" emptyLabel="No customers found" options={customerOptions} />
                       </div>
                       <div className="space-y-1.5">
                         <div className="flex min-h-8 items-center justify-between gap-3">
                           <Label required>Vehicle</Label>
-                          {canAddVehicle ? <Button type="button" variant="outline" size="sm" className="h-8 gap-1 border-primary/25 text-primary hover:bg-primary/10 hover:text-primary" onClick={() => setVehicleOpen(true)} disabled={!customerId}><Plus className="h-3.5 w-3.5" /> Add Vehicle</Button> : null}
+                          {canAddVehicle ? <Button type="button" variant="outline" size="sm" className="h-8 gap-1 border-primary/25 text-primary hover:bg-primary/10 hover:text-primary" onClick={() => { setVehicleForm((current) => ({ ...current, number_plate: plateInput.trim().toUpperCase() })); setVehicleOpen(true); }} disabled={!customerId}><Plus className="h-3.5 w-3.5" /> Add Vehicle</Button> : null}
                         </div>
-                        <SearchSelect value={vehicleId} onChange={(value) => { setPrefillVehicleKey(''); setVehicleId(value); const selected = vehicleList.find((vehicle: any) => String(vehicle.id) === value); setVehicleTypeId(selected?.vehicle_type ? String(selected.vehicle_type) : ''); }} placeholder={customerId ? 'Search vehicle' : 'Select customer first'} searchPlaceholder="Search vehicle" emptyLabel="No vehicles found" disabled={!customerId} options={vehicleOptions} />
+                        <SearchSelect value={vehicleId} onChange={(value) => { setPrefillVehicleKey(''); setVehicleId(value); const selected = vehicleList.find((vehicle: any) => String(vehicle.id) === value); setVehicleTypeId(selected?.vehicle_type ? String(selected.vehicle_type) : ''); setPlateInput(selected?.number_plate ?? ''); setPlateRecognition(null); }} placeholder={customerId ? 'Search vehicle' : 'Select customer first'} searchPlaceholder="Search vehicle" emptyLabel="No vehicles found" disabled={!customerId} options={vehicleOptions} />
                       </div>
                       {duplicateOpenFirstWeight ? <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 md:col-span-2">Open draft found for this vehicle: <span className="font-mono font-bold">TX-{String(duplicateOpenFirstWeight.id).padStart(5, '0')}</span>. Complete or approve that {duplicateOpenFirstWeight.operation_type_name.toLowerCase()} record before saving another one.</div> : null}
                     </div>

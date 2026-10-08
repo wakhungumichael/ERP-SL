@@ -39,6 +39,7 @@ urlpatterns = [
     path("overweight-config/<int:branch_pk>/",      views.OverweightConfigView.as_view(),                 name="wb-overweight-config"),
     path("camera-configs/",                         views.CameraConfigListCreateView.as_view(),           name="wb-camera-configs"),
     path("camera-configs/preview/",                 views.CameraConfigPreviewView.as_view(),              name="wb-camera-config-preview"),
+    path("camera-configs/recognize-plate/",         views.CameraPlateRecognitionView.as_view(),           name="wb-camera-recognize-plate"),
     path("camera-configs/<int:pk>/",                views.CameraConfigDetailView.as_view(),               name="wb-camera-config-detail"),
     path("surveillance-monitor/",                   views.SurveillanceMonitorStatusView.as_view(),        name="wb-surveillance-monitor"),
     path("surveillance-monitor/test/",              views.SurveillanceMonitorTestView.as_view(),          name="wb-surveillance-monitor-test"),

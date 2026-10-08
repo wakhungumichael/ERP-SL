@@ -18,6 +18,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxslt1.1 \
     libxslt1-dev \
     shared-mime-info \
+    tesseract-ocr \
     && rm -rf /var/lib/apt/lists/*
 
 COPY backend/requirements.txt /tmp/requirements.txt

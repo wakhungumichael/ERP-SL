@@ -43,6 +43,11 @@ from SL_Weighbridge.models import (
 )
 from SL_Sales.models import Product
 from SL_Weighbridge.utils import capture_hikvision_snapshot
+from SL_Weighbridge.plate_recognition import (
+    PlateRecognitionUnavailable,
+    normalize_plate,
+    recognize_plate_image,
+)
 
 
 # ── Pagination ────────────────────────────────────────────────────────────────
@@ -3027,6 +3032,84 @@ class CameraConfigPreviewView(APIView):
             "branch_id": int(branch_id),
             "camera_count": len(previews),
             "results": previews,
+        })
+
+
+class CameraPlateRecognitionView(APIView):
+    """Recognize a plate from a captured camera image and find its tenant vehicle."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        _require_weighbridge_model_permission(request.user, "view_vehicle")
+        snapshot_serializer = TransactionSerializer(
+            data={"camera_snapshot": request.data.get("image")},
+            partial=True,
+        )
+        if not snapshot_serializer.is_valid():
+            return Response(
+                {"image": snapshot_serializer.errors.get("camera_snapshot", ["A valid camera image is required."])},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        image_bytes = snapshot_serializer.validated_data["camera_snapshot"]
+        if not image_bytes:
+            return Response(
+                {"image": ["A valid camera image is required."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        branch_id = request.data.get("branch_id")
+        if branch_id and not Branch.objects.filter(
+            pk=branch_id,
+            id__in=_allowed_branch_ids(request.user),
+        ).exists():
+            return Response(
+                {"branch_id": "Branch not found or access denied."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        try:
+            recognition = recognize_plate_image(image_bytes)
+        except PlateRecognitionUnavailable as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+        if recognition is None:
+            return Response({
+                "detected": False,
+                "plate": "",
+                "confidence": 0,
+                "matched": False,
+                "vehicle": None,
+                "message": "No number plate could be read. Enter it manually or retake the image.",
+            })
+
+        vehicles = Vehicle.objects.select_related("customer", "vehicle_type")
+        resolved = _resolve_user_tenant(request.user)
+        if isinstance(resolved, _NoTenantProfile):
+            vehicles = vehicles.none()
+        elif resolved is not None:
+            vehicles = vehicles.filter(
+                Q(tenant=resolved) | Q(tenant__isnull=True, transaction__tenant=resolved)
+            ).distinct()
+
+        vehicle = next(
+            (
+                candidate
+                for candidate in vehicles.iterator()
+                if normalize_plate(candidate.number_plate) == recognition.plate
+            ),
+            None,
+        )
+        return Response({
+            "detected": True,
+            "plate": recognition.plate,
+            "confidence": recognition.confidence,
+            "matched": vehicle is not None,
+            "vehicle": VehicleSerializer(vehicle, context={"request": request}).data if vehicle else None,
+            "message": (
+                "Registered vehicle found. Review the populated details before continuing."
+                if vehicle
+                else "Plate detected but no registered vehicle was found. Correct it or add a vehicle."
+            ),
         })
 
 
