@@ -541,6 +541,26 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
     queryClient.invalidateQueries();
   };
 
+  async function populateVehicleHistoryDefaults(vehicleId: number | string) {
+    try {
+      const res = await fetch(`/api/commercial-weighbridge/transactions/workflow-context/?vehicle_id=${vehicleId}`, {
+        headers: authHeaders(),
+      });
+      if (!res.ok) return;
+
+      const context = await res.json() as WorkflowContextPayload;
+      const defaults = context.latest_transaction_defaults;
+      setItemId(defaults?.item_id ? String(defaults.item_id) : '');
+      setDestination(defaults?.destination ?? '');
+      setDriverName(defaults?.driver_name ?? '');
+      setDriverPhone(defaults?.driver_phone ?? '');
+      setDriverDetailsPrefilled(Boolean(defaults?.driver_name || defaults?.driver_phone));
+      setPrefillVehicleKey(`first:${vehicleId}`);
+    } catch {
+      // The vehicle remains usable even when it has no prior transaction history.
+    }
+  }
+
   function selectRecognizedVehicle(vehicle: any) {
     setPlateInput(String(vehicle.number_plate ?? '').toUpperCase());
     setVehicleForm((current) => ({ ...current, number_plate: String(vehicle.number_plate ?? '').toUpperCase() }));
@@ -558,6 +578,7 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
     setCustomerId(String(vehicle.customer));
     setVehicleId(String(vehicle.id));
     setVehicleTypeId(vehicle.vehicle_type ? String(vehicle.vehicle_type) : '');
+    void populateVehicleHistoryDefaults(vehicle.id);
   }
 
   async function recognizePlate(image: string) {
