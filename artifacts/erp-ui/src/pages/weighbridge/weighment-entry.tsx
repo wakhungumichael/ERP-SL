@@ -221,36 +221,6 @@ function normalizeBranchId(value: unknown): string | null {
   return String(value);
 }
 
-function WeighmentStepper({ isSecondFlow }: { isSecondFlow: boolean }) {
-  const steps = ['Vehicle', 'First Weight', 'Second Weight', 'Review', 'Complete'];
-  const activeStep = isSecondFlow ? 2 : 1;
-
-  return (
-    <div className="overflow-x-auto border-b border-border/80 pb-4">
-      <div className="flex min-w-[620px] items-center">
-        {steps.map((step, index) => {
-          const completed = index < activeStep;
-          const active = index === activeStep;
-          return (
-            <div key={step} className="flex flex-1 items-center last:flex-none">
-              <div className="flex items-center gap-2 whitespace-nowrap">
-                <span className={cn(
-                  'flex h-5 w-5 items-center justify-center rounded-full border text-[10px] font-bold',
-                  completed || active ? 'border-primary bg-primary text-primary-foreground' : 'border-border bg-card text-muted-foreground',
-                )}>
-                  {completed ? '✓' : index + 1}
-                </span>
-                <span className={cn('text-xs font-medium', active ? 'text-foreground' : 'text-muted-foreground')}>{step}</span>
-              </div>
-              {index < steps.length - 1 ? <div className={cn('mx-3 h-px flex-1', completed ? 'bg-primary' : 'bg-border')} /> : null}
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
 function extractAssignedBranchIds(user: Record<string, unknown> | null): string[] {
   if (!user) return [];
 
@@ -632,13 +602,13 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
   }
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-3">
       <ERPPageHeader
         title={<span className="flex items-center gap-2"><Scale className="h-5 w-5 text-primary" />Weighment Entry</span>}
       />
-      <WeighmentStepper isSecondFlow={isSecondFlow} />
 
-      <form onSubmit={handleSubmit} className="grid gap-5 xl:grid-cols-[minmax(0,1.15fr)_minmax(360px,0.85fr)]">
+      <form onSubmit={handleSubmit} className="grid items-start gap-4 xl:grid-cols-[minmax(300px,0.72fr)_minmax(0,1.65fr)]">
+        <aside className="space-y-4 xl:sticky xl:top-4">
           <Card className="overflow-hidden border-primary/20 shadow-sm">
             <CardHeader className="flex-row items-center justify-between border-b border-primary/15 bg-primary/5 px-4 py-3">
               <CardTitle className="text-sm font-semibold">Live Weight</CardTitle>
@@ -709,16 +679,18 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
           </Card>
 
           <CameraPanel branchId={effectiveBranchId} snapshotVersion={snapshotVersion} onRefresh={refreshCameraPreviews} />
+        </aside>
 
-          <Card className="overflow-hidden border-primary/20 shadow-sm xl:col-span-2">
+        <section className="min-w-0 space-y-4">
+          <Card className="overflow-hidden border-primary/20 shadow-sm">
             <CardHeader className="border-b border-primary/15 bg-gradient-to-r from-primary/10 via-primary/5 to-transparent py-3">
               <CardTitle className="flex items-center gap-2 text-sm font-bold uppercase tracking-widest">
                 <span className="h-2 w-2 rounded-full bg-primary" />
                 Vehicle and Transaction Details
               </CardTitle>
             </CardHeader>
-            <CardContent className="space-y-4 p-5">
-              <div className="grid gap-4 rounded-xl border border-primary/20 bg-primary/[0.04] p-4 md:grid-cols-2 xl:grid-cols-[minmax(240px,0.8fr)_minmax(240px,0.8fr)_1fr]">
+            <CardContent className="space-y-3 p-4">
+              <div className="grid gap-3 rounded-xl border border-primary/20 bg-primary/[0.04] p-3 md:grid-cols-2 xl:grid-cols-[minmax(210px,0.8fr)_minmax(210px,0.8fr)_1fr]">
                 <div className="space-y-1.5">
                   <Label>Operation Type</Label>
                   <Select value={operationTypeId} onValueChange={setOperationTypeId}>
@@ -835,16 +807,16 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
                   ) : null}
                 </>
               ) : (
-                <div className="space-y-5">
-                  <section className="rounded-xl border border-primary/15 bg-card p-4 shadow-sm">
-                    <div className="mb-4 flex items-center gap-3">
+                <div className="space-y-3">
+                  <section className="rounded-xl border border-primary/15 bg-card p-3 shadow-sm">
+                    <div className="mb-3 flex items-center gap-3">
                       <span className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-sm font-bold text-primary-foreground">1</span>
                       <div>
                         <h3 className="flex items-center gap-2 font-semibold"><Truck className="h-4 w-4 text-primary" />Vehicle account</h3>
                         <p className="text-xs text-muted-foreground">Choose the customer and registered vehicle for this ticket.</p>
                       </div>
                     </div>
-                    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                       <div className="space-y-1.5">
                         <div className="flex min-h-8 items-center justify-between gap-3">
                           <Label>Customer</Label>
@@ -869,17 +841,17 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
                       {duplicateOpenFirstWeight ? <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 md:col-span-2 xl:col-span-3">Open draft found for this vehicle: <span className="font-mono font-bold">TX-{String(duplicateOpenFirstWeight.id).padStart(5, '0')}</span>. Complete or approve that {duplicateOpenFirstWeight.operation_type_name.toLowerCase()} record before saving another one.</div> : null}
                     </div>
                   </section>
-                  <div className="grid gap-5 xl:grid-cols-2">
-                    <section className="rounded-xl border border-primary/15 bg-card p-4 shadow-sm">
-                      <div className="mb-4 flex items-center gap-3"><span className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-sm font-bold text-primary-foreground">2</span><div><h3 className="flex items-center gap-2 font-semibold"><Package className="h-4 w-4 text-primary" />Load details</h3><p className="text-xs text-muted-foreground">Record what the vehicle is carrying and where it is going.</p></div></div>
-                      <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="grid gap-3 xl:grid-cols-2">
+                    <section className="rounded-xl border border-primary/15 bg-card p-3 shadow-sm">
+                      <div className="mb-3 flex items-center gap-3"><span className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-sm font-bold text-primary-foreground">2</span><div><h3 className="flex items-center gap-2 font-semibold"><Package className="h-4 w-4 text-primary" />Load details</h3><p className="text-xs text-muted-foreground">Record what the vehicle is carrying and where it is going.</p></div></div>
+                      <div className="grid gap-3 sm:grid-cols-2">
                         <div className="space-y-1.5"><div className="flex min-h-8 items-center justify-between gap-3"><Label>Commodity</Label>{canAddItem ? <Button type="button" variant="outline" size="sm" className="h-8 gap-1 border-primary/25 text-primary hover:bg-primary/10 hover:text-primary" onClick={() => setItemOpen(true)}><Plus className="h-3.5 w-3.5" /> Add Item</Button> : null}</div><Select value={itemId} onValueChange={setItemId}><SelectTrigger><SelectValue placeholder="Select commodity" /></SelectTrigger><SelectContent>{itemList.map((row: any) => <SelectItem key={row.id} value={String(row.id)}>{row.name}</SelectItem>)}</SelectContent></Select></div>
                         <div className="space-y-1.5"><div className="flex min-h-8 items-center"><Label>Destination</Label></div><Input value={destination} onChange={(event) => setDestination(event.target.value)} placeholder="Optional destination" /></div>
                       </div>
                     </section>
-                    <section className="rounded-xl border border-primary/15 bg-card p-4 shadow-sm">
-                      <div className="mb-4 flex items-center gap-3"><span className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-sm font-bold text-primary-foreground">3</span><div><h3 className="flex items-center gap-2 font-semibold"><UserRound className="h-4 w-4 text-primary" />Driver details</h3><p className="text-xs text-muted-foreground">Optional contact details for ticket follow-up.</p></div></div>
-                      <div className="grid gap-4 sm:grid-cols-2"><div className="space-y-1.5"><div className="flex min-h-8 items-center"><Label>Driver Name</Label></div><Input value={driverName} onChange={(event) => setDriverName(event.target.value)} placeholder="Driver name" /></div><div className="space-y-1.5"><div className="flex min-h-8 items-center"><Label>Driver Phone</Label></div><Input type="tel" value={driverPhone} onChange={(event) => setDriverPhone(event.target.value)} placeholder="Driver phone" /></div></div>
+                    <section className="rounded-xl border border-primary/15 bg-card p-3 shadow-sm">
+                      <div className="mb-3 flex items-center gap-3"><span className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-sm font-bold text-primary-foreground">3</span><div><h3 className="flex items-center gap-2 font-semibold"><UserRound className="h-4 w-4 text-primary" />Driver details</h3><p className="text-xs text-muted-foreground">Optional contact details for ticket follow-up.</p></div></div>
+                      <div className="grid gap-3 sm:grid-cols-2"><div className="space-y-1.5"><div className="flex min-h-8 items-center"><Label>Driver Name</Label></div><Input value={driverName} onChange={(event) => setDriverName(event.target.value)} placeholder="Driver name" /></div><div className="space-y-1.5"><div className="flex min-h-8 items-center"><Label>Driver Phone</Label></div><Input type="tel" value={driverPhone} onChange={(event) => setDriverPhone(event.target.value)} placeholder="Driver phone" /></div></div>
                     </section>
                   </div>
                 </div>
@@ -900,7 +872,7 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
             </CardContent>
           </Card>
 
-          <div className="sticky bottom-3 z-10 flex items-center justify-between gap-3 rounded-xl border border-primary/20 bg-background/95 p-3 shadow-lg backdrop-blur xl:col-span-2">
+          <div className="sticky bottom-3 z-10 flex items-center justify-between gap-3 rounded-xl border border-primary/20 bg-background/95 p-3 shadow-lg backdrop-blur">
             <p className="hidden text-sm text-muted-foreground sm:block">Review the vehicle and captured weight before saving.</p>
             <div className="ml-auto flex items-center gap-3">
             <Button type="button" variant="outline" onClick={() => setLocation('/weighbridge/transactions')}>
@@ -915,6 +887,7 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
             </Button>
             </div>
           </div>
+        </section>
       </form>
 
       <Dialog open={customerOpen} onOpenChange={setCustomerOpen}>
