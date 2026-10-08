@@ -297,15 +297,15 @@ def _receipt_stylesheet(primary_color):
     return f"""
       :root {{ --receipt-brand: {primary_color}; --receipt-text: #111827; }}
       * {{ box-sizing: border-box; }}
-      @page {{ size: A5 landscape; margin: 8mm; }}
+      @page {{ size: A5 landscape; margin: 5mm; }}
       body {{ margin: 0; background: #f3f4f6; color: var(--receipt-text); font-family: Arial, Helvetica, sans-serif; }}
-      .wb-receipt {{ width: 100%; max-width: 194mm; min-height: 130mm; margin: 12px auto; padding: 7mm 8mm; background: #fff; border: 1px solid var(--receipt-brand); font-size: 9pt; line-height: 1.28; }}
-      .wb-receipt__header {{ display: grid; grid-template-columns: 42mm 1fr; align-items: center; gap: 5mm; padding-bottom: 3mm; border-bottom: 2px solid var(--receipt-brand); }}
-      .wb-receipt__logo {{ display: block; width: 40mm; max-height: 18mm; object-fit: contain; object-position: left center; }}
+      .wb-receipt {{ width: 200mm; height: 138mm; margin: 12px auto; padding: 4.5mm 5mm; overflow: hidden; background: #fff; border: 1px solid var(--receipt-brand); font-size: 8pt; line-height: 1.18; }}
+      .wb-receipt__header {{ display: grid; grid-template-columns: 42mm 1fr; align-items: center; gap: 4mm; padding-bottom: 2mm; border-bottom: 2px solid var(--receipt-brand); }}
+      .wb-receipt__logo {{ display: block; width: 40mm; max-height: 16mm; object-fit: contain; object-position: left center; }}
       .wb-receipt__company {{ font-size: 14pt; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }}
-      .wb-receipt__branch {{ margin-top: 1mm; font-size: 9pt; font-weight: 700; }}
-      .wb-receipt__contact {{ grid-column: 1 / -1; color: #4b5563; font-size: 7.5pt; }}
-      .wb-receipt__title-row {{ display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 5mm; padding: 3.5mm 0; border-bottom: 1px dashed var(--receipt-brand); }}
+      .wb-receipt__branch {{ margin-top: 1mm; font-size: 8pt; font-weight: 700; }}
+      .wb-receipt__contact {{ grid-column: 1 / -1; color: #4b5563; font-size: 7pt; }}
+      .wb-receipt__title-row {{ display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 4mm; padding: 2.5mm 0; border-bottom: 1px dashed var(--receipt-brand); }}
       .wb-receipt__kicker {{ font-size: 7.5pt; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; color: var(--receipt-brand); }}
       .wb-receipt__title-row strong {{ font-size: 12pt; }}
       .wb-receipt__issue {{ text-align: right; font-size: 7.5pt; }}
@@ -314,23 +314,23 @@ def _receipt_stylesheet(primary_color):
       .wb-receipt__status.is-paid {{ color: #047857; background: #ecfdf5; }}
       .wb-receipt__status.is-pending {{ color: #b45309; background: #fffbeb; }}
       .wb-receipt__details, .wb-receipt__weights {{ width: 100%; border-collapse: collapse; }}
-      .wb-receipt__details {{ margin: 3mm 0; }}
-      .wb-receipt__details th, .wb-receipt__details td {{ padding: 1.4mm 1.8mm; border-bottom: 1px solid #e5e7eb; text-align: left; }}
+      .wb-receipt__details {{ margin: 2mm 0; }}
+      .wb-receipt__details th, .wb-receipt__details td {{ padding: 1.1mm 1.5mm; border-bottom: 1px solid #e5e7eb; text-align: left; }}
       .wb-receipt__details th {{ width: 14%; color: #6b7280; font-size: 7pt; letter-spacing: .07em; text-transform: uppercase; }}
       .wb-receipt__details td {{ width: 36%; font-weight: 700; }}
       .wb-receipt__weights thead {{ background: var(--receipt-brand); color: #fff; }}
-      .wb-receipt__weights th, .wb-receipt__weights td {{ padding: 2mm; border: 1px solid #d1d5db; text-align: left; }}
+      .wb-receipt__weights th, .wb-receipt__weights td {{ padding: 1.5mm; border: 1px solid #d1d5db; text-align: left; }}
       .wb-receipt__weights th:last-child, .wb-receipt__weights td:last-child {{ text-align: right; font-weight: 800; }}
       .wb-receipt__weights tfoot {{ background: #f9fafb; }}
       .wb-receipt__weights tfoot th {{ border-top: 2px solid var(--receipt-brand); font-size: 10pt; text-transform: uppercase; }}
-      .wb-receipt__payment {{ display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 4mm; margin-top: 3mm; padding-top: 3mm; border-top: 1px dashed #9ca3af; }}
+      .wb-receipt__payment {{ display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 4mm; margin-top: 2mm; padding-top: 2mm; border-top: 1px dashed #9ca3af; }}
       .wb-receipt__payment strong {{ font-size: 9pt; }}
       .wb-receipt__payment .wb-receipt__charge {{ text-align: right; }}
       .wb-receipt__payment .wb-receipt__charge strong {{ color: var(--receipt-brand); font-size: 11pt; }}
-      .wb-receipt__footer {{ margin-top: 3mm; padding-top: 2mm; border-top: 1px solid #e5e7eb; text-align: center; color: #6b7280; font-size: 7pt; }}
+      .wb-receipt__footer {{ margin-top: 2mm; padding-top: 1.5mm; border-top: 1px solid #e5e7eb; text-align: center; color: #6b7280; font-size: 7pt; }}
       @media print {{
         body {{ background: #fff; }}
-        .wb-receipt {{ max-width: none; min-height: 0; margin: 0; padding: 0; border: 0; }}
+        .wb-receipt {{ width: 200mm; height: 138mm; margin: 0; }}
       }}
     """
 
@@ -343,7 +343,9 @@ def _default_body(document_type):
               {% if branding.logo_url %}
                 <img class="wb-receipt__logo" src="{{ branding.logo_url }}" alt="{{ company.name }} logo" />
               {% endif %}
-              <div class="wb-receipt__company">{{ company.name|default:"SL-ERP" }}</div>
+              {% if not branding.logo_url %}
+                <div class="wb-receipt__company">{{ company.name|default:"SL-ERP" }}</div>
+              {% endif %}
               <div class="wb-receipt__branch">{{ company.branch_name|default:"Main Branch" }}</div>
               {% if company.phone or company.email %}
                 <div class="wb-receipt__contact">{{ company.phone }}{% if company.phone and company.email %} | {% endif %}{{ company.email }}</div>
@@ -400,9 +402,9 @@ def _default_body(document_type):
               <div class="wb-receipt__charge"><span>Charge</span><strong>{{ totals.total_display }}</strong></div>
             </section>
 
-            <footer class="wb-receipt__footer">
-              {{ branding.footer_text|default:"Generated by SL-ERP" }}
-            </footer>
+            {% if branding.footer_text %}
+              <footer class="wb-receipt__footer">{{ branding.footer_text }}</footer>
+            {% endif %}
           </main>
         """
     if document_type == "report":
@@ -813,7 +815,7 @@ def _receipt_context(transaction, settings_obj, request=None):
         "branding": {
             "logo_url": _safe_logo_url(settings_obj, request),
             "primary_color": getattr(settings_obj, "primary_color", "") or "#E85D26",
-            "footer_text": getattr(settings_obj, "footer_text", "") or company_name,
+            "footer_text": getattr(settings_obj, "footer_text", ""),
         },
         "company": {
             "name": company_name,

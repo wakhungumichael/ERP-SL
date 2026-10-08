@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Printer, Mail, Send, CheckCircle2 } from 'lucide-react';
+import { Printer, Mail, Send, CheckCircle2, Download } from 'lucide-react';
 import { useAuth } from '@/context/use-auth';
 
 export interface ReceiptTransaction {
@@ -126,6 +126,30 @@ export function ReceiptDialog({ transaction: t, open, onOpenChange, token }: Rec
       });
   };
 
+  const handleDownloadPdf = async () => {
+    if (!t || !token || !canPrintReceipt) return;
+    setPrintResult(null);
+    try {
+      const res = await fetch(`/api/commercial-weighbridge/transactions/${t.id}/receipt/?format=pdf`, {
+        headers: { Authorization: `Token ${token}` },
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body?.error ?? `Failed to generate PDF (${res.status})`);
+      }
+      const url = URL.createObjectURL(await res.blob());
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `weighbridge-receipt-TX-${String(t.id).padStart(5, '0')}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (error: any) {
+      setPrintResult(error?.message || 'The receipt PDF could not be generated. Please try again.');
+    }
+  };
+
   const openEmail = () => {
     setEmailAddr(t?.customer_email ?? '');
     setEmailResult(null);
@@ -180,6 +204,9 @@ export function ReceiptDialog({ transaction: t, open, onOpenChange, token }: Rec
         <div className="flex gap-2 mb-3">
           <Button size="sm" onClick={handlePrint} className="gap-2 flex-1 font-bold uppercase tracking-wide" disabled={!canPrintReceipt}>
             <Printer className="h-4 w-4" /> Print Receipt
+          </Button>
+          <Button size="sm" variant="outline" onClick={handleDownloadPdf} className="gap-2 font-bold uppercase tracking-wide" disabled={!canPrintReceipt}>
+            <Download className="h-4 w-4" /> PDF
           </Button>
           {token && (
             <Button

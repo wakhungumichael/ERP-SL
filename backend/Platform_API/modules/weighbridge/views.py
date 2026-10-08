@@ -9,7 +9,10 @@ import urllib.error
 from datetime import timedelta
 from decimal import Decimal
 from io import BytesIO
+from pathlib import Path
+from urllib.parse import urlparse
 
+from django.conf import settings
 from django.core.files.base import ContentFile
 from django.db import transaction as db_transaction
 from django.http import HttpResponse
@@ -52,6 +55,11 @@ from SL_Weighbridge.plate_recognition import (
     normalize_plate,
     recognize_plate_image,
 )
+
+try:
+    from xhtml2pdf import pisa
+except Exception:
+    pisa = None
 
 
 # ── Pagination ────────────────────────────────────────────────────────────────
@@ -1900,6 +1908,18 @@ class TransactionEmailReceiptView(APIView):
 class TransactionReceiptDocumentView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @staticmethod
+    def _pdf_link_callback(uri, _rel):
+        """Resolve local media/static files when xhtml2pdf renders the receipt."""
+        path = urlparse(uri).path or uri
+        media_url = str(settings.MEDIA_URL or "")
+        static_url = str(settings.STATIC_URL or "")
+        if media_url and path.startswith(media_url):
+            return str(Path(settings.MEDIA_ROOT) / path.removeprefix(media_url))
+        if static_url and path.startswith(static_url):
+            return str(Path(settings.STATIC_ROOT) / path.removeprefix(static_url))
+        return uri
+
     def get(self, request, pk):
         try:
             tx = _get_tenant_scoped_transaction(
@@ -1927,6 +1947,25 @@ class TransactionReceiptDocumentView(APIView):
             )
 
         rendered = render_transaction_receipt(tx, request=request)
+        if request.query_params.get("format") == "pdf":
+            if pisa is None:
+                return Response(
+                    {"error": "PDF generation is not available on this server."},
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
+            response = HttpResponse(content_type="application/pdf")
+            response["Content-Disposition"] = f'attachment; filename="weighbridge-receipt-TX-{tx.pk:05d}.pdf"'
+            pdf_result = pisa.CreatePDF(
+                rendered.html,
+                dest=response,
+                link_callback=self._pdf_link_callback,
+            )
+            if pdf_result.err:
+                return Response(
+                    {"error": "The receipt PDF could not be generated."},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
+            return response
         return HttpResponse(rendered.html, content_type="text/html; charset=utf-8")
 
 
