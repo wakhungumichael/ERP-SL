@@ -421,6 +421,7 @@ class Transaction(models.Model):
     manual_weight_capture = models.BooleanField(default=False)
     weight_reason = models.TextField(blank=True, null=True)  # Optional until capture
     manual_receipt = models.FileField(upload_to='manual_receipts/', blank=True, null=True)  # File upload
+    image = models.ImageField(upload_to='transaction_images/', blank=True, null=True)
     
 
     paired_first_transaction = models.ForeignKey(

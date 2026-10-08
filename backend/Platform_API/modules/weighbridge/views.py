@@ -1,12 +1,15 @@
 import csv
 import base64
+import binascii
 import json as _json
 import socket
 import urllib.request
 import urllib.error
 from datetime import timedelta
 from decimal import Decimal
+from io import BytesIO
 
+from django.core.files.base import ContentFile
 from django.http import HttpResponse
 from django.db.models import Q
 from django.utils import timezone
@@ -16,6 +19,7 @@ from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from PIL import Image, UnidentifiedImageError
 
 from Platform_Core.documents import render_business_document, render_transaction_receipt
 from Platform_Core.branch_sync import get_operational_branches_for_tenant
@@ -148,6 +152,8 @@ class VehicleSerializer(serializers.ModelSerializer):
 
 
 class TransactionSerializer(serializers.ModelSerializer):
+    camera_snapshot = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    camera_image_url = serializers.SerializerMethodField()
     status = serializers.CharField(required=False, allow_blank=False)
     branch_name = serializers.CharField(source="branch.name", read_only=True)
     customer_name = serializers.CharField(source="customer.name", read_only=True)
@@ -167,6 +173,57 @@ class TransactionSerializer(serializers.ModelSerializer):
 
     def get_vehicle_type_name(self, obj):
         return getattr(getattr(obj, "vehicle_type", None), "name", "")
+
+    def get_camera_image_url(self, obj):
+        if not getattr(obj, "image", None):
+            return None
+        try:
+            url = obj.image.url
+            request = self.context.get("request")
+            return request.build_absolute_uri(url) if request else url
+        except (ValueError, OSError):
+            return None
+
+    def validate_camera_snapshot(self, value):
+        if not value:
+            return None
+        prefix = "data:image/jpeg;base64,"
+        if not value.startswith(prefix):
+            raise serializers.ValidationError("Camera snapshot must be a JPEG data URL.")
+        encoded = value[len(prefix):]
+        if len(encoded) > 8 * 1024 * 1024:
+            raise serializers.ValidationError("Camera snapshot must be smaller than 6 MB.")
+        try:
+            image_bytes = base64.b64decode(encoded, validate=True)
+            with Image.open(BytesIO(image_bytes)) as image:
+                if image.width * image.height > 40_000_000:
+                    raise serializers.ValidationError("Camera snapshot dimensions are too large.")
+                image.verify()
+                if image.format != "JPEG":
+                    raise serializers.ValidationError("Camera snapshot must contain a valid JPEG image.")
+        except serializers.ValidationError:
+            raise
+        except (binascii.Error, ValueError, UnidentifiedImageError, OSError):
+            raise serializers.ValidationError("Camera snapshot is not a valid JPEG image.")
+        return image_bytes
+
+    def _save_camera_snapshot(self, transaction, image_bytes):
+        if not image_bytes:
+            return
+        filename = f"transaction_{transaction.pk}_{timezone.now():%Y%m%d%H%M%S}.jpg"
+        transaction.image.save(filename, ContentFile(image_bytes), save=True)
+
+    def create(self, validated_data):
+        image_bytes = validated_data.pop("camera_snapshot", None)
+        transaction = super().create(validated_data)
+        self._save_camera_snapshot(transaction, image_bytes)
+        return transaction
+
+    def update(self, instance, validated_data):
+        image_bytes = validated_data.pop("camera_snapshot", None)
+        transaction = super().update(instance, validated_data)
+        self._save_camera_snapshot(transaction, image_bytes)
+        return transaction
 
     def get_auto_invoice_id(self, obj):
         return getattr(obj, "auto_invoice_id", None)
@@ -210,6 +267,7 @@ class TransactionSerializer(serializers.ModelSerializer):
             "status", "weight_type", "payment_mode", "payment_status", "payment_reference", "payment_received_at",
             "charge", "destination", "invoiced", "approval_status",
             "manual_weight_capture", "weight_reason",
+            "camera_snapshot", "camera_image_url",
             "paired", "paired_first_transaction",
             "auto_invoice_id",
             "created_at", "updated_at",

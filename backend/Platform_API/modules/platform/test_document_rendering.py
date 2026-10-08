@@ -197,6 +197,8 @@ class TenantDocumentRenderingTests(TestCase):
             payment_mode="Cash",
             payment_status="Paid",
         )
+        tx.image.name = "transaction_images/captured_vehicle.jpg"
+        tx.save(update_fields=["image"])
 
         response = self.client.get(reverse("wb-transaction-receipt", kwargs={"pk": tx.pk}))
 
@@ -206,6 +208,8 @@ class TenantDocumentRenderingTests(TestCase):
         self.assertIn("TX-", html)
         self.assertIn("Main Branch", html)
         self.assertIn("KES 1,800.00", html)
+        self.assertIn("Captured Vehicle Image", html)
+        self.assertIn("transaction_images/captured_vehicle.jpg", html)
 
     def test_purchase_order_document_uses_selected_template(self):
         template = DocumentTemplate.objects.create(

@@ -32,6 +32,7 @@ export interface ReceiptTransaction {
   manual_weight_capture?: boolean;
   weight_reason?: string;
   discounted?: boolean;
+  camera_image_url?: string | null;
 }
 
 interface ReceiptDialogProps {
@@ -302,6 +303,13 @@ export function ReceiptDialog({ transaction: t, open, onOpenChange, token }: Rec
                 </div>
               ) : null)}
             </div>
+
+            {t.camera_image_url && (
+              <div style={{ margin: '10px 0', breakInside: 'avoid' }}>
+                <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: 2, borderBottom: '1px solid #000', marginBottom: 6, paddingBottom: 2 }}>Captured Vehicle Image</div>
+                <img src={t.camera_image_url} alt="Captured vehicle" style={{ display: 'block', width: '100%', maxHeight: 220, objectFit: 'contain', border: '1px solid #000' }} />
+              </div>
+            )}
 
             {/* Weights */}
             <div style={{ background: '#f5f5f5', border: '1px solid #000', padding: 8, margin: '10px 0' }}>

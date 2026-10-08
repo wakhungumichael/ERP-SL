@@ -16,7 +16,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
 import LiveIndicator from '@/components/weighbridge/live-indicator';
-import { Camera, Check, ChevronsUpDown, Package, Plus, RefreshCw, Scale, Search, Truck, UserRound, WifiOff } from 'lucide-react';
+import { Camera, Check, ChevronsUpDown, Package, Plus, RefreshCw, Scale, Search, Trash2, Truck, UserRound, WifiOff } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { ERPPageHeader } from '@/components/erp/workspace/workspace-ui';
 import { hasPermission } from '@/lib/permissions';
@@ -157,7 +157,21 @@ function SearchSelect({
   );
 }
 
-function CameraPanel({ branchId, snapshotVersion, onRefresh }: { branchId: string; snapshotVersion: number; onRefresh: () => void }) {
+function CameraPanel({
+  branchId,
+  snapshotVersion,
+  capturedImage,
+  onRefresh,
+  onCaptureImage,
+  onClearImage,
+}: {
+  branchId: string;
+  snapshotVersion: number;
+  capturedImage: string | null;
+  onRefresh: () => void;
+  onCaptureImage: (image: string) => void;
+  onClearImage: () => void;
+}) {
   const [selectedCameraId, setSelectedCameraId] = useState('');
   const { data, isLoading, isFetching } = useQuery({
     queryKey: ['wb-camera-preview', branchId, snapshotVersion],
@@ -173,13 +187,15 @@ function CameraPanel({ branchId, snapshotVersion, onRefresh }: { branchId: strin
 
   const previews = data?.results ?? [];
   const selectedCamera = previews.find((camera) => String(camera.id) === selectedCameraId) ?? previews[0];
+  const liveImage = selectedCamera?.image_data_url ?? null;
+  const displayImage = capturedImage ?? liveImage;
 
   return (
     <Card className="flex h-full flex-col overflow-hidden border-primary/20 shadow-sm">
       <CardHeader className="flex flex-row items-center justify-between border-b border-primary/15 bg-primary/5 px-4 py-3">
         <CardTitle className="flex items-center gap-2 text-sm font-semibold">
           <Camera className="h-4 w-4" />
-          Camera View
+          {capturedImage ? 'Captured Image' : 'Camera View'}
         </CardTitle>
         {previews.length > 1 ? (
           <Select value={selectedCameraId || String(selectedCamera?.id ?? '')} onValueChange={setSelectedCameraId}>
@@ -189,7 +205,12 @@ function CameraPanel({ branchId, snapshotVersion, onRefresh }: { branchId: strin
         ) : null}
       </CardHeader>
       <CardContent className="flex flex-1 flex-col p-3">
-        {!branchId ? (
+        {capturedImage ? (
+          <div className="relative flex flex-1 overflow-hidden rounded-md border-2 border-emerald-500 bg-black">
+            <img src={capturedImage} alt="Captured transaction" className="h-full min-h-0 w-full object-contain" />
+            <Badge className="absolute right-2 top-2 border-0 bg-emerald-600 text-white hover:bg-emerald-600">Ready to save</Badge>
+          </div>
+        ) : !branchId ? (
           <div className="flex flex-1 items-center justify-center rounded-lg border border-dashed px-4 py-8 text-center text-sm text-muted-foreground">
             Select a branch to load camera previews.
           </div>
@@ -198,17 +219,31 @@ function CameraPanel({ branchId, snapshotVersion, onRefresh }: { branchId: strin
         ) : previews.length === 0 ? (
           <div className="flex flex-1 items-center justify-center rounded-lg border px-4 py-8 text-center text-sm text-muted-foreground">No active cameras configured for this branch.</div>
         ) : (
-          <div className="overflow-hidden rounded-md border bg-black">
-            {selectedCamera?.image_data_url ? (
-              <img src={selectedCamera.image_data_url} alt={selectedCamera.name} className="aspect-[16/8] w-full object-cover" />
+          <div className="flex flex-1 overflow-hidden rounded-md border bg-black">
+            {displayImage ? (
+              <img src={displayImage} alt={selectedCamera.name} className="h-full min-h-0 w-full object-contain" />
             ) : (
               <div className="flex aspect-[16/8] items-center justify-center text-xs text-muted-foreground">Preview unavailable</div>
             )}
           </div>
         )}
-        <div className="mt-2 flex justify-end">
+        <div className="mt-2 flex flex-wrap items-center justify-end gap-2">
+          {capturedImage ? (
+            <Button type="button" size="sm" variant="ghost" className="h-7 px-2 text-xs text-destructive hover:text-destructive" onClick={onClearImage}>
+              <Trash2 className="mr-1.5 h-3.5 w-3.5" />Remove
+            </Button>
+          ) : null}
           <Button type="button" size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={onRefresh} disabled={!branchId || isFetching}>
             <RefreshCw className={cn('mr-1.5 h-3.5 w-3.5', isFetching && 'animate-spin')} />Refresh
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            className="h-8 px-3 text-xs"
+            disabled={!liveImage}
+            onClick={() => liveImage && onCaptureImage(liveImage)}
+          >
+            <Camera className="mr-1.5 h-3.5 w-3.5" />{capturedImage ? 'Retake image' : 'Capture image'}
           </Button>
         </div>
       </CardContent>
@@ -268,6 +303,7 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
   const [selectedVehicle, setSelectedVehicle] = useState<any>(null);
   const [showVehicleResults, setShowVehicleResults] = useState(false);
   const [snapshotVersion, setSnapshotVersion] = useState(0);
+  const [capturedCameraImage, setCapturedCameraImage] = useState<string | null>(null);
   const [customerOpen, setCustomerOpen] = useState(false);
   const [vehicleOpen, setVehicleOpen] = useState(false);
   const [itemOpen, setItemOpen] = useState(false);
@@ -393,7 +429,12 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
     setCapturedWeight(null);
     setManualWeight('');
     setWeightReason('');
+    setCapturedCameraImage(null);
   }, [operationTypeId]);
+
+  useEffect(() => {
+    setCapturedCameraImage(null);
+  }, [effectiveBranchId]);
 
   useEffect(() => {
     if (isSecondFlow) return;
@@ -533,6 +574,7 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
         paired_first_transaction: firstTransaction.id,
         manual_weight_capture: manualMode,
       };
+      if (capturedCameraImage) payload.camera_snapshot = capturedCameraImage;
       if (manualMode && weightReason.trim()) payload.weight_reason = weightReason.trim();
 
       create.mutate({ data: payload as any }, {
@@ -543,6 +585,7 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
           setCapturedWeight(null);
           setManualWeight('');
           setWeightReason('');
+          setCapturedCameraImage(null);
           resetSecondFlowState();
           setLocation('/weighbridge/transactions');
         },
@@ -581,6 +624,7 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
       payment_status: 'Pending',
       manual_weight_capture: manualMode,
     };
+    if (capturedCameraImage) payload.camera_snapshot = capturedCameraImage;
     if (itemId) payload.item = parseInt(itemId, 10);
     if (vehicleTypeId) payload.vehicle_type = parseInt(vehicleTypeId, 10);
     if (manualMode && weightReason.trim()) payload.weight_reason = weightReason.trim();
@@ -593,6 +637,7 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
         setCapturedWeight(null);
         setManualWeight('');
         setWeightReason('');
+        setCapturedCameraImage(null);
         setLocation('/weighbridge/transactions');
       },
       onError: (err: any) => toast({
@@ -609,7 +654,7 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
         title={<span className="flex items-center gap-2"><Scale className="h-5 w-5 text-primary" />Weighment Entry</span>}
       />
 
-      <form onSubmit={handleSubmit} className="grid min-w-0 items-stretch gap-4 xl:grid-cols-[minmax(280px,0.68fr)_minmax(0,1.72fr)]">
+      <form onSubmit={handleSubmit} className="grid min-w-0 items-stretch gap-4 xl:min-h-[calc(100vh-19rem)] xl:grid-cols-[minmax(280px,0.68fr)_minmax(0,1.72fr)]">
         <aside className="grid min-w-0 gap-4 xl:grid-rows-2">
           <Card className="flex h-full flex-col overflow-hidden border-primary/20 shadow-sm">
             <CardHeader className="flex-row items-center justify-between border-b border-primary/15 bg-primary/5 px-4 py-3">
@@ -682,7 +727,14 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
             </CardContent>
           </Card>
 
-          <CameraPanel branchId={effectiveBranchId} snapshotVersion={snapshotVersion} onRefresh={refreshCameraPreviews} />
+          <CameraPanel
+            branchId={effectiveBranchId}
+            snapshotVersion={snapshotVersion}
+            capturedImage={capturedCameraImage}
+            onRefresh={refreshCameraPreviews}
+            onCaptureImage={setCapturedCameraImage}
+            onClearImage={() => setCapturedCameraImage(null)}
+          />
         </aside>
 
         <section className="flex min-w-0 flex-col gap-4">

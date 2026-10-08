@@ -1,6 +1,11 @@
+import base64
+import tempfile
+from io import BytesIO
+
 from django.contrib.auth.models import Permission, User
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.urls import reverse
+from PIL import Image
 from rest_framework.test import APIClient
 
 from Platform_Core.models import Tenant, TenantUserProfile
@@ -204,3 +209,35 @@ class TransactionVehicleTypeLockTests(TestCase):
         self.assertEqual(response.status_code, 201, response.data)
         transaction = Transaction.objects.get(pk=response.data["id"])
         self.assertEqual(transaction.vehicle_type, self.configured_type)
+        self.assertIsNone(response.data["camera_image_url"])
+
+    def test_transaction_accepts_optional_camera_snapshot(self):
+        image_buffer = BytesIO()
+        Image.new("RGB", (4, 4), color=(20, 80, 120)).save(image_buffer, format="JPEG")
+        snapshot = f"data:image/jpeg;base64,{base64.b64encode(image_buffer.getvalue()).decode('ascii')}"
+
+        with tempfile.TemporaryDirectory() as media_root, override_settings(MEDIA_ROOT=media_root):
+            response = self.client.post(
+                reverse("wb-transactions"),
+                {
+                    "branch": self.branch.id,
+                    "customer": self.customer.id,
+                    "vehicle": self.vehicle.id,
+                    "vehicle_type": self.configured_type.id,
+                    "item": self.item.id,
+                    "operation_type": self.operation_type.id,
+                    "operator": "Cashier",
+                    "weight_type": "First Weight",
+                    "payment_mode": "Cash",
+                    "payment_status": "Pending",
+                    "destination": "Main Yard",
+                    "gross_weight": 10000,
+                    "camera_snapshot": snapshot,
+                },
+                format="json",
+            )
+
+            self.assertEqual(response.status_code, 201, response.data)
+            transaction = Transaction.objects.get(pk=response.data["id"])
+            self.assertTrue(transaction.image.name.startswith("transaction_images/transaction_"))
+            self.assertTrue(response.data["camera_image_url"].endswith(".jpg"))
