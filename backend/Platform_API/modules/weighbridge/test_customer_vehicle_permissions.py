@@ -395,6 +395,13 @@ class TellerReceiptWindowTests(TestCase):
         )
         self.user = User.objects.create_user(username="receipt_teller", password="pass")
         TenantUserProfile.objects.create(user=self.user, tenant=self.tenant, is_tenant_admin=False)
+        self.company = Company.objects.create(
+            tenant=self.tenant,
+            name="Receipt Company",
+            address="Road 4",
+            email="receipt-company@example.test",
+            phone="0700000401",
+        )
         self.customer = Customer.objects.create(tenant=self.tenant, name="Receipt Customer", phone_number="0700000400")
         self.currency = Currency.objects.create(tenant=self.tenant, name="Kenya Shilling", code="KES", symbol="KSh")
         self.vehicle_type = VehicleType.objects.create(
@@ -406,6 +413,7 @@ class TellerReceiptWindowTests(TestCase):
         self.item = Item.objects.create(tenant=self.tenant, name="Receipt Item", currency=self.currency)
         self.branch = Branch.objects.create(
             tenant=self.tenant,
+            company=self.company,
             name="Receipt Branch",
             address="Road 4",
             email="receipt-branch@example.test",
@@ -459,5 +467,9 @@ class TellerReceiptWindowTests(TestCase):
                 codename="can_reprint_recent_weighbridge_receipts",
             )
         )
+        # The first denied request populated Django's in-memory permission cache.
+        self.user.refresh_from_db()
+        for cache_name in ("_perm_cache", "_user_perm_cache", "_group_perm_cache"):
+            self.user.__dict__.pop(cache_name, None)
         allowed = self.client.get(reverse("wb-transaction-receipt", kwargs={"pk": transaction.id}))
         self.assertEqual(allowed.status_code, 200)

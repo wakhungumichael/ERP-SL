@@ -293,7 +293,118 @@ def _brand_stylesheet(primary_color):
     """
 
 
+def _receipt_stylesheet(primary_color):
+    return f"""
+      :root {{ --receipt-brand: {primary_color}; --receipt-text: #111827; }}
+      * {{ box-sizing: border-box; }}
+      @page {{ size: A5 landscape; margin: 8mm; }}
+      body {{ margin: 0; background: #f3f4f6; color: var(--receipt-text); font-family: Arial, Helvetica, sans-serif; }}
+      .wb-receipt {{ width: 100%; max-width: 194mm; min-height: 130mm; margin: 12px auto; padding: 7mm 8mm; background: #fff; border: 1px solid var(--receipt-brand); font-size: 9pt; line-height: 1.28; }}
+      .wb-receipt__header {{ display: grid; grid-template-columns: 42mm 1fr; align-items: center; gap: 5mm; padding-bottom: 3mm; border-bottom: 2px solid var(--receipt-brand); }}
+      .wb-receipt__logo {{ display: block; width: 40mm; max-height: 18mm; object-fit: contain; object-position: left center; }}
+      .wb-receipt__company {{ font-size: 14pt; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }}
+      .wb-receipt__branch {{ margin-top: 1mm; font-size: 9pt; font-weight: 700; }}
+      .wb-receipt__contact {{ grid-column: 1 / -1; color: #4b5563; font-size: 7.5pt; }}
+      .wb-receipt__title-row {{ display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 5mm; padding: 3.5mm 0; border-bottom: 1px dashed var(--receipt-brand); }}
+      .wb-receipt__kicker {{ font-size: 7.5pt; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; color: var(--receipt-brand); }}
+      .wb-receipt__title-row strong {{ font-size: 12pt; }}
+      .wb-receipt__issue {{ text-align: right; font-size: 7.5pt; }}
+      .wb-receipt__issue span, .wb-receipt__payment span {{ display: block; color: #6b7280; font-size: 7pt; text-transform: uppercase; letter-spacing: .08em; }}
+      .wb-receipt__status {{ padding: 1.5mm 3mm; border: 1px solid currentColor; font-size: 7.5pt; font-weight: 800; letter-spacing: .08em; white-space: nowrap; }}
+      .wb-receipt__status.is-paid {{ color: #047857; background: #ecfdf5; }}
+      .wb-receipt__status.is-pending {{ color: #b45309; background: #fffbeb; }}
+      .wb-receipt__details, .wb-receipt__weights {{ width: 100%; border-collapse: collapse; }}
+      .wb-receipt__details {{ margin: 3mm 0; }}
+      .wb-receipt__details th, .wb-receipt__details td {{ padding: 1.4mm 1.8mm; border-bottom: 1px solid #e5e7eb; text-align: left; }}
+      .wb-receipt__details th {{ width: 14%; color: #6b7280; font-size: 7pt; letter-spacing: .07em; text-transform: uppercase; }}
+      .wb-receipt__details td {{ width: 36%; font-weight: 700; }}
+      .wb-receipt__weights thead {{ background: var(--receipt-brand); color: #fff; }}
+      .wb-receipt__weights th, .wb-receipt__weights td {{ padding: 2mm; border: 1px solid #d1d5db; text-align: left; }}
+      .wb-receipt__weights th:last-child, .wb-receipt__weights td:last-child {{ text-align: right; font-weight: 800; }}
+      .wb-receipt__weights tfoot {{ background: #f9fafb; }}
+      .wb-receipt__weights tfoot th {{ border-top: 2px solid var(--receipt-brand); font-size: 10pt; text-transform: uppercase; }}
+      .wb-receipt__payment {{ display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 4mm; margin-top: 3mm; padding-top: 3mm; border-top: 1px dashed #9ca3af; }}
+      .wb-receipt__payment strong {{ font-size: 9pt; }}
+      .wb-receipt__payment .wb-receipt__charge {{ text-align: right; }}
+      .wb-receipt__payment .wb-receipt__charge strong {{ color: var(--receipt-brand); font-size: 11pt; }}
+      .wb-receipt__footer {{ margin-top: 3mm; padding-top: 2mm; border-top: 1px solid #e5e7eb; text-align: center; color: #6b7280; font-size: 7pt; }}
+      @media print {{
+        body {{ background: #fff; }}
+        .wb-receipt {{ max-width: none; min-height: 0; margin: 0; padding: 0; border: 0; }}
+      }}
+    """
+
+
 def _default_body(document_type):
+    if document_type == "receipt":
+        return """
+          <main class="wb-receipt">
+            <header class="wb-receipt__header">
+              {% if branding.logo_url %}
+                <img class="wb-receipt__logo" src="{{ branding.logo_url }}" alt="{{ company.name }} logo" />
+              {% endif %}
+              <div class="wb-receipt__company">{{ company.name|default:"SL-ERP" }}</div>
+              <div class="wb-receipt__branch">{{ company.branch_name|default:"Main Branch" }}</div>
+              {% if company.phone or company.email %}
+                <div class="wb-receipt__contact">{{ company.phone }}{% if company.phone and company.email %} | {% endif %}{{ company.email }}</div>
+              {% endif %}
+            </header>
+
+            <section class="wb-receipt__title-row">
+              <div>
+                <div class="wb-receipt__kicker">Weighbridge Receipt</div>
+                <strong>{{ document.number }}</strong>
+              </div>
+              <div class="wb-receipt__issue">
+                <span>Date</span>
+                <strong>{{ document.issue_date }}</strong>
+              </div>
+              <div class="wb-receipt__status {% if receipt_meta.payment_status == 'Paid' %}is-paid{% else %}is-pending{% endif %}">
+                {{ receipt_meta.receipt_label }}
+              </div>
+            </section>
+
+            <table class="wb-receipt__details">
+              <tbody>
+                <tr>
+                  <th>Customer</th><td>{{ customer.name }}</td>
+                  <th>Vehicle No.</th><td>{{ weighing.vehicle_plate|default:"-" }}</td>
+                </tr>
+                <tr>
+                  <th>Item</th><td>{{ weighing.item_name|default:"-" }}</td>
+                  <th>Vehicle Type</th><td>{{ weighing.vehicle_type_name|default:"-" }}</td>
+                </tr>
+                <tr>
+                  <th>Destination</th><td>{{ weighing.destination|default:"-" }}</td>
+                  <th>Operator</th><td>{{ weighing.operator|default:"-" }}</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <table class="wb-receipt__weights">
+              <thead>
+                <tr><th>Weighing</th><th>Date &amp; Time</th><th>Weight (kg)</th></tr>
+              </thead>
+              <tbody>
+                <tr><td>1. First Weight</td><td>{{ weighing.gross_weight_date|default:"-" }}</td><td>{{ weighing.gross_weight_display }}</td></tr>
+                <tr><td>2. Second Weight</td><td>{{ weighing.tare_weight_date|default:"-" }}</td><td>{{ weighing.tare_weight_display }}</td></tr>
+              </tbody>
+              <tfoot>
+                <tr><th colspan="2">Net Weight</th><th>{{ weighing.net_weight_display }}</th></tr>
+              </tfoot>
+            </table>
+
+            <section class="wb-receipt__payment">
+              <div><span>Payment Mode</span><strong>{{ receipt_meta.payment_mode|default:"-" }}</strong></div>
+              <div><span>Payment Status</span><strong>{{ receipt_meta.payment_status }}</strong></div>
+              <div class="wb-receipt__charge"><span>Charge</span><strong>{{ totals.total_display }}</strong></div>
+            </section>
+
+            <footer class="wb-receipt__footer">
+              {{ branding.footer_text|default:"Generated by SL-ERP" }}
+            </footer>
+          </main>
+        """
     if document_type == "report":
         return """
           <div class="document-shell">
@@ -753,6 +864,18 @@ def _receipt_context(transaction, settings_obj, request=None):
             "show_pending_banner": payment_status != "Paid",
             "allow_release": payment_status == "Paid" or payment_mode == "Debt",
         },
+        "weighing": {
+            "vehicle_plate": getattr(vehicle, "number_plate", "") or "",
+            "vehicle_type_name": getattr(vehicle_type, "name", "") or "",
+            "item_name": getattr(item, "name", "") or "",
+            "destination": transaction.destination or "",
+            "operator": transaction.operator or "",
+            "gross_weight_display": f"{int(transaction.gross_weight or 0):,}" if transaction.gross_weight is not None else "-",
+            "tare_weight_display": f"{int(transaction.tare_weight or 0):,}" if transaction.tare_weight is not None else "-",
+            "net_weight_display": f"{int(transaction.net_weight or 0):,}" if transaction.net_weight is not None else "-",
+            "gross_weight_date": date_filter(transaction.gross_weight_date, "d M Y H:i") if transaction.gross_weight_date else "",
+            "tare_weight_date": date_filter(transaction.tare_weight_date, "d M Y H:i") if transaction.tare_weight_date else "",
+        },
         "transaction_image_url": transaction_image_url,
         "generated_at": timezone.now(),
     }
@@ -824,10 +947,17 @@ def render_business_document(*, tenant, document_type, context, request=None):
     branding = context.get("branding") or {}
     primary_color = branding.get("primary_color") or "#E85D26"
 
-    template_body = template.body_template if template and template.body_template else _default_body(document_type)
-    stylesheet = template.stylesheet if template and template.stylesheet else _default_stylesheet(primary_color)
+    # Shared templates are general-purpose. Weighbridge tickets use a dedicated
+    # compact print layout, while a tenant's explicitly selected template wins.
+    use_compact_receipt = document_type == "receipt" and not getattr(template, "tenant_id", None)
+    template_body = _default_body(document_type) if use_compact_receipt else (
+        template.body_template if template and template.body_template else _default_body(document_type)
+    )
+    stylesheet = _receipt_stylesheet(primary_color) if use_compact_receipt else (
+        template.stylesheet if template and template.stylesheet else _default_stylesheet(primary_color)
+    )
     rendered_body = _render_template_string(template_body, context)
-    if document_type == "receipt" and context.get("transaction_image_url") and "transaction-capture" not in rendered_body:
+    if document_type == "receipt" and not use_compact_receipt and context.get("transaction_image_url") and "transaction-capture" not in rendered_body:
         rendered_body += _render_template_string(
             """
               <div class="transaction-capture" style="max-width:900px;margin:20px auto;background:#fff;padding:20px;break-inside:avoid;">

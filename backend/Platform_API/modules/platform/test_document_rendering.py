@@ -211,6 +211,48 @@ class TenantDocumentRenderingTests(TestCase):
         self.assertIn("Captured Vehicle Image", html)
         self.assertIn("transaction_images/captured_vehicle.jpg", html)
 
+    def test_shared_receipt_template_uses_compact_weighbridge_print_layout(self):
+        DocumentTemplate.objects.create(
+            name="Shared Receipt Layout",
+            document_type="receipt",
+            engine="html",
+            is_default=True,
+            body_template="<div>Shared generic receipt</div>",
+        )
+        TenantSettings.objects.create(
+            tenant=self.tenant,
+            primary_color="#b89226",
+            logo_url="https://assets.example.test/metrix-logo.png",
+        )
+        tx = Transaction.objects.create(
+            tenant=self.tenant,
+            branch=self.branch,
+            customer=self.customer,
+            vehicle=self.vehicle,
+            operator="Moses",
+            item=self.item,
+            vehicle_type=self.vehicle_type,
+            status="Completed",
+            gross_weight=24000,
+            tare_weight=12000,
+            net_weight=12000,
+            charge=1800,
+            destination="Mombasa",
+            weight_type="First Weight",
+            payment_mode="Cash",
+            payment_status="Paid",
+        )
+
+        response = self.client.get(reverse("wb-transaction-receipt", kwargs={"pk": tx.pk}))
+
+        self.assertEqual(response.status_code, 200)
+        html = response.content.decode()
+        self.assertIn('class="wb-receipt"', html)
+        self.assertIn("@page { size: A5 landscape;", html)
+        self.assertIn("https://assets.example.test/metrix-logo.png", html)
+        self.assertIn("24,000", html)
+        self.assertNotIn("Shared generic receipt", html)
+
     def test_purchase_order_document_uses_selected_template(self):
         template = DocumentTemplate.objects.create(
             tenant=self.tenant,

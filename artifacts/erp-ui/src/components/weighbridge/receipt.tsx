@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
@@ -70,7 +70,6 @@ function kes(v?: number | string | null) {
 }
 
 export function ReceiptDialog({ transaction: t, open, onOpenChange, token }: ReceiptDialogProps) {
-  const printRef = useRef<HTMLDivElement>(null);
   const { user } = useAuth();
   const tenantId = (user as any)?.tenant_id;
   const { data: settingsData } = useQuery({
@@ -90,9 +89,19 @@ export function ReceiptDialog({ transaction: t, open, onOpenChange, token }: Rec
   const [emailAddr, setEmailAddr]     = useState('');
   const [emailSending, setEmailSending] = useState(false);
   const [emailResult, setEmailResult] = useState<{ ok: boolean; msg: string } | null>(null);
+  const [printResult, setPrintResult] = useState<string | null>(null);
 
   const handlePrint = () => {
     if (!t || !token || !canPrintReceipt) return;
+    setPrintResult(null);
+    // Opening while handling the click avoids browser popup blocking after the API call.
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) {
+      setPrintResult('Your browser blocked the receipt window. Allow popups for this site and try again.');
+      return;
+    }
+    printWindow.document.title = `Weighbridge Receipt TX-${String(t.id).padStart(5, '0')}`;
+    printWindow.document.body.textContent = 'Preparing receipt...';
     fetch(`/api/commercial-weighbridge/transactions/${t.id}/receipt/`, {
       headers: { Authorization: `Token ${token}` },
     })
@@ -104,54 +113,16 @@ export function ReceiptDialog({ transaction: t, open, onOpenChange, token }: Rec
         const html = await res.text();
         const blob = new Blob([html], { type: 'text/html' });
         const url = URL.createObjectURL(blob);
-        const win = window.open(url, '_blank', 'noopener,noreferrer');
-        if (!win) throw new Error('Popup was blocked by the browser');
+        printWindow.onload = () => {
+          printWindow.focus();
+          printWindow.print();
+        };
+        printWindow.location.replace(url);
         setTimeout(() => URL.revokeObjectURL(url), 60_000);
       })
       .catch((error: Error) => {
-        // Do not bypass server-side teller receipt restrictions with a local print.
-        if (error.message.includes('does not allow receipt reprints') || error.message.includes('outside your allowed teller receipt window')) {
-          setEmailResult({ ok: false, msg: error.message });
-          return;
-        }
-        if (!printRef.current) return;
-        const content = printRef.current.innerHTML;
-        const win = window.open('', '_blank', 'width=720,height=900');
-        if (!win) return;
-        win.document.write(`
-          <!DOCTYPE html>
-          <html>
-            <head>
-              <title>Weighbridge Receipt — TX${String(t?.id ?? '').padStart(5, '0')}</title>
-              <style>
-                * { box-sizing: border-box; margin: 0; padding: 0; }
-                body { font-family: 'Courier New', monospace; font-size: 12px; color: #000; background: #fff; padding: 20px; }
-                .receipt { max-width: 400px; margin: 0 auto; border: 2px solid #000; padding: 16px; }
-                .header { text-align: center; border-bottom: 2px dashed #000; padding-bottom: 10px; margin-bottom: 10px; }
-                .header h1 { font-size: 18px; font-weight: bold; letter-spacing: 2px; }
-                .header h2 { font-size: 13px; font-weight: normal; margin-top: 2px; }
-                .txid { font-size: 22px; font-weight: bold; text-align: center; margin: 8px 0; letter-spacing: 4px; }
-                .section { margin-bottom: 10px; }
-                .section-title { font-size: 10px; text-transform: uppercase; letter-spacing: 2px; border-bottom: 1px solid #000; margin-bottom: 6px; padding-bottom: 2px; }
-                .row { display: flex; justify-content: space-between; margin-bottom: 3px; }
-                .label { color: #444; }
-                .value { font-weight: bold; text-align: right; max-width: 55%; word-break: break-word; }
-                .weights { background: #f5f5f5; border: 1px solid #000; padding: 8px; margin: 10px 0; }
-                .net-weight { font-size: 20px; font-weight: bold; text-align: center; margin: 4px 0; }
-                .net-label { font-size: 10px; text-align: center; text-transform: uppercase; letter-spacing: 2px; }
-                .divider { border-top: 1px dashed #000; margin: 8px 0; }
-                .footer { text-align: center; font-size: 10px; margin-top: 10px; color: #555; }
-                .charge-row { font-size: 14px; font-weight: bold; border-top: 2px solid #000; padding-top: 6px; margin-top: 6px; display: flex; justify-content: space-between; }
-                .manual-note { background: #fff3cd; border: 1px solid #ffc107; padding: 4px 6px; font-size: 10px; margin-top: 4px; }
-                @media print { body { padding: 0; } }
-              </style>
-            </head>
-            <body>${content}</body>
-          </html>
-        `);
-        win.document.close();
-        win.focus();
-        setTimeout(() => { win.print(); win.close(); }, 300);
+        printWindow.close();
+        setPrintResult(error.message || 'The receipt could not be prepared. Please try again.');
       });
   };
 
@@ -192,14 +163,14 @@ export function ReceiptDialog({ transaction: t, open, onOpenChange, token }: Rec
   const settings = settingsData?.data ?? settingsData ?? {};
   const tenantCompanyName = (user as any)?.tenant_name || 'SL-ERP';
   const branding: ReceiptBranding = {
-    logo_url: settings.logo_url || '',
+    logo_url: settings.logo_file || settings.logo_url || '',
     primary_color: settings.primary_color || '#E85D26',
     footer_text: settings.footer_text || '',
   };
   const footerText = branding.footer_text || tenantCompanyName;
 
   return (
-    <Dialog open={open} onOpenChange={v => { onOpenChange(v); if (!v) { setEmailOpen(false); setEmailResult(null); } }}>
+    <Dialog open={open} onOpenChange={v => { onOpenChange(v); if (!v) { setEmailOpen(false); setEmailResult(null); setPrintResult(null); } }}>
       <DialogContent className="sm:max-w-[480px] max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="font-mono font-bold tracking-widest">WEIGHBRIDGE RECEIPT</DialogTitle>
@@ -207,7 +178,7 @@ export function ReceiptDialog({ transaction: t, open, onOpenChange, token }: Rec
 
         {/* Action buttons */}
         <div className="flex gap-2 mb-3">
-          <Button size="sm" onClick={handlePrint} className="gap-2 flex-1 font-bold uppercase tracking-wide">
+          <Button size="sm" onClick={handlePrint} className="gap-2 flex-1 font-bold uppercase tracking-wide" disabled={!canPrintReceipt}>
             <Printer className="h-4 w-4" /> Print Receipt
           </Button>
           {token && (
@@ -221,6 +192,12 @@ export function ReceiptDialog({ transaction: t, open, onOpenChange, token }: Rec
             </Button>
           )}
         </div>
+
+        {printResult && (
+          <div role="alert" className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs font-medium text-destructive">
+            {printResult}
+          </div>
+        )}
 
       {!canPrintReceipt && (
         <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">
@@ -264,7 +241,7 @@ export function ReceiptDialog({ transaction: t, open, onOpenChange, token }: Rec
         )}
 
         {/* Receipt preview */}
-        <div ref={printRef}>
+        <div>
           <div className="receipt" style={{ fontFamily: "'Courier New', monospace", border: `2px solid ${branding.primary_color}`, padding: 16, fontSize: 12, color: '#000', background: '#fff' }}>
             {/* Header */}
             <div className="header" style={{ textAlign: 'center', borderBottom: `2px dashed ${branding.primary_color}`, paddingBottom: 10, marginBottom: 10 }}>
