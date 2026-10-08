@@ -10,6 +10,7 @@ from decimal import Decimal
 from io import BytesIO
 
 from django.core.files.base import ContentFile
+from django.db import transaction as db_transaction
 from django.http import HttpResponse
 from django.db.models import Q
 from django.utils import timezone
@@ -981,14 +982,18 @@ class TransactionListCreateView(generics.ListCreateAPIView):
             )
 
         try:
-            tx = serializer.save(
-                tenant=user_tenant,
-                vehicle_type=vehicle.vehicle_type,
-                created_by=self.request.user,
-                last_modified_by=self.request.user,
-            )
-            _, invoice_target = _finalize_transaction_workflow(tx)
-            _maybe_create_transaction_invoice(invoice_target)
+            # A workflow update touches the submitted transaction and, for a
+            # second weight, its paired first-weight ticket. Commit them only
+            # after all post-save processing has succeeded.
+            with db_transaction.atomic():
+                tx = serializer.save(
+                    tenant=user_tenant,
+                    vehicle_type=vehicle.vehicle_type,
+                    created_by=self.request.user,
+                    last_modified_by=self.request.user,
+                )
+                _, invoice_target = _finalize_transaction_workflow(tx)
+                _maybe_create_transaction_invoice(invoice_target)
         except ValueError as exc:
             raise serializers.ValidationError({"gross_weight": str(exc)}) from exc
 
@@ -1013,12 +1018,13 @@ class TransactionDetailView(generics.RetrieveUpdateAPIView):
         if current.status == "Completed":
             raise serializers.ValidationError("Completed transactions are locked. Recall the transaction before editing.")
         try:
-            tx = serializer.save(last_modified_by=self.request.user)
-            if tx.status not in REVIEWABLE_TRANSACTION_STATUSES:
-                tx.status = "Draft"
-                tx.save(update_fields=["status", "updated_at"])
-            _, invoice_target = _finalize_transaction_workflow(tx)
-            _maybe_create_transaction_invoice(invoice_target)
+            with db_transaction.atomic():
+                tx = serializer.save(last_modified_by=self.request.user)
+                if tx.status not in REVIEWABLE_TRANSACTION_STATUSES:
+                    tx.status = "Draft"
+                    tx.save(update_fields=["status", "updated_at"])
+                _, invoice_target = _finalize_transaction_workflow(tx)
+                _maybe_create_transaction_invoice(invoice_target)
         except ValueError as exc:
             raise serializers.ValidationError({"gross_weight": str(exc)}) from exc
 
