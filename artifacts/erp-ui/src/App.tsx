@@ -8,6 +8,7 @@ import { AuthProvider } from '@/context/auth-context';
 import { useAuth } from '@/context/use-auth';
 import type { AppRole } from '@/lib/roles';
 import { CAN_VIEW_REPORTS_WORKSPACE } from '@/lib/roles';
+import { getWorkspaceHomePath } from '@/lib/workspace-home';
 import Login from '@/pages/login';
 import LandingPage from '@/pages/landing';
 import MarketingAppsPage from '@/pages/marketing-apps';
@@ -136,7 +137,9 @@ function Router() {
     if (token && user) {
       return role === 'superadmin'
         ? <Shell><BillingCenter /></Shell>
-        : <Shell><Dashboard /></Shell>;
+        : <Shell>{getWorkspaceHomePath(role, user as Record<string, unknown>) === '/weighbridge/weighment-entry'
+          ? <WeighmentEntryPage />
+          : <Dashboard />}</Shell>;
     }
 
     return <LandingPage />;

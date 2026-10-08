@@ -536,7 +536,14 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const remainingSections = nonDashboardSections.filter(section => section.key !== 'platform');
   const navSections = dashboardSections.length > 0
     ? [...dashboardSections, ...remainingSections, ...platformSections]
-    : [HOME_SECTION, ...remainingSections, ...platformSections];
+    : usesPermissionDrivenNavigation
+      ? [...remainingSections, ...platformSections]
+      : [HOME_SECTION, ...remainingSections, ...platformSections];
+  const workspaceHomePath = navSections
+    .flatMap((section) => section.items)
+    .find((item) => item.path === '/weighbridge/weighment-entry')?.path
+    ?? navSections.flatMap((section) => section.items)[0]?.path
+    ?? '/dashboard';
   const routeAccess = useMemo(
     () => evaluateWorkspaceRouteAccess({
       path: location,
@@ -651,7 +658,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
       >
         {/* Logo */}
         <div className={`${sidebarCollapsed ? 'h-16 px-2' : 'h-24 px-3'} flex items-center border-b border-sidebar-border shrink-0 gap-2`}>
-          <Link href="/dashboard" className="flex min-w-0 flex-1 items-center justify-center">
+          <Link href={workspaceHomePath} className="flex min-w-0 flex-1 items-center justify-center">
             <div
               className={sidebarCollapsed ? 'flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-lg' : 'flex h-20 w-full items-center justify-center overflow-hidden'}
               style={{ backgroundColor: appLogoUrl ? 'transparent' : appPrimaryColor }}
@@ -859,8 +866,8 @@ export function Shell({ children }: { children: React.ReactNode }) {
                       : 'Your current role does not have permission to open this workspace area for this organization.'}
                   </p>
                   <div className="mt-6 flex flex-col gap-3 sm:flex-row">
-                    <Button onClick={() => setLocation('/dashboard')}>
-                      Return to dashboard
+                    <Button onClick={() => setLocation(workspaceHomePath)}>
+                      Return to workspace
                     </Button>
                     {effectiveRole === 'tenant_admin' ? (
                       <Button variant="outline" onClick={() => setLocation('/platform/organization-settings')}>
@@ -885,7 +892,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
           </SheetHeader>
           <div className="flex h-full flex-col">
             <div className="flex h-24 items-center border-b border-sidebar-border px-4">
-              <Link href="/dashboard" className="flex min-w-0 flex-1 items-center justify-center" onClick={() => setMobileNavOpen(false)}>
+              <Link href={workspaceHomePath} className="flex min-w-0 flex-1 items-center justify-center" onClick={() => setMobileNavOpen(false)}>
                 <div
                   className="flex h-20 w-full shrink-0 items-center justify-center overflow-hidden"
                   style={{ backgroundColor: appLogoUrl ? 'transparent' : appPrimaryColor }}
