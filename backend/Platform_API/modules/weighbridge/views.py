@@ -2,6 +2,7 @@ import csv
 import base64
 import binascii
 import json as _json
+import re
 import socket
 import urllib.request
 import urllib.error
@@ -145,12 +146,45 @@ class CustomerBulkActionSerializer(serializers.Serializer):
     action = serializers.ChoiceField(choices=["activate", "deactivate", "soft_delete"])
 
 
+def _plate_search_terms(value):
+    """Split any country plate into stable letter/number fragments for lookup."""
+    return re.findall(r"[A-Z]+|[0-9]+", str(value or "").upper())
+
+
+def _plate_search_query(value):
+    terms = _plate_search_terms(value)
+    if not terms:
+        return Q(pk__in=[])
+
+    query = Q()
+    for term in terms:
+        query &= Q(number_plate__icontains=term)
+    return query
+
+
 class VehicleSerializer(serializers.ModelSerializer):
     customer_name = serializers.CharField(source="customer.name", read_only=True)
     vehicle_type_name = serializers.SerializerMethodField()
 
     def get_vehicle_type_name(self, obj):
         return getattr(getattr(obj, "vehicle_type", None), "name", "")
+
+    def validate_number_plate(self, value):
+        display_value = " ".join(str(value or "").upper().split())
+        compact_value = normalize_plate(display_value)
+        if len(compact_value) < 3 or not any(char.isalpha() for char in compact_value) or not any(char.isdigit() for char in compact_value):
+            raise serializers.ValidationError(
+                "Enter a valid number plate containing both letters and numbers. Examples: KBS 596L or ZX 4646."
+            )
+
+        candidates = Vehicle.objects.filter(_plate_search_query(display_value))
+        if self.instance:
+            candidates = candidates.exclude(pk=self.instance.pk)
+        if any(normalize_plate(candidate.number_plate) == compact_value for candidate in candidates.only("id", "number_plate")[:50]):
+            raise serializers.ValidationError(
+                "A vehicle with this number plate already exists, even though it may be stored with different spacing or punctuation."
+            )
+        return display_value
 
     class Meta:
         model = Vehicle
@@ -2480,7 +2514,7 @@ class VehicleListCreateView(generics.ListCreateAPIView):
             qs = qs.filter(is_active=is_active.lower() == "true")
         if search := params.get("search"):
             qs = qs.filter(
-                Q(number_plate__icontains=search)
+                _plate_search_query(search)
                 | Q(customer__name__icontains=search)
                 | Q(vehicle_type__name__icontains=search)
             )

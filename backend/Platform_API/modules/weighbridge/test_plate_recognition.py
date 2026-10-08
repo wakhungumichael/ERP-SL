@@ -9,6 +9,7 @@ from PIL import Image
 from rest_framework.test import APIClient
 
 from Platform_Core.models import Tenant, TenantUserProfile
+from Platform_API.modules.weighbridge.views import VehicleSerializer, _plate_search_query
 from SL_Weighbridge.models import Currency, Customer, Vehicle, VehicleType
 from SL_Weighbridge.plate_recognition import PlateRecognitionResult
 
@@ -105,6 +106,34 @@ class CameraPlateRecognitionTests(TestCase):
         self.assertTrue(response.data["matched"])
         self.assertEqual(response.data["vehicle"]["id"], self.vehicle.id)
         self.assertEqual(response.data["vehicle"]["customer_name"], "Recognition Customer")
+
+    def test_plate_lookup_ignores_spacing_and_supports_international_formats(self):
+        international_vehicle = Vehicle.objects.create(
+            tenant=self.tenant,
+            customer=self.vehicle.customer,
+            vehicle_type=self.vehicle.vehicle_type,
+            number_plate="ZX 4646",
+        )
+
+        compact_match_ids = set(
+            Vehicle.objects.filter(_plate_search_query("KDA401A")).values_list("id", flat=True)
+        )
+        international_match_ids = set(
+            Vehicle.objects.filter(_plate_search_query("ZX-4646")).values_list("id", flat=True)
+        )
+
+        self.assertIn(self.vehicle.id, compact_match_ids)
+        self.assertIn(international_vehicle.id, international_match_ids)
+
+    def test_vehicle_serializer_rejects_spacing_only_duplicate_plate(self):
+        serializer = VehicleSerializer(data={
+            "customer": self.vehicle.customer_id,
+            "vehicle_type": self.vehicle.vehicle_type_id,
+            "number_plate": "KDA401A",
+        })
+
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("number_plate", serializer.errors)
 
     @patch("Platform_API.modules.weighbridge.views.recognize_plate_image")
     def test_recognized_plate_never_returns_another_tenant_vehicle(self, recognize):

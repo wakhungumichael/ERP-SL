@@ -1039,7 +1039,7 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
                             setVehicleForm((current) => ({ ...current, number_plate: plate }));
                             setPlateRecognition(null);
                           }}
-                          placeholder="Detected plate or type manually"
+                          placeholder="e.g. KBS596L, KBS 596L, or ZX 4646"
                         />
                         <Button type="button" variant="outline" className="shrink-0" onClick={() => void findVehicleByPlate()}>
                           <Search className="mr-1.5 h-4 w-4" />Find vehicle
