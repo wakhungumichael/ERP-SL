@@ -971,6 +971,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
     memberships = serializers.SerializerMethodField()
     active_membership_id = serializers.SerializerMethodField()
     active_role = serializers.SerializerMethodField()
+    is_customer_portal = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -1000,10 +1001,15 @@ class UserProfileSerializer(serializers.ModelSerializer):
             "memberships",
             "active_membership_id",
             "active_role",
+            "is_customer_portal",
         )
 
     def get_permissions(self, obj):
         return sorted(obj.get_all_permissions())
+
+    def get_is_customer_portal(self, obj):
+        account = getattr(obj, "customer_portal_account", None)
+        return bool(account and account.is_active)
 
     def _profile(self, obj):
         return getattr(obj, "tenant_profile", None)

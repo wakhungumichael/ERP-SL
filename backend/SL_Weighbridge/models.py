@@ -191,6 +191,22 @@ class Customer(models.Model):
         return self.name
 
 
+class CustomerPortalAccount(models.Model):
+    """A restricted login that may view only one customer's operational records."""
+    tenant = models.ForeignKey('Platform_Core.Tenant', on_delete=models.CASCADE, related_name='customer_portal_accounts')
+    customer = models.OneToOneField(Customer, on_delete=models.CASCADE, related_name='portal_account')
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='customer_portal_account')
+    is_active = models.BooleanField(default=True)
+    invited_at = models.DateTimeField(auto_now_add=True)
+    last_invited_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['customer__name']
+
+    def __str__(self):
+        return f"Customer portal: {self.customer.name}"
+
+
 def _resolve_vehicle_presence_client(branch=None):
     """
     Resolve the legacy company reference for surveillance captures.

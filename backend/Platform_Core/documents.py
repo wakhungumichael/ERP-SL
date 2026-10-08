@@ -281,6 +281,46 @@ def _default_stylesheet(primary_color):
         .document-header {{ flex-direction: column; }}
         .document-grid {{ grid-template-columns: 1fr; }}
       }}
+      .weighbridge-slip {{
+        width: min(100%, 820px);
+        margin: 24px auto;
+        padding: 28px;
+        color: #1f2937;
+        background: #fff;
+        border-top: 8px solid var(--brand-color);
+        font-family: Arial, sans-serif;
+        box-shadow: 0 12px 32px rgba(15, 23, 42, .08);
+      }}
+      .slip-header {{ display:grid; grid-template-columns:auto 1fr auto; gap:18px; align-items:center; padding-bottom:18px; border-bottom:1px solid #d1d5db; }}
+      .slip-logo {{ width:120px; max-height:76px; object-fit:contain; }}
+      .slip-company {{ font-size:22px; font-weight:800; letter-spacing:.02em; }}
+      .slip-title {{ margin-top:3px; color:var(--brand-color); font-size:12px; font-weight:800; letter-spacing:.16em; }}
+      .slip-branch {{ margin-top:4px; color:#64748b; font-size:12px; }}
+      .slip-number {{ display:flex; flex-direction:column; align-items:flex-end; gap:4px; font-size:11px; color:#64748b; }}
+      .slip-number strong {{ color:#111827; font-family:ui-monospace, monospace; font-size:18px; letter-spacing:.08em; }}
+      .slip-status {{ border:1px solid var(--brand-color); color:var(--brand-color); padding:3px 7px; font-size:10px; font-weight:800; letter-spacing:.12em; }}
+      .slip-details {{ display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:10px 28px; padding:20px 0; }}
+      .slip-details div, .slip-payment div {{ display:flex; justify-content:space-between; gap:18px; font-size:12px; }}
+      .slip-details span, .slip-payment span {{ color:#6b7280; }}
+      .slip-details strong, .slip-payment strong {{ text-align:right; }}
+      .slip-weights {{ width:100%; border-collapse:collapse; font-size:12px; }}
+      .slip-weights th {{ background:var(--brand-color); color:#fff; padding:9px; text-align:left; font-size:10px; letter-spacing:.08em; text-transform:uppercase; }}
+      .slip-weights td {{ border:1px solid #d1d5db; padding:10px 9px; }}
+      .slip-weights td:last-child, .slip-weights th:last-child {{ text-align:right; font-weight:700; }}
+      .slip-net td {{ background:color-mix(in srgb, var(--brand-color) 12%, white); font-size:14px; font-weight:800; }}
+      .slip-payment {{ margin:18px 0; margin-left:auto; width:min(100%, 340px); padding:14px; border:1px solid #d1d5db; }}
+      .slip-payment div {{ padding:4px 0; }}
+      .slip-payment .slip-charge {{ margin-top:7px; padding-top:10px; border-top:2px solid var(--brand-color); color:#111827; font-size:15px; font-weight:800; }}
+      .slip-payment .slip-charge span {{ color:#111827; }}
+      .slip-capture {{ margin:18px 0; padding-top:14px; border-top:1px solid #d1d5db; }}
+      .slip-capture > span {{ display:block; margin-bottom:8px; color:#64748b; font-size:10px; font-weight:800; letter-spacing:.1em; text-transform:uppercase; }}
+      .slip-capture img {{ display:block; width:100%; max-height:320px; object-fit:contain; border:1px solid #d1d5db; }}
+      .slip-footer {{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:18px; align-items:end; padding-top:18px; border-top:1px solid #d1d5db; color:#6b7280; font-size:10px; }}
+      .slip-reference {{ font-family:ui-monospace, monospace; font-weight:700; color:#374151; }}
+      .slip-signature {{ padding-top:24px; border-bottom:1px solid #9ca3af; text-align:center; }}
+      .slip-signature span {{ position:relative; top:15px; background:#fff; padding:0 6px; font-size:9px; }}
+      @media print {{ .weighbridge-slip {{ width:100%; margin:0; padding:16mm; border-top-width:5px; box-shadow:none; }} }}
+      @media (max-width:600px) {{ .slip-header {{ grid-template-columns:1fr; text-align:center; }} .slip-logo {{ margin:auto; }} .slip-number {{ align-items:center; }} .slip-details {{ grid-template-columns:1fr; }} .slip-footer {{ grid-template-columns:1fr; text-align:center; }} }}
     """
 
 
@@ -294,6 +334,68 @@ def _brand_stylesheet(primary_color):
 
 
 def _default_body(document_type):
+    if document_type == "receipt":
+        # A weighbridge receipt is an operational slip, not a sales invoice. Keep
+        # the fields compact so it prints cleanly on both A4 and thermal printers.
+        return """
+          <main class="weighbridge-slip">
+            <header class="slip-header">
+              {% if branding.logo_url %}
+                <img class="slip-logo" src="{{ branding.logo_url }}" alt="{{ company.name }} logo" />
+              {% endif %}
+              <div class="slip-heading">
+                <div class="slip-company">{{ company.name|default:"SL-ERP" }}</div>
+                <div class="slip-title">WEIGHBRIDGE RECEIPT</div>
+                <div class="slip-branch">{{ company.branch_name|default:"Main Weighbridge" }}</div>
+              </div>
+              <div class="slip-number">
+                <span>Receipt No.</span>
+                <strong>{{ document.number }}</strong>
+                <span class="slip-status">{{ receipt_meta.receipt_label }}</span>
+              </div>
+            </header>
+
+            <section class="slip-details">
+              <div><span>Transaction</span><strong>{{ document.number }}</strong></div>
+              <div><span>Date</span><strong>{{ document.issue_date }}</strong></div>
+              <div><span>Vehicle</span><strong>{{ weighbridge.plate|default:"—" }}</strong></div>
+              <div><span>Vehicle type</span><strong>{{ weighbridge.vehicle_type|default:"—" }}</strong></div>
+              <div><span>Customer</span><strong>{{ customer.name|default:"Walk-in Customer" }}</strong></div>
+              <div><span>Commodity</span><strong>{{ weighbridge.item|default:"—" }}</strong></div>
+              <div><span>Destination</span><strong>{{ weighbridge.destination|default:"—" }}</strong></div>
+              <div><span>Operator</span><strong>{{ weighbridge.operator|default:"—" }}</strong></div>
+            </section>
+
+            <table class="slip-weights">
+              <thead><tr><th>Weighing</th><th>Date &amp; Time</th><th>Weight (kg)</th></tr></thead>
+              <tbody>
+                <tr><td>1. First Weight (IN)</td><td>{{ weighbridge.first_weight_at }}</td><td>{{ weighbridge.gross_weight_display }}</td></tr>
+                <tr><td>2. Second Weight (OUT)</td><td>{{ weighbridge.second_weight_at }}</td><td>{{ weighbridge.tare_weight_display }}</td></tr>
+                <tr class="slip-net"><td colspan="2">NET WEIGHT</td><td>{{ weighbridge.net_weight_display }}</td></tr>
+              </tbody>
+            </table>
+
+            <section class="slip-payment">
+              <div><span>Payment mode</span><strong>{{ receipt_meta.payment_mode|default:"—" }}</strong></div>
+              <div><span>Payment status</span><strong>{{ receipt_meta.payment_status|default:"Pending" }}</strong></div>
+              <div class="slip-charge"><span>CHARGE</span><strong>{{ totals.total_display }}</strong></div>
+            </section>
+
+            {% if transaction_image_url %}
+              <section class="slip-capture">
+                <span>Captured vehicle image</span>
+                <img src="{{ transaction_image_url }}" alt="Captured vehicle" />
+              </section>
+            {% endif %}
+
+            <footer class="slip-footer">
+              <div class="slip-reference">{{ document.number }}</div>
+              <div class="slip-signature"><span>Authorized signature</span></div>
+              <div>{{ branding.footer_text|default:"Accurate weighing for safer operations" }}</div>
+            </footer>
+          </main>
+        """
+
     if document_type == "report":
         return """
           <div class="document-shell">
@@ -753,6 +855,18 @@ def _receipt_context(transaction, settings_obj, request=None):
             "show_pending_banner": payment_status != "Paid",
             "allow_release": payment_status == "Paid" or payment_mode == "Debt",
         },
+        "weighbridge": {
+            "plate": getattr(vehicle, "number_plate", "") or "—",
+            "vehicle_type": getattr(vehicle_type, "name", "") or "—",
+            "item": getattr(item, "name", "") or "—",
+            "destination": transaction.destination or "—",
+            "operator": transaction.operator or "—",
+            "gross_weight_display": f"{int(transaction.gross_weight or 0):,}" if transaction.gross_weight is not None else "—",
+            "tare_weight_display": f"{int(transaction.tare_weight or 0):,}" if transaction.tare_weight is not None else "—",
+            "net_weight_display": f"{int(transaction.net_weight or 0):,}" if transaction.net_weight is not None else "—",
+            "first_weight_at": date_filter(transaction.gross_weight_date or transaction.created_at, "d M Y H:i"),
+            "second_weight_at": date_filter(transaction.tare_weight_date, "d M Y H:i") if transaction.tare_weight_date else "—",
+        },
         "transaction_image_url": transaction_image_url,
         "generated_at": timezone.now(),
     }
@@ -824,8 +938,11 @@ def render_business_document(*, tenant, document_type, context, request=None):
     branding = context.get("branding") or {}
     primary_color = branding.get("primary_color") or "#E85D26"
 
-    template_body = template.body_template if template and template.body_template else _default_body(document_type)
-    stylesheet = template.stylesheet if template and template.stylesheet else _default_stylesheet(primary_color)
+    # Shared library receipt templates used to be generic sales-document layouts.
+    # Use the operational slip for them while preserving tenant-authored templates.
+    is_shared_receipt = document_type == "receipt" and template is not None and template.tenant_id is None
+    template_body = _default_body(document_type) if is_shared_receipt else (template.body_template if template and template.body_template else _default_body(document_type))
+    stylesheet = _default_stylesheet(primary_color) if is_shared_receipt else (template.stylesheet if template and template.stylesheet else _default_stylesheet(primary_color))
     rendered_body = _render_template_string(template_body, context)
     if document_type == "receipt" and context.get("transaction_image_url") and "transaction-capture" not in rendered_body:
         rendered_body += _render_template_string(

@@ -71,6 +71,7 @@ import ManufacturingOverview from '@/pages/industry/manufacturing-overview';
 import RetailOverview from '@/pages/industry/retail-overview';
 import ServicesOverview from '@/pages/industry/services-overview';
 import NotFound from '@/pages/not-found';
+import CustomerPortalPage from '@/pages/customer-portal';
 
 // ── Sales ─────────────────────────────────────────────────────────────────────
 import SalesEstimates from '@/pages/sales/estimates';
@@ -185,6 +186,9 @@ function Router() {
       </Route>
       <Route path="/login">
         <Login />
+      </Route>
+      <Route path="/customer-portal">
+        <CustomerPortalPage />
       </Route>
       <Route path="/privacy">
         <PrivacyPolicyPage />

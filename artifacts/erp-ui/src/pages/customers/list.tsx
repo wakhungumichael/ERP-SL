@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Mail, Phone, Plus, Search, Trash2, UserCheck, UserX } from 'lucide-react';
+import { Mail, Phone, Plus, Search, Send, Trash2, UserCheck, UserX } from 'lucide-react';
 import { useAuth } from '@/context/use-auth';
 import { useToast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
@@ -283,6 +283,19 @@ export default function CustomersList() {
     }
   };
 
+  const sendPortalInvitation = async (customer: Customer) => {
+    try {
+      const response = await fetch(`${BASE_URL}/api/commercial-weighbridge/customers/${customer.id}/portal-invitation/`, {
+        method: 'POST', headers: { Authorization: `Token ${token}` },
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body?.error || 'Could not send the customer invitation.');
+      toast({ title: 'Portal invitation sent', description: body?.message || `Login details were sent to ${customer.email}.` });
+    } catch (error: any) {
+      toast({ title: 'Portal invitation not sent', description: error?.message || 'Check the customer email and SMTP configuration.', variant: 'destructive' });
+    }
+  };
+
   const columns = useMemo<ERPTableColumn<Customer>[]>(() => {
     const renderers: Record<string, ERPTableColumn<Customer>> = {
       id: {
@@ -426,6 +439,11 @@ export default function CustomersList() {
             rowActions={canSelectCustomers ? (customer) => (
               <div className="flex justify-end gap-2">
                 {canChangeCustomer ? <Button size="sm" variant="outline" onClick={() => openEdit(customer)}>Open</Button> : null}
+                {canChangeCustomer && customer.email && customer.is_active && !customer.is_deleted ? (
+                  <Button size="sm" variant="outline" onClick={() => sendPortalInvitation(customer)}>
+                    <Send className="mr-1 h-4 w-4" /> Portal Invite
+                  </Button>
+                ) : null}
                 {canChangeCustomer && !customer.is_deleted && customer.is_active ? (
                   <Button size="sm" variant="outline" onClick={() => runSingleAction(customer, 'deactivate')}>
                     <UserX className="mr-1 h-4 w-4" /> Deactivate

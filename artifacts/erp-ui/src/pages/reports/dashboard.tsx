@@ -37,6 +37,7 @@ import {
   UserCircle2,
   Wallet,
 } from 'lucide-react';
+import { Bar, BarChart, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { ERPFilterBar } from '@/components/erp/listing/filter-bar';
 import { ERPDataTable, type ERPTableColumn } from '@/components/erp/listing/data-table';
 import { ListingPagination } from '@/components/erp/listing/pagination';
@@ -145,7 +146,6 @@ type OperatorOption = {
 };
 
 const PAGE_SIZE = 8;
-const LIBRARY_PAGE_SIZE = 4;
 const OPERATIONS_ACCESS: AppRole[] = ['superadmin', 'tenant_admin', 'operator'];
 const FINANCIAL_ACCESS: AppRole[] = ['superadmin', 'tenant_admin', 'finance'];
 
@@ -376,6 +376,24 @@ function SummaryCard({ label, value }: { label: string; value: string }) {
   );
 }
 
+function ReportInsights({ transactions, onBranchSelect }: { transactions: TransactionRow[]; onBranchSelect: (branchName: string) => void }) {
+  const grouped = new Map<string, { branch: string; records: number; weight: number }>();
+  transactions.forEach((tx) => {
+    const branch = tx.branch_name || 'Unassigned';
+    const current = grouped.get(branch) ?? { branch, records: 0, weight: 0 };
+    current.records += 1;
+    current.weight += num(tx.net_weight);
+    grouped.set(branch, current);
+  });
+  const branches = [...grouped.values()].sort((a, b) => b.weight - a.weight).slice(0, 8);
+  const payments = ['Paid', 'Pending'].map((name) => ({ name, value: transactions.filter((tx) => tx.payment_status === name).length })).filter((entry) => entry.value > 0);
+  const colors = ['#0f9f76', '#d49a26'];
+  return <div className="grid gap-4 border-b border-border bg-muted/20 p-4 lg:grid-cols-[minmax(0,1.7fr)_minmax(260px,.8fr)] lg:px-6">
+    <Card className="border-border shadow-none"><CardHeader className="flex flex-row items-center justify-between space-y-0 pb-1"><CardTitle className="text-sm font-bold">Net Weight by Branch</CardTitle><span className="text-xs text-muted-foreground">Select a bar to drill down</span></CardHeader><CardContent className="h-56 pt-3">{branches.length ? <ResponsiveContainer width="100%" height="100%"><BarChart data={branches} onClick={(state: any) => state?.activePayload?.[0]?.payload?.branch && onBranchSelect(state.activePayload[0].payload.branch)}><XAxis dataKey="branch" tickLine={false} axisLine={false} tick={{ fontSize: 11 }} /><YAxis tickLine={false} axisLine={false} tick={{ fontSize: 11 }} tickFormatter={(value) => `${Math.round(value / 1000)}t`} /><Tooltip formatter={(value: number) => [`${fmtInt(value)} kg`, 'Net weight']} /><Bar dataKey="weight" fill="var(--primary)" radius={[6, 6, 0, 0]} cursor="pointer" /></BarChart></ResponsiveContainer> : <div className="flex h-full items-center justify-center text-sm text-muted-foreground">No transaction data in this period.</div>}</CardContent></Card>
+    <Card className="border-border shadow-none"><CardHeader className="pb-1"><CardTitle className="text-sm font-bold">Payment Health</CardTitle></CardHeader><CardContent className="flex h-56 items-center gap-4 pt-3">{payments.length ? <ResponsiveContainer width="56%" height="100%"><PieChart><Pie data={payments} dataKey="value" nameKey="name" innerRadius={48} outerRadius={76} paddingAngle={4}>{payments.map((entry, index) => <Cell key={entry.name} fill={colors[index]} />)}</Pie><Tooltip /></PieChart></ResponsiveContainer> : null}<div className="min-w-0 flex-1 space-y-3">{payments.map((entry, index) => <div key={entry.name} className="flex items-center justify-between gap-2 text-xs"><span className="flex items-center gap-2"><i className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: colors[index] }} />{entry.name}</span><strong>{fmtInt(entry.value)}</strong></div>)}</div></CardContent></Card>
+  </div>;
+}
+
 function ReportsDashboardContent() {
   const { token, role } = useAuth();
   const { toast } = useToast();
@@ -384,7 +402,6 @@ function ReportsDashboardContent() {
   const [activeTab, setActiveTab] = useState<ReportTab>(hasAccess(role, OPERATIONS_ACCESS) ? 'operations' : 'financial');
   const [selectedReportId, setSelectedReportId] = useState<ReportId>('ops_transactions');
   const [page, setPage] = useState(1);
-  const [libraryPage, setLibraryPage] = useState(1);
   const [summaryOpen, setSummaryOpen] = useState(false);
 
   const canViewOperations = hasAccess(role, OPERATIONS_ACCESS);
@@ -896,10 +913,6 @@ function ReportsDashboardContent() {
     setPage(1);
   }, [selectedReportId, activeTab, filters]);
 
-  useEffect(() => {
-    setLibraryPage(1);
-  }, [activeTab, reportSearch]);
-
   if (!canViewOperations && !canViewFinancial) {
     return (
       <Card className="border-border/70 shadow-sm">
@@ -917,7 +930,7 @@ function ReportsDashboardContent() {
   const totalPages = selectedReport ? Math.max(1, Math.ceil(selectedReport.rows.length / PAGE_SIZE)) : 1;
   const rowStart = selectedReport && selectedReport.rows.length ? (page - 1) * PAGE_SIZE + 1 : 0;
   const rowEnd = selectedReport ? Math.min(page * PAGE_SIZE, selectedReport.rows.length) : 0;
-  const pagedVisibleReports = visibleReports.slice((libraryPage - 1) * LIBRARY_PAGE_SIZE, libraryPage * LIBRARY_PAGE_SIZE);
+  const pagedVisibleReports = visibleReports;
   const displayRows: DisplayRow[] = pagedRows.map((row, index) => ({
     id: `${selectedReport?.id ?? 'report'}-${rowStart + index}`,
     ...row,
@@ -1021,8 +1034,8 @@ function ReportsDashboardContent() {
       title="Reports"
     >
       <section className="overflow-hidden border-y border-border bg-background shadow-sm">
-        <div className="grid min-h-0 gap-0 xl:grid-cols-[240px_minmax(0,1fr)]">
-          <aside className="min-w-0 border-b border-border bg-card xl:border-b-0 xl:border-r">
+        <div className="min-h-0">
+          <aside className="min-w-0 border-b border-border bg-card">
             <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as ReportTab)} className="space-y-4">
               <div className="border-b border-border px-3 py-3">
                 <div className="mb-2 text-xs font-bold uppercase tracking-[0.14em] text-muted-foreground">
@@ -1061,36 +1074,22 @@ function ReportsDashboardContent() {
               </div>
             </div>
 
-            <div className="max-h-[22rem] overflow-y-auto px-3 py-4 xl:max-h-[calc(100vh-15rem)]">
+            <div className="overflow-x-auto px-3 py-4">
               {libraryGroups
                 .filter((group) => group.key === activeTab)
                 .map((group) => (
-                  <div key={group.key} className="space-y-3">
-                    <div className="mb-3 rounded-xl border border-border bg-muted px-3 py-2 text-sm font-bold uppercase tracking-[0.12em] text-foreground">
+                  <div key={group.key} className="flex min-w-max items-center gap-3">
+                    <div className="rounded-xl border border-border bg-muted px-3 py-2 text-sm font-bold uppercase tracking-[0.12em] text-foreground">
                       {group.title}
                     </div>
-                    <div className="space-y-3">
+                    <div className="flex items-center gap-3">
                       {pagedVisibleReports.map((report) => (
-                        <LibraryTile
-                          key={report.id}
-                          title={report.title}
-                          active={selectedReport?.id === report.id}
-                          onClick={() => setSelectedReportId(report.id)}
-                        />
+                        <div key={report.id} className="w-52"><LibraryTile title={report.title} active={selectedReport?.id === report.id} onClick={() => setSelectedReportId(report.id)} /></div>
                       ))}
                       {visibleReports.length === 0 ? (
                         <div className="rounded-2xl border border-dashed border-border bg-muted/30 px-4 py-6 text-sm text-muted-foreground">
                           No reports match "{reportSearch}".
                         </div>
-                      ) : null}
-                      {visibleReports.length > 0 ? (
-                        <ListingPagination
-                          page={libraryPage}
-                          pageSize={LIBRARY_PAGE_SIZE}
-                          totalCount={visibleReports.length}
-                          onPage={setLibraryPage}
-                          onPageSize={() => {}}
-                        />
                       ) : null}
                     </div>
                   </div>
@@ -1202,6 +1201,14 @@ function ReportsDashboardContent() {
                       )}
                     />
                   </div>
+
+                  <ReportInsights
+                    transactions={searchedTransactions}
+                    onBranchSelect={(branchName) => {
+                      const branch = branches.find((entry) => entry.name === branchName);
+                      if (branch) setFilters((current) => ({ ...current, branchId: String(branch.id) }));
+                    }}
+                  />
 
                   <div className="border-b border-border bg-card px-5 py-3 lg:px-6">
                     <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">

@@ -100,7 +100,7 @@ export default function Login() {
   const [forgotSubmitting, setForgotSubmitting] = useState(false);
   const login = useAuthLogin();
   const { toast } = useToast();
-  const { setToken, token } = useAuth();
+  const { setToken, token, user } = useAuth();
   const { data } = useQuery({
     queryKey: ['public-site-config', tenantCode ?? 'owner'],
     queryFn: () => fetchPublicSiteConfig(tenantCode),
@@ -145,8 +145,8 @@ export default function Login() {
   const showPublicRegistration = site.login_page.show_public_registration !== false;
   const showPricingCard = showLandingPageLink && site.login_page.show_pricing_card !== false;
   useEffect(() => {
-    if (token) setLocation('/dashboard');
-  }, [token, setLocation]);
+    if (token) setLocation((user as any)?.is_customer_portal ? '/customer-portal' : '/dashboard');
+  }, [token, user, setLocation]);
 
   useEffect(() => {
     const nextPlanId = recommendedPlan?.id ? String(recommendedPlan.id) : '';
@@ -188,7 +188,7 @@ export default function Login() {
           const user = (payload?.user ?? (raw as Record<string, unknown>)?.user) as Record<string, unknown> | undefined;
           if (authToken) {
             setToken(authToken, user ?? null);
-            setLocation('/dashboard');
+            setLocation((user as any)?.is_customer_portal ? '/customer-portal' : '/dashboard');
           }
         },
         onError: () => {

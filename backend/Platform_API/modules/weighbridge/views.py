@@ -3,7 +3,9 @@ import base64
 import binascii
 import json as _json
 import re
+import secrets
 import socket
+import string
 import urllib.request
 import urllib.error
 from datetime import timedelta
@@ -11,6 +13,8 @@ from decimal import Decimal
 from io import BytesIO
 
 from django.core.files.base import ContentFile
+from django.core.mail import EmailMessage
+from django.contrib.auth.models import User
 from django.db import transaction as db_transaction
 from django.http import HttpResponse
 from django.db.models import Q
@@ -24,6 +28,7 @@ from rest_framework.views import APIView
 from PIL import Image, UnidentifiedImageError
 
 from Platform_Core.documents import render_business_document, render_transaction_receipt
+from Platform_Core.email import get_tenant_smtp_connection
 from Platform_Core.branch_sync import get_operational_branches_for_tenant
 from Platform_Core.accounting import assert_posting_allowed, sync_transaction_posting
 from Platform_Core.models import OrganizationMembership, Tenant, TenantSettings, TenantUserProfile
@@ -39,7 +44,7 @@ from SL_Weighbridge.sync import (
     vehicle_type_product_code,
 )
 from SL_Weighbridge.models import (
-    Branch, CameraConfig, Customer, IndicatorConfig, Item,
+    Branch, CameraConfig, Customer, CustomerPortalAccount, IndicatorConfig, Invoice, Item,
     OverweightConfig, OverweightEvent, Transaction, Vehicle, VehicleType,
     WeighingOperationType,
     WeighbridgeDiscrepancy,
@@ -2520,6 +2525,89 @@ class CustomerDetailView(generics.RetrieveUpdateDestroyAPIView):
         instance.is_deleted = True
         instance.save(update_fields=["is_active", "is_deleted"])
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class CustomerPortalInvitationView(APIView):
+    """Create or refresh a restricted customer login using the verified customer email."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        _require_weighbridge_model_permission(request.user, "change_customer")
+        tenant = _get_request_user_tenant(request.user)
+        customer = Customer.objects.filter(pk=pk, tenant=tenant, is_active=True, is_deleted=False).first()
+        if customer is None:
+            return Response({"error": "Active customer not found in your organization."}, status=status.HTTP_404_NOT_FOUND)
+        email = (customer.email or "").strip().lower()
+        if not email:
+            return Response({"error": "Add and save the customer's email address before sending a portal invitation."}, status=status.HTTP_400_BAD_REQUEST)
+
+        tenant_settings, _ = TenantSettings.objects.get_or_create(tenant=tenant, defaults={"invoice_prefix": "INV"})
+        if not tenant_settings.smtp_host or not tenant_settings.smtp_user:
+            return Response({"error": "Customer invitations require SMTP settings. Configure them in Organization Settings -> Email first."}, status=status.HTTP_400_BAD_REQUEST)
+
+        account = CustomerPortalAccount.objects.select_related("user").filter(customer=customer).first()
+        if account:
+            user = account.user
+        else:
+            user = User.objects.filter(email__iexact=email).first()
+            if user and (user.is_staff or user.is_superuser):
+                return Response({"error": "This email belongs to a staff account and cannot be converted into a customer portal account."}, status=status.HTTP_400_BAD_REQUEST)
+            profile = getattr(user, "tenant_profile", None) if user else None
+            if profile and profile.tenant_id not in (None, tenant.id):
+                return Response({"error": "This email already belongs to a user in another organization."}, status=status.HTTP_400_BAD_REQUEST)
+            if user is None:
+                base_username = re.sub(r"[^a-z0-9]+", "_", email.split("@", 1)[0].lower()).strip("_") or "customer"
+                username = base_username
+                suffix = 1
+                while User.objects.filter(username=username).exists():
+                    suffix += 1
+                    username = f"{base_username}{suffix}"
+                user = User.objects.create_user(username=username, email=email, is_active=True)
+            TenantUserProfile.objects.get_or_create(user=user, defaults={"tenant": tenant, "is_tenant_admin": False})
+            account = CustomerPortalAccount.objects.create(tenant=tenant, customer=customer, user=user)
+
+        temporary_password = "".join(secrets.choice(string.ascii_letters + string.digits) for _ in range(14))
+        user.set_password(temporary_password)
+        user.is_active = True
+        user.save(update_fields=["password", "is_active"])
+        account.is_active = True
+        account.last_invited_at = timezone.now()
+        account.save(update_fields=["is_active", "last_invited_at"])
+
+        login_url = f"{request.scheme}://{request.get_host()}/login/{tenant.code}"
+        try:
+            EmailMessage(
+                subject=f"{tenant.name} customer portal access",
+                body=(f"Hello {customer.name},\n\nYour customer portal is ready.\n\n"
+                      f"Username: {user.username}\nTemporary password: {temporary_password}\n"
+                      f"Sign in: {login_url}\n\nPlease change your password after signing in."),
+                from_email=tenant_settings.support_email or tenant_settings.smtp_user,
+                to=[email], connection=get_tenant_smtp_connection(tenant_settings),
+            ).send()
+        except Exception as exc:
+            return Response({"error": f"The account was created, but the invitation email could not be sent: {exc}"}, status=status.HTTP_502_BAD_GATEWAY)
+        return Response({"message": f"Customer portal invitation sent to {email}.", "username": user.username})
+
+
+def _customer_portal_account(user):
+    return CustomerPortalAccount.objects.select_related("customer", "tenant").filter(user=user, is_active=True, customer__is_active=True, customer__is_deleted=False).first()
+
+
+class CustomerPortalSummaryView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        account = _customer_portal_account(request.user)
+        if account is None:
+            return Response({"error": "This login is not a customer portal account."}, status=status.HTTP_403_FORBIDDEN)
+        records = Transaction.objects.filter(tenant=account.tenant, customer=account.customer).select_related("branch", "vehicle", "item").order_by("-created_at")[:100]
+        invoices = Invoice.objects.filter(tenant=account.tenant, customer=account.customer).order_by("-issued_date")[:100]
+        statement = [{
+            "number": invoice.invoice_number, "date": invoice.issued_date,
+            "status": invoice.status, "amount": invoice.total_amount,
+            "currency": invoice.currency, "due_date": invoice.due_date,
+        } for invoice in invoices]
+        return Response({"customer": CustomerSerializer(account.customer).data, "transactions": TransactionSerializer(records, many=True, context={"request": request}).data, "statement": statement})
 
 
 class CustomerBulkActionView(APIView):
