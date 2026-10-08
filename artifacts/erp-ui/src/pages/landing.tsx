@@ -58,7 +58,10 @@ function HighlightStroke({ children, color }: { children: React.ReactNode; color
 export default function LandingPage({ tenantCode }: { tenantCode?: string }) {
   const site = useMarketingSite(tenantCode);
   const brand = site.branding.primary_color ?? '#E85D26';
-  const primaryHref = tenantCode ? `/login/${tenantCode}?intent=register` : '/login?intent=register';
+  const allowPublicRegistration = site.login_page.show_public_registration !== false;
+  const primaryHref = allowPublicRegistration
+    ? (tenantCode ? `/login/${tenantCode}?intent=register` : '/login?intent=register')
+    : (tenantCode ? `/login/${tenantCode}` : '/login');
   const publishedModules = [...site.modules]
     .filter((module) => module.is_active !== false)
     .sort((a, b) => {
@@ -100,7 +103,7 @@ export default function LandingPage({ tenantCode }: { tenantCode?: string }) {
                 className="inline-flex items-center justify-center gap-2 rounded-full px-6 py-3.5 text-sm font-semibold text-white transition hover:opacity-90"
                 style={{ backgroundColor: brand }}
               >
-                {site.landing_page.primary_cta_label ?? 'Start now'}
+                {allowPublicRegistration ? (site.landing_page.primary_cta_label ?? 'Start now') : 'Sign in'}
                 <ArrowRight className="h-4 w-4" />
               </Link>
               <Link

@@ -66,6 +66,9 @@ const DEFAULT_LOGIN_PAGE_CONFIG = {
   title: 'SL ERP',
   subtitle: 'SL ERP for small businesses, growing companies, and large enterprises.',
   description: 'A scalable business system built to support everyday operations, finance, billing, and control at every stage of growth.',
+  show_landing_page_link: true,
+  show_public_registration: true,
+  show_pricing_card: true,
 };
 
 const DEFAULT_LANDING_PAGE_CONFIG = {
@@ -82,6 +85,7 @@ const DEFAULT_LANDING_PAGE_CONFIG = {
     'Procurement, approvals, and supplier control',
     'Inventory, operations, and live reporting',
   ],
+  enabled: true,
 };
 
 const DEFAULT_SUPPORT_FORM_FIELDS = [
@@ -1972,12 +1976,12 @@ export default function OrganizationSettings() {
 
   const tf = (k: string) => (e: React.ChangeEvent<HTMLInputElement>) => setTenantForm((p: any) => ({ ...p, [k]: e.target.value }));
   const sf = (k: string) => (e: React.ChangeEvent<HTMLInputElement>) => setSettingsForm((p: any) => ({ ...p, [k]: e.target.value }));
-  const updateLoginPageField = (key: string, value: string) =>
+  const updateLoginPageField = (key: string, value: unknown) =>
     setSettingsForm((p: any) => ({
       ...p,
       login_page_config: { ...(p?.login_page_config ?? {}), [key]: value },
     }));
-  const updateLandingPageField = (key: string, value: string) =>
+  const updateLandingPageField = (key: string, value: unknown) =>
     setSettingsForm((p: any) => ({
       ...p,
       landing_page_config: { ...(p?.landing_page_config ?? {}), [key]: value },
@@ -2486,6 +2490,31 @@ export default function OrganizationSettings() {
                         <a href={publicLandingUrl} className="font-medium text-primary hover:underline">Preview landing: {publicLandingUrl}</a>
                         <a href={publicLoginUrl} className="font-medium text-primary hover:underline">Preview login: {publicLoginUrl}</a>
                         <a href={publicSupportUrl} className="font-medium text-primary hover:underline">Preview support: {publicSupportUrl}</a>
+                      </div>
+                    </div>
+
+                    <div className="space-y-4 rounded-2xl border border-primary/20 bg-primary/[0.04] p-4">
+                      <div>
+                        <p className="text-sm font-semibold">Public Site Visibility</p>
+                        <p className="text-xs text-muted-foreground">Choose which public links and self-service options this organization exposes. These controls are available to platform and tenant administrators.</p>
+                      </div>
+                      <div className="grid gap-3">
+                        <div className="flex items-center justify-between gap-6 rounded-xl border bg-background p-3">
+                          <div><Label htmlFor="landing-page-enabled">Enable landing page</Label><p className="text-xs text-muted-foreground">When disabled, public marketing access is removed from this tenant login.</p></div>
+                          <Switch id="landing-page-enabled" checked={settingsForm.landing_page_config?.enabled !== false} onCheckedChange={(checked) => updateLandingPageField('enabled', checked)} />
+                        </div>
+                        <div className="flex items-center justify-between gap-6 rounded-xl border bg-background p-3">
+                          <div><Label htmlFor="login-landing-link">Show landing-page link on login</Label><p className="text-xs text-muted-foreground">Lets users navigate from the sign-in page to the public site.</p></div>
+                          <Switch id="login-landing-link" checked={settingsForm.login_page_config?.show_landing_page_link !== false} disabled={settingsForm.landing_page_config?.enabled === false} onCheckedChange={(checked) => updateLoginPageField('show_landing_page_link', checked)} />
+                        </div>
+                        <div className="flex items-center justify-between gap-6 rounded-xl border bg-background p-3">
+                          <div><Label htmlFor="public-registration">Allow public workspace registration</Label><p className="text-xs text-muted-foreground">Hide this for client deployments where accounts are created only by an administrator.</p></div>
+                          <Switch id="public-registration" checked={settingsForm.login_page_config?.show_public_registration !== false} onCheckedChange={(checked) => updateLoginPageField('show_public_registration', checked)} />
+                        </div>
+                        <div className="flex items-center justify-between gap-6 rounded-xl border bg-background p-3">
+                          <div><Label htmlFor="pricing-card">Show pricing card on login</Label><p className="text-xs text-muted-foreground">Controls the public pricing and subscription prompt below the sign-in form.</p></div>
+                          <Switch id="pricing-card" checked={settingsForm.login_page_config?.show_pricing_card !== false} disabled={settingsForm.landing_page_config?.enabled === false || settingsForm.login_page_config?.show_landing_page_link === false} onCheckedChange={(checked) => updateLoginPageField('show_pricing_card', checked)} />
+                        </div>
                       </div>
                     </div>
 

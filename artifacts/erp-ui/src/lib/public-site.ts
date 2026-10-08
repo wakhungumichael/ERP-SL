@@ -48,6 +48,9 @@ export interface PublicSiteConfig {
     title?: string;
     subtitle?: string;
     description?: string;
+    show_landing_page_link?: boolean;
+    show_public_registration?: boolean;
+    show_pricing_card?: boolean;
   };
   landing_page: {
     eyebrow?: string;
@@ -59,6 +62,7 @@ export interface PublicSiteConfig {
     secondary_cta_label?: string;
     secondary_cta_url?: string;
     highlights?: string[];
+    enabled?: boolean;
   };
   support_page: {
     eyebrow?: string;
@@ -102,6 +106,9 @@ export const DEFAULT_PUBLIC_SITE: PublicSiteConfig = {
     title: 'SL ERP',
     subtitle: 'SL ERP for small businesses, growing companies, and large enterprises.',
     description: 'A scalable business system built to support everyday operations, finance, billing, and control at every stage of growth.',
+    show_landing_page_link: true,
+    show_public_registration: true,
+    show_pricing_card: true,
   },
   landing_page: {
     eyebrow: 'SL ERP',
@@ -117,6 +124,7 @@ export const DEFAULT_PUBLIC_SITE: PublicSiteConfig = {
       'Procurement, approvals, and supplier control',
       'Inventory, operations, and live reporting',
     ],
+    enabled: true,
   },
   support_page: {
     eyebrow: 'Customer Support',

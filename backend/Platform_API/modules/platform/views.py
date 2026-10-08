@@ -327,6 +327,9 @@ def _default_login_page_config(tenant):
         "title": "SL ERP",
         "subtitle": "SL ERP for small businesses, growing companies, and large enterprises.",
         "description": "A scalable business system built to support everyday operations, finance, billing, and control at every stage of growth.",
+        "show_landing_page_link": True,
+        "show_public_registration": True,
+        "show_pricing_card": True,
     }
 
 
@@ -348,6 +351,7 @@ def _default_landing_page_config(tenant):
             "Procurement, approvals, and supplier control",
             "Inventory, operations, and live reporting",
         ],
+        "enabled": True,
     }
 
 
@@ -854,6 +858,22 @@ class PublicRegistrationAPIView(APIView):
     permission_classes = (AllowAny,)
 
     def post(self, request):
+        tenant_code = str(request.data.get("tenant_code") or "").strip()
+        if tenant_code:
+            tenant = Tenant.objects.filter(code=tenant_code, is_active=True).first()
+            if tenant is None:
+                return error_response("Organization was not found.", status_code=status.HTTP_404_NOT_FOUND)
+            tenant_settings, _ = TenantSettings.objects.get_or_create(
+                tenant=tenant,
+                defaults={"invoice_prefix": "INV"},
+            )
+            login_config = tenant_settings.login_page_config or {}
+            if login_config.get("show_public_registration") is False:
+                return error_response(
+                    "This organization does not allow public account registration. Contact its administrator for access.",
+                    status_code=status.HTTP_403_FORBIDDEN,
+                )
+
         full_name = str(request.data.get("name") or "").strip()
         email = str(request.data.get("email") or "").strip().lower()
         password = str(request.data.get("password") or "")

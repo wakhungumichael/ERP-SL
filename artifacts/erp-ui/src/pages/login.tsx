@@ -140,6 +140,10 @@ export default function Login() {
   const [startWithDemo, setStartWithDemo] = useState(true);
   const selectedPlan = plans.find((plan: any) => String(plan.id) === selectedPlanId) ?? recommendedPlan ?? null;
   const logoUrl = site.branding.logo_url?.trim();
+  const landingPageEnabled = site.landing_page.enabled !== false;
+  const showLandingPageLink = landingPageEnabled && site.login_page.show_landing_page_link !== false;
+  const showPublicRegistration = site.login_page.show_public_registration !== false;
+  const showPricingCard = showLandingPageLink && site.login_page.show_pricing_card !== false;
   useEffect(() => {
     if (token) setLocation('/dashboard');
   }, [token, setLocation]);
@@ -233,6 +237,7 @@ export default function Login() {
           name: trimmedName,
           email: trimmedEmail,
           password: registerForm.password,
+          tenant_code: tenantCode,
         }),
       });
       const payload = await response.json().catch(() => ({}));
@@ -354,19 +359,16 @@ export default function Login() {
     <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(232,93,38,0.26),_transparent_30%),linear-gradient(180deg,#1c1917_0%,#292524_100%)] text-white">
       <div className="mx-auto grid min-h-screen max-w-7xl lg:grid-cols-[1.08fr_0.92fr]">
         <div className="flex flex-col justify-between px-8 py-10 sm:px-12 lg:px-14">
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-3">
-              <div className="flex h-14 w-14 items-center justify-center overflow-hidden rounded-2xl bg-white/95 p-2 shadow-lg">
+          <div className="flex items-center">
+            <div className="flex items-center">
+              <div className="flex h-24 w-64 items-center justify-start overflow-hidden">
                 {logoUrl ? (
-                  <img src={logoUrl} alt="SL ERP logo" className="h-full w-full object-contain" />
+                  <img src={logoUrl} alt={`${site.tenant?.name ?? 'Organization'} logo`} className="h-full w-full object-contain object-left" />
                 ) : (
-                  <div className="flex h-full w-full items-center justify-center rounded-xl text-sm font-black tracking-[0.2em] text-white" style={{ backgroundColor: brand }}>
+                  <div className="flex h-16 w-16 items-center justify-center rounded-2xl text-lg font-black tracking-[0.2em] text-white" style={{ backgroundColor: brand }}>
                     SL
                   </div>
                 )}
-              </div>
-              <div>
-                <p className="text-lg font-black tracking-tight">SL ERP</p>
               </div>
             </div>
           </div>
@@ -386,7 +388,7 @@ export default function Login() {
               ) : null}
             </div>
 
-            <div className="flex flex-wrap items-center gap-3">
+            {showLandingPageLink ? <div className="flex flex-wrap items-center gap-3">
               <button
                 type="button"
                 onClick={() => setLocation(tenantCode ? `/landing/${tenantCode}` : '/landing')}
@@ -396,11 +398,10 @@ export default function Login() {
                 View Landing Page
                 <ArrowRight className="h-4 w-4" />
               </button>
-            </div>
+            </div> : null}
           </div>
 
           <footer className="space-y-3 border-t border-white/10 pt-5">
-            {site.branding.footer_text ? <p className="text-sm text-white/60">{site.branding.footer_text}</p> : null}
             <div className="flex flex-wrap gap-4 text-sm text-white/70">
               {site.footer_menu.map((item) => (
                 <a key={`${item.label}-${item.href}`} href={item.href} className="transition hover:text-white">
@@ -414,9 +415,9 @@ export default function Login() {
         <div className="flex items-center justify-center px-8 py-10 sm:px-12 lg:px-14">
           <div className="w-full max-w-md rounded-[32px] border border-white/10 bg-white p-8 text-slate-950 shadow-[0_35px_120px_rgba(0,0,0,0.35)]">
             <div className="flex items-center gap-4">
-              <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-white/95 p-2 shadow-sm">
+              <div className="flex h-16 w-24 shrink-0 items-center justify-center overflow-hidden">
                 {logoUrl ? (
-                  <img src={logoUrl} alt="SL ERP logo" className="h-full w-full object-contain" />
+                  <img src={logoUrl} alt={`${site.tenant?.name ?? 'Organization'} logo`} className="h-full w-full object-contain" />
                 ) : (
                   <div className="flex h-full w-full items-center justify-center rounded-xl text-sm font-black tracking-[0.2em] text-white" style={{ backgroundColor: brand }}>
                     SL
@@ -477,7 +478,7 @@ export default function Login() {
               </Button>
             </form>
 
-            <div className="mt-5 flex items-center justify-between gap-3 text-sm">
+            {showPublicRegistration ? <div className="mt-5 flex items-center justify-between gap-3 text-sm">
               <span className="text-slate-500">No account yet?</span>
               <button
                 type="button"
@@ -487,7 +488,7 @@ export default function Login() {
               >
                 Create your workspace
               </button>
-            </div>
+            </div> : null}
 
             {requestedIntent === 'subscribe' ? (
               <div className="mt-4 rounded-2xl border border-[#f1d7c8] bg-[#fff8f3] p-4 text-sm text-slate-700">
@@ -498,7 +499,7 @@ export default function Login() {
               </div>
             ) : null}
 
-            <div className="mt-6 rounded-3xl bg-slate-50 p-5">
+            {showPricingCard ? <div className="mt-6 rounded-3xl bg-slate-50 p-5">
               <p className="text-sm font-semibold text-slate-900">Need product pricing first?</p>
               <p className="mt-1 text-sm leading-6 text-slate-600">
                 Review the public subscription plans and billing packages before you enter the workspace.
@@ -512,7 +513,7 @@ export default function Login() {
                 Open Landing Page
                 <ArrowRight className="h-4 w-4" />
               </button>
-            </div>
+            </div> : null}
           </div>
         </div>
       </div>

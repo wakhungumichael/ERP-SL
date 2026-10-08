@@ -28,7 +28,21 @@ export function MarketingSiteShell({
   const brand = site.branding.primary_color ?? '#E85D26';
   const loginHref = tenantCode ? `/login/${tenantCode}` : '/login';
   const startNowHref = tenantCode ? `/login/${tenantCode}?intent=register` : '/login?intent=register';
+  const allowPublicRegistration = site.login_page.show_public_registration !== false;
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  if (site.landing_page.enabled === false) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-slate-950 px-6 text-white">
+        <div className="max-w-md text-center">
+          {site.branding.logo_url ? <img src={site.branding.logo_url} alt={`${site.tenant?.name ?? 'Organization'} logo`} className="mx-auto mb-8 h-24 w-64 object-contain" /> : null}
+          <h1 className="text-3xl font-semibold">Public site unavailable</h1>
+          <p className="mt-3 text-sm leading-6 text-white/65">This organization has chosen to make its workspace available by sign-in only.</p>
+          <Link href={loginHref} className="mt-7 inline-flex rounded-full px-5 py-3 text-sm font-semibold text-white" style={{ backgroundColor: brand }}>Sign in</Link>
+        </div>
+      </main>
+    );
+  }
 
   return (
     <div
@@ -52,19 +66,15 @@ export function MarketingSiteShell({
           <div className="rounded-[28px] border border-black/5 bg-white/90 px-5 py-3 shadow-[0_18px_60px_rgba(232,93,38,0.12)] backdrop-blur">
             <div className="flex items-center justify-between gap-4">
               <Link href={buildMarketingPath(tenantCode)} className="flex items-center gap-3" onClick={() => setMobileMenuOpen(false)}>
-                <div
-                  className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-2xl bg-white p-2 shadow-sm"
-                  style={{ border: '1px solid rgba(17,24,39,0.08)' }}
-                >
+                <div className="flex h-16 w-44 items-center justify-start overflow-hidden">
                   {site.branding.logo_url ? (
-                    <img src={site.branding.logo_url} alt="SL ERP logo" className="h-full w-full object-contain" />
+                    <img src={site.branding.logo_url} alt={`${site.tenant?.name ?? 'Organization'} logo`} className="h-full w-full object-contain object-left" />
                   ) : (
                     <div className="flex h-full w-full items-center justify-center rounded-xl text-sm font-black tracking-[0.2em] text-white" style={{ backgroundColor: brand }}>
                       SL
                     </div>
                   )}
                 </div>
-                <p className="text-xl font-semibold tracking-tight text-[#111827]">SL ERP</p>
               </Link>
 
               <nav className="hidden items-center gap-6 text-sm font-medium text-[#4b5563] lg:flex">
@@ -83,14 +93,14 @@ export function MarketingSiteShell({
                 <Link href={loginHref} className="text-sm font-semibold text-[#4b5563] transition hover:text-[#111827]">
                   Sign in
                 </Link>
-                <Link
+                {allowPublicRegistration ? <Link
                   href={startNowHref}
                   className="inline-flex items-center gap-2 rounded-full px-4 py-2.5 text-sm font-semibold text-white transition hover:opacity-90"
                   style={{ backgroundColor: brand }}
                 >
                   Start now
                   <ArrowRight className="h-4 w-4" />
-                </Link>
+                </Link> : null}
               </div>
 
               <button
@@ -124,13 +134,13 @@ export function MarketingSiteShell({
                 </nav>
 
                 <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                  <Link
+                  {allowPublicRegistration ? <Link
                     href={loginHref}
                     className="inline-flex items-center justify-center rounded-full border border-black/10 bg-white px-4 py-3 text-sm font-semibold text-[#111827] transition hover:border-black/20"
                     onClick={() => setMobileMenuOpen(false)}
                   >
                     Sign in
-                  </Link>
+                  </Link> : null}
                   <Link
                     href={startNowHref}
                     className="inline-flex items-center justify-center gap-2 rounded-full px-4 py-3 text-sm font-semibold text-white transition hover:opacity-90"
@@ -156,19 +166,19 @@ export function MarketingSiteShell({
                   A quieter way to run subscriptions, teams, and operations.
                 </p>
               </div>
-              <Link
+              {allowPublicRegistration ? <Link
                 href={startNowHref}
                 className="inline-flex items-center gap-2 rounded-full px-5 py-3 text-sm font-semibold text-white transition hover:opacity-90"
                 style={{ backgroundColor: brand }}
               >
                 Start now
                 <ArrowRight className="h-4 w-4" />
-              </Link>
+              </Link> : null}
             </div>
 
             <div className="grid gap-10 py-4 lg:grid-cols-[1.2fr_0.8fr_0.8fr_1fr]">
               <div>
-                <p className="text-2xl font-semibold tracking-tight">SL ERP</p>
+                {site.branding.logo_url ? <img src={site.branding.logo_url} alt={`${site.tenant?.name ?? 'Organization'} logo`} className="h-16 w-48 object-contain object-left" /> : <p className="text-2xl font-semibold tracking-tight">SL ERP</p>}
                 <p className="mt-4 max-w-md text-sm leading-7 text-white/68">
                   {site.branding.footer_text || 'Subscription billing, ERP operations, and customer workflows in one minimal platform.'}
                 </p>

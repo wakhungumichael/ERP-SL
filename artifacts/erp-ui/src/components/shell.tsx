@@ -1,6 +1,6 @@
 import { Link, useLocation } from 'wouter';
 import { useAuthLogout } from '@workspace/api-client-react';
-import { LogOut, Scale, ChevronRight, ChevronDown, Search, UserCircle2, Settings, PanelTop, X, Menu, ShieldAlert } from 'lucide-react';
+import { LogOut, Scale, ChevronRight, ChevronDown, Search, UserCircle2, Settings, PanelTop, X, Menu, ShieldAlert, LayoutDashboard, ShoppingCart, Package, Landmark, Users, Ticket, BarChart3, ClipboardList, Factory, Store, Wrench, Boxes, FileText, Truck, CreditCard, FolderKanban, ContactRound } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { Input } from '@/components/ui/input';
@@ -255,6 +255,31 @@ function matchesSearch(value: string, query: string) {
   return value.toLowerCase().includes(query.trim().toLowerCase());
 }
 
+function NavigationIcon({ path, className }: { path: string; className?: string }) {
+  const key = path.toLowerCase();
+  const Icon = key.includes('dashboard') ? LayoutDashboard
+    : key.includes('weighbridge') || key.includes('weight') || key.includes('vehicle') ? Scale
+    : key.includes('sales') || key.includes('estimate') || key.includes('order') ? ShoppingCart
+    : key.includes('inventory') || key.includes('stock') || key.includes('warehouse') ? Boxes
+    : key.includes('finance') || key.includes('account') || key.includes('budget') || key.includes('payment') ? Landmark
+    : key.includes('crm') || key.includes('customer') || key.includes('people') || key.includes('supplier') ? Users
+    : key.includes('ticket') || key.includes('support') ? Ticket
+    : key.includes('report') || key.includes('analytics') ? BarChart3
+    : key.includes('procurement') || key.includes('purchase') || key.includes('requisition') ? ClipboardList
+    : key.includes('manufacturing') ? Factory
+    : key.includes('retail') ? Store
+    : key.includes('service') || key.includes('project') ? Wrench
+    : key.includes('platform') || key.includes('organization') || key.includes('role') || key.includes('user') ? Settings
+    : key.includes('invoice') || key.includes('statement') ? FileText
+    : key.includes('contact') ? ContactRound
+    : key.includes('module') ? Package
+    : key.includes('workspace') ? FolderKanban
+    : key.includes('billing') || key.includes('license') ? CreditCard
+    : key.includes('truck') ? Truck
+    : PanelTop;
+  return <Icon className={className} aria-hidden="true" />;
+}
+
 // ── NavSection component ───────────────────────────────────────────────────────
 interface NavSectionProps {
   section: NavSection;
@@ -287,11 +312,7 @@ function NavSectionItem({ section, location, sidebarCollapsed, open, onToggle }:
                 : 'text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
             }`}
           >
-            <span
-              className={`h-1.5 w-1.5 rounded-full shrink-0 ${
-                hasActive ? 'bg-primary-foreground' : 'bg-sidebar-foreground/30'
-              }`}
-            />
+            <NavigationIcon path={singleItem.path} className="h-4 w-4 shrink-0" />
             {!sidebarCollapsed && <span className="truncate">{singleItem.title}</span>}
           </Link>
         </div>
@@ -305,9 +326,10 @@ function NavSectionItem({ section, location, sidebarCollapsed, open, onToggle }:
                 hasActive && !open ? 'text-sidebar-foreground/80' : ''
               }`}
             >
-              <span className={`text-[10px] font-bold uppercase tracking-[0.12em] transition-colors ${
-                hasActive ? 'text-primary/80' : 'text-sidebar-foreground/40 group-hover:text-sidebar-foreground/60'
+              <span className={`flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.12em] transition-colors ${
+                hasActive ? 'text-primary/90' : 'text-sidebar-foreground/50 group-hover:text-sidebar-foreground/75'
               }`}>
+                <NavigationIcon path={section.key} className="h-3.5 w-3.5" />
                 {section.title}
               </span>
               <ChevronDown
@@ -315,9 +337,10 @@ function NavSectionItem({ section, location, sidebarCollapsed, open, onToggle }:
               />
             </button>
           ) : (
-            /* Collapsed sidebar — show a faint divider dot instead of the label */
-            <div className="flex justify-center py-2">
-              <div className="h-px w-6 bg-sidebar-foreground/10" />
+            <div className="flex justify-center py-2" title={section.title}>
+              <div className="flex h-7 w-7 items-center justify-center rounded-md bg-sidebar-accent/45 text-sidebar-foreground/65">
+                <NavigationIcon path={section.key} className="h-4 w-4" />
+              </div>
             </div>
           )}
 
@@ -345,11 +368,7 @@ function NavSectionItem({ section, location, sidebarCollapsed, open, onToggle }:
                         : 'text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
                     }`}
                   >
-                    <span
-                      className={`h-1.5 w-1.5 rounded-full shrink-0 ${
-                        active ? 'bg-primary-foreground' : 'bg-sidebar-foreground/30'
-                      }`}
-                    />
+                    <NavigationIcon path={item.path} className="h-4 w-4 shrink-0" />
                     {!sidebarCollapsed && <span className="truncate">{item.title}</span>}
                   </Link>
                 );
@@ -634,11 +653,11 @@ export function Shell({ children }: { children: React.ReactNode }) {
         className={`${sidebarCollapsed ? 'w-16' : 'w-60'} h-screen overflow-hidden transition-all duration-200 bg-sidebar text-sidebar-foreground border-r border-sidebar-border flex-col hidden md:flex shrink-0`}
       >
         {/* Logo */}
-        <div className="h-14 flex items-center px-4 border-b border-sidebar-border shrink-0 gap-3">
+        <div className="h-[4.5rem] flex items-center px-3 border-b border-sidebar-border shrink-0 gap-2">
           <Link href="/dashboard" className="flex min-w-0 flex-1 items-center gap-3">
             <div
-              className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-white/10 shadow-sm"
-              style={{ backgroundColor: appLogoUrl ? 'rgba(255,255,255,0.08)' : appPrimaryColor }}
+              className={sidebarCollapsed ? 'flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-lg' : 'flex h-12 w-20 shrink-0 items-center justify-center overflow-hidden'}
+              style={{ backgroundColor: appLogoUrl ? 'transparent' : appPrimaryColor }}
             >
               {appLogoUrl ? (
                 <img src={appLogoUrl} alt={`${appTitle} logo`} className="h-full w-full object-contain" />
@@ -874,11 +893,11 @@ export function Shell({ children }: { children: React.ReactNode }) {
             <SheetDescription>Browse modules and pages on mobile.</SheetDescription>
           </SheetHeader>
           <div className="flex h-full flex-col">
-            <div className="flex h-14 items-center gap-3 border-b border-sidebar-border px-4">
+            <div className="flex h-[4.5rem] items-center gap-3 border-b border-sidebar-border px-4">
               <Link href="/dashboard" className="flex min-w-0 flex-1 items-center gap-3" onClick={() => setMobileNavOpen(false)}>
                 <div
-                  className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-white/10 shadow-sm"
-                  style={{ backgroundColor: appLogoUrl ? 'rgba(255,255,255,0.08)' : appPrimaryColor }}
+                  className="flex h-12 w-20 shrink-0 items-center justify-center overflow-hidden"
+                  style={{ backgroundColor: appLogoUrl ? 'transparent' : appPrimaryColor }}
                 >
                   {appLogoUrl ? (
                     <img src={appLogoUrl} alt={`${appTitle} logo`} className="h-full w-full object-contain" />
