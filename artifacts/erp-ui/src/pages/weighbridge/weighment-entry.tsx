@@ -939,7 +939,6 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
                         aria-invalid={!!transactionErrors.errors.fields.paired_first_transaction}
                         aria-describedby={transactionErrors.errors.fields.paired_first_transaction ? 'paired-first-error' : undefined}
                         className="flex-1 bg-transparent font-mono text-lg font-bold uppercase tracking-widest outline-none placeholder:font-normal placeholder:tracking-normal"
-                        placeholder="Type plate to search"
                         value={plateInput}
                         onChange={(event) => {
                           setPlateInput(event.target.value.toUpperCase());
