@@ -16,6 +16,7 @@ import { ERPFilterBar } from '@/components/erp/listing/filter-bar';
 import { ERPDataTable, type ERPTableColumn } from '@/components/erp/listing/data-table';
 import { ListingPagination } from '@/components/erp/listing/pagination';
 import { ERPWorkspacePage } from '@/components/erp/workspace/workspace-page';
+import { apiErrorFromResponse, formatApiError } from '@/lib/api-errors';
 
 function useFetch<T>(url: string, token: string | null) {
   return useQuery<T>({
@@ -23,7 +24,7 @@ function useFetch<T>(url: string, token: string | null) {
     enabled: !!token,
     queryFn: async () => {
       const res = await fetch(url, { headers: { Authorization: `Token ${token}` } });
-      if (!res.ok) throw new Error(await res.text());
+      if (!res.ok) throw await apiErrorFromResponse(res, 'Discrepancies could not be loaded.');
       return res.json() as Promise<T>;
     },
   });
@@ -47,7 +48,7 @@ function useApiMutation(
         body: body !== undefined ? JSON.stringify(body) : undefined,
       });
       const data = res.status !== 204 ? await res.json() : null;
-      if (!res.ok) throw new Error(JSON.stringify(data));
+      if (!res.ok) throw new Error(formatApiError(data, 'The discrepancy could not be updated.'));
       return data;
     },
     onSuccess,

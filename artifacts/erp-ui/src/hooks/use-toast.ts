@@ -1,5 +1,6 @@
 import * as React from 'react';
 import type { ToastActionElement, ToastProps } from '@/components/ui/toast';
+import { formatApiError } from '@/lib/api-errors';
 
 const TOAST_LIMIT = 1;
 const TOAST_REMOVE_DELAY = 1000000;
@@ -135,13 +136,26 @@ function dispatch(action: Action) {
 
 type Toast = Omit<ToasterToast, 'id'>;
 
+function normalizeToastDescription(description: React.ReactNode) {
+  if (typeof description !== 'string') return description;
+  const trimmed = description.trim();
+  const looksLikeJson =
+    (trimmed.startsWith('{') && trimmed.endsWith('}')) ||
+    (trimmed.startsWith('[') && trimmed.endsWith(']'));
+  return looksLikeJson ? formatApiError(trimmed) : description;
+}
+
 function toast({ ...props }: Toast) {
   const id = genId();
 
   const update = (props: ToasterToast) =>
     dispatch({
       type: 'UPDATE_TOAST',
-      toast: { ...props, id },
+      toast: {
+        ...props,
+        description: normalizeToastDescription(props.description),
+        id,
+      },
     });
   const dismiss = () => dispatch({ type: 'DISMISS_TOAST', toastId: id });
 
@@ -149,6 +163,7 @@ function toast({ ...props }: Toast) {
     type: 'ADD_TOAST',
     toast: {
       ...props,
+      description: normalizeToastDescription(props.description),
       id,
       open: true,
       onOpenChange: (open) => {

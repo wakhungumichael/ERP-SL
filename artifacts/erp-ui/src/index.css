@@ -133,6 +133,13 @@
   body {
     @apply font-sans antialiased bg-background text-foreground;
   }
+
+  label:has(+ input:required):not([data-required])::after,
+  label:has(+ textarea:required):not([data-required])::after,
+  label:has(+ button[aria-required='true']):not([data-required])::after {
+    content: ' *';
+    color: hsl(var(--destructive));
+  }
 }
 
 @layer utilities {

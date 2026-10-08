@@ -13,6 +13,7 @@ import { ERPFilterBar } from '@/components/erp/listing/filter-bar';
 import { ERPDataTable, type ERPTableColumn } from '@/components/erp/listing/data-table';
 import { ListingPagination } from '@/components/erp/listing/pagination';
 import { ERPWorkspacePage } from '@/components/erp/workspace/workspace-page';
+import { apiErrorFromResponse } from '@/lib/api-errors';
 
 function useFetch<T>(url: string, token: string | null) {
   return useQuery<T>({
@@ -20,7 +21,7 @@ function useFetch<T>(url: string, token: string | null) {
     enabled: !!token,
     queryFn: async () => {
       const res = await fetch(url, { headers: { Authorization: `Token ${token}` } });
-      if (!res.ok) throw new Error(await res.text());
+      if (!res.ok) throw await apiErrorFromResponse(res, 'Overweight events could not be loaded.');
       return res.json() as Promise<T>;
     },
   });
@@ -241,7 +242,7 @@ export default function OverweightLog() {
     try {
       const exportUrl = buildExportUrl(applied);
       const res = await fetch(exportUrl, { headers: { Authorization: `Token ${token}` } });
-      if (!res.ok) throw new Error(await res.text());
+      if (!res.ok) throw await apiErrorFromResponse(res, 'The overweight event could not be updated.');
       const blob = await res.blob();
       const href = URL.createObjectURL(blob);
       const link = document.createElement('a');

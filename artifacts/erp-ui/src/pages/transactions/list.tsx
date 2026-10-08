@@ -26,6 +26,7 @@ import {
   Popover, PopoverContent, PopoverTrigger,
 } from '@/components/ui/popover';
 import { ReceiptDialog, type ReceiptTransaction } from '@/components/weighbridge/receipt';
+import { apiErrorFromResponse, formatApiError } from '@/lib/api-errors';
 
 // ── Types & constants ─────────────────────────────────────────────────────────
 
@@ -1057,14 +1058,14 @@ function CreateTransactionDialog({ onCreated }: { onCreated?: () => void }) {
         headers: { 'Content-Type': 'application/json', Authorization: `Token ${token}` },
         body: JSON.stringify(payload),
       });
-      if (!res.ok) throw new Error(await res.text());
+      if (!res.ok) throw await apiErrorFromResponse(res, 'The transaction could not be saved.');
       toast({ title: 'Transaction logged successfully' });
       queryClient.invalidateQueries({ queryKey: ['transactions'] });
       onCreated?.();
       setOpen(false);
       reset();
     } catch (err: any) {
-      toast({ title: 'Could not log transaction', description: err?.message ?? 'Check required fields.', variant: 'destructive' });
+      toast({ title: 'Could not log transaction', description: formatApiError(err, 'Check the required fields and try again.'), variant: 'destructive' });
     } finally {
       setSubmitting(false);
     }

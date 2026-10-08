@@ -578,6 +578,7 @@ export default function Login() {
                   <div className="space-y-1.5">
                     <label className="text-xs font-bold uppercase tracking-[0.22em] text-slate-500">Name</label>
                     <Input
+                      required
                       value={registerForm.name}
                       onChange={(e) => setRegisterForm((current) => ({ ...current, name: e.target.value }))}
                       placeholder="John Doe"
@@ -588,6 +589,7 @@ export default function Login() {
                   <div className="space-y-1.5">
                     <label className="text-xs font-bold uppercase tracking-[0.22em] text-slate-500">Email</label>
                     <Input
+                      required
                       type="email"
                       value={registerForm.email}
                       onChange={(e) => setRegisterForm((current) => ({ ...current, email: e.target.value }))}
@@ -601,6 +603,7 @@ export default function Login() {
                   <div className="space-y-1.5">
                     <label className="text-xs font-bold uppercase tracking-[0.22em] text-slate-500">Password</label>
                     <Input
+                      required
                       type="password"
                       minLength={8}
                       value={registerForm.password}
@@ -627,6 +630,7 @@ export default function Login() {
                   <div className="space-y-1.5">
                     <label className="text-xs font-bold uppercase tracking-[0.22em] text-slate-500">Organization Name</label>
                     <Input
+                      required
                       value={organizationForm.name}
                       onChange={(e) => setOrganizationForm((current) => ({ ...current, name: e.target.value }))}
                       placeholder="Acme Logistics"
@@ -801,6 +805,7 @@ export default function Login() {
           <div className="space-y-2 py-2">
             <label className="text-xs font-bold uppercase tracking-[0.24em] text-slate-500">Username or Email</label>
             <Input
+              required
               value={forgotIdentifier}
               onChange={(event) => setForgotIdentifier(event.target.value)}
               placeholder="name@company.com or username"

@@ -34,6 +34,7 @@ import {
   Plus, Pencil, Trash2, Settings2, Truck, Package, Tag, ShieldAlert, Camera, PlugZap,
 } from 'lucide-react';
 import { ERPDataTable, type ERPTableColumn } from '@/components/erp/listing/data-table';
+import { formatApiError } from '@/lib/api-errors';
 
 // ── helpers ────────────────────────────────────────────────────────────────────
 
@@ -81,14 +82,7 @@ function useApiMutation(
 }
 
 function parseErrors(raw: string): string {
-  try {
-    const obj = JSON.parse(raw);
-    return Object.entries(obj)
-      .map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(', ') : v}`)
-      .join('\n');
-  } catch {
-    return raw;
-  }
+  return formatApiError(raw);
 }
 
 // ── ConfirmDelete ──────────────────────────────────────────────────────────────

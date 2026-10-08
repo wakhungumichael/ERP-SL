@@ -20,6 +20,7 @@ import { Camera, Check, ChevronsUpDown, Package, Plus, RefreshCw, Scale, Search,
 import { cn } from '@/lib/utils';
 import { ERPPageHeader } from '@/components/erp/workspace/workspace-ui';
 import { hasPermission } from '@/lib/permissions';
+import { apiErrorFromResponse, formatApiError } from '@/lib/api-errors';
 
 type RouteFlow = 'first' | 'second';
 
@@ -67,33 +68,6 @@ type WorkflowContextPayload = {
 function authHeaders() {
   const token = localStorage.getItem('sl-erp-token');
   return { Authorization: `Token ${token}` };
-}
-
-function extractApiErrorMessage(error: any, fallback: string) {
-  const candidates = [
-    error?.response?.data,
-    error?.data,
-    error?.body,
-    error?.cause,
-  ];
-
-  for (const candidate of candidates) {
-    if (!candidate) continue;
-    if (typeof candidate === 'string') return candidate;
-    if (typeof candidate?.detail === 'string') return candidate.detail;
-    if (typeof candidate?.error === 'string') return candidate.error;
-    if (Array.isArray(candidate?.non_field_errors) && candidate.non_field_errors.length > 0) {
-      return String(candidate.non_field_errors[0]);
-    }
-    for (const value of Object.values(candidate)) {
-      if (typeof value === 'string' && value.trim()) return value;
-      if (Array.isArray(value) && value.length > 0) return String(value[0]);
-    }
-  }
-
-  const message = typeof error?.message === 'string' ? error.message : '';
-  if (message && !message.includes('<!DOCTYPE html>')) return message;
-  return fallback;
 }
 
 function SearchSelect({
@@ -474,7 +448,7 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
       headers: { 'Content-Type': 'application/json', ...authHeaders() },
       body: JSON.stringify(customerForm),
     });
-    if (!res.ok) throw new Error(await res.text());
+    if (!res.ok) throw await apiErrorFromResponse(res, 'The customer could not be added.');
     const json = await res.json();
     setCustomerId(String(json.id));
     setCustomerOpen(false);
@@ -492,7 +466,7 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
         number_plate: vehicleForm.number_plate.toUpperCase(),
       }),
     });
-    if (!res.ok) throw new Error(await res.text());
+    if (!res.ok) throw await apiErrorFromResponse(res, 'The vehicle could not be added.');
     const json = await res.json();
     setVehicleId(String(json.id));
     if (json.vehicle_type) setVehicleTypeId(String(json.vehicle_type));
@@ -507,7 +481,7 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
       headers: { 'Content-Type': 'application/json', ...authHeaders() },
       body: JSON.stringify(itemForm),
     });
-    if (!res.ok) throw new Error(await res.text());
+    if (!res.ok) throw await apiErrorFromResponse(res, 'The commodity could not be added.');
     const json = await res.json();
     setItemId(String(json.id));
     setItemOpen(false);
@@ -591,7 +565,7 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
         },
         onError: (err: any) => toast({
           title: 'Could not complete second weight',
-          description: extractApiErrorMessage(err, 'The server rejected this second-weight entry. Check the vehicle workflow and required fields.'),
+          description: formatApiError(err, 'The server rejected this second-weight entry. Check the vehicle workflow and required fields.'),
           variant: 'destructive',
         }),
       });
@@ -642,7 +616,7 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
       },
       onError: (err: any) => toast({
         title: 'Could not log first weight',
-        description: extractApiErrorMessage(err, 'The server rejected this first-weight entry. Check the weight, vehicle setup, and required fields.'),
+        description: formatApiError(err, 'The server rejected this first-weight entry. Check the weight, vehicle setup, and required fields.'),
         variant: 'destructive',
       }),
     });
@@ -688,11 +662,11 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
               {manualMode ? (
                 <div className="grid gap-4 md:grid-cols-2">
                   <div className="space-y-1.5">
-                    <Label>{isSecondFlow ? 'Tare weight (kg)' : 'Gross weight (kg)'} <span className="text-destructive">*</span></Label>
+                    <Label required>{isSecondFlow ? 'Tare weight (kg)' : 'Gross weight (kg)'}</Label>
                     <Input required type="number" min="1" value={manualWeight} onChange={(event) => setManualWeight(event.target.value)} placeholder="Enter weight" />
                   </div>
                   <div className="space-y-1.5 md:col-span-2">
-                    <Label>Reason <span className="text-destructive">*</span></Label>
+                    <Label required>Reason</Label>
                     <Textarea required rows={2} value={weightReason} onChange={(event) => setWeightReason(event.target.value)} placeholder="Reason for manual capture" />
                   </div>
                 </div>
@@ -748,9 +722,9 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
             <CardContent className="space-y-3 p-4">
               <div className="grid gap-3 rounded-xl border border-primary/20 bg-primary/[0.04] p-3 md:grid-cols-2">
                 <div className="space-y-1.5">
-                  <Label>Operation Type <span className="text-destructive">*</span></Label>
+                  <Label required>Operation Type</Label>
                   <Select value={operationTypeId} onValueChange={setOperationTypeId}>
-                    <SelectTrigger>
+                    <SelectTrigger aria-required="true">
                       <SelectValue placeholder="Select operation type" />
                     </SelectTrigger>
                     <SelectContent>
@@ -764,9 +738,9 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
                 </div>
                 {shouldShowBranchSelector ? (
                   <div className="space-y-1.5">
-                    <Label>Branch <span className="text-destructive">*</span></Label>
+                    <Label required>Branch</Label>
                     <Select value={branchId} onValueChange={setBranchId}>
-                      <SelectTrigger><SelectValue placeholder="Select branch" /></SelectTrigger>
+                      <SelectTrigger aria-required="true"><SelectValue placeholder="Select branch" /></SelectTrigger>
                       <SelectContent>
                         {selectableBranchList.map((branch: any) => (
                           <SelectItem key={branch.id} value={String(branch.id)}>{branch.name}</SelectItem>
@@ -784,7 +758,7 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
               {isSecondFlow ? (
                 <>
                   <div className="relative">
-                    <Label className="mb-1.5 block">Vehicle plate <span className="text-destructive">*</span></Label>
+                    <Label required className="mb-1.5 block">Vehicle plate</Label>
                     <div className="flex items-center gap-2 rounded-lg border px-3 py-2 focus-within:ring-2 focus-within:ring-primary">
                       <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
                       <input
@@ -875,14 +849,14 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
                     <div className="grid gap-3 md:grid-cols-2">
                       <div className="space-y-1.5">
                         <div className="flex min-h-8 items-center justify-between gap-3">
-                          <Label>Customer <span className="text-destructive">*</span></Label>
+                          <Label required>Customer</Label>
                           {canAddCustomer ? <Button type="button" variant="outline" size="sm" className="h-8 gap-1 border-primary/25 text-primary hover:bg-primary/10 hover:text-primary" onClick={() => setCustomerOpen(true)}><Plus className="h-3.5 w-3.5" /> Add Customer</Button> : null}
                         </div>
                         <SearchSelect value={customerId} onChange={(value) => { setCustomerId(value); setVehicleId(''); setVehicleTypeId(''); setItemId(''); setDestination(''); setDriverName(''); setDriverPhone(''); setPrefillVehicleKey(''); }} placeholder="Search customer" searchPlaceholder="Search customer" emptyLabel="No customers found" options={customerOptions} />
                       </div>
                       <div className="space-y-1.5">
                         <div className="flex min-h-8 items-center justify-between gap-3">
-                          <Label>Vehicle <span className="text-destructive">*</span></Label>
+                          <Label required>Vehicle</Label>
                           {canAddVehicle ? <Button type="button" variant="outline" size="sm" className="h-8 gap-1 border-primary/25 text-primary hover:bg-primary/10 hover:text-primary" onClick={() => setVehicleOpen(true)} disabled={!customerId}><Plus className="h-3.5 w-3.5" /> Add Vehicle</Button> : null}
                         </div>
                         <SearchSelect value={vehicleId} onChange={(value) => { setPrefillVehicleKey(''); setVehicleId(value); const selected = vehicleList.find((vehicle: any) => String(vehicle.id) === value); setVehicleTypeId(selected?.vehicle_type ? String(selected.vehicle_type) : ''); }} placeholder={customerId ? 'Search vehicle' : 'Select customer first'} searchPlaceholder="Search vehicle" emptyLabel="No vehicles found" disabled={!customerId} options={vehicleOptions} />
@@ -894,8 +868,8 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
                     <section className="rounded-xl border border-primary/15 bg-card p-3 shadow-sm">
                       <div className="mb-3 flex items-center gap-3"><span className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-sm font-bold text-primary-foreground">2</span><div><h3 className="flex items-center gap-2 font-semibold"><Package className="h-4 w-4 text-primary" />Load details</h3><p className="text-xs text-muted-foreground">Record what the vehicle is carrying and where it is going.</p></div></div>
                       <div className="grid gap-3 sm:grid-cols-2">
-                        <div className="space-y-1.5"><div className="flex min-h-8 items-center justify-between gap-3"><Label>Commodity <span className="text-destructive">*</span></Label>{canAddItem ? <Button type="button" variant="outline" size="sm" className="h-8 gap-1 border-primary/25 text-primary hover:bg-primary/10 hover:text-primary" onClick={() => setItemOpen(true)}><Plus className="h-3.5 w-3.5" /> Add Item</Button> : null}</div><Select value={itemId} onValueChange={setItemId}><SelectTrigger><SelectValue placeholder="Select commodity" /></SelectTrigger><SelectContent>{itemList.map((row: any) => <SelectItem key={row.id} value={String(row.id)}>{row.name}</SelectItem>)}</SelectContent></Select></div>
-                        <div className="space-y-1.5"><div className="flex min-h-8 items-center"><Label>Destination <span className="text-destructive">*</span></Label></div><Input required value={destination} onChange={(event) => setDestination(event.target.value)} placeholder="Enter destination" /></div>
+                        <div className="space-y-1.5"><div className="flex min-h-8 items-center justify-between gap-3"><Label required>Commodity</Label>{canAddItem ? <Button type="button" variant="outline" size="sm" className="h-8 gap-1 border-primary/25 text-primary hover:bg-primary/10 hover:text-primary" onClick={() => setItemOpen(true)}><Plus className="h-3.5 w-3.5" /> Add Item</Button> : null}</div><Select value={itemId} onValueChange={setItemId}><SelectTrigger aria-required="true"><SelectValue placeholder="Select commodity" /></SelectTrigger><SelectContent>{itemList.map((row: any) => <SelectItem key={row.id} value={String(row.id)}>{row.name}</SelectItem>)}</SelectContent></Select></div>
+                        <div className="space-y-1.5"><div className="flex min-h-8 items-center"><Label required>Destination</Label></div><Input required value={destination} onChange={(event) => setDestination(event.target.value)} placeholder="Enter destination" /></div>
                       </div>
                     </section>
                     <section className="rounded-xl border border-primary/15 bg-card p-3 shadow-sm">
@@ -942,48 +916,82 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
       <Dialog open={customerOpen} onOpenChange={setCustomerOpen}>
         <DialogContent className="max-w-md">
           <DialogHeader><DialogTitle>Add Customer</DialogTitle></DialogHeader>
-          <div className="grid gap-3">
-            <Input placeholder="Customer name" value={customerForm.name} onChange={(event) => setCustomerForm((current) => ({ ...current, name: event.target.value }))} />
-            <Input placeholder="Phone number" value={customerForm.phone_number} onChange={(event) => setCustomerForm((current) => ({ ...current, phone_number: event.target.value }))} />
-            <Input placeholder="Email address" value={customerForm.email} onChange={(event) => setCustomerForm((current) => ({ ...current, email: event.target.value }))} />
-            <Textarea placeholder="Address" value={customerForm.address} onChange={(event) => setCustomerForm((current) => ({ ...current, address: event.target.value }))} rows={3} />
-            <Button type="button" onClick={() => createCustomer().catch((err) => toast({ title: 'Could not add customer', description: err.message, variant: 'destructive' }))}>
+          <form className="grid gap-3" onSubmit={(event) => {
+            event.preventDefault();
+            createCustomer().catch((err) => toast({ title: 'Could not add customer', description: formatApiError(err), variant: 'destructive' }));
+          }}>
+            <div className="space-y-1.5">
+              <Label required htmlFor="new-customer-name">Customer name</Label>
+              <Input id="new-customer-name" required autoFocus placeholder="Enter customer name" value={customerForm.name} onChange={(event) => setCustomerForm((current) => ({ ...current, name: event.target.value }))} />
+            </div>
+            <div className="space-y-1.5">
+              <Label required htmlFor="new-customer-phone">Phone number</Label>
+              <Input id="new-customer-phone" required type="tel" placeholder="Enter phone number" value={customerForm.phone_number} onChange={(event) => setCustomerForm((current) => ({ ...current, phone_number: event.target.value }))} />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="new-customer-email">Email address</Label>
+              <Input id="new-customer-email" type="email" placeholder="Optional email address" value={customerForm.email} onChange={(event) => setCustomerForm((current) => ({ ...current, email: event.target.value }))} />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="new-customer-address">Address</Label>
+              <Textarea id="new-customer-address" placeholder="Optional address" value={customerForm.address} onChange={(event) => setCustomerForm((current) => ({ ...current, address: event.target.value }))} rows={2} />
+            </div>
+            <p className="text-xs text-muted-foreground"><span className="font-bold text-destructive">*</span> Required fields</p>
+            <Button type="submit">
               Save Customer
             </Button>
-          </div>
+          </form>
         </DialogContent>
       </Dialog>
 
       <Dialog open={vehicleOpen} onOpenChange={setVehicleOpen}>
         <DialogContent className="max-w-md">
           <DialogHeader><DialogTitle>Add Vehicle</DialogTitle></DialogHeader>
-          <div className="grid gap-3">
-            <Input placeholder="Number plate" value={vehicleForm.number_plate} onChange={(event) => setVehicleForm((current) => ({ ...current, number_plate: event.target.value.toUpperCase() }))} />
+          <form className="grid gap-3" onSubmit={(event) => {
+            event.preventDefault();
+            createVehicle().catch((err) => toast({ title: 'Could not add vehicle', description: formatApiError(err), variant: 'destructive' }));
+          }}>
+            <div className="space-y-1.5">
+              <Label required htmlFor="new-vehicle-plate">Number plate</Label>
+              <Input id="new-vehicle-plate" required autoFocus placeholder="Enter number plate" value={vehicleForm.number_plate} onChange={(event) => setVehicleForm((current) => ({ ...current, number_plate: event.target.value.toUpperCase() }))} />
+            </div>
+            <div className="space-y-1.5">
+              <Label required>Vehicle type</Label>
             <Select value={vehicleForm.vehicle_type || vehicleTypeId} onValueChange={(value) => setVehicleForm((current) => ({ ...current, vehicle_type: value }))}>
-              <SelectTrigger><SelectValue placeholder="Select vehicle type…" /></SelectTrigger>
+              <SelectTrigger aria-required="true"><SelectValue placeholder="Select vehicle type…" /></SelectTrigger>
               <SelectContent>
                 {vehicleTypeList.map((vehicleType: any) => (
                   <SelectItem key={vehicleType.id} value={String(vehicleType.id)}>{vehicleType.name}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
-            <Button type="button" onClick={() => createVehicle().catch((err) => toast({ title: 'Could not add vehicle', description: err.message, variant: 'destructive' }))} disabled={!customerId}>
+            </div>
+            <Button type="submit" disabled={!customerId || !(vehicleForm.vehicle_type || vehicleTypeId)}>
               Save Vehicle
             </Button>
-          </div>
+          </form>
         </DialogContent>
       </Dialog>
 
       <Dialog open={itemOpen} onOpenChange={setItemOpen}>
         <DialogContent className="max-w-md">
           <DialogHeader><DialogTitle>Add Item</DialogTitle></DialogHeader>
-          <div className="grid gap-3">
-            <Input placeholder="Item name" value={itemForm.name} onChange={(event) => setItemForm((current) => ({ ...current, name: event.target.value }))} />
-            <Textarea placeholder="Description" value={itemForm.description} onChange={(event) => setItemForm((current) => ({ ...current, description: event.target.value }))} rows={3} />
-            <Button type="button" onClick={() => createItem().catch((err) => toast({ title: 'Could not add item', description: err.message, variant: 'destructive' }))}>
+          <form className="grid gap-3" onSubmit={(event) => {
+            event.preventDefault();
+            createItem().catch((err) => toast({ title: 'Could not add commodity', description: formatApiError(err), variant: 'destructive' }));
+          }}>
+            <div className="space-y-1.5">
+              <Label required htmlFor="new-item-name">Commodity name</Label>
+              <Input id="new-item-name" required autoFocus placeholder="Enter commodity name" value={itemForm.name} onChange={(event) => setItemForm((current) => ({ ...current, name: event.target.value }))} />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="new-item-description">Description</Label>
+              <Textarea id="new-item-description" placeholder="Optional description" value={itemForm.description} onChange={(event) => setItemForm((current) => ({ ...current, description: event.target.value }))} rows={2} />
+            </div>
+            <Button type="submit">
               Save Item
             </Button>
-          </div>
+          </form>
         </DialogContent>
       </Dialog>
     </div>

@@ -30,6 +30,7 @@ import { ERP_BRANCHES_QUERY_KEY, fetchErpBranches } from '@/lib/branches';
 import { cn } from '@/lib/utils';
 import { Check, ChevronsUpDown, Plus, Scale, WifiOff } from 'lucide-react';
 import LiveIndicator from '@/components/weighbridge/live-indicator';
+import { apiErrorFromResponse, formatApiError } from '@/lib/api-errors';
 
 function SearchSelect({
   value,
@@ -245,7 +246,7 @@ export default function FirstWeightPage() {
         queryClient.invalidateQueries({ queryKey: getListTransactionsQueryKey() });
         setLocation('/weighbridge/transactions');
       },
-      onError: (err: any) => toast({ title: 'Could not log transaction', description: err?.message, variant: 'destructive' }),
+      onError: (err: any) => toast({ title: 'Could not log transaction', description: formatApiError(err), variant: 'destructive' }),
     });
   };
 
@@ -260,7 +261,7 @@ export default function FirstWeightPage() {
       headers: { 'Content-Type': 'application/json', Authorization: `Token ${fetchToken()}` },
       body: JSON.stringify(customerForm),
     });
-    if (!res.ok) throw new Error(await res.text());
+    if (!res.ok) throw await apiErrorFromResponse(res, 'The customer could not be added.');
     const json = await res.json();
     setCustomerId(String(json.id));
     setCustomerOpen(false);
@@ -278,7 +279,7 @@ export default function FirstWeightPage() {
         number_plate: vehicleForm.number_plate.toUpperCase(),
       }),
     });
-    if (!res.ok) throw new Error(await res.text());
+    if (!res.ok) throw await apiErrorFromResponse(res, 'The vehicle could not be added.');
     const json = await res.json();
     setVehicleId(String(json.id));
     if (json.vehicle_type) setVehicleTypeId(String(json.vehicle_type));
@@ -293,7 +294,7 @@ export default function FirstWeightPage() {
       headers: { 'Content-Type': 'application/json', Authorization: `Token ${fetchToken()}` },
       body: JSON.stringify(itemForm),
     });
-    if (!res.ok) throw new Error(await res.text());
+    if (!res.ok) throw await apiErrorFromResponse(res, 'The commodity could not be added.');
     const json = await res.json();
     setItemId(String(json.id));
     setItemOpen(false);
@@ -544,7 +545,7 @@ export default function FirstWeightPage() {
             <Input placeholder="Phone number" value={customerForm.phone_number} onChange={e => setCustomerForm(previous => ({ ...previous, phone_number: e.target.value }))} />
             <Input placeholder="Email address" value={customerForm.email} onChange={e => setCustomerForm(previous => ({ ...previous, email: e.target.value }))} />
             <Textarea placeholder="Address" value={customerForm.address} onChange={e => setCustomerForm(previous => ({ ...previous, address: e.target.value }))} rows={3} />
-            <Button type="button" onClick={() => createCustomer().catch(err => toast({ title: 'Could not add customer', description: err.message, variant: 'destructive' }))}>Save Customer</Button>
+            <Button type="button" onClick={() => createCustomer().catch(err => toast({ title: 'Could not add customer', description: formatApiError(err), variant: 'destructive' }))}>Save Customer</Button>
           </div>
         </DialogContent>
       </Dialog>
@@ -558,7 +559,7 @@ export default function FirstWeightPage() {
               <SelectTrigger><SelectValue placeholder="Select vehicle type…" /></SelectTrigger>
               <SelectContent>{vehicleTypeList.map((vehicleType: any) => <SelectItem key={vehicleType.id} value={String(vehicleType.id)}>{vehicleType.name}</SelectItem>)}</SelectContent>
             </Select>
-            <Button type="button" onClick={() => createVehicle().catch(err => toast({ title: 'Could not add vehicle', description: err.message, variant: 'destructive' }))} disabled={!customerId}>Save Vehicle</Button>
+            <Button type="button" onClick={() => createVehicle().catch(err => toast({ title: 'Could not add vehicle', description: formatApiError(err), variant: 'destructive' }))} disabled={!customerId}>Save Vehicle</Button>
           </div>
         </DialogContent>
       </Dialog>
@@ -569,7 +570,7 @@ export default function FirstWeightPage() {
           <div className="grid gap-3">
             <Input placeholder="Item name" value={itemForm.name} onChange={e => setItemForm(previous => ({ ...previous, name: e.target.value }))} />
             <Textarea placeholder="Description" value={itemForm.description} onChange={e => setItemForm(previous => ({ ...previous, description: e.target.value }))} rows={3} />
-            <Button type="button" onClick={() => createItem().catch(err => toast({ title: 'Could not add item', description: err.message, variant: 'destructive' }))}>Save Item</Button>
+            <Button type="button" onClick={() => createItem().catch(err => toast({ title: 'Could not add item', description: formatApiError(err), variant: 'destructive' }))}>Save Item</Button>
           </div>
         </DialogContent>
       </Dialog>
