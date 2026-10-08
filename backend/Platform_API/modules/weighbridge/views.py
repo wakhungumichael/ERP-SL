@@ -589,6 +589,16 @@ def _is_pending_first_weight(transaction, *, now=None):
     return recorded_at >= (now or timezone.now()) - timedelta(days=_max_first_weight_age_days(transaction.branch))
 
 
+def _blocks_new_first_weight(transaction):
+    """Only unfinished or unpaid first weights prevent another first capture."""
+    if transaction is None or _resolve_transaction_flow(transaction) != "first" or transaction.paired:
+        return False
+
+    status = (transaction.status or "").strip().lower()
+    payment_status = (transaction.payment_status or "").strip().lower()
+    return status == "draft" or payment_status == "pending"
+
+
 def _find_open_transaction_duplicate(*, tenant, vehicle, flow_kind, exclude_pk=None):
     qs = Transaction.objects.filter(vehicle=vehicle)
     if tenant is None:
@@ -600,8 +610,8 @@ def _find_open_transaction_duplicate(*, tenant, vehicle, flow_kind, exclude_pk=N
     qs = qs.select_related("operation_type", "item", "branch").order_by("-updated_at", "-created_at", "-id")
 
     if flow_kind == "first":
-        for transaction in qs.filter(_flow_filter_q("first"), paired=False, status__in=PENDING_FIRST_WEIGHT_STATUSES):
-            if _is_pending_first_weight(transaction):
+        for transaction in qs.filter(_flow_filter_q("first"), paired=False):
+            if _blocks_new_first_weight(transaction):
                 return transaction
         return None
 
@@ -1003,8 +1013,8 @@ class TransactionListCreateView(generics.ListCreateAPIView):
             flow_label = (getattr(getattr(duplicate, "operation_type", None), "name", None) or duplicate.weight_type or flow_kind).strip()
             if flow_kind == "first":
                 message = (
-                    f"Vehicle {vehicle.number_plate} already has a pending {flow_label} "
-                    f"(TX-{duplicate.id:05d}). Capture its second weight before recording another first weight."
+                    f"Vehicle {vehicle.number_plate} already has an unfinished or unpaid {flow_label} "
+                    f"(TX-{duplicate.id:05d}). Complete the draft or process its payment before recording another first weight."
                 )
             else:
                 message = (
