@@ -333,9 +333,9 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
   });
   const { data: customers } = useQuery({
     queryKey: ['wb-customers-entry'],
-    // The customer directory is paginated at 25 rows by default. Load the
-    // picker-safe maximum so operators can find every tenant-directory record.
-    queryFn: async () => fetch('/api/commercial-weighbridge/customers/?page_size=200&search=', { headers: authHeaders() }).then((res) => res.json()),
+    // A weighbridge operator must be able to search the entire tenant directory,
+    // not only the first alphabetic page of customers.
+    queryFn: async () => fetch('/api/commercial-weighbridge/customers/?page_size=1000&search=', { headers: authHeaders() }).then((res) => res.json()),
   });
   const { data: vehicles } = useQuery({
     queryKey: ['wb-vehicles-entry', customerId],

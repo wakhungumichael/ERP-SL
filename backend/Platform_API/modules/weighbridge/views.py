@@ -70,6 +70,12 @@ class StandardPagination(PageNumberPagination):
     max_page_size = 200
 
 
+class CustomerPickerPagination(StandardPagination):
+    """Allow the transaction picker to search the full tenant customer directory."""
+
+    max_page_size = 1000
+
+
 # ── Serializers ───────────────────────────────────────────────────────────────
 
 class BranchSerializer(serializers.ModelSerializer):
@@ -2487,7 +2493,7 @@ class ItemListView(ItemListCreateView):
 
 class CustomerListCreateView(generics.ListCreateAPIView):
     permission_classes = [IsAuthenticated]
-    pagination_class = StandardPagination
+    pagination_class = CustomerPickerPagination
 
     def get_serializer_class(self):
         if self.request.method == "POST":

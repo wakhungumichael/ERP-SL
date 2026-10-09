@@ -139,7 +139,7 @@ export default function FirstWeightPage() {
   });
   const { data: customers } = useQuery({
     queryKey: ['wb-customers'],
-    queryFn: async () => fetch('/api/commercial-weighbridge/customers/?page_size=200&search=', { headers: { Authorization: `Token ${fetchToken()}` } }).then(r => r.json()),
+    queryFn: async () => fetch('/api/commercial-weighbridge/customers/?page_size=1000&search=', { headers: { Authorization: `Token ${fetchToken()}` } }).then(r => r.json()),
   });
   const { data: vehicles } = useQuery({
     queryKey: ['wb-vehicles', customerId],
