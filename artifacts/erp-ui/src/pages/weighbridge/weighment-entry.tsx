@@ -114,7 +114,7 @@ function SearchSelect({
       <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
         <Command>
           <CommandInput placeholder={searchPlaceholder} />
-          <CommandList>
+          <CommandList className="max-h-[min(20rem,50vh)]">
             <CommandEmpty>{emptyLabel}</CommandEmpty>
             <CommandGroup>
               {options.map((option) => (
@@ -491,6 +491,15 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
       meta: vehicle.vehicle_type_name || '',
     })),
     [vehicleList],
+  );
+
+  const itemOptions = useMemo(
+    () => itemList.map((item: any) => ({
+      value: String(item.id),
+      label: item.name,
+      meta: item.description || undefined,
+    })),
+    [itemList],
   );
 
   const createCustomer = async () => {
@@ -1094,7 +1103,7 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
                     <section className="rounded-xl border border-primary/15 bg-card p-3 shadow-sm">
                       <div className="mb-3 flex items-center gap-3"><span className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-sm font-bold text-primary-foreground">2</span><div><h3 className="flex items-center gap-2 font-semibold"><Package className="h-4 w-4 text-primary" />Load details</h3><p className="text-xs text-muted-foreground">Record what the vehicle is carrying and where it is going.</p></div></div>
                       <div className="grid gap-3 sm:grid-cols-2">
-                        <div className="space-y-1.5"><div className="flex min-h-8 items-center justify-between gap-3"><Label required>Commodity</Label>{canAddItem ? <Button type="button" variant="outline" size="sm" className="h-8 gap-1 border-primary/25 text-primary hover:bg-primary/10 hover:text-primary" onClick={() => setItemOpen(true)}><Plus className="h-3.5 w-3.5" /> Add Item</Button> : null}</div><Select value={itemId} onValueChange={(value) => { setItemId(value); transactionErrors.clearField('item'); }}><SelectTrigger name="item" aria-required="true" aria-invalid={!!transactionErrors.errors.fields.item} aria-describedby={transactionErrors.errors.fields.item ? 'item-error' : undefined}><SelectValue placeholder="Select commodity" /></SelectTrigger><SelectContent>{itemList.map((row: any) => <SelectItem key={row.id} value={String(row.id)}>{row.name}</SelectItem>)}</SelectContent></Select><InlineFormError id="item-error" messages={transactionErrors.errors.fields.item} /></div>
+                        <div className="space-y-1.5"><div className="flex min-h-8 items-center justify-between gap-3"><Label required>Commodity</Label>{canAddItem ? <Button type="button" variant="outline" size="sm" className="h-8 gap-1 border-primary/25 text-primary hover:bg-primary/10 hover:text-primary" onClick={() => setItemOpen(true)}><Plus className="h-3.5 w-3.5" /> Add Item</Button> : null}</div><SearchSelect value={itemId} onChange={(value) => { setItemId(value); transactionErrors.clearField('item'); }} placeholder="Search commodity" searchPlaceholder="Search commodities..." emptyLabel="No commodities found." options={itemOptions} /><InlineFormError id="item-error" messages={transactionErrors.errors.fields.item} /></div>
                         <div className="space-y-1.5"><div className="flex min-h-8 items-center"><Label required>Destination</Label></div><Input name="destination" required aria-invalid={!!transactionErrors.errors.fields.destination} aria-describedby={transactionErrors.errors.fields.destination ? 'destination-error' : undefined} value={destination} onChange={(event) => { setDestination(event.target.value); transactionErrors.clearField('destination'); }} placeholder="Enter destination" /><InlineFormError id="destination-error" messages={transactionErrors.errors.fields.destination} /></div>
                       </div>
                     </section>
