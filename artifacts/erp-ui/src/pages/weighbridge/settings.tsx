@@ -1553,7 +1553,7 @@ function SurveillanceTab() {
         <div className="flex items-center justify-between gap-3">
           <div>
             <h3 className="font-semibold text-sm">Surveillance Monitor</h3>
-            <p className="text-xs text-muted-foreground">Shows whether the main background runner is active for vehicle presence and discrepancy checks.</p>
+            <p className="text-xs text-muted-foreground">Shows whether the background runner is capturing scale readings and checking for unrecorded transactions.</p>
           </div>
           <div className="flex items-center gap-2">
             <Button variant="outline" size="sm" onClick={testSelectedBranch} disabled={testingMonitor || !branchId}>
@@ -1645,7 +1645,7 @@ function SurveillanceTab() {
       <div className="rounded-lg border p-5 space-y-4">
         <div className="flex items-center gap-2">
           <ShieldAlert className="h-4 w-4 text-amber-500" />
-          <h3 className="font-semibold text-sm">Vehicle Presence Threshold</h3>
+          <h3 className="font-semibold text-sm">Scale Reading Surveillance</h3>
         </div>
         {cfgLoading ? <p className="text-sm text-muted-foreground">Loading…</p> : (
             <div className="grid grid-cols-2 gap-4">
@@ -1657,7 +1657,7 @@ function SurveillanceTab() {
                 onChange={e => setCfgForm(f => ({ ...f, threshold_kg: e.target.value }))}
                 placeholder="1000"
               />
-              <p className="text-xs text-muted-foreground">Vehicle presence events are created when the scale reading meets or exceeds this value.</p>
+              <p className="text-xs text-muted-foreground">A scale reading is added to the surveillance log when it meets or exceeds this value.</p>
             </div>
               <div className="space-y-1.5">
                 <Label>Grace window (minutes)</Label>
@@ -1667,7 +1667,7 @@ function SurveillanceTab() {
                 onChange={e => setCfgForm(f => ({ ...f, grace_window_minutes: e.target.value }))}
                 placeholder="30"
               />
-              <p className="text-xs text-muted-foreground">A captured presence event becomes a discrepancy if no matching transaction is found after this window.</p>
+              <p className="text-xs text-muted-foreground">A scale reading needs review only if no matching weighbridge transaction is found after this window.</p>
               </div>
               <div className="space-y-1.5">
                 <Label>Capture interval (seconds)</Label>
@@ -1677,7 +1677,7 @@ function SurveillanceTab() {
                   onChange={e => setCfgForm(f => ({ ...f, capture_interval_seconds: e.target.value }))}
                   placeholder="45"
                 />
-                <p className="text-xs text-muted-foreground">Minimum time before the same branch can record another repeated vehicle-presence reading. Example: `5` for every 5 seconds, `300` for every 5 minutes.</p>
+                <p className="text-xs text-muted-foreground">Minimum time before the same branch records another repeated scale reading. Example: `5` for every 5 seconds, `300` for every 5 minutes.</p>
               </div>
               <div className="col-span-2 flex items-center gap-3">
               <button

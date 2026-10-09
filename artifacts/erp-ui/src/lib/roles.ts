@@ -77,8 +77,8 @@ export const STATIC_NAV: NavSection[] = [
       { key: 'live',           title: 'Live Weight',      path: '/weighbridge/live',               roles: OPS },
       { key: 'reports',        title: 'Reports',          path: '/weighbridge/reports',            roles: CAN_VIEW_REPORTS_WORKSPACE },
       { key: 'settings',        title: 'Settings',          path: '/weighbridge/settings',           roles: ['tenant_admin'] },
-      { key: 'overweight-log',  title: 'Vehicle Presence',  path: '/weighbridge/overweight-log',     roles: ['tenant_admin'] },
-      { key: 'discrepancies',   title: 'Discrepancies',     path: '/weighbridge/discrepancies',      roles: FINANCE_UP },
+      { key: 'overweight-log',  title: 'Scale Surveillance', path: '/weighbridge/overweight-log',     roles: ['tenant_admin'] },
+      { key: 'discrepancies',   title: 'Unrecorded Readings', path: '/weighbridge/discrepancies',     roles: FINANCE_UP },
     ],
   },
 

@@ -2896,7 +2896,7 @@ class _OverweightEventSerializer(serializers.ModelSerializer):
             "threshold_at_capture", "recorded_at",
             "operator", "operator_name",
             "linked_transaction", "camera_image",
-            "discrepancy_raised", "has_discrepancy", "discrepancy_id",
+            "capture_source", "discrepancy_raised", "has_discrepancy", "discrepancy_id",
         ]
 
     def get_operator_name(self, obj):

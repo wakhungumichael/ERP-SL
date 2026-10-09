@@ -39,6 +39,7 @@ type OverweightEvent = {
   recorded_at: string;
   operator_name: string | null;
   linked_transaction: number | null;
+  capture_source: 'transaction' | 'vehicle_presence';
   camera_image: string | null;
   discrepancy_raised: boolean;
   has_discrepancy: boolean;
@@ -90,13 +91,13 @@ function excess(event: OverweightEvent) {
 }
 
 function statusBadge(event: OverweightEvent) {
-  if (event.discrepancy_raised) {
-    return <Badge variant="destructive" className="text-[10px]">Discrepancy</Badge>;
-  }
   if (event.linked_transaction) {
-    return <Badge variant="outline" className="border-green-300 text-[10px] text-green-700">Linked</Badge>;
+    return <Badge variant="outline" className="border-green-300 text-[10px] text-green-700">Transaction linked</Badge>;
   }
-  return <Badge variant="secondary" className="text-[10px]">Unlinked</Badge>;
+  if (event.discrepancy_raised) {
+    return <Badge variant="destructive" className="text-[10px]">Needs review</Badge>;
+  }
+  return <Badge variant="secondary" className="text-[10px]">Awaiting transaction</Badge>;
 }
 
 function Field({ label, value, className = '' }: { label: string; value: string; className?: string }) {
@@ -125,7 +126,7 @@ function EventDrawer({
         <SheetHeader className="mb-4">
           <SheetTitle className="flex items-center gap-2">
             <AlertTriangle className="h-4 w-4 text-amber-500" />
-            Vehicle Presence Event #{event.id}
+            Scale Reading #{event.id}
           </SheetTitle>
         </SheetHeader>
 
@@ -137,7 +138,7 @@ function EventDrawer({
           ) : (
             <div className="flex items-center gap-2 rounded-lg border px-4 py-3 text-sm text-muted-foreground">
               <Camera className="h-4 w-4" />
-              No camera image captured
+              No surveillance image captured
             </div>
           )}
 
@@ -168,11 +169,11 @@ function EventDrawer({
           <div className="flex items-start gap-3 rounded-lg border px-4 py-3">
             <Link2 className={`mt-0.5 h-4 w-4 ${event.linked_transaction ? 'text-green-600' : 'text-muted-foreground'}`} />
             <div>
-              <p className="mb-0.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Transaction</p>
+              <p className="mb-0.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Transaction record</p>
               {event.linked_transaction ? (
                 <p className="text-sm">TX-{String(event.linked_transaction).padStart(5, '0')} linked</p>
               ) : (
-                <p className="text-sm text-muted-foreground">No transaction linked</p>
+                <p className="text-sm text-muted-foreground">No transaction has been linked yet</p>
               )}
             </div>
           </div>
@@ -232,7 +233,7 @@ export default function OverweightLog() {
 
   const counts = useMemo(() => ({
     total: totalCount,
-    discrepancy: events.filter((event) => event.discrepancy_raised).length,
+    discrepancy: events.filter((event) => event.discrepancy_raised && !event.linked_transaction).length,
     withImage: events.filter((event) => event.camera_image).length,
   }), [events, totalCount]);
 
@@ -357,9 +358,10 @@ export default function OverweightLog() {
       title={(
         <span className="flex items-center gap-2">
           <AlertTriangle className="h-5 w-5 text-amber-500" />
-          Vehicle Presence Log
+          Scale Surveillance Log
         </span>
       )}
+      description="Audit scale readings at or above each branch threshold. A reading only needs review when no weighbridge transaction is linked after the configured grace window."
       actions={(
         <>
           <Button variant="outline" size="sm" onClick={handleExportCsv} disabled={exporting}>
@@ -448,9 +450,9 @@ export default function OverweightLog() {
 
       <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
         {[
-          { label: 'Total events', value: counts.total },
-          { label: 'Discrepancies on this page', value: counts.discrepancy },
-          { label: 'Images on this page', value: counts.withImage },
+          { label: 'Scale readings', value: counts.total },
+          { label: 'Needs review on this page', value: counts.discrepancy },
+          { label: 'Readings with images', value: counts.withImage },
         ].map((stat) => (
           <div key={stat.label} className="rounded-lg border px-4 py-3">
             <p className="text-xs text-muted-foreground">{stat.label}</p>
@@ -464,8 +466,8 @@ export default function OverweightLog() {
           columns={columns}
           rows={events}
           loading={isLoading}
-          loadingLabel="Loading overweight events…"
-          emptyState={error ? 'Failed to load overweight events.' : 'No overweight events found.'}
+          loadingLabel="Loading scale readings…"
+          emptyState={error ? 'Failed to load scale readings.' : 'No scale readings found.'}
           onRowClick={(event) => setSelected(event)}
           rowActions={(event) => (
             <Button
@@ -490,7 +492,7 @@ export default function OverweightLog() {
       </div>
 
       {isFetching && !isLoading ? (
-        <p className="text-xs text-muted-foreground">Refreshing overweight events…</p>
+        <p className="text-xs text-muted-foreground">Refreshing scale readings…</p>
       ) : null}
 
       <EventDrawer event={selected} open={!!selected} onClose={() => setSelected(null)} />

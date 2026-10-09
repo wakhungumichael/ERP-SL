@@ -421,10 +421,10 @@ export default function Discrepancies() {
       title={(
         <span className="flex items-center gap-2">
           <AlertCircle className="h-5 w-5 text-red-500" />
-          Surveillance Discrepancies
+          Unrecorded Scale Readings
         </span>
       )}
-      description="Vehicle presence events that passed the grace window without a linked transaction."
+      description="Scale readings at or above the branch threshold that passed the configured grace window without a linked weighbridge transaction."
       actions={(
         <>
           <Button

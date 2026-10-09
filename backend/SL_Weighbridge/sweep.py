@@ -32,9 +32,10 @@ def run_sweep(branch_id=None, tenant=None):
     """
     Sweep OverweightEvents eligible for discrepancy promotion.
 
-    Eligible events:
-      - discrepancy_raised=False
-      - NOT linked to a transaction that is both Completed AND Paid
+    A scale-reading event is reconciled when it can be linked to any recorded
+    weighbridge transaction. Payment and approval are commercial workflow
+    states; they must not turn an otherwise recorded weighing into a cash-loss
+    discrepancy.
 
     For each eligible event whose grace window (from OverweightConfig, default
     30 minutes) has expired, get_or_create a WeighbridgeDiscrepancy and mark
@@ -66,13 +67,16 @@ def run_sweep(branch_id=None, tenant=None):
         get_tenants_with_active_module("weighbridge").values_list("id", flat=True)
     )
 
-    qs = OverweightEvent.objects.filter(discrepancy_raised=False)
+    # Revisit raised events too: a cashier may save the transaction after the
+    # grace period, in which case the outstanding discrepancy is auto-resolved.
+    qs = OverweightEvent.objects.all()
     if tenant is not None:
         qs = qs.filter(tenant=tenant)
     if branch_id:
         qs = qs.filter(branch_id=branch_id)
 
     created = 0
+    reconciled = 0
     skipped = 0
 
     for event in qs.select_related("branch", "tenant"):
@@ -100,10 +104,26 @@ def run_sweep(branch_id=None, tenant=None):
 
         matched = reconcile_overweight_event(event, grace_minutes=grace_minutes)
         if matched:
-            if event.capture_source == "vehicle_presence":
-                continue
-            if matched.status == "Completed" and matched.payment_status == "Paid":
-                continue
+            if event.discrepancy_raised:
+                discrepancy = getattr(event, "discrepancy", None)
+                if discrepancy and discrepancy.resolution_status != "resolved":
+                    automatic_note = (
+                        f"Automatically reconciled with transaction "
+                        f"TX-{matched.id:05d}."
+                    )
+                    discrepancy.resolution_status = "resolved"
+                    discrepancy.resolution_note = automatic_note
+                    discrepancy.resolved_at = now
+                    discrepancy.save(update_fields=[
+                        "resolution_status", "resolution_note", "resolved_at", "updated_at",
+                    ])
+                    reconciled += 1
+            continue
+
+        if event.discrepancy_raised:
+            # An unresolved discrepancy remains in the audit queue until a
+            # reviewer resolves it or a later sweep finds its transaction.
+            continue
 
         cutoff = event.recorded_at + timedelta(minutes=grace_minutes)
         if now < cutoff:
@@ -131,4 +151,4 @@ def run_sweep(branch_id=None, tenant=None):
             skipped,
         )
 
-    return {"created": created, "skipped": skipped}
+    return {"created": created, "skipped": skipped, "reconciled": reconciled}

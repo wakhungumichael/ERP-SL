@@ -133,7 +133,7 @@ class VehiclePresenceSurveillanceTests(TestCase):
         self.assertFalse(event.discrepancy_raised)
         self.assertFalse(WeighbridgeDiscrepancy.objects.filter(overweight_event=event).exists())
 
-    def test_transaction_origin_events_still_require_completed_and_paid(self):
+    def test_transaction_origin_events_are_not_discrepancies(self):
         from SL_Weighbridge.models import OverweightEvent, WeighbridgeDiscrepancy
         from SL_Weighbridge.sweep import run_sweep
 
@@ -151,7 +151,33 @@ class VehiclePresenceSurveillanceTests(TestCase):
 
         result = run_sweep(tenant=self.tenant)
 
-        self.assertEqual(result["created"], 1)
+        self.assertEqual(result["created"], 0)
         event.refresh_from_db()
-        self.assertTrue(event.discrepancy_raised)
-        self.assertTrue(WeighbridgeDiscrepancy.objects.filter(overweight_event=event).exists())
+        self.assertFalse(event.discrepancy_raised)
+        self.assertFalse(WeighbridgeDiscrepancy.objects.filter(overweight_event=event).exists())
+
+    def test_unrecorded_event_is_auto_resolved_when_transaction_is_saved_later(self):
+        from SL_Weighbridge.models import VehiclePresence, WeighbridgeDiscrepancy
+        from SL_Weighbridge.surveillance import maybe_record_overweight_event_from_presence
+        from SL_Weighbridge.sweep import run_sweep
+
+        presence = VehiclePresence.objects.create(
+            tenant=self.tenant,
+            branch=self.branch,
+            detected_weight=1500,
+            capture_status=False,
+            plate_number="KDD123D",
+        )
+        event = maybe_record_overweight_event_from_presence(presence)
+        run_sweep(tenant=self.tenant)
+        discrepancy = WeighbridgeDiscrepancy.objects.get(overweight_event=event)
+        self.assertEqual(discrepancy.resolution_status, "unresolved")
+
+        transaction = self._create_transaction(status="Draft", payment_status="Pending")
+        result = run_sweep(tenant=self.tenant)
+
+        self.assertEqual(result["reconciled"], 1)
+        event.refresh_from_db()
+        discrepancy.refresh_from_db()
+        self.assertEqual(event.linked_transaction_id, transaction.id)
+        self.assertEqual(discrepancy.resolution_status, "resolved")
