@@ -329,7 +329,7 @@ def _receipt_stylesheet(primary_color):
       .wb-receipt__payment .wb-receipt__charge strong {{ color: var(--receipt-brand); font-size: 11pt; }}
       .wb-receipt__footer {{ margin-top: 2mm; padding-top: 1.5mm; border-top: 1px solid #e5e7eb; text-align: center; color: #6b7280; font-size: 7pt; }}
       @media print {{
-        body {{ background: #fff; }}
+        html, body {{ width: 200mm; height: 138mm; overflow: hidden; background: #fff; }}
         .wb-receipt {{ width: 200mm; height: 138mm; margin: 0; }}
       }}
     """

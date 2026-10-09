@@ -301,6 +301,15 @@ class TransactionSerializer(serializers.ModelSerializer):
             return "Draft"
         return normalized or "Draft"
 
+    def validate(self, attrs):
+        payment_status = (attrs.get("payment_status") or "").strip()
+        current_status = (getattr(self.instance, "status", "") or "").strip()
+        if payment_status == "Paid" and self.instance and current_status != "Completed":
+            raise serializers.ValidationError({
+                "payment_status": "Payment can be marked paid only after the transaction has been approved and completed."
+            })
+        return attrs
+
 
     class Meta:
         model = Transaction
@@ -658,6 +667,11 @@ def _finalize_transaction_workflow(transaction):
     flow_kind = _resolve_transaction_flow(transaction)
     requires_approval = bool(transaction.manual_weight_capture)
     finalized_status = "Draft" if requires_approval else "Completed"
+    if requires_approval:
+        # A manually captured reading must be approved before any payment is
+        # posted. Keep the selected payment method, but make its status pending.
+        transaction.payment_status = "Pending"
+        transaction.payment_received_at = None
 
     if flow_kind == "second" and transaction.paired_first_transaction_id:
         first = transaction.paired_first_transaction
@@ -777,9 +791,9 @@ def _approve_transaction(transaction):
 
 
 def _receipt_allowed(transaction):
-    payment_mode = (getattr(transaction, "payment_mode", "") or "").strip()
-    payment_status = (getattr(transaction, "payment_status", "") or "").strip()
-    return payment_status == "Paid" or payment_mode == "Debt"
+    # A receipt is evidence of a completed weighing. It may legitimately show
+    # either PAID or PAYMENT PENDING, but never a draft/unapproved transaction.
+    return transaction.status == "Completed" and bool(transaction.approval_status)
 
 
 def _get_tenant_scoped_transaction(user, pk, select_related=None):
@@ -2780,6 +2794,12 @@ class TransactionReceivePaymentView(APIView):
                     "transaction_id": tx.id,
                     "payment_status": tx.payment_status,
                 },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if tx.status != "Completed" or not tx.approval_status:
+            return Response(
+                {"error": "Approve and complete the transaction before recording payment."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
