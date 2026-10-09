@@ -2838,7 +2838,17 @@ export default function OrganizationSettings() {
                     </div>
                     <div className="space-y-1.5">
                       <Label>SMTP Password</Label>
-                      <Input value={settingsForm.smtp_password ?? ''} onChange={sf('smtp_password')} type="password" placeholder="Leave blank to keep existing" />
+                      <Input
+                        value={settingsForm.smtp_password ?? ''}
+                        onChange={sf('smtp_password')}
+                        type="password"
+                        placeholder={settingsForm.smtp_password_configured ? 'Saved securely - enter a new password to replace it' : 'Enter the mailbox password'}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        {settingsForm.smtp_password_configured
+                          ? 'A password is saved securely. It is intentionally never shown after refresh or login.'
+                          : 'No SMTP password is saved yet. Enter the mailbox password, then select Save Email Config.'}
+                      </p>
                     </div>
                   </div>
                   <div className="space-y-1.5 max-w-sm">

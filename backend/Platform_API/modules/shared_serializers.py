@@ -809,6 +809,7 @@ class TenantBranchSerializer(serializers.ModelSerializer):
 
 class TenantSettingsSerializer(serializers.ModelSerializer):
     smtp_password = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    smtp_password_configured = serializers.SerializerMethodField(read_only=True)
     logo_url = serializers.SerializerMethodField()
     logo_file = serializers.ImageField(required=False, allow_null=True)
     login_page_config = serializers.JSONField(required=False)
@@ -867,7 +868,7 @@ class TenantSettingsSerializer(serializers.ModelSerializer):
             "statement_template", "statement_template_id",
             "purchase_order_template", "purchase_order_template_id",
             "smtp_host", "smtp_port", "smtp_user", "smtp_password", "smtp_use_tls", "smtp_use_ssl",
-            "smtp_allow_insecure_ssl",
+            "smtp_allow_insecure_ssl", "smtp_password_configured",
             "default_payment_terms_days",
             "teller_receipt_latest_records", "teller_receipt_max_age_hours",
             "created_at", "updated_at",
@@ -881,6 +882,11 @@ class TenantSettingsSerializer(serializers.ModelSerializer):
             except Exception:
                 pass
         return obj.logo_url
+
+    def get_smtp_password_configured(self, obj):
+        # Never return the SMTP secret itself; administrators only need to know
+        # whether a saved credential is available for mail delivery.
+        return bool(obj.smtp_password)
 
     def validate(self, attrs):
         use_tls = attrs.get("smtp_use_tls", getattr(self.instance, "smtp_use_tls", True))
