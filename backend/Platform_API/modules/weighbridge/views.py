@@ -1950,7 +1950,10 @@ class TransactionReceiptDocumentView(APIView):
             )
 
         rendered = render_transaction_receipt(tx, request=request)
-        if request.query_params.get("format") == "pdf":
+        # `format` is reserved by DRF's content negotiation and turns
+        # `?format=pdf` into a 404 before this view is called. Use a distinct
+        # download flag for the generated receipt document.
+        if request.query_params.get("download") == "pdf":
             if pisa is None:
                 return Response(
                     {"error": "PDF generation is not available on this server."},

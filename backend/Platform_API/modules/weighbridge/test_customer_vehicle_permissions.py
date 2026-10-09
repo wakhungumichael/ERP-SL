@@ -486,3 +486,10 @@ class TellerReceiptWindowTests(TestCase):
 
         allowed = self.client.get(reverse("wb-transaction-receipt", kwargs={"pk": transaction.id}))
         self.assertEqual(allowed.status_code, 200)
+
+        pdf = self.client.get(
+            reverse("wb-transaction-receipt", kwargs={"pk": transaction.id}),
+            {"download": "pdf"},
+        )
+        self.assertEqual(pdf.status_code, 200)
+        self.assertEqual(pdf["Content-Type"], "application/pdf")

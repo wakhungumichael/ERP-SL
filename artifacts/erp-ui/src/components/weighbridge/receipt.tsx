@@ -111,14 +111,15 @@ export function ReceiptDialog({ transaction: t, open, onOpenChange, token }: Rec
           throw new Error(body?.error ?? `Failed to open receipt (${res.status})`);
         }
         const html = await res.text();
-        const blob = new Blob([html], { type: 'text/html' });
-        const url = URL.createObjectURL(blob);
-        printWindow.onload = () => {
+        // Waiting for the new document's load event lets the configured logo
+        // finish loading before the browser opens its native printer dialog.
+        printWindow.addEventListener('load', () => {
           printWindow.focus();
           printWindow.print();
-        };
-        printWindow.location.replace(url);
-        setTimeout(() => URL.revokeObjectURL(url), 60_000);
+        }, { once: true });
+        printWindow.document.open();
+        printWindow.document.write(html);
+        printWindow.document.close();
       })
       .catch((error: Error) => {
         printWindow.close();
@@ -130,7 +131,7 @@ export function ReceiptDialog({ transaction: t, open, onOpenChange, token }: Rec
     if (!t || !token || !canPrintReceipt) return;
     setPrintResult(null);
     try {
-      const res = await fetch(`/api/commercial-weighbridge/transactions/${t.id}/receipt/?format=pdf`, {
+      const res = await fetch(`/api/commercial-weighbridge/transactions/${t.id}/receipt/?download=pdf`, {
         headers: { Authorization: `Token ${token}` },
       });
       if (!res.ok) {
