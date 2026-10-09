@@ -155,6 +155,7 @@ export function useTenantTheme() {
       branding: {
         logoUrl: settings.logo_url || publicBranding.logo_url || '',
         primaryColor,
+        workspaceName: settings.workspace_name || tenant.name || publicSite?.tenant?.name || '',
         currency: tenant.default_currency || 'KES',
         locale: tenant.default_currency === 'USD' ? 'en-US' : 'en-KE',
         timezone: tenant.timezone || 'Africa/Nairobi',
@@ -174,9 +175,9 @@ export function useTenantTheme() {
 
   useEffect(() => {
     if (typeof document === 'undefined') return;
-    const title = tenantContext.tenantName?.trim() || 'SL-ERP';
+    const title = tenantContext.branding.workspaceName?.trim() || tenantContext.tenantName?.trim() || 'Business Workspace';
     document.title = title;
-  }, [tenantContext.tenantName]);
+  }, [tenantContext.branding.workspaceName, tenantContext.tenantName]);
 
   useEffect(() => {
     if (typeof document === 'undefined') return;
@@ -192,6 +193,12 @@ export function useTenantTheme() {
       shortcutIconLink.href = faviconHref;
     }
   }, [tenantContext.branding.logoUrl]);
+
+  useEffect(() => {
+    if (!tenantContext.tenantCode || typeof document === 'undefined') return;
+    const manifest = ensureHeadLink('manifest');
+    if (manifest) manifest.href = `/api/platform/public/manifest/?tenant_code=${encodeURIComponent(tenantContext.tenantCode)}`;
+  }, [tenantContext.tenantCode]);
 
   useEffect(() => {
     if (typeof window === 'undefined' || !tenantContext.tenantCode) return;

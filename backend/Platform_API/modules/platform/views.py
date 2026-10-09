@@ -16,7 +16,7 @@ from django.shortcuts import get_object_or_404
 from django.utils.decorators import method_decorator
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
-from django.http import FileResponse, HttpResponse
+from django.http import FileResponse, HttpResponse, JsonResponse
 from rest_framework import generics
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.authentication import BasicAuthentication, TokenAuthentication
@@ -40,7 +40,7 @@ from Platform_Core.platform import (
     validate_license,
 )
 from Platform_Core.template_library import ensure_shared_document_template_library
-from Platform_Core.documents import render_document_template_preview
+from Platform_Core.documents import _safe_logo_url, render_document_template_preview
 from Platform_Core.backup_service import create_backup_archive, resolve_backup_directory
 from Platform_Core.audit import get_record_audit_summary
 from Platform_Core.models import (
@@ -847,6 +847,33 @@ class PublicSiteConfigurationAPIView(APIView):
                 "site_scope": "owner" if _is_owner_tenant(tenant) else "tenant",
             },
         )
+
+
+class PublicWebManifestAPIView(APIView):
+    """Serve a tenant-branded install manifest without requiring sign-in."""
+    permission_classes = (AllowAny,)
+    authentication_classes = ()
+
+    def get(self, request):
+        tenant_code = request.GET.get("tenant_code", "").strip()
+        tenant = Tenant.objects.filter(code=tenant_code, is_active=True).first() if tenant_code else _public_site_tenant()
+        settings_obj = getattr(tenant, "settings", None) if tenant else None
+        name = (
+            getattr(settings_obj, "workspace_name", "")
+            or getattr(tenant, "name", "")
+            or "Business Workspace"
+        )
+        logo_url = _safe_logo_url(settings_obj, request) if settings_obj else ""
+        payload = {
+            "name": name,
+            "short_name": name[:32],
+            "start_url": "/",
+            "display": "standalone",
+            "background_color": "#fffaf5",
+            "theme_color": getattr(settings_obj, "primary_color", "") or "#e85d26",
+            "icons": [{"src": logo_url or "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable"}],
+        }
+        return JsonResponse(payload, content_type="application/manifest+json")
 
 
 @method_decorator(csrf_exempt, name="dispatch")

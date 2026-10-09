@@ -123,7 +123,7 @@ const DEFAULT_SUPPORT_PAGE_CONFIG = {
 const ORGANIZATION_CURRENCIES = ['KES', 'USD', 'EUR', 'GBP', 'UGX', 'TZS'];
 const PAGINATION_PAGE_SIZES = [5, 10, 25, 50];
 
-const BRANDING_SETTINGS_FIELDS = ['primary_color'] as const;
+const BRANDING_SETTINGS_FIELDS = ['primary_color', 'workspace_name'] as const;
 const PUBLIC_SITE_SETTINGS_FIELDS = ['login_page_config', 'landing_page_config', 'footer_menu'] as const;
 const EMAIL_SETTINGS_FIELDS = [
   'support_email', 'smtp_host', 'smtp_port', 'smtp_user', 'smtp_password',
@@ -2428,6 +2428,11 @@ export default function OrganizationSettings() {
                       </p>
                     </div>
                     <div className="space-y-4">
+                      <div className="space-y-1.5">
+                        <Label>Application Name</Label>
+                        <Input value={settingsForm.workspace_name ?? ''} onChange={sf('workspace_name')} placeholder={tenant?.name ?? 'Business Workspace'} />
+                        <p className="text-xs text-muted-foreground">Shown in the browser, installed app, and workspace identity. Example: Metrix Weighbridge.</p>
+                      </div>
                       <div className="space-y-1.5">
                         <Label>Brand Color</Label>
                         <div className="flex items-center gap-3">

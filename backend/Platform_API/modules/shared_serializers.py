@@ -858,7 +858,7 @@ class TenantSettingsSerializer(serializers.ModelSerializer):
     class Meta:
         model = TenantSettings
         fields = (
-            "id", "tenant", "logo_url", "logo_file", "primary_color",
+            "id", "tenant", "logo_url", "logo_file", "primary_color", "workspace_name",
             "login_page_config", "footer_menu", "landing_page_config", "support_email",
             "invoice_prefix", "footer_text", "default_tax_name", "default_tax_rate",
             "invoice_template", "invoice_template_id",

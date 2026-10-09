@@ -1,6 +1,6 @@
 import { Link, useLocation } from 'wouter';
 import { useAuthLogout } from '@workspace/api-client-react';
-import { LogOut, Scale, ChevronRight, ChevronDown, Search, UserCircle2, Settings, PanelTop, X, Menu, ShieldAlert, LayoutDashboard, ShoppingCart, Package, Landmark, Users, Ticket, BarChart3, ClipboardList, Factory, Store, Wrench, Boxes, FileText, Truck, CreditCard, FolderKanban, ContactRound } from 'lucide-react';
+import { LogOut, Scale, ChevronRight, ChevronDown, Search, UserCircle2, Settings, PanelTop, X, Menu, ShieldAlert, LayoutDashboard, ShoppingCart, Package, Landmark, Users, Ticket, BarChart3, ClipboardList, Factory, Store, Wrench, Boxes, FileText, Truck, CreditCard, FolderKanban, ContactRound, Download } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { Input } from '@/components/ui/input';
@@ -49,6 +49,29 @@ const HOME_SECTION: NavSection = {
     { key: 'dashboard', title: 'Dashboard', path: '/dashboard', roles: [] },
   ],
 };
+
+type InstallPromptEvent = Event & { prompt: () => Promise<void>; userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }> };
+
+function PwaInstallPrompt({ appName }: { appName: string }) {
+  const [installEvent, setInstallEvent] = useState<InstallPromptEvent | null>(null);
+  const [dismissed, setDismissed] = useState(() => localStorage.getItem('pwa-install-dismissed') === 'true');
+
+  useEffect(() => {
+    const onPrompt = (event: Event) => {
+      event.preventDefault();
+      setInstallEvent(event as InstallPromptEvent);
+    };
+    window.addEventListener('beforeinstallprompt', onPrompt);
+    return () => window.removeEventListener('beforeinstallprompt', onPrompt);
+  }, []);
+
+  if (!installEvent || dismissed || window.matchMedia('(display-mode: standalone)').matches) return null;
+  return <div className="fixed inset-x-3 bottom-3 z-[100] mx-auto flex max-w-md items-center gap-3 rounded-2xl border bg-card p-3 shadow-xl md:hidden">
+    <div className="min-w-0 flex-1"><p className="text-sm font-semibold">Install {appName}</p><p className="text-xs text-muted-foreground">Add this workspace to your phone for faster access.</p></div>
+    <Button size="sm" onClick={async () => { await installEvent.prompt(); const choice = await installEvent.userChoice; if (choice.outcome === 'accepted') setInstallEvent(null); }}><Download className="h-4 w-4" /> Install</Button>
+    <Button size="icon" variant="ghost" onClick={() => { localStorage.setItem('pwa-install-dismissed', 'true'); setDismissed(true); }} aria-label="Dismiss install prompt"><X className="h-4 w-4" /></Button>
+  </div>;
+}
 
 const STATIC_SECTION_MODULES: Record<string, string[]> = {
   weighbridge: ['weighbridge', 'commercial-weighbridge'],
@@ -407,7 +430,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
     || '';
   const appLogoUrl = tenantContext.branding.logoUrl || '';
   const appPrimaryColor = tenantContext.branding.primaryColor || '#E85D26';
-  const appTitle = activeOrganizationName || 'SL-ERP';
+  const appTitle = tenantContext.branding.workspaceName || activeOrganizationName || 'Business Workspace';
   const tenantLoginPath = tenantContext.tenantCode
     ? `/login/${encodeURIComponent(tenantContext.tenantCode)}`
     : '/login';
@@ -1092,6 +1115,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
           </div>
         </DialogContent>
       </Dialog>
+      <PwaInstallPrompt appName={appTitle} />
     </div>
   );
 }

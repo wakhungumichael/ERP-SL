@@ -804,6 +804,7 @@ class TenantSettings(TimeStampedModel):
     logo_url = models.CharField(max_length=500, blank=True)
     logo_file = models.ImageField(upload_to="tenant_logos/", blank=True, null=True)
     primary_color = models.CharField(max_length=20, blank=True, default="#E85D26")
+    workspace_name = models.CharField(max_length=120, blank=True)
     login_page_config = models.JSONField(blank=True, default=dict)
     footer_menu = models.JSONField(blank=True, default=list)
     landing_page_config = models.JSONField(blank=True, default=dict)

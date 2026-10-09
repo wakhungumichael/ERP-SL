@@ -84,6 +84,7 @@ from .views import (
     WorkflowTransitionDefinitionListCreateAPIView,
     PlatformUserRoleAssignmentAPIView,
     PublicSiteConfigurationAPIView,
+    PublicWebManifestAPIView,
     activate_license_action,
     activate_tenant,
     generate_license_action,
@@ -105,6 +106,7 @@ urlpatterns = [
     # Auth
     path("auth/status/", AuthStatusAPIView.as_view(), name="platform-auth-status"),
     path("public/site/", PublicSiteConfigurationAPIView.as_view(), name="platform-public-site"),
+    path("public/manifest/", PublicWebManifestAPIView.as_view(), name="platform-public-manifest"),
     path("auth/register/", PublicRegistrationAPIView.as_view(), name="platform-auth-register"),
     path("auth/token/", TokenLoginAPIView.as_view(), name="platform-auth-token"),
     path("auth/forgot-password/", ForgotPasswordAPIView.as_view(), name="platform-auth-forgot-password"),

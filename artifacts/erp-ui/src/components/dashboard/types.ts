@@ -38,6 +38,7 @@ export interface DashboardLayoutItem {
 export interface DashboardBranding {
   logoUrl: string;
   primaryColor: string;
+  workspaceName?: string;
   currency: string;
   locale: string;
   timezone: string;

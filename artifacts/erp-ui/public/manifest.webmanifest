@@ -1,0 +1,9 @@
+{
+  "name": "Business Workspace",
+  "short_name": "Workspace",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#fffaf5",
+  "theme_color": "#e85d26",
+  "icons": [{ "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
+}
