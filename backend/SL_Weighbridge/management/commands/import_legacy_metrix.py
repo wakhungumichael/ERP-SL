@@ -5,6 +5,7 @@ from pathlib import Path
 
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from Platform_Core.models import Tenant, TenantBranch
@@ -51,9 +52,18 @@ class Command(BaseCommand):
             "transactions": len(rows(payload, "SL_Weighbridge_transaction")),
         }
         self.stdout.write(self.style.WARNING(f"Metrix import for tenant '{tenant.code}': {summary}"))
-        existing = Transaction.objects.filter(tenant=tenant).count()
-        if existing and not options["replace"]:
-            raise CommandError("Target tenant has transactions. Re-run with --replace only after confirming its backup.")
+        existing = {
+            "transactions": Transaction.objects.filter(tenant=tenant).count(),
+            "customers": Customer.objects.filter(tenant=tenant).count(),
+            "vehicles": Vehicle.objects.filter(tenant=tenant).count(),
+            "items": Item.objects.filter(tenant=tenant).count(),
+        }
+        if any(existing.values()) and not options["replace"]:
+            raise CommandError(
+                "Target tenant already has weighbridge data. Re-run with --replace only after confirming its backup. "
+                f"Current counts: {existing}"
+            )
+        self._check_cross_tenant_conflicts(tenant, payload)
         if not options["apply"]:
             self.stdout.write(self.style.SUCCESS("Dry run passed. Re-run with --apply to import."))
             return
@@ -63,6 +73,21 @@ class Command(BaseCommand):
                 self._clear_tenant(tenant)
             self._import(tenant, payload)
         self.stdout.write(self.style.SUCCESS("Legacy Metrix data imported successfully."))
+
+    def _check_cross_tenant_conflicts(self, tenant, payload):
+        phones = [row["phone_number"] for row in rows(payload, "SL_Weighbridge_customer") if row.get("phone_number")]
+        emails = [row["email"] for row in rows(payload, "SL_Weighbridge_customer") if row.get("email")]
+        plates = [row["number_plate"] for row in rows(payload, "SL_Weighbridge_vehicle") if row.get("number_plate")]
+
+        customer_conflicts = Customer.objects.exclude(tenant=tenant).filter(
+            Q(phone_number__in=phones) | Q(email__in=emails)
+        ).count()
+        vehicle_conflicts = Vehicle.objects.exclude(tenant=tenant).filter(number_plate__in=plates).count()
+        if customer_conflicts or vehicle_conflicts:
+            raise CommandError(
+                "Import stopped to prevent cross-tenant duplicates: "
+                f"{customer_conflicts} customer conflict(s), {vehicle_conflicts} vehicle conflict(s)."
+            )
 
     def _clear_tenant(self, tenant):
         Transaction.objects.filter(tenant=tenant).delete()

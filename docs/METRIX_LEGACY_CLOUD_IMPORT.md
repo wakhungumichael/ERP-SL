@@ -15,7 +15,8 @@ docker compose --env-file .env.production -f docker-compose.production.yml exec 
   < backups/migrations/metrix_legacy_20261009_093659.json
 ```
 3. Confirm the cloud tenant code from the Organizations screen or with the command below.
-4. The `--replace` command deletes only weighbridge business records assigned to that tenant. It does not remove tenant users, roles, subscriptions, or platform settings.
+4. The `--replace` command deletes only weighbridge business records assigned to that tenant: transactions, discounts, vehicles, customers, items, vehicle types, branches, currencies, and companies. It does not remove tenant users, roles, subscriptions, or platform settings.
+5. Before importing, the command checks for customer phone/email and vehicle plate conflicts owned by other tenants. It stops without changing data if any are found.
 
 ```bash
 cd /srv/sl-erp
