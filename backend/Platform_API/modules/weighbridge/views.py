@@ -2,6 +2,7 @@ import csv
 import base64
 import binascii
 import json as _json
+import logging
 import re
 import socket
 import urllib.request
@@ -60,6 +61,9 @@ try:
     from xhtml2pdf import pisa
 except Exception:
     pisa = None
+
+
+logger = logging.getLogger(__name__)
 
 
 # ── Pagination ────────────────────────────────────────────────────────────────
@@ -1961,11 +1965,18 @@ class TransactionReceiptDocumentView(APIView):
                 )
             response = HttpResponse(content_type="application/pdf")
             response["Content-Disposition"] = f'attachment; filename="weighbridge-receipt-TX-{tx.pk:05d}.pdf"'
-            pdf_result = pisa.CreatePDF(
-                rendered.html,
-                dest=response,
-                link_callback=self._pdf_link_callback,
-            )
+            try:
+                pdf_result = pisa.CreatePDF(
+                    rendered.html,
+                    dest=response,
+                    link_callback=self._pdf_link_callback,
+                )
+            except Exception:
+                logger.exception("Weighbridge receipt PDF generation failed for transaction=%s", tx.pk)
+                return Response(
+                    {"error": "The receipt PDF could not be generated. Please try printing the receipt or contact your administrator."},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
             if pdf_result.err:
                 return Response(
                     {"error": "The receipt PDF could not be generated."},

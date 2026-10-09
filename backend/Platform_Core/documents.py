@@ -311,9 +311,9 @@ def _receipt_stylesheet(primary_color):
       .wb-receipt__title-row strong {{ font-size: 11pt; }}
       .wb-receipt__issue {{ text-align: right; font-size: 7.5pt; }}
       .wb-receipt__issue span, .wb-receipt__payment span {{ display: block; color: #6b7280; font-size: 7pt; text-transform: uppercase; letter-spacing: .08em; }}
-      .wb-receipt__status {{ padding: 1mm 2.5mm; border: 1px solid currentColor; font-size: 7.5pt; font-weight: 800; letter-spacing: .08em; white-space: nowrap; }}
-      .wb-receipt__status.is-paid {{ color: #047857; background: #ecfdf5; }}
-      .wb-receipt__status.is-pending {{ color: #b45309; background: #fffbeb; }}
+      .wb-receipt__status {{ padding: 1mm 2.5mm; border: 1px solid #6b7280; font-size: 7.5pt; font-weight: 800; letter-spacing: .08em; white-space: nowrap; }}
+      .wb-receipt__status.is-paid {{ color: #047857; border-color: #047857; background: #ecfdf5; }}
+      .wb-receipt__status.is-pending {{ color: #b45309; border-color: #b45309; background: #fffbeb; }}
       .wb-receipt__details, .wb-receipt__weights {{ width: 100%; border-collapse: collapse; }}
       .wb-receipt__details {{ margin: 1.5mm 0; }}
       .wb-receipt__details th, .wb-receipt__details td {{ padding: .8mm 1.25mm; border-bottom: 1px solid #e5e7eb; text-align: left; }}
