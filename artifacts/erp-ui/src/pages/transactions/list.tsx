@@ -941,7 +941,7 @@ export default function TransactionsList() {
                     {/* Receipt */}
                     <TableCell className="px-2 py-2.5 text-center align-middle">
                       {(() => {
-                        const canPrintReceipt = t.payment_status === 'Paid' || t.payment_mode === 'Debt';
+                        const canPrintReceipt = t.status === 'Completed';
                         return (
                       <button
                         onClick={() => { setReceiptTx(t); setReceiptOpen(true); }}

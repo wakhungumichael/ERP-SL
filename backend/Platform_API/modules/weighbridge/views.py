@@ -885,13 +885,6 @@ def _apply_teller_receipt_window(qs, user, tenant):
     return qs if allowed_ids is None else qs.filter(pk__in=allowed_ids)
 
 
-def _can_reprint_weighbridge_receipt(user):
-    return bool(
-        _has_unrestricted_weighbridge_history_access(user)
-        or user.has_perm("SL_Weighbridge.can_reprint_recent_weighbridge_receipts")
-    )
-
-
 def _has_weighbridge_process_permission(user, codename):
     """Tenant admins retain operational access; custom roles need the named process permission."""
     return bool(
@@ -1777,11 +1770,6 @@ class TransactionEmailReceiptView(APIView):
         except Transaction.DoesNotExist:
             return Response({"error": f"Transaction {pk} not found."}, status=status.HTTP_404_NOT_FOUND)
 
-        if not _can_reprint_weighbridge_receipt(request.user):
-            return Response(
-                {"error": "Your role does not allow receipt reprints. Ask an administrator to grant the Receipt reprint permission."},
-                status=status.HTTP_403_FORBIDDEN,
-            )
         resolved = _resolve_user_tenant(request.user)
         if resolved is not None and not isinstance(resolved, _NoTenantProfile):
             if not _apply_teller_receipt_window(Transaction.objects.filter(pk=tx.pk), request.user, resolved).exists():
@@ -1950,11 +1938,6 @@ class TransactionReceiptDocumentView(APIView):
         except Transaction.DoesNotExist:
             return Response({"error": f"Transaction {pk} not found."}, status=status.HTTP_404_NOT_FOUND)
 
-        if not _can_reprint_weighbridge_receipt(request.user):
-            return Response(
-                {"error": "Your role does not allow receipt reprints. Ask an administrator to grant the Receipt reprint permission."},
-                status=status.HTTP_403_FORBIDDEN,
-            )
         resolved = _resolve_user_tenant(request.user)
         if resolved is not None and not isinstance(resolved, _NoTenantProfile):
             if not _apply_teller_receipt_window(Transaction.objects.filter(pk=tx.pk), request.user, resolved).exists():

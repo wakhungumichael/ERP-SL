@@ -481,21 +481,8 @@ class TellerReceiptWindowTests(TestCase):
         self.assertNotIn(oldest.id, [row["id"] for row in response.data["results"]])
         self.assertEqual(self.client.get(reverse("wb-transaction-detail", kwargs={"pk": oldest.id})).status_code, 404)
 
-    def test_teller_requires_reprint_permission_for_allowed_receipt(self):
+    def test_teller_can_print_an_allowed_completed_receipt_without_reprint_permission(self):
         transaction = self.create_transaction(1)
 
-        denied = self.client.get(reverse("wb-transaction-receipt", kwargs={"pk": transaction.id}))
-        self.assertEqual(denied.status_code, 403)
-
-        self.user.user_permissions.add(
-            Permission.objects.get(
-                content_type__app_label="SL_Weighbridge",
-                codename="can_reprint_recent_weighbridge_receipts",
-            )
-        )
-        # The first denied request populated Django's in-memory permission cache.
-        self.user.refresh_from_db()
-        for cache_name in ("_perm_cache", "_user_perm_cache", "_group_perm_cache"):
-            self.user.__dict__.pop(cache_name, None)
         allowed = self.client.get(reverse("wb-transaction-receipt", kwargs={"pk": transaction.id}))
         self.assertEqual(allowed.status_code, 200)

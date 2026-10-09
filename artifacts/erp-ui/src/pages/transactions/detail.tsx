@@ -337,8 +337,7 @@ export default function TransactionDetail({ id }: { id: string }) {
   const canExport        = CAN_EXPORT.includes(role);
   const canEdit          = tx.status !== 'Completed';
   const canReceivePayment = tx.payment_status !== 'Paid' && tx.status !== 'Rejected';
-  const isPaid           = tx.payment_status === 'Paid';
-  const canPrintReceipt  = isPaid || tx.payment_mode === 'Debt';
+  const canPrintReceipt  = tx.status === 'Completed';
   // auto_invoice_id from API, or an invoice returned after receive-payment
   const linkedInvoiceId  = invoiceId ?? tx.auto_invoice_id ?? null;
 
