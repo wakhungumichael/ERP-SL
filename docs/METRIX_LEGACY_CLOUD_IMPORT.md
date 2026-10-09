@@ -45,7 +45,7 @@ docker compose --env-file .env.production -f docker-compose.production.yml exec 
 
 ## Import
 
-Run this only after the dry run reports the expected 698 customers, 1,547 vehicles, 188 items, 102 discounts, and 6,714 transactions.
+Run this only after the dry run reports the expected 698 customers, 1,547 vehicles, 188 items, and 6,714 transactions. The legacy export contains 102 discount rows; 49 reference deleted legacy customers and are skipped, while 53 valid discounts are imported.
 
 ```bash
 docker compose --env-file .env.production -f docker-compose.production.yml exec -T backend \

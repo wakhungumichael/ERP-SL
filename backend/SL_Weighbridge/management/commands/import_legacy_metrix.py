@@ -71,8 +71,12 @@ class Command(BaseCommand):
         with transaction.atomic():
             if options["replace"]:
                 self._clear_tenant(tenant)
-            self._import(tenant, payload)
+            skipped_discounts = self._import(tenant, payload)
         self.stdout.write(self.style.SUCCESS("Legacy Metrix data imported successfully."))
+        if skipped_discounts:
+            self.stdout.write(self.style.WARNING(
+                f"Skipped {skipped_discounts} legacy discount row(s) whose customer or vehicle type no longer exists."
+            ))
 
     def _check_cross_tenant_conflicts(self, tenant, payload):
         phones = [row["phone_number"] for row in rows(payload, "SL_Weighbridge_customer") if row.get("phone_number")]
@@ -134,8 +138,18 @@ class Command(BaseCommand):
         for source in rows(payload, "SL_Weighbridge_item"):
             obj = Item.objects.create(tenant=tenant, name=source["name"], description=source.get("description"), currency=currencies.get(source.get("currency_id")))
             items[source["id"]] = obj
+        skipped_discounts = 0
         for source in rows(payload, "SL_Weighbridge_customervehicletypediscount"):
-            CustomerVehicleTypeDiscount.objects.create(customer=customers[source["customer_id"]], vehicle_type=vehicle_types[source["vehicle_type_id"]], discounted_charge=Decimal(source["discounted_charge"]))
+            customer = customers.get(source["customer_id"])
+            vehicle_type = vehicle_types.get(source["vehicle_type_id"])
+            if customer is None or vehicle_type is None:
+                skipped_discounts += 1
+                continue
+            CustomerVehicleTypeDiscount.objects.create(
+                customer=customer,
+                vehicle_type=vehicle_type,
+                discounted_charge=Decimal(source["discounted_charge"]),
+            )
 
         first, _ = WeighingOperationType.objects.get_or_create(tenant=tenant, code="first-weight", defaults={"name": "First Weight", "flow_kind": "first", "is_default": True})
         second, _ = WeighingOperationType.objects.get_or_create(tenant=tenant, code="second-weight", defaults={"name": "Second Weight", "flow_kind": "second"})
@@ -163,3 +177,4 @@ class Command(BaseCommand):
         for source in rows(payload, "SL_Weighbridge_transaction"):
             if source.get("paired_first_transaction_id") in transactions:
                 Transaction.objects.filter(pk=transactions[source["id"]].pk).update(paired_first_transaction=transactions[source["paired_first_transaction_id"]])
+        return skipped_discounts
