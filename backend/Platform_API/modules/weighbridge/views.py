@@ -792,8 +792,8 @@ def _approve_transaction(transaction):
 
 def _receipt_allowed(transaction):
     # A receipt is evidence of a completed weighing. It may legitimately show
-    # either PAID or PAYMENT PENDING, but never a draft/unapproved transaction.
-    return transaction.status == "Completed" and bool(transaction.approval_status)
+    # either PAID or PAYMENT PENDING. Approval is a separate workflow control.
+    return transaction.status == "Completed"
 
 
 def _get_tenant_scoped_transaction(user, pk, select_related=None):
@@ -1783,7 +1783,7 @@ class TransactionEmailReceiptView(APIView):
 
         if not _receipt_allowed(tx):
             return Response(
-                {"error": "Receipt is available only after payment is received, unless the transaction is on debt terms."},
+                {"error": "Receipt is available only after the weighing is completed."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -1956,7 +1956,7 @@ class TransactionReceiptDocumentView(APIView):
 
         if not _receipt_allowed(tx):
             return Response(
-                {"error": "Receipt is available only after payment is received, unless the transaction is on debt terms."},
+                {"error": "Receipt is available only after the weighing is completed."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 

@@ -181,7 +181,7 @@ export function ReceiptDialog({ transaction: t, open, onOpenChange, token }: Rec
 
   if (!t) return null;
 
-  const canPrintReceipt = t.status === 'Completed' && t.approval_status === true;
+  const canPrintReceipt = t.status === 'Completed';
   const receiptStatusLabel = t.payment_status || 'Pending';
   const txNum = String(t.id).padStart(5, '0');
   const settings = settingsData?.data ?? settingsData ?? {};
@@ -228,7 +228,7 @@ export function ReceiptDialog({ transaction: t, open, onOpenChange, token }: Rec
 
       {!canPrintReceipt && (
         <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">
-          Receipt printing is available after the weighing has been approved and completed. Completed receipts may show paid or payment pending.
+          Receipt printing is available after the weighing is completed. Completed receipts may show paid or payment pending.
         </div>
       )}
 
