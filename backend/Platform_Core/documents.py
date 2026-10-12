@@ -293,9 +293,8 @@ def _brand_stylesheet(primary_color):
     """
 
 
-def _receipt_stylesheet(primary_color):
-    # xhtml2pdf cannot resolve CSS custom properties, so compact receipts must
-    # receive concrete colors even though browsers can handle CSS variables.
+def _receipt_brand_color(primary_color):
+    """Return a PDF-safe brand color from tenant-configured branding."""
     brand_color = str(primary_color or "").strip()
     hex_digits = "0123456789abcdefABCDEF"
     if (
@@ -306,6 +305,13 @@ def _receipt_stylesheet(primary_color):
         brand_color = "#E85D26"
     elif len(brand_color) == 4:
         brand_color = "#" + "".join(character * 2 for character in brand_color[1:])
+    return brand_color
+
+
+def _receipt_stylesheet(primary_color):
+    # xhtml2pdf cannot resolve CSS custom properties, so compact receipts must
+    # receive concrete colors even though browsers can handle CSS variables.
+    brand_color = _receipt_brand_color(primary_color)
 
     return f"""
       * {{ box-sizing: border-box; }}
@@ -345,6 +351,46 @@ def _receipt_stylesheet(primary_color):
         html, body {{ width: 210mm; height: 148mm; margin: 0; padding: 0; overflow: hidden; background: #fff; }}
         .wb-receipt {{ width: 202mm; height: 140mm; max-height: 140mm; margin: 0; }}
       }}
+    """
+
+
+def _receipt_pdf_stylesheet(primary_color):
+    """A single-page A5 receipt stylesheet supported by xhtml2pdf."""
+    brand_color = _receipt_brand_color(primary_color)
+    return f"""
+      @page {{ size: A5 landscape; margin: 4mm; }}
+      body {{ margin: 0; color: #111827; font-family: Arial, Helvetica, sans-serif; font-size: 7.5pt; line-height: 1.1; }}
+      .wb-receipt {{ width: 202mm; margin: 0; padding: 3mm 4mm; background: #fff; border: 1px solid {brand_color}; }}
+      .wb-receipt__header {{ padding-bottom: 1.5mm; border-bottom: 2px solid {brand_color}; text-align: center; }}
+      .wb-receipt__logo {{ width: 34mm; height: 11mm; object-fit: contain; }}
+      .wb-receipt__company {{ font-size: 12pt; font-weight: bold; letter-spacing: 1pt; text-transform: uppercase; }}
+      .wb-receipt__branch {{ margin-top: 1mm; font-size: 8pt; font-weight: bold; }}
+      .wb-receipt__contact {{ margin-top: 1mm; color: #4b5563; font-size: 7pt; }}
+      .wb-receipt__title-row {{ padding: 1.5mm 0; border-bottom: 1px dashed {brand_color}; text-align: center; }}
+      .wb-receipt__title-row > div {{ display: inline-block; vertical-align: middle; margin: 0 5mm; }}
+      .wb-receipt__kicker {{ color: {brand_color}; font-size: 7pt; font-weight: bold; letter-spacing: 1pt; text-transform: uppercase; }}
+      .wb-receipt__title-row strong {{ font-size: 10pt; }}
+      .wb-receipt__issue {{ font-size: 7pt; }}
+      .wb-receipt__issue span, .wb-receipt__payment span {{ display: block; color: #6b7280; font-size: 6.5pt; text-transform: uppercase; letter-spacing: .5pt; }}
+      .wb-receipt__status {{ padding: 1mm 2.5mm; border: 1px solid #6b7280; font-size: 7pt; font-weight: bold; letter-spacing: .5pt; }}
+      .wb-receipt__status.is-paid {{ color: #047857; border-color: #047857; background: #ecfdf5; }}
+      .wb-receipt__status.is-pending {{ color: #b45309; border-color: #b45309; background: #fffbeb; }}
+      .wb-receipt__details, .wb-receipt__weights {{ width: 100%; border-collapse: collapse; }}
+      .wb-receipt__details {{ margin: 1.5mm 0; }}
+      .wb-receipt__details th, .wb-receipt__details td {{ padding: .8mm 1.25mm; border-bottom: 1px solid #e5e7eb; text-align: left; }}
+      .wb-receipt__details th {{ width: 14%; color: #6b7280; font-size: 6.5pt; letter-spacing: .5pt; text-transform: uppercase; }}
+      .wb-receipt__details td {{ width: 36%; font-weight: bold; }}
+      .wb-receipt__weights thead {{ background: {brand_color}; color: #fff; }}
+      .wb-receipt__weights th, .wb-receipt__weights td {{ padding: 1mm; border: 1px solid #d1d5db; text-align: left; }}
+      .wb-receipt__weights th:last-child, .wb-receipt__weights td:last-child {{ text-align: right; font-weight: bold; }}
+      .wb-receipt__weights tfoot {{ background: #f9fafb; }}
+      .wb-receipt__weights tfoot th {{ border-top: 2px solid {brand_color}; font-size: 9pt; text-transform: uppercase; }}
+      .wb-receipt__payment {{ width: 100%; margin-top: 1.5mm; padding-top: 1.5mm; border-top: 1px dashed #9ca3af; text-align: center; }}
+      .wb-receipt__payment > div {{ display: inline-block; width: 31%; vertical-align: top; text-align: left; }}
+      .wb-receipt__payment strong {{ font-size: 8pt; }}
+      .wb-receipt__payment .wb-receipt__charge {{ text-align: right; }}
+      .wb-receipt__payment .wb-receipt__charge strong {{ color: {brand_color}; font-size: 10pt; }}
+      .wb-receipt__footer {{ margin-top: 1.5mm; padding-top: 1mm; border-top: 1px solid #e5e7eb; text-align: center; color: #6b7280; font-size: 6.5pt; }}
     """
 
 
@@ -957,7 +1003,7 @@ def _purchase_order_context(purchase_order, settings_obj, request=None):
     }
 
 
-def render_business_document(*, tenant, document_type, context, request=None):
+def render_business_document(*, tenant, document_type, context, request=None, pdf_optimized=False):
     template, settings_obj = resolve_document_template(tenant=tenant, document_type=document_type)
     branding = context.get("branding") or {}
     primary_color = branding.get("primary_color") or "#E85D26"
@@ -968,9 +1014,10 @@ def render_business_document(*, tenant, document_type, context, request=None):
     template_body = _default_body(document_type) if use_compact_receipt else (
         template.body_template if template and template.body_template else _default_body(document_type)
     )
-    stylesheet = _receipt_stylesheet(primary_color) if use_compact_receipt else (
-        template.stylesheet if template and template.stylesheet else _default_stylesheet(primary_color)
-    )
+    if use_compact_receipt:
+        stylesheet = _receipt_pdf_stylesheet(primary_color) if pdf_optimized else _receipt_stylesheet(primary_color)
+    else:
+        stylesheet = template.stylesheet if template and template.stylesheet else _default_stylesheet(primary_color)
     rendered_body = _render_template_string(template_body, context)
     if document_type == "receipt" and not use_compact_receipt and context.get("transaction_image_url") and "transaction-capture" not in rendered_body:
         rendered_body += _render_template_string(
@@ -1219,7 +1266,7 @@ def render_estimate_document(estimate, request=None):
     )
 
 
-def render_transaction_receipt(transaction, request=None):
+def render_transaction_receipt(transaction, request=None, pdf_optimized=False):
     template, settings_obj = resolve_document_template(tenant=getattr(transaction, "tenant", None), document_type="receipt")
     context = _receipt_context(transaction, settings_obj, request=request)
     return render_business_document(
@@ -1227,6 +1274,7 @@ def render_transaction_receipt(transaction, request=None):
         document_type="receipt",
         context=context,
         request=request,
+        pdf_optimized=pdf_optimized,
     )
 
 

@@ -1953,11 +1953,11 @@ class TransactionReceiptDocumentView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        rendered = render_transaction_receipt(tx, request=request)
         # `format` is reserved by DRF's content negotiation and turns
         # `?format=pdf` into a 404 before this view is called. Use a distinct
         # download flag for the generated receipt document.
         if request.query_params.get("download") == "pdf":
+            rendered = render_transaction_receipt(tx, request=request, pdf_optimized=True)
             if pisa is None:
                 return Response(
                     {"error": "PDF generation is not available on this server."},
@@ -1983,6 +1983,7 @@ class TransactionReceiptDocumentView(APIView):
                     status=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 )
             return response
+        rendered = render_transaction_receipt(tx, request=request)
         return HttpResponse(rendered.html, content_type="text/html; charset=utf-8")
 
 
