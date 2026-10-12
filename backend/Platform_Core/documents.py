@@ -845,6 +845,10 @@ def _receipt_context(transaction, settings_obj, request=None):
     payment_status = getattr(transaction, "payment_status", "") or "Pending"
     payment_mode = getattr(transaction, "payment_mode", "") or ""
     receipt_label = "PAID" if payment_status == "Paid" else "PAYMENT PENDING"
+    cashier = getattr(transaction, "created_by", None) or getattr(transaction, "last_modified_by", None)
+    cashier_name = ""
+    if cashier is not None:
+        cashier_name = (cashier.get_full_name() or "").strip() or str(getattr(cashier, "username", "") or "").strip()
     has_second_weight = bool(
         getattr(transaction, "tare_weight_date", None)
         or (getattr(transaction, "tare_weight", None) not in (None, 0))
@@ -886,7 +890,9 @@ def _receipt_context(transaction, settings_obj, request=None):
         },
         "company": {
             "name": company_name,
-            "email": getattr(tenant, "contact_email", "") or getattr(settings_obj, "support_email", ""),
+            # Receipts must use the tenant's organisation contact, never an
+            # administrator or platform support address as a fallback.
+            "email": getattr(tenant, "contact_email", ""),
             "phone": getattr(tenant, "contact_phone", ""),
             "branch_name": getattr(branch, "name", "") or "Main Branch",
             "currency": currency,
@@ -939,7 +945,7 @@ def _receipt_context(transaction, settings_obj, request=None):
             "vehicle_type_name": getattr(vehicle_type, "name", "") or "",
             "item_name": getattr(item, "name", "") or "",
             "destination": transaction.destination or "",
-            "operator": transaction.operator or "",
+            "operator": cashier_name or transaction.operator or "",
             "gross_weight_display": f"{int(transaction.gross_weight or 0):,} kg" if transaction.gross_weight is not None else "-",
             "tare_weight_display": f"{int(transaction.tare_weight or 0):,} kg" if transaction.tare_weight is not None else "-",
             "net_weight_display": f"{int(transaction.net_weight or 0):,} kg" if transaction.net_weight is not None else "-",
