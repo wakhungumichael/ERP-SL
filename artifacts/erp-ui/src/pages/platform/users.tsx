@@ -321,6 +321,7 @@ function EditUserDialog({
     password: '',
     job_title: '',
     branch_id: '',
+    branch_ids: [] as string[],
     is_active: true,
     is_tenant_admin: false,
   });
@@ -336,6 +337,7 @@ function EditUserDialog({
       password: '',
       job_title: user.job_title ?? '',
       branch_id: user.branch_id ? String(user.branch_id) : '',
+      branch_ids: Array.isArray(user.branch_ids) ? user.branch_ids.map(String) : (user.branch_id ? [String(user.branch_id)] : []),
       is_active: Boolean(user.is_active),
       is_tenant_admin: Boolean((user as any).is_org_admin ?? user.is_tenant_admin),
     });
@@ -412,6 +414,7 @@ function EditUserDialog({
         is_org_admin: roleValue === 'owner' || roleValue === 'system_admin',
         is_default: membershipForm.is_default,
         branch_id: form.branch_id || null,
+        branch_ids: form.branch_ids.map(Number),
         job_title: form.job_title,
       };
       if (selectedMembership) {
@@ -640,11 +643,38 @@ function EditUserDialog({
                   <SelectTrigger><SelectValue placeholder="No branch" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="__none__">No branch</SelectItem>
-                    {membershipBranches.map((branch: any) => (
+              {membershipBranches.map((branch: any) => (
                       <SelectItem key={branch.id} value={String(branch.id)}>{branch.name}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
+              </div>
+            )}
+            {membershipForm.tenant_id && membershipBranches.length > 0 && (
+              <div className="space-y-1.5">
+                <Label>Branches this user can access</Label>
+                <div className="grid grid-cols-2 gap-2 rounded-md border p-3">
+                  {membershipBranches.map((branch: any) => {
+                    const branchValue = String(branch.id);
+                    const checked = form.branch_ids.includes(branchValue);
+                    return (
+                      <label key={branch.id} className="flex cursor-pointer items-center gap-2 text-sm">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(event) => setForm((current) => ({
+                            ...current,
+                            branch_ids: event.target.checked
+                              ? Array.from(new Set([...current.branch_ids, branchValue]))
+                              : current.branch_ids.filter((id) => id !== branchValue),
+                          }))}
+                        />
+                        {branch.name}
+                      </label>
+                    );
+                  })}
+                </div>
+                <p className="text-xs text-muted-foreground">Choose one or more branches. The default branch is used automatically; users with more than one branch can select it when working.</p>
               </div>
             )}
             <div className="flex items-center justify-between rounded border px-3 py-2 text-sm">

@@ -401,12 +401,15 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
     ? currentFlowOpenTransaction
     : null;
   const hasDuplicateOpenTransaction = Boolean(duplicateOpenFirstWeight || duplicateOpenSecondWeight);
-  const effectiveBranchId = isSecondFlow ? String(firstTransaction?.branch ?? '') : branchId;
+  // A second weighing inherits the branch of its paired first weighing. Until
+  // a plate is selected, keep the operator's default branch active so the
+  // indicator and camera do not show an unnecessary "Select branch" state.
+  const effectiveBranchId = isSecondFlow ? String(firstTransaction?.branch ?? branchId) : branchId;
   const effectiveBranchName = isSecondFlow
     ? firstTransaction?.branch_name ?? ''
     : branchList.find((branch: any) => String(branch.id) === effectiveBranchId)?.name ?? '';
   const effectiveWeight = manualMode ? (parseInt(manualWeight, 10) || null) : capturedWeight;
-  const shouldShowBranchSelector = !isSecondFlow && selectableBranchList.length > 1;
+  const shouldShowBranchSelector = selectableBranchList.length > 1;
   const netWeight = isSecondFlow && firstTransaction && effectiveWeight
     ? Math.abs(Number(firstTransaction.gross_weight || 0) - Number(effectiveWeight))
     : null;
@@ -941,7 +944,7 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
                 {shouldShowBranchSelector ? (
                   <div className="space-y-1.5">
                     <Label required>Branch</Label>
-                    <Select value={branchId} onValueChange={(value) => { setBranchId(value); transactionErrors.clearField('branch'); }}>
+                    <Select value={effectiveBranchId} onValueChange={(value) => { setBranchId(value); transactionErrors.clearField('branch'); }} disabled={isSecondFlow && !!firstTransaction}>
                       <SelectTrigger name="branch" aria-required="true" aria-invalid={!!transactionErrors.errors.fields.branch} aria-describedby={transactionErrors.errors.fields.branch ? 'branch-error' : undefined}><SelectValue placeholder="Select branch" /></SelectTrigger>
                       <SelectContent>
                         {selectableBranchList.map((branch: any) => (

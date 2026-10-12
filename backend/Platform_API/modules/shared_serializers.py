@@ -934,6 +934,20 @@ class OrganizationMembershipSerializer(serializers.ModelSerializer):
     tenant_name = serializers.CharField(source="tenant.name", read_only=True)
     tenant_code = serializers.CharField(source="tenant.code", read_only=True)
     branch_name = serializers.CharField(source="branch.name", read_only=True)
+    branch_ids = serializers.SerializerMethodField()
+    branches = serializers.SerializerMethodField()
+
+    def get_branch_ids(self, obj):
+        branch_ids = list(obj.branches.values_list("id", flat=True))
+        if obj.branch_id and obj.branch_id not in branch_ids:
+            branch_ids.insert(0, obj.branch_id)
+        return branch_ids
+
+    def get_branches(self, obj):
+        branches = list(obj.branches.order_by("name").values("id", "name"))
+        if obj.branch_id and not any(branch["id"] == obj.branch_id for branch in branches):
+            branches.insert(0, {"id": obj.branch_id, "name": obj.branch.name})
+        return branches
 
     class Meta:
         model = OrganizationMembership
@@ -944,6 +958,8 @@ class OrganizationMembershipSerializer(serializers.ModelSerializer):
             "tenant_code",
             "branch",
             "branch_name",
+            "branch_ids",
+            "branches",
             "role",
             "role_group_name",
             "is_org_admin",
@@ -971,6 +987,8 @@ class UserProfileSerializer(serializers.ModelSerializer):
     tenant_name = serializers.SerializerMethodField()
     branch_id = serializers.SerializerMethodField()
     branch_name = serializers.SerializerMethodField()
+    branch_ids = serializers.SerializerMethodField()
+    assigned_branches = serializers.SerializerMethodField()
     job_title = serializers.SerializerMethodField()
     is_org_admin = serializers.SerializerMethodField()
     is_tenant_admin = serializers.SerializerMethodField()
@@ -1000,6 +1018,8 @@ class UserProfileSerializer(serializers.ModelSerializer):
             "tenant_name",
             "branch_id",
             "branch_name",
+            "branch_ids",
+            "assigned_branches",
             "job_title",
             "is_org_admin",
             "is_tenant_admin",
@@ -1062,6 +1082,26 @@ class UserProfileSerializer(serializers.ModelSerializer):
             return membership.branch.name
         p = self._profile(obj)
         return p.branch.name if p and p.branch_id else None
+
+    def get_branch_ids(self, obj):
+        membership = self._active_membership(obj)
+        if membership:
+            branch_ids = list(membership.branches.values_list("id", flat=True))
+            if membership.branch_id and membership.branch_id not in branch_ids:
+                branch_ids.insert(0, membership.branch_id)
+            return branch_ids
+        profile = self._profile(obj)
+        return [profile.branch_id] if profile and profile.branch_id else []
+
+    def get_assigned_branches(self, obj):
+        membership = self._active_membership(obj)
+        if membership:
+            branches = list(membership.branches.order_by("name").values("id", "name"))
+            if membership.branch_id and not any(branch["id"] == membership.branch_id for branch in branches):
+                branches.insert(0, {"id": membership.branch_id, "name": membership.branch.name})
+            return branches
+        profile = self._profile(obj)
+        return [{"id": profile.branch_id, "name": profile.branch.name}] if profile and profile.branch_id else []
 
     def get_job_title(self, obj):
         membership = self._active_membership(obj)

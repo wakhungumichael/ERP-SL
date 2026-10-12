@@ -775,6 +775,13 @@ class OrganizationMembership(TimeStampedModel):
         blank=True,
         null=True,
     )
+    # `branch` remains the user's default location. This relation controls all
+    # locations the member may work from within the organization.
+    branches = models.ManyToManyField(
+        TenantBranch,
+        related_name="organization_member_assignments",
+        blank=True,
+    )
     role = models.CharField(max_length=32, choices=ROLE_CHOICES, default="member")
     role_group_name = models.CharField(max_length=150, blank=True)
     is_org_admin = models.BooleanField(default=False)

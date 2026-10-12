@@ -3068,6 +3068,17 @@ class PlatformUserMembershipListCreateAPIView(APIView):
             branch = TenantBranch.objects.filter(pk=branch_id, tenant=tenant).first()
             if not branch:
                 return error_response("Branch not found for this organization.", status_code=status.HTTP_400_BAD_REQUEST)
+        branch_ids = request.data.get("branch_ids")
+        if branch_ids is not None:
+            if not isinstance(branch_ids, list):
+                return error_response("branch_ids must be a list.", status_code=status.HTTP_400_BAD_REQUEST)
+            assigned_branches = list(TenantBranch.objects.filter(tenant=tenant, pk__in=branch_ids, is_active=True))
+            if len(assigned_branches) != len({str(value) for value in branch_ids}):
+                return error_response("One or more assigned branches do not belong to this organization.", status_code=status.HTTP_400_BAD_REQUEST)
+            if branch is None and assigned_branches:
+                branch = assigned_branches[0]
+        else:
+            assigned_branches = [branch] if branch else []
 
         role_group_name = str(request.data.get("role_group_name") or request.data.get("role_group") or "").strip()
         is_org_admin = bool(request.data.get("is_org_admin")) or role_group_name == "Tenant Admin"
@@ -3087,6 +3098,7 @@ class PlatformUserMembershipListCreateAPIView(APIView):
                     "job_title": str(request.data.get("job_title") or "").strip(),
                 },
             )
+            membership.branches.set(assigned_branches)
             if is_default or not OrganizationMembership.objects.filter(user=target_user, is_default=True, is_active=True).exclude(pk=membership.pk).exists():
                 OrganizationMembership.objects.filter(user=target_user).exclude(pk=membership.pk).update(is_default=False)
                 membership.is_default = True
@@ -3124,6 +3136,17 @@ class PlatformUserMembershipDetailAPIView(APIView):
                     return error_response("Branch not found for this organization.", status_code=status.HTTP_400_BAD_REQUEST)
                 membership.branch = branch
 
+        assigned_branches = None
+        if "branch_ids" in request.data:
+            branch_ids = request.data.get("branch_ids")
+            if not isinstance(branch_ids, list):
+                return error_response("branch_ids must be a list.", status_code=status.HTTP_400_BAD_REQUEST)
+            assigned_branches = list(TenantBranch.objects.filter(tenant=membership.tenant, pk__in=branch_ids, is_active=True))
+            if len(assigned_branches) != len({str(value) for value in branch_ids}):
+                return error_response("One or more assigned branches do not belong to this organization.", status_code=status.HTTP_400_BAD_REQUEST)
+            if membership.branch_id is None and assigned_branches:
+                membership.branch = assigned_branches[0]
+
         if "role" in request.data:
             membership.role = str(request.data.get("role") or "member")
         if "role_group_name" in request.data:
@@ -3137,6 +3160,8 @@ class PlatformUserMembershipDetailAPIView(APIView):
 
         with transaction.atomic():
             membership.save()
+            if assigned_branches is not None:
+                membership.branches.set(assigned_branches)
             if bool(request.data.get("is_default")):
                 OrganizationMembership.objects.filter(user=membership.user).exclude(pk=membership.pk).update(is_default=False)
                 membership.is_default = True

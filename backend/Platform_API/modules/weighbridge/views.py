@@ -3011,7 +3011,31 @@ def _allowed_branch_ids(user):
         return Branch.objects.none().values_list("id", flat=True)
     if resolved is None:
         return Branch.objects.all().values_list("id", flat=True)
-    return get_operational_branches_for_tenant(resolved).values_list("id", flat=True)
+
+    # Tenant administrators retain tenant-wide access. Other users are scoped
+    # to their assigned locations once assignments have been configured.
+    branches = get_operational_branches_for_tenant(resolved)
+    if _is_weighbridge_tenant_admin(user):
+        return branches.values_list("id", flat=True)
+
+    membership = (
+        OrganizationMembership.objects.filter(user=user, tenant=resolved, is_active=True)
+        .select_related("branch")
+        .prefetch_related("branches")
+        .order_by("-is_default", "id")
+        .first()
+    )
+    assigned_names = []
+    if membership:
+        assigned_names = list(membership.branches.values_list("name", flat=True))
+        if membership.branch_id and membership.branch.name not in assigned_names:
+            assigned_names.append(membership.branch.name)
+    if assigned_names:
+        return branches.filter(name__in=assigned_names).values_list("id", flat=True)
+
+    # Preserve existing tenant access for legacy users until an administrator
+    # assigns their branches. New assignments are always enforced above.
+    return branches.values_list("id", flat=True)
 
 
 def _require_reference_write_access(user, model, action):
