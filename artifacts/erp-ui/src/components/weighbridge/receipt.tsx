@@ -14,6 +14,8 @@ export interface ReceiptTransaction {
   vehicle_plate?: string;
   vehicle_type_name?: string;
   operator?: string;
+  actor_display_name?: string;
+  actor_username?: string;
   item_name?: string;
   weight_type?: string;
   gross_weight?: number | null;
@@ -189,6 +191,7 @@ export function ReceiptDialog({ transaction: t, open, onOpenChange, token }: Rec
 
   const canPrintReceipt = t.status === 'Completed';
   const receiptStatusLabel = t.payment_status || 'Pending';
+  const receiptOperator = t.actor_display_name || t.actor_username || t.operator || '';
   const txNum = String(t.id).padStart(5, '0');
   const settings = settingsData?.data ?? settingsData ?? {};
   const tenantCompanyName = (user as any)?.tenant_name || 'SL-ERP';
@@ -313,7 +316,7 @@ export function ReceiptDialog({ transaction: t, open, onOpenChange, token }: Rec
                 ['Customer', t.customer_name],
                 ['Item / Commodity', t.item_name],
                 ['Destination', t.destination],
-                ['Operator', t.operator],
+                ['Operator', receiptOperator],
               ] as [string, string | undefined][]).map(([label, value]) => value ? (
                 <div key={label} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
                   <span style={{ color: '#444' }}>{label}</span>

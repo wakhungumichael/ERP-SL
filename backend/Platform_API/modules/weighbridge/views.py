@@ -1774,7 +1774,7 @@ class TransactionEmailReceiptView(APIView):
         try:
             tx = _get_tenant_scoped_transaction(
                 request.user, pk,
-                select_related=["branch", "customer", "vehicle", "item", "vehicle_type"],
+                select_related=["branch", "customer", "vehicle", "item", "vehicle_type", "created_by", "last_modified_by"],
             )
         except Transaction.DoesNotExist:
             return Response({"error": f"Transaction {pk} not found."}, status=status.HTTP_404_NOT_FOUND)
@@ -1806,6 +1806,7 @@ class TransactionEmailReceiptView(APIView):
         customer_name = tx.customer.name if tx.customer else "—"
         item_name = tx.item.name if tx.item else "—"
         vtype = tx.vehicle_type.name if tx.vehicle_type else "—"
+        operator_name = _transaction_operator_display(tx) or "—"
 
         def _kg(v):
             if v is None:
@@ -1843,7 +1844,7 @@ class TransactionEmailReceiptView(APIView):
             f"Customer:       {customer_name}",
             f"Item:           {item_name}",
             f"Destination:    {tx.destination or '—'}",
-            f"Operator:       {tx.operator or '—'}",
+            f"Operator:       {operator_name}",
             "",
             "--- WEIGHTS ---",
             f"Gross Weight:   {_kg(tx.gross_weight)}",
@@ -1884,7 +1885,7 @@ class TransactionEmailReceiptView(APIView):
     <tr><td style="color:#555;padding:3px 0;">Customer</td><td style="font-weight:bold;text-align:right;">{customer_name}</td></tr>
     <tr><td style="color:#555;padding:3px 0;">Item / Commodity</td><td style="font-weight:bold;text-align:right;">{item_name}</td></tr>
     <tr><td style="color:#555;padding:3px 0;">Destination</td><td style="font-weight:bold;text-align:right;">{tx.destination or '—'}</td></tr>
-    <tr><td style="color:#555;padding:3px 0;">Operator</td><td style="font-weight:bold;text-align:right;">{tx.operator or '—'}</td></tr>
+    <tr><td style="color:#555;padding:3px 0;">Operator</td><td style="font-weight:bold;text-align:right;">{operator_name}</td></tr>
   </table>
   <div style="background:#f5f5f5;border:1px solid #000;padding:12px;margin:12px 0;text-align:center;">
     <div style="display:flex;justify-content:space-around;margin-bottom:10px;">
@@ -3082,6 +3083,14 @@ def _apply_transaction_visibility_scope(queryset, user):
     if _can_view_all_transactions(user):
         return queryset
     return queryset.filter(created_by_id=user.id)
+
+
+def _transaction_operator_display(transaction):
+    """Use the captured cashier account name instead of a legacy email string."""
+    actor = getattr(transaction, "created_by", None) or getattr(transaction, "last_modified_by", None)
+    if actor is not None:
+        return (actor.get_full_name() or "").strip() or str(getattr(actor, "username", "") or "").strip()
+    return str(getattr(transaction, "operator", "") or "")
 
 
 def _require_reference_write_access(user, model, action):
