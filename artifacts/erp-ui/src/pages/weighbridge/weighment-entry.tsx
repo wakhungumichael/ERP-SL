@@ -418,9 +418,10 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
   // a plate is selected, keep the operator's default branch active so the
   // indicator and camera do not show an unnecessary "Select branch" state.
   const effectiveBranchId = isSecondFlow ? String(firstTransaction?.branch ?? branchId) : branchId;
+  const selectedBranchName = branchList.find((branch: any) => String(branch.id) === effectiveBranchId)?.name ?? '';
   const effectiveBranchName = isSecondFlow
-    ? firstTransaction?.branch_name ?? ''
-    : branchList.find((branch: any) => String(branch.id) === effectiveBranchId)?.name ?? '';
+    ? firstTransaction?.branch_name ?? selectedBranchName
+    : selectedBranchName;
   const effectiveWeight = manualMode ? (parseInt(manualWeight, 10) || null) : capturedWeight;
   const shouldShowBranchSelector = selectableBranchList.length > 1;
   const netWeight = isSecondFlow && firstTransaction && effectiveWeight
