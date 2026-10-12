@@ -148,11 +148,12 @@ export default function FirstWeightPage() {
     enabled: !!customerId,
   });
   const { data: items } = useQuery({
-    queryKey: ['items-picker'],
+    queryKey: ['items-picker', branchId],
     queryFn: async () => {
       const token = fetchToken();
-      return fetch('/api/commercial-weighbridge/items/', { headers: { Authorization: `Token ${token}` } }).then(r => r.json());
+      return fetch(`/api/commercial-weighbridge/items/?branch_id=${encodeURIComponent(branchId)}`, { headers: { Authorization: `Token ${token}` } }).then(r => r.json());
     },
+    enabled: !!branchId,
   });
   const { data: vehicleTypesRaw } = useQuery({
     queryKey: ['wb-vehicle-types'],
@@ -303,17 +304,23 @@ export default function FirstWeightPage() {
   };
 
   const createItem = async () => {
+    if (!branchId) throw new Error('Select your branch before adding a commodity.');
     const res = await fetch('/api/commercial-weighbridge/items/', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Token ${fetchToken()}` },
-      body: JSON.stringify(itemForm),
+      body: JSON.stringify({ ...itemForm, branch_id: Number(branchId) }),
     });
     if (!res.ok) throw await apiErrorFromResponse(res, 'The commodity could not be added.');
     const response = await res.json();
     const item = response?.data ?? response;
     if (!item?.id) throw new Error('Commodity was created, but no commodity record was returned.');
+    queryClient.setQueryData(['items-picker', branchId], (current: any) => {
+      const rows = Array.isArray(current) ? current : current?.results;
+      if (!Array.isArray(rows) || rows.some((row: any) => String(row.id) === String(item.id))) return current;
+      const next = [...rows, item].sort((left, right) => String(left.name).localeCompare(String(right.name)));
+      return Array.isArray(current) ? next : { ...current, results: next };
+    });
     await queryClient.invalidateQueries({ queryKey: ['items-picker'] });
-    await queryClient.refetchQueries({ queryKey: ['items-picker'], type: 'active' });
     setItemId(String(item.id));
     setItemOpen(false);
     setItemForm({ name: '', description: '' });

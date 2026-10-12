@@ -141,9 +141,12 @@ def _tenant_scoped_reference_queryset(qs, user):
 
 
 class ItemSerializer(serializers.ModelSerializer):
+    branch_name = serializers.CharField(source="branch.name", read_only=True)
+
     class Meta:
         model = Item
-        fields = ["id", "name", "description", "currency"]
+        fields = ["id", "name", "description", "currency", "branch", "branch_name"]
+        read_only_fields = ["branch", "branch_name"]
 
 
 class CustomerSerializer(serializers.ModelSerializer):
@@ -2164,7 +2167,9 @@ class BranchListView(generics.ListAPIView):
                 return Branch.objects.none()
         if resolved is None:
             return Branch.objects.all().order_by("name")
-        return get_operational_branches_for_tenant(resolved)
+        return get_operational_branches_for_tenant(resolved).filter(
+            id__in=_allowed_branch_ids(self.request.user)
+        )
 
 
 # ── Settings / configuration CRUD ────────────────────────────────────────────
@@ -2410,11 +2415,25 @@ class ItemListCreateView(generics.ListCreateAPIView):
     queryset = Item.objects.all().order_by("name")
 
     def get_queryset(self):
-        return _tenant_scoped_reference_queryset(self.queryset, self.request.user)
+        queryset = _tenant_scoped_reference_queryset(self.queryset, self.request.user)
+        branch_id = self.request.query_params.get("branch_id")
+        if not branch_id:
+            return queryset
+        allowed = _allowed_branch_ids(self.request.user)
+        if not Branch.objects.filter(pk=branch_id, id__in=allowed).exists():
+            return queryset.none()
+        # Null is retained only for legacy tenant-wide commodities. All newly
+        # created commodities are owned by one operational branch.
+        return queryset.filter(Q(branch_id=branch_id) | Q(branch__isnull=True))
 
     def perform_create(self, serializer):
         _require_reference_write_access(self.request.user, Item, "add")
-        serializer.save(tenant=_get_request_user_tenant(self.request.user))
+        branch_id = self.request.data.get("branch_id")
+        allowed = _allowed_branch_ids(self.request.user)
+        branch = Branch.objects.filter(pk=branch_id, id__in=allowed).first() if branch_id else None
+        if branch is None:
+            raise serializers.ValidationError({"branch_id": "Choose a branch you are assigned to."})
+        serializer.save(tenant=_get_request_user_tenant(self.request.user), branch=branch)
 
 
 class ItemDetailView(generics.RetrieveUpdateDestroyAPIView):
@@ -2423,11 +2442,20 @@ class ItemDetailView(generics.RetrieveUpdateDestroyAPIView):
     queryset = Item.objects.all()
 
     def get_queryset(self):
-        return _tenant_scoped_reference_queryset(self.queryset, self.request.user)
+        queryset = _tenant_scoped_reference_queryset(self.queryset, self.request.user)
+        return queryset.filter(Q(branch_id__in=_allowed_branch_ids(self.request.user)) | Q(branch__isnull=True))
 
     def perform_update(self, serializer):
         _require_reference_write_access(self.request.user, Item, "change")
-        serializer.save()
+        branch_id = self.request.data.get("branch_id")
+        if branch_id is None:
+            serializer.save()
+            return
+        allowed = _allowed_branch_ids(self.request.user)
+        branch = Branch.objects.filter(pk=branch_id, id__in=allowed).first()
+        if branch is None:
+            raise serializers.ValidationError({"branch_id": "Choose a branch you are assigned to."})
+        serializer.save(branch=branch)
 
     def perform_destroy(self, instance):
         _require_reference_write_access(self.request.user, Item, "delete")

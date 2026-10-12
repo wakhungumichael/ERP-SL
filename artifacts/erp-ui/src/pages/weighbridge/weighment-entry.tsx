@@ -359,10 +359,6 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
     enabled: plateInput.trim().length >= 2,
     staleTime: 30_000,
   });
-  const { data: items } = useQuery({
-    queryKey: ['wb-items-entry'],
-    queryFn: async () => fetch('/api/commercial-weighbridge/items/', { headers: authHeaders() }).then((res) => res.json()),
-  });
   const { data: vehicleTypesRaw } = useQuery({
     queryKey: ['wb-vehicle-types-entry'],
     queryFn: async () => fetch('/api/commercial-weighbridge/vehicle-types/', { headers: authHeaders() }).then((res) => res.json()),
@@ -388,7 +384,6 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
   const customerList = Array.isArray(customers) ? customers : (customers as any)?.results ?? [];
   const vehicleList = Array.isArray(vehicles) ? vehicles : (vehicles as any)?.results ?? [];
   const searchedVehicles = Array.isArray(vehicleSearchResults) ? vehicleSearchResults : (vehicleSearchResults as any)?.results ?? [];
-  const itemList = Array.isArray(items) ? items : (items as any)?.results ?? [];
   const vehicleTypeList = Array.isArray(vehicleTypesRaw) ? vehicleTypesRaw : (vehicleTypesRaw as any)?.results ?? [];
   const operationTypeList: OperationType[] = (Array.isArray(operationTypesRaw) ? operationTypesRaw : (operationTypesRaw as any)?.results ?? []).filter((row: any) => row.is_active);
   const selectedOperation = operationTypeList.find((row) => String(row.id) === operationTypeId) ?? null;
@@ -422,6 +417,12 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
   const effectiveBranchName = isSecondFlow
     ? firstTransaction?.branch_name ?? selectedBranchName
     : selectedBranchName;
+  const { data: items } = useQuery({
+    queryKey: ['wb-items-entry', effectiveBranchId],
+    queryFn: async () => fetch(`/api/commercial-weighbridge/items/?branch_id=${encodeURIComponent(effectiveBranchId)}`, { headers: authHeaders() }).then((res) => res.json()),
+    enabled: !!effectiveBranchId,
+  });
+  const itemList = Array.isArray(items) ? items : (items as any)?.results ?? [];
   const effectiveWeight = manualMode ? (parseInt(manualWeight, 10) || null) : capturedWeight;
   const shouldShowBranchSelector = selectableBranchList.length > 1;
   const netWeight = isSecondFlow && firstTransaction && effectiveWeight
@@ -574,17 +575,23 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
   };
 
   const createItem = async () => {
+    if (!effectiveBranchId) throw new Error('Select your branch before adding a commodity.');
     const res = await fetch('/api/commercial-weighbridge/items/', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...authHeaders() },
-      body: JSON.stringify(itemForm),
+      body: JSON.stringify({ ...itemForm, branch_id: Number(effectiveBranchId) }),
     });
     if (!res.ok) throw await apiErrorFromResponse(res, 'The commodity could not be added.');
     const response = await res.json();
     const item = response?.data ?? response;
     if (!item?.id) throw new Error('Commodity was created, but no commodity record was returned.');
+    queryClient.setQueryData(['wb-items-entry', effectiveBranchId], (current: any) => {
+      const rows = Array.isArray(current) ? current : current?.results;
+      if (!Array.isArray(rows) || rows.some((row: any) => String(row.id) === String(item.id))) return current;
+      const next = [...rows, item].sort((left, right) => String(left.name).localeCompare(String(right.name)));
+      return Array.isArray(current) ? next : { ...current, results: next };
+    });
     await queryClient.invalidateQueries({ queryKey: ['wb-items-entry'] });
-    await queryClient.refetchQueries({ queryKey: ['wb-items-entry'], type: 'active' });
     setItemId(String(item.id));
     setItemOpen(false);
     setItemForm({ name: '', description: '' });

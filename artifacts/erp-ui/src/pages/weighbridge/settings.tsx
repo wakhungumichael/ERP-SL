@@ -662,7 +662,7 @@ function VehicleTypesTab() {
 // TAB 3 — Items
 // ══════════════════════════════════════════════════════════════════════════════
 
-type Item = { id?: number; name: string; description?: string };
+type Item = { id?: number; name: string; description?: string; branch?: number | null; branch_name?: string; branch_id?: string };
 type ItemRow = Item & { id: number };
 const emptyItem = (): Item => ({ name: '', description: '' });
 
@@ -673,7 +673,9 @@ function ItemsTab() {
   const invalidate = useCallback(() => qc.invalidateQueries({ queryKey: ['/api/commercial-weighbridge/items/'] }), [qc]);
 
   const { data: _itemsRaw, isLoading } = useFetch<any>('/api/commercial-weighbridge/items/', token);
+  const { data: branchesRaw } = useFetch<any>(ERP_BRANCHES_ENDPOINT, token);
   const items: Item[] = Array.isArray(_itemsRaw?.results) ? _itemsRaw.results : Array.isArray(_itemsRaw) ? _itemsRaw : [];
+  const branches = normalizeBranchList(branchesRaw);
 
   const [open, setOpen]   = useState(false);
   const [form, setForm]   = useState<Item>(emptyItem());
@@ -707,10 +709,17 @@ function ItemsTab() {
       cellClassName: 'text-muted-foreground text-sm',
       render: (item) => item.description || '—',
     },
+    {
+      key: 'branch_name',
+      label: 'Branch',
+      headerClassName: 'text-[10px] font-bold uppercase tracking-widest',
+      cellClassName: 'text-sm',
+      render: (item) => item.branch_name || 'Tenant-wide legacy item',
+    },
   ];
 
-  function openNew() { setForm(emptyItem()); setOpen(true); }
-  function openEdit(item: Item) { setForm({ ...item }); setOpen(true); }
+  function openNew() { setForm({ ...emptyItem(), branch_id: branches.length === 1 ? String(branches[0].id) : '' }); setOpen(true); }
+  function openEdit(item: Item) { setForm({ ...item, branch_id: item.branch ? String(item.branch) : '' }); setOpen(true); }
 
   function save() {
     if (form.id) {
@@ -767,10 +776,19 @@ function ItemsTab() {
               <Label>Description</Label>
               <Textarea value={form.description ?? ''} onChange={e => set('description', e.target.value)} rows={2} placeholder="Optional" />
             </div>
+            <div className="space-y-1.5">
+              <Label required>Branch</Label>
+              <Select value={form.branch_id ?? ''} onValueChange={value => set('branch_id', value)}>
+                <SelectTrigger><SelectValue placeholder="Select branch" /></SelectTrigger>
+                <SelectContent>
+                  {branches.map(branch => <SelectItem key={branch.id} value={String(branch.id)}>{branch.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
-            <Button onClick={save} disabled={mut.isPending}>
+            <Button onClick={save} disabled={mut.isPending || !form.name.trim() || !form.branch_id}>
               {mut.isPending ? 'Saving…' : form.id ? 'Save changes' : 'Add item'}
             </Button>
           </DialogFooter>

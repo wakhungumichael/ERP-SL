@@ -322,6 +322,14 @@ class Item(models.Model):
         blank=True,
         related_name='weighbridge_items',
     )
+    branch = models.ForeignKey(
+        Branch,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='items',
+        help_text="Branch that owns this commodity. Blank items remain tenant-wide legacy references.",
+    )
     name = models.CharField(max_length=255)
     description = models.TextField(blank=True, null=True)
     currency = models.ForeignKey(Currency, on_delete=models.SET_NULL, null=True)
