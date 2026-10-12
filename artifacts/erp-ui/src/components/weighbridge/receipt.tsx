@@ -111,14 +111,19 @@ export function ReceiptDialog({ transaction: t, open, onOpenChange, token }: Rec
           throw new Error(body?.error ?? `Failed to open receipt (${res.status})`);
         }
         const html = await res.text();
-        // Waiting for the new document's load event lets the configured logo
-        // finish loading before the browser opens its native printer dialog.
-        printWindow.addEventListener('load', () => {
-          printWindow.focus();
-          printWindow.print();
-        }, { once: true });
+        // Put the handler in the generated document. Its load event reliably
+        // fires after document.write(), including after the branding logo loads.
+        const printScript = `<script>
+          window.addEventListener('load', function () {
+            window.setTimeout(function () {
+              window.focus();
+              window.print();
+            }, 250);
+          }, { once: true });
+        <\/script>`;
+        const printableHtml = html.replace(/<\/body>/i, `${printScript}</body>`);
         printWindow.document.open();
-        printWindow.document.write(html);
+        printWindow.document.write(printableHtml);
         printWindow.document.close();
       })
       .catch((error: Error) => {
