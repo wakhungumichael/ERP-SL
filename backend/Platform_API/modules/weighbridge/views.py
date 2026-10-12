@@ -988,6 +988,7 @@ class TransactionListCreateView(generics.ListCreateAPIView):
                 return qs.none()
             qs = qs.filter(tenant=resolved)
             qs = _apply_teller_receipt_window(qs, self.request.user, resolved)
+        qs = _apply_transaction_visibility_scope(qs, self.request.user)
 
         if branch_id := params.get("branch_id"):
             # For non-superusers, verify the requested branch is associated
@@ -1136,6 +1137,7 @@ class TransactionDetailView(generics.RetrieveUpdateAPIView):
     def get_queryset(self):
         qs = Transaction.objects.select_related("branch", "customer", "vehicle", "item", "vehicle_type", "created_by", "last_modified_by")
         qs = _apply_tenant_filter(qs, self.request.user)
+        qs = _apply_transaction_visibility_scope(qs, self.request.user)
         resolved = _resolve_user_tenant(self.request.user)
         if resolved is not None and not isinstance(resolved, _NoTenantProfile):
             qs = _apply_teller_receipt_window(qs, self.request.user, resolved)
@@ -2013,6 +2015,7 @@ class TransactionExportCSVView(APIView):
         # - Profiled non-superusers export only their tenant's transactions
         # - Profileless non-superusers export nothing (deny-all)
         qs = _apply_tenant_filter(qs, request.user)
+        qs = _apply_transaction_visibility_scope(qs, request.user)
 
         params = request.query_params
         from django.db.models import Q
@@ -3036,6 +3039,21 @@ def _allowed_branch_ids(user):
     # Preserve existing tenant access for legacy users until an administrator
     # assigns their branches. New assignments are always enforced above.
     return branches.values_list("id", flat=True)
+
+
+def _can_view_all_transactions(user):
+    return (
+        getattr(user, "is_superuser", False)
+        or _is_weighbridge_tenant_admin(user)
+        or user.has_perm("SL_Weighbridge.can_view_all_weighbridge_transactions")
+    )
+
+
+def _apply_transaction_visibility_scope(queryset, user):
+    """Limit teller records to transactions they originally captured."""
+    if _can_view_all_transactions(user):
+        return queryset
+    return queryset.filter(created_by_id=user.id)
 
 
 def _require_reference_write_access(user, model, action):

@@ -452,6 +452,7 @@ class Transaction(models.Model):
                 ("can_capture_first_weight", "Can capture first weight"),
                 ("can_capture_second_weight", "Can capture second weight"),
                 ("can_view_live_weight", "Can view live weight"),
+                ("can_view_all_weighbridge_transactions", "Can view all weighbridge transactions"),
                 ("can_manage_weighbridge_reports", "Can manage weighbridge reports"),
                 ("can_manage_weighbridge_settings", "Can manage weighbridge settings"),
                 ("can_manage_vehicle_presence", "Can manage vehicle presence"),
