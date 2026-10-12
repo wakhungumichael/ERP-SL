@@ -1010,6 +1010,16 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
                         }}
                         onFocus={() => setShowVehicleResults(true)}
                       />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="shrink-0"
+                        onClick={() => void findVehicleByPlate()}
+                        disabled={!plateInput.trim()}
+                      >
+                        <Search className="mr-1.5 h-4 w-4" />Find vehicle
+                      </Button>
                       {searchingVehicles ? <span className="text-xs text-muted-foreground">searching…</span> : null}
                     </div>
                     {showVehicleResults && plateInput.trim().length >= 2 && (
