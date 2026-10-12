@@ -130,6 +130,7 @@ export default function FirstWeightPage() {
 
   const fetchToken = () => localStorage.getItem('sl-erp-token');
   const userBranchId = String((user as any)?.branch_id ?? '');
+  const userBranchName = String((user as any)?.branch_name ?? '');
 
   const { data: branches } = useQuery({
     queryKey: ERP_BRANCHES_QUERY_KEY,
@@ -174,14 +175,17 @@ export default function FirstWeightPage() {
 
   useEffect(() => {
     if (branchId || branchList.length === 0) return;
-    if (userBranchId && branchList.some((branch: any) => String(branch.id) === userBranchId)) {
-      setBranchId(userBranchId);
+    const preferredBranch = branchList.find((branch: any) => (
+      String(branch.id) === userBranchId || branch.name === userBranchName
+    ));
+    if (preferredBranch) {
+      setBranchId(String(preferredBranch.id));
       return;
     }
     if (branchList.length === 1) {
       setBranchId(String(branchList[0].id));
     }
-  }, [branchId, branchList, userBranchId]);
+  }, [branchId, branchList, userBranchId, userBranchName]);
 
   useEffect(() => {
     if (!selectedOperationType?.id || operationTypeId) return;

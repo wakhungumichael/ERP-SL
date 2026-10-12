@@ -277,6 +277,15 @@ function extractAssignedBranchIds(user: Record<string, unknown> | null): string[
   return Array.from(new Set(values)) as string[];
 }
 
+function extractAssignedBranchNames(user: Record<string, unknown> | null): string[] {
+  if (!user) return [];
+  const candidates = [user.assigned_branches, user.branches];
+  return Array.from(new Set(candidates.flatMap((candidate) => {
+    if (!Array.isArray(candidate)) return [];
+    return candidate.map((entry: any) => String(entry?.name ?? '')).filter(Boolean);
+  })));
+}
+
 export default function WeighmentEntryPage({ preferredFlow = 'first' }: { preferredFlow?: RouteFlow }) {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
@@ -322,7 +331,9 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
 
   const fetchToken = () => localStorage.getItem('sl-erp-token') || '';
   const userBranchId = String((user as any)?.branch_id ?? '');
+  const userBranchName = String((user as any)?.branch_name ?? '');
   const assignedBranchIds = useMemo(() => extractAssignedBranchIds(user), [user]);
+  const assignedBranchNames = useMemo(() => extractAssignedBranchNames(user), [user]);
   const operatorName = (user as any)?.full_name || (user as any)?.name || (user as any)?.username || '';
 
   const { data: branches } = useQuery({
@@ -363,15 +374,17 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
 
   const branchList = Array.isArray(branches) ? branches : [];
   const selectableBranchList = useMemo(() => {
-    if (assignedBranchIds.length > 0) {
-      return branchList.filter((branch: any) => assignedBranchIds.includes(String(branch.id)));
+    if (assignedBranchIds.length > 0 || assignedBranchNames.length > 0) {
+      return branchList.filter((branch: any) => (
+        assignedBranchIds.includes(String(branch.id)) || assignedBranchNames.includes(branch.name)
+      ));
     }
     if (userBranchId) {
       const primaryBranch = branchList.find((branch: any) => String(branch.id) === userBranchId);
       if (primaryBranch) return [primaryBranch];
     }
     return branchList;
-  }, [assignedBranchIds, branchList, userBranchId]);
+  }, [assignedBranchIds, assignedBranchNames, branchList, userBranchId]);
   const customerList = Array.isArray(customers) ? customers : (customers as any)?.results ?? [];
   const vehicleList = Array.isArray(vehicles) ? vehicles : (vehicles as any)?.results ?? [];
   const searchedVehicles = Array.isArray(vehicleSearchResults) ? vehicleSearchResults : (vehicleSearchResults as any)?.results ?? [];
@@ -416,14 +429,17 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
 
   useEffect(() => {
     if (branchId || selectableBranchList.length === 0) return;
-    if (userBranchId && selectableBranchList.some((branch: any) => String(branch.id) === userBranchId)) {
-      setBranchId(userBranchId);
+    const preferredBranch = selectableBranchList.find((branch: any) => (
+      String(branch.id) === userBranchId || branch.name === userBranchName
+    ));
+    if (preferredBranch) {
+      setBranchId(String(preferredBranch.id));
       return;
     }
     if (selectableBranchList.length >= 1) {
       setBranchId(String(selectableBranchList[0].id));
     }
-  }, [branchId, selectableBranchList, userBranchId]);
+  }, [branchId, selectableBranchList, userBranchId, userBranchName]);
 
   useEffect(() => {
     if (!branchId) return;
