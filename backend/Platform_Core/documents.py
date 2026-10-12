@@ -337,7 +337,7 @@ def _receipt_stylesheet(primary_color):
       .wb-receipt__details th, .wb-receipt__details td {{ padding: .8mm 1.25mm; border-bottom: 1px solid #e5e7eb; text-align: left; }}
       .wb-receipt__details th {{ width: 14%; color: #6b7280; font-size: 7pt; letter-spacing: .07em; text-transform: uppercase; }}
       .wb-receipt__details td {{ width: 36%; font-weight: 700; }}
-      .wb-receipt__weights thead {{ background: {brand_color}; color: #fff; }}
+      .wb-receipt__weights thead, .wb-receipt__weights thead th {{ background: {brand_color}; color: #fff; }}
       .wb-receipt__weights th, .wb-receipt__weights td {{ padding: 1.15mm; border: 1px solid #d1d5db; text-align: left; }}
       .wb-receipt__weights th:last-child, .wb-receipt__weights td:last-child {{ text-align: right; font-weight: 800; }}
       .wb-receipt__weights tfoot {{ background: #f9fafb; }}
@@ -380,7 +380,7 @@ def _receipt_pdf_stylesheet(primary_color):
       .wb-receipt__details th, .wb-receipt__details td {{ padding: .8mm 1.25mm; border-bottom: 1px solid #e5e7eb; text-align: left; }}
       .wb-receipt__details th {{ width: 14%; color: #6b7280; font-size: 6.5pt; letter-spacing: .5pt; text-transform: uppercase; }}
       .wb-receipt__details td {{ width: 36%; font-weight: bold; }}
-      .wb-receipt__weights thead {{ background: {brand_color}; color: #fff; }}
+      .wb-receipt__weights thead, .wb-receipt__weights thead th {{ background: {brand_color}; color: #fff; }}
       .wb-receipt__weights th, .wb-receipt__weights td {{ padding: 1mm; border: 1px solid #d1d5db; text-align: left; }}
       .wb-receipt__weights th:last-child, .wb-receipt__weights td:last-child {{ text-align: right; font-weight: bold; }}
       .wb-receipt__weights tfoot {{ background: #f9fafb; }}
@@ -448,11 +448,15 @@ def _default_body(document_type):
               </thead>
               <tbody>
                 <tr><td>1. First Weight</td><td>{{ weighing.gross_weight_date|default:"-" }}</td><td>{{ weighing.gross_weight_display }}</td></tr>
+                {% if receipt_meta.has_second_weight %}
                 <tr><td>2. Second Weight</td><td>{{ weighing.tare_weight_date|default:"-" }}</td><td>{{ weighing.tare_weight_display }}</td></tr>
+                {% endif %}
               </tbody>
+              {% if receipt_meta.has_second_weight %}
               <tfoot>
                 <tr><th colspan="2">Net Weight</th><th>{{ weighing.net_weight_display }}</th></tr>
               </tfoot>
+              {% endif %}
             </table>
 
             <section class="wb-receipt__payment">
@@ -841,6 +845,10 @@ def _receipt_context(transaction, settings_obj, request=None):
     payment_status = getattr(transaction, "payment_status", "") or "Pending"
     payment_mode = getattr(transaction, "payment_mode", "") or ""
     receipt_label = "PAID" if payment_status == "Paid" else "PAYMENT PENDING"
+    has_second_weight = bool(
+        getattr(transaction, "tare_weight_date", None)
+        or (getattr(transaction, "tare_weight", None) not in (None, 0))
+    )
     transaction_image_url = ""
     if getattr(transaction, "image", None):
         try:
@@ -891,7 +899,7 @@ def _receipt_context(transaction, settings_obj, request=None):
         "document": {
             "number": f"TX-{transaction.pk:05d}",
             "status": payment_status,
-            "issue_date": date_filter(transaction.created_at, "d M Y H:i"),
+            "issue_date": date_filter(transaction.created_at, "d M Y h:i A"),
             "due_date": "",
             "currency": currency,
             "notes": "\n".join(
@@ -922,6 +930,7 @@ def _receipt_context(transaction, settings_obj, request=None):
             "payment_status": payment_status,
             "payment_mode": payment_mode,
             "receipt_label": receipt_label,
+            "has_second_weight": has_second_weight,
             "show_pending_banner": payment_status != "Paid",
             "allow_release": payment_status == "Paid" or payment_mode == "Debt",
         },
@@ -931,11 +940,11 @@ def _receipt_context(transaction, settings_obj, request=None):
             "item_name": getattr(item, "name", "") or "",
             "destination": transaction.destination or "",
             "operator": transaction.operator or "",
-            "gross_weight_display": f"{int(transaction.gross_weight or 0):,}" if transaction.gross_weight is not None else "-",
-            "tare_weight_display": f"{int(transaction.tare_weight or 0):,}" if transaction.tare_weight is not None else "-",
-            "net_weight_display": f"{int(transaction.net_weight or 0):,}" if transaction.net_weight is not None else "-",
-            "gross_weight_date": date_filter(transaction.gross_weight_date, "d M Y H:i") if transaction.gross_weight_date else "",
-            "tare_weight_date": date_filter(transaction.tare_weight_date, "d M Y H:i") if transaction.tare_weight_date else "",
+            "gross_weight_display": f"{int(transaction.gross_weight or 0):,} kg" if transaction.gross_weight is not None else "-",
+            "tare_weight_display": f"{int(transaction.tare_weight or 0):,} kg" if transaction.tare_weight is not None else "-",
+            "net_weight_display": f"{int(transaction.net_weight or 0):,} kg" if transaction.net_weight is not None else "-",
+            "gross_weight_date": date_filter(transaction.gross_weight_date, "d M Y h:i A") if transaction.gross_weight_date else "",
+            "tare_weight_date": date_filter(transaction.tare_weight_date, "d M Y h:i A") if transaction.tare_weight_date else "",
         },
         "transaction_image_url": transaction_image_url,
         "generated_at": timezone.now(),
