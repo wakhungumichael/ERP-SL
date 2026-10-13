@@ -1565,6 +1565,7 @@ class WorkflowDefinitionSerializer(serializers.ModelSerializer):
     entity_bindings = WorkflowEntityBindingSerializer(many=True, read_only=True)
     nodes = WorkflowNodeDefinitionSerializer(many=True, read_only=True)
     transitions = WorkflowTransitionDefinitionSerializer(many=True, read_only=True)
+    version = serializers.ReadOnlyField()
 
     class Meta:
         model = WorkflowDefinition
@@ -1581,6 +1582,14 @@ class WorkflowDefinitionSerializer(serializers.ModelSerializer):
             "scope",
             "trigger_event",
             "description",
+            "status",
+            "version_major",
+            "version_minor",
+            "version",
+            "revision_of",
+            "effective_from",
+            "published_at",
+            "archived_at",
             "is_active",
             "allow_dashboard_quick_actions",
             "metadata",

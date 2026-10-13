@@ -21,7 +21,7 @@ from rest_framework import generics
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.authentication import BasicAuthentication, TokenAuthentication
 from rest_framework import status
-from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.permissions import AllowAny, BasePermission, IsAuthenticated
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.views import APIView
 from rest_framework.authtoken.models import Token
@@ -1667,8 +1667,22 @@ class WorkspaceRoleMenuAccessDetailAPIView(generics.RetrieveUpdateDestroyAPIView
     serializer_class = WorkspaceRoleMenuItemSerializer
 
 
+class IsWorkflowConfigurationPermission(BasePermission):
+    """Keep workflow design rights in the role system instead of relying on hidden UI controls."""
+
+    def has_permission(self, request, view):
+        permission = {
+            "GET": "view_workflowdefinition",
+            "POST": "add_workflowdefinition",
+            "PUT": "change_workflowdefinition",
+            "PATCH": "change_workflowdefinition",
+            "DELETE": "delete_workflowdefinition",
+        }.get(request.method, "change_workflowdefinition")
+        return _workflow_admin_allowed(request.user, permission)
+
+
 class WorkflowDefinitionListCreateAPIView(ModuleAPIViewMixin, generics.ListCreateAPIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsWorkflowConfigurationPermission]
     queryset = WorkflowDefinition.objects.select_related("tenant", "module").prefetch_related(
         "entity_bindings",
         "steps__approval_group",
@@ -1678,7 +1692,7 @@ class WorkflowDefinitionListCreateAPIView(ModuleAPIViewMixin, generics.ListCreat
         "transitions__to_node",
     ).all()
     serializer_class = WorkflowDefinitionSerializer
-    filterset_fields = ("tenant", "module", "entity_type", "is_active")
+    filterset_fields = ("tenant", "module", "entity_type", "status", "is_active")
     search_fields = ("code", "name", "entity_type", "description")
     ordering_fields = ("name", "code", "created_at", "updated_at")
 
@@ -1711,7 +1725,7 @@ class WorkflowDefinitionListCreateAPIView(ModuleAPIViewMixin, generics.ListCreat
 
 
 class WorkflowDefinitionDetailAPIView(generics.RetrieveUpdateDestroyAPIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsWorkflowConfigurationPermission]
     queryset = WorkflowDefinition.objects.select_related("tenant", "module").prefetch_related(
         "entity_bindings",
         "steps__approval_group",
@@ -1729,9 +1743,159 @@ class WorkflowDefinitionDetailAPIView(generics.RetrieveUpdateDestroyAPIView):
         tenant = _request_tenant_or_none(self.request.user)
         return qs.filter(tenant=tenant) if tenant else qs.none()
 
+    def update(self, request, *args, **kwargs):
+        workflow = self.get_object()
+        if workflow.status == "published":
+            raise ValidationError({"status": "Published workflows are immutable. Create a draft revision before changing this route."})
+        return super().update(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        workflow = self.get_object()
+        if workflow.status == "published":
+            raise ValidationError({"status": "Published workflows cannot be deleted. Archive the workflow instead."})
+        return super().destroy(request, *args, **kwargs)
+
+
+def _workflow_admin_allowed(user, permission_codename):
+    """Use the existing role model while allowing organization administrators to operate their tenant."""
+    return bool(
+        _is_superadmin(user)
+        or _active_organization_membership(user, require_admin=True)
+        or getattr(getattr(user, "tenant_profile", None), "is_tenant_admin", False)
+        or user.has_perm(f"Platform_Core.{permission_codename}")
+    )
+
+
+def _validate_workflow_definition(workflow):
+    """Return publish blockers and warnings without executing document-specific logic."""
+    errors, warnings = [], []
+    bindings = list(workflow.entity_bindings.filter(is_active=True))
+    nodes = list(workflow.nodes.filter(is_active=True).order_by("step_order", "id"))
+    transitions = list(workflow.transitions.filter(is_active=True).select_related("from_node", "to_node"))
+
+    if not bindings:
+        errors.append("Add an active ERP document binding before publishing.")
+    if not nodes:
+        errors.append("Add at least one active approval node before publishing.")
+        return errors, warnings
+    initial_nodes = [node for node in nodes if node.is_initial]
+    if len(initial_nodes) != 1:
+        errors.append("Exactly one active initial node is required.")
+    for node in nodes:
+        if node.node_type in {"approval", "review", "task"} and not (node.approval_group_id or node.assigned_user_id):
+            errors.append(f"{node.name} needs an approver role, committee, or user.")
+    node_ids = {node.id for node in nodes}
+    for transition in transitions:
+        if transition.from_node_id not in node_ids or transition.to_node_id not in node_ids:
+            errors.append("Every active transition must connect active nodes in this workflow.")
+        if transition.condition_operator != "always":
+            errors.append("Conditional routing cannot be published until the safe condition evaluator is enabled.")
+    if nodes and not any(node.node_type == "end" for node in nodes):
+        warnings.append("No explicit end node is configured; the final approval node will complete the workflow.")
+    if nodes and not transitions and len(nodes) > 1:
+        errors.append("Connect all approval nodes with transitions before publishing.")
+    return errors, warnings
+
+
+class WorkflowDefinitionActionAPIView(APIView):
+    """Lifecycle actions keep publication and revision creation out of generic CRUD endpoints."""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk, action):
+        workflow = get_object_or_404(WorkflowDefinition.objects.prefetch_related("entity_bindings", "nodes", "transitions"), pk=pk)
+        if not _is_superadmin(request.user) and workflow.tenant_id != getattr(_request_tenant_or_none(request.user), "id", None):
+            raise PermissionDenied("This workflow does not belong to your organization.")
+
+        required_permission = {
+            "validate": "change_workflowdefinition",
+            "publish": "publish_workflowdefinition",
+            "deactivate": "change_workflowdefinition",
+            "archive": "archive_workflowdefinition",
+            "duplicate": "duplicate_workflowdefinition",
+        }.get(action)
+        if not required_permission or not _workflow_admin_allowed(request.user, required_permission):
+            raise PermissionDenied("You do not have permission to perform this workflow action.")
+
+        errors, warnings = _validate_workflow_definition(workflow)
+        if action == "validate":
+            return success_response("Workflow validation completed.", data={"valid": not errors, "errors": errors, "warnings": warnings})
+        if action == "publish":
+            if errors:
+                return error_response("Workflow cannot be published.", errors={"errors": errors, "warnings": warnings}, status_code=status.HTTP_400_BAD_REQUEST)
+            workflow.status = "published"
+            workflow.is_active = True
+            workflow.published_at = timezone.now()
+            workflow.archived_at = None
+            workflow.save(update_fields=["status", "is_active", "published_at", "archived_at", "updated_at"])
+            log_business_event(event_group="workflow", event_type="published", tenant=workflow.tenant, actor=request.user, obj=workflow, note=f"Workflow {workflow.name} v{workflow.version} published.")
+            return success_response("Workflow published.", data=WorkflowDefinitionSerializer(workflow).data)
+        if action == "deactivate":
+            workflow.status = "inactive"
+            workflow.is_active = False
+            workflow.save(update_fields=["status", "is_active", "updated_at"])
+            return success_response("Workflow deactivated.", data=WorkflowDefinitionSerializer(workflow).data)
+        if action == "archive":
+            workflow.status = "archived"
+            workflow.is_active = False
+            workflow.archived_at = timezone.now()
+            workflow.save(update_fields=["status", "is_active", "archived_at", "updated_at"])
+            log_business_event(event_group="workflow", event_type="archived", tenant=workflow.tenant, actor=request.user, obj=workflow, note=f"Workflow {workflow.name} archived.")
+            return success_response("Workflow archived.", data=WorkflowDefinitionSerializer(workflow).data)
+
+        # A revision copies configuration into a draft without modifying active instances.
+        with transaction.atomic():
+            revision = WorkflowDefinition.objects.create(
+                tenant=workflow.tenant,
+                module=workflow.module,
+                code=f"{workflow.code}-v{workflow.version_major}-{workflow.version_minor + 1}"[:100],
+                name=workflow.name,
+                entity_type=workflow.entity_type,
+                scope=workflow.scope,
+                trigger_event=workflow.trigger_event,
+                description=workflow.description,
+                status="draft",
+                version_major=workflow.version_major,
+                version_minor=workflow.version_minor + 1,
+                revision_of=workflow,
+                effective_from=workflow.effective_from,
+                is_active=False,
+                allow_dashboard_quick_actions=workflow.allow_dashboard_quick_actions,
+                metadata=workflow.metadata,
+            )
+            for binding in workflow.entity_bindings.all():
+                WorkflowEntityBinding.objects.create(
+                    workflow=revision, module_slug=binding.module_slug, entity_type=binding.entity_type,
+                    entity_label=binding.entity_label, route_path=binding.route_path, api_base_path=binding.api_base_path,
+                    trigger_events=binding.trigger_events, is_primary=binding.is_primary, is_active=binding.is_active,
+                    metadata=binding.metadata,
+                )
+            node_map = {}
+            for node in workflow.nodes.all():
+                cloned = WorkflowNodeDefinition.objects.create(
+                    workflow=revision, code=node.code, name=node.name, node_type=node.node_type, step_order=node.step_order,
+                    is_initial=node.is_initial, approval_group=node.approval_group, approval_mode=node.approval_mode,
+                    required_approvals=node.required_approvals, assigned_user=node.assigned_user, min_amount=node.min_amount,
+                    max_amount=node.max_amount, cost_center=node.cost_center, entry_action=node.entry_action,
+                    exit_action=node.exit_action, notify_dashboard=node.notify_dashboard,
+                    allow_quick_action=node.allow_quick_action, sla_hours=node.sla_hours,
+                    position_x=node.position_x, position_y=node.position_y, is_active=node.is_active, metadata=node.metadata,
+                )
+                node_map[node.id] = cloned
+            for route in workflow.transitions.all():
+                WorkflowTransitionDefinition.objects.create(
+                    workflow=revision, from_node=node_map[route.from_node_id], to_node=node_map[route.to_node_id],
+                    name=route.name, transition_key=route.transition_key, decision=route.decision, priority=route.priority,
+                    is_default=route.is_default, condition_field=route.condition_field,
+                    condition_operator=route.condition_operator, condition_value=route.condition_value,
+                    is_active=route.is_active, metadata=route.metadata,
+                )
+        log_business_event(event_group="workflow", event_type="revision_created", tenant=workflow.tenant, actor=request.user, obj=revision, note=f"Draft revision v{revision.version} created from {workflow.name}.")
+        return success_response("Draft revision created.", data=WorkflowDefinitionSerializer(revision).data, status=status.HTTP_201_CREATED)
+
 
 class WorkflowStepDefinitionListCreateAPIView(ModuleAPIViewMixin, generics.ListCreateAPIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsWorkflowConfigurationPermission]
     queryset = WorkflowStepDefinition.objects.select_related("workflow", "approval_group", "workflow__tenant", "workflow__module").all()
     serializer_class = WorkflowStepDefinitionSerializer
     filterset_fields = ("workflow", "approval_group", "action_type", "is_active")
@@ -1747,7 +1911,7 @@ class WorkflowStepDefinitionListCreateAPIView(ModuleAPIViewMixin, generics.ListC
 
 
 class WorkflowStepDefinitionDetailAPIView(generics.RetrieveUpdateDestroyAPIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsWorkflowConfigurationPermission]
     queryset = WorkflowStepDefinition.objects.select_related("workflow", "approval_group", "workflow__tenant", "workflow__module").all()
     serializer_class = WorkflowStepDefinitionSerializer
 
@@ -1760,7 +1924,7 @@ class WorkflowStepDefinitionDetailAPIView(generics.RetrieveUpdateDestroyAPIView)
 
 
 class WorkflowEntityBindingListCreateAPIView(ModuleAPIViewMixin, generics.ListCreateAPIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsWorkflowConfigurationPermission]
     queryset = WorkflowEntityBinding.objects.select_related("workflow", "workflow__tenant", "workflow__module").all()
     serializer_class = WorkflowEntityBindingSerializer
     filterset_fields = ("workflow", "module_slug", "entity_type", "is_primary", "is_active")
@@ -1776,7 +1940,7 @@ class WorkflowEntityBindingListCreateAPIView(ModuleAPIViewMixin, generics.ListCr
 
 
 class WorkflowEntityBindingDetailAPIView(generics.RetrieveUpdateDestroyAPIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsWorkflowConfigurationPermission]
     queryset = WorkflowEntityBinding.objects.select_related("workflow", "workflow__tenant", "workflow__module").all()
     serializer_class = WorkflowEntityBindingSerializer
 
@@ -1789,7 +1953,7 @@ class WorkflowEntityBindingDetailAPIView(generics.RetrieveUpdateDestroyAPIView):
 
 
 class WorkflowNodeDefinitionListCreateAPIView(ModuleAPIViewMixin, generics.ListCreateAPIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsWorkflowConfigurationPermission]
     queryset = WorkflowNodeDefinition.objects.select_related(
         "workflow",
         "workflow__tenant",
@@ -1811,7 +1975,7 @@ class WorkflowNodeDefinitionListCreateAPIView(ModuleAPIViewMixin, generics.ListC
 
 
 class WorkflowNodeDefinitionDetailAPIView(generics.RetrieveUpdateDestroyAPIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsWorkflowConfigurationPermission]
     queryset = WorkflowNodeDefinition.objects.select_related(
         "workflow",
         "workflow__tenant",
@@ -1830,7 +1994,7 @@ class WorkflowNodeDefinitionDetailAPIView(generics.RetrieveUpdateDestroyAPIView)
 
 
 class WorkflowTransitionDefinitionListCreateAPIView(ModuleAPIViewMixin, generics.ListCreateAPIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsWorkflowConfigurationPermission]
     queryset = WorkflowTransitionDefinition.objects.select_related(
         "workflow",
         "workflow__tenant",
@@ -1852,7 +2016,7 @@ class WorkflowTransitionDefinitionListCreateAPIView(ModuleAPIViewMixin, generics
 
 
 class WorkflowTransitionDefinitionDetailAPIView(generics.RetrieveUpdateDestroyAPIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsWorkflowConfigurationPermission]
     queryset = WorkflowTransitionDefinition.objects.select_related(
         "workflow",
         "workflow__tenant",
@@ -1980,6 +2144,7 @@ class WorkflowForwardAPIView(APIView):
         bindings = WorkflowEntityBinding.objects.select_related("workflow").filter(
             workflow__tenant=tenant,
             workflow__is_active=True,
+            workflow__status="published",
             module_slug=module_slug,
             entity_type=entity_type,
             is_active=True,

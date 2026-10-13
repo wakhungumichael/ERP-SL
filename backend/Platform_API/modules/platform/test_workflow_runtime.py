@@ -19,7 +19,7 @@ class WorkflowRuntimeTests(TestCase):
         self.tenant = Tenant.objects.create(name="Workflow Tenant", code="workflow-tenant", is_active=True, status="active")
         self.submitter = User.objects.create_user("workflow_submitter", password="pass")
         self.approver = User.objects.create_user("workflow_approver", password="pass")
-        TenantUserProfile.objects.create(user=self.submitter, tenant=self.tenant)
+        TenantUserProfile.objects.create(user=self.submitter, tenant=self.tenant, is_tenant_admin=True)
         TenantUserProfile.objects.create(user=self.approver, tenant=self.tenant)
         self.approver_group = Group.objects.create(name="Workflow Approvers")
         self.approver.groups.add(self.approver_group)
@@ -29,6 +29,7 @@ class WorkflowRuntimeTests(TestCase):
             name="Weighbridge Review",
             entity_type="weighbridge_transaction",
             trigger_event="submit",
+            status="published",
         )
         WorkflowEntityBinding.objects.create(
             workflow=self.workflow,
@@ -77,3 +78,26 @@ class WorkflowRuntimeTests(TestCase):
         item.refresh_from_db()
         self.assertEqual(item.status, "completed")
         self.assertEqual(item.acted_by, self.approver)
+
+    def test_published_workflow_is_revised_instead_of_edited(self):
+        self.client.force_authenticate(self.submitter)
+
+        update = self.client.patch(
+            reverse("workflow-definition-detail", kwargs={"pk": self.workflow.pk}),
+            {"name": "Changed workflow"},
+            format="json",
+        )
+        self.assertEqual(update.status_code, 400, update.data)
+        self.workflow.refresh_from_db()
+        self.assertEqual(self.workflow.name, "Weighbridge Review")
+
+        revision = self.client.post(
+            reverse("workflow-definition-action", kwargs={"pk": self.workflow.pk, "action": "duplicate"}),
+            format="json",
+        )
+        self.assertEqual(revision.status_code, 201, revision.data)
+        draft = WorkflowDefinition.objects.get(revision_of=self.workflow)
+        self.assertEqual(draft.status, "draft")
+        self.assertEqual(draft.version, "1.1")
+        self.assertEqual(draft.nodes.count(), 1)
+        self.assertEqual(draft.entity_bindings.count(), 1)

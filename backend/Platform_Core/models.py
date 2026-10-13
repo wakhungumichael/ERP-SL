@@ -264,6 +264,12 @@ class WorkflowDefinition(TimeStampedModel):
         ("master_data", "Master Data"),
         ("custom", "Custom"),
     ]
+    STATUS_CHOICES = [
+        ("draft", "Draft"),
+        ("published", "Published"),
+        ("inactive", "Inactive"),
+        ("archived", "Archived"),
+    ]
 
     tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name="workflow_definitions")
     module = models.ForeignKey(
@@ -279,6 +285,19 @@ class WorkflowDefinition(TimeStampedModel):
     scope = models.CharField(max_length=20, choices=SCOPE_CHOICES, default="document")
     trigger_event = models.CharField(max_length=80, default="submit")
     description = models.TextField(blank=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="draft")
+    version_major = models.PositiveIntegerField(default=1)
+    version_minor = models.PositiveIntegerField(default=0)
+    revision_of = models.ForeignKey(
+        "self",
+        on_delete=models.SET_NULL,
+        related_name="revisions",
+        blank=True,
+        null=True,
+    )
+    effective_from = models.DateField(blank=True, null=True)
+    published_at = models.DateTimeField(blank=True, null=True)
+    archived_at = models.DateTimeField(blank=True, null=True)
     is_active = models.BooleanField(default=True)
     allow_dashboard_quick_actions = models.BooleanField(default=True)
     metadata = models.JSONField(blank=True, default=dict)
@@ -286,9 +305,24 @@ class WorkflowDefinition(TimeStampedModel):
     class Meta:
         ordering = ["tenant__name", "name"]
         unique_together = ("tenant", "code")
+        permissions = [
+            ("publish_workflowdefinition", "Can publish workflow definitions"),
+            ("archive_workflowdefinition", "Can archive workflow definitions"),
+            ("duplicate_workflowdefinition", "Can duplicate workflow definitions"),
+            ("manage_workflow_nodes", "Can manage workflow nodes"),
+            ("manage_workflow_transitions", "Can manage workflow transitions"),
+            ("manage_workflow_conditions", "Can manage workflow conditions"),
+            ("manage_workflow_assignments", "Can manage workflow assignments"),
+            ("forward_workflow", "Can forward records for approval"),
+            ("approve_workflow", "Can approve assigned workflow tasks"),
+        ]
 
     def __str__(self):
         return f"{self.tenant.name} - {self.name}"
+
+    @property
+    def version(self):
+        return f"{self.version_major}.{self.version_minor}"
 
 
 class WorkflowEntityBinding(TimeStampedModel):
