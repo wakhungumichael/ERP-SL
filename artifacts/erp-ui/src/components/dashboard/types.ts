@@ -10,7 +10,14 @@ export type DashboardWidgetId =
   | 'module-map'
   | 'finance-pulse'
   | 'operations-pulse'
-  | 'shortcut-stack';
+  | 'shortcut-stack'
+  | 'inventory-pulse'
+  | 'crm-pipeline'
+  | 'procurement-pulse'
+  | 'support-pulse'
+  | 'people-pulse'
+  | 'budget-pulse'
+  | 'sales-pulse';
 
 export type DashboardPermission =
   | 'view_dashboard'
@@ -71,6 +78,8 @@ export interface DashboardWidgetDefinition {
   description: string;
   category: 'overview' | 'analytics' | 'workflows' | 'operations' | 'compliance';
   requiredPermissions: DashboardPermission[];
+  /** Workspace overview permissions required before this widget can fetch data. */
+  workspacePermissions?: string[];
   moduleDependencies?: string[];
   defaultLayout: DashboardLayoutItem;
   minW?: number;

@@ -504,6 +504,117 @@ function ShortcutStackWidget({ tenantContext, canViewSensitive }: DashboardWidge
   );
 }
 
+function InventoryPulseWidget({ tenantContext, canViewSensitive }: DashboardWidgetComponentProps) {
+  const token = useDashboardToken();
+  const query = useQuery({
+    queryKey: ['dashboard-widget-inventory', tenantContext.tenantId],
+    enabled: !!token && !!tenantContext.tenantId,
+    staleTime: 60000,
+    queryFn: async () => {
+      const res = await fetch('/api/inventory/dashboard/', { headers: buildHeaders(token) });
+      if (!res.ok) throw new Error(`${res.status}`);
+      return res.json();
+    },
+  });
+  const data = query.data ?? {};
+  return <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+    <MetricTile label="Available stock" value={Number(data.totals?.available || 0).toLocaleString()} tone="positive" />
+    <MetricTile label="Reserved stock" value={Number(data.totals?.reserved || 0).toLocaleString()} tone="warning" />
+    <MetricTile label="Warehouses" value={Number(data.counts?.warehouses || 0)} />
+    <MetricTile label="Stock value" value={formatMoney(Number(data.totals?.valuation || 0), tenantContext, !canViewSensitive)} />
+  </div>;
+}
+
+function CrmPipelineWidget({ tenantContext, canViewSensitive }: DashboardWidgetComponentProps) {
+  const token = useDashboardToken();
+  const query = useQuery({
+    queryKey: ['dashboard-widget-crm', tenantContext.tenantId], enabled: !!token && !!tenantContext.tenantId, staleTime: 60000,
+    queryFn: async () => { const res = await fetch('/api/crm/dashboard/', { headers: buildHeaders(token) }); if (!res.ok) throw new Error(`${res.status}`); return res.json(); },
+  });
+  const summary = query.data?.summary ?? {};
+  return <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+    <MetricTile label="Open opportunities" value={Number(summary.open_opportunities || 0)} />
+    <MetricTile label="Pipeline value" value={formatMoney(Number(summary.pipeline_value || 0), tenantContext, !canViewSensitive)} tone="positive" />
+    <MetricTile label="Overdue follow-ups" value={Number(summary.overdue_follow_ups || 0)} tone="warning" />
+    <MetricTile label="Closing this week" value={Number(summary.closing_soon || 0)} />
+  </div>;
+}
+
+function ProcurementPulseWidget({ tenantContext, canViewSensitive }: DashboardWidgetComponentProps) {
+  const token = useDashboardToken();
+  const query = useQuery({
+    queryKey: ['dashboard-widget-procurement-pulse', tenantContext.tenantId], enabled: !!token && !!tenantContext.tenantId, staleTime: 60000,
+    queryFn: async () => { const res = await fetch('/api/procurement/dashboard/', { headers: buildHeaders(token) }); if (!res.ok) throw new Error(`${res.status}`); return res.json(); },
+  });
+  const data = query.data ?? {};
+  return <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+    <MetricTile label="Submitted POs" value={Number(data.counts?.submitted || 0)} tone="warning" />
+    <MetricTile label="Approved POs" value={Number(data.counts?.approved || 0)} tone="positive" />
+    <MetricTile label="Blocked requisitions" value={Number(data.requisitions?.blocked || 0)} tone="warning" />
+    <MetricTile label="Approved value" value={formatMoney(Number(data.total_value || 0), tenantContext, !canViewSensitive)} />
+  </div>;
+}
+
+function SupportPulseWidget({ tenantContext }: DashboardWidgetComponentProps) {
+  const token = useDashboardToken();
+  const query = useQuery({
+    queryKey: ['dashboard-widget-ticketing', tenantContext.tenantId], enabled: !!token && !!tenantContext.tenantId, staleTime: 30000,
+    queryFn: async () => { const res = await fetch('/api/ticketing/dashboard/', { headers: buildHeaders(token) }); if (!res.ok) throw new Error(`${res.status}`); return res.json(); },
+  });
+  const counts = query.data?.counts ?? {};
+  return <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+    <MetricTile label="Open tickets" value={Number(counts.open || 0)} tone="warning" />
+    <MetricTile label="High priority" value={Number(counts.high_priority || 0)} tone="warning" />
+    <MetricTile label="Unassigned" value={Number(counts.unassigned || 0)} />
+    <MetricTile label="Resolved" value={Number(counts.resolved || 0)} tone="positive" />
+  </div>;
+}
+
+function PeoplePulseWidget({ tenantContext }: DashboardWidgetComponentProps) {
+  const token = useDashboardToken();
+  const query = useQuery({
+    queryKey: ['dashboard-widget-hr', tenantContext.tenantId], enabled: !!token && !!tenantContext.tenantId, staleTime: 60000,
+    queryFn: async () => { const res = await fetch('/api/hr/dashboard/', { headers: buildHeaders(token) }); if (!res.ok) throw new Error(`${res.status}`); return res.json(); },
+  });
+  const staff = query.data?.staff ?? {}; const payroll = query.data?.payroll ?? {};
+  return <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+    <MetricTile label="Active staff" value={Number(staff.active || 0)} tone="positive" />
+    <MetricTile label="Inactive staff" value={Number(staff.inactive || 0)} />
+    <MetricTile label="Payroll completed" value={`${Number(payroll.completed_periods || 0)} / ${Number(payroll.total_periods || 0)}`} />
+    <MetricTile label="Administrators" value={Number(staff.admins || 0)} />
+  </div>;
+}
+
+function BudgetPulseWidget({ tenantContext, canViewSensitive }: DashboardWidgetComponentProps) {
+  const token = useDashboardToken();
+  const query = useQuery({
+    queryKey: ['dashboard-widget-budgeting', tenantContext.tenantId], enabled: !!token && !!tenantContext.tenantId, staleTime: 60000,
+    queryFn: async () => { const res = await fetch('/api/budgeting/dashboard/', { headers: buildHeaders(token) }); if (!res.ok) throw new Error(`${res.status}`); return res.json(); },
+  });
+  const data = query.data ?? {}; const totals = data.totals ?? {};
+  return <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+    <MetricTile label="Active budgets" value={Number(data.counts?.active_budgets || 0)} />
+    <MetricTile label="Available budget" value={formatMoney(Number(totals.available || 0), tenantContext, !canViewSensitive)} tone="positive" />
+    <MetricTile label="Committed" value={formatMoney(Number(totals.committed || 0), tenantContext, !canViewSensitive)} tone="warning" />
+    <MetricTile label="Actual spend" value={formatMoney(Number(totals.actual || 0), tenantContext, !canViewSensitive)} />
+  </div>;
+}
+
+function SalesPulseWidget({ tenantContext, canViewSensitive }: DashboardWidgetComponentProps) {
+  const token = useDashboardToken();
+  const query = useQuery({
+    queryKey: ['dashboard-widget-sales', tenantContext.tenantId], enabled: !!token && !!tenantContext.tenantId, staleTime: 60000,
+    queryFn: async () => { const res = await fetch('/api/sales/dashboard/', { headers: buildHeaders(token) }); if (!res.ok) throw new Error(`${res.status}`); return res.json(); },
+  });
+  const data = query.data ?? {}; const counts = data.counts ?? {}; const totals = data.totals ?? {};
+  return <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+    <MetricTile label="Open orders" value={Number(counts.open_orders || 0)} tone="warning" />
+    <MetricTile label="Confirmed orders" value={Number(counts.confirmed_orders || 0)} tone="positive" />
+    <MetricTile label="Estimate pipeline" value={formatMoney(Number(totals.estimate_pipeline || 0), tenantContext, !canViewSensitive)} />
+    <MetricTile label="Open order value" value={formatMoney(Number(totals.open_order_value || 0), tenantContext, !canViewSensitive)} tone="positive" />
+  </div>;
+}
+
 export const DASHBOARD_WIDGETS: DashboardWidgetDefinition[] = [
   {
     id: 'hero',
@@ -521,6 +632,7 @@ export const DASHBOARD_WIDGETS: DashboardWidgetDefinition[] = [
     category: 'analytics',
     requiredPermissions: ['view_company_health', 'view_financials', 'view_supply_chain'],
     moduleDependencies: ['accounting', 'procurement'],
+    workspacePermissions: ['can_view_finance_overview', 'can_view_procurement_overview'],
     defaultLayout: { widgetId: 'company-health', x: 0, y: 3, w: 7, h: 4, isCollapsed: false, isEnabled: true },
     component: CompanyHealthWidget,
   },
@@ -530,6 +642,8 @@ export const DASHBOARD_WIDGETS: DashboardWidgetDefinition[] = [
     description: 'Operational alerts and workflow-driven issues that need follow-up.',
     category: 'operations',
     requiredPermissions: ['view_operational_alerts'],
+    moduleDependencies: ['weighbridge', 'accounting', 'procurement'],
+    workspacePermissions: ['can_view_weighbridge_overview', 'can_view_finance_overview', 'can_view_procurement_overview'],
     defaultLayout: { widgetId: 'actionable-insights', x: 7, y: 3, w: 5, h: 4, isCollapsed: false, isEnabled: true },
     component: WorkflowNotificationsWidget,
   },
@@ -567,6 +681,7 @@ export const DASHBOARD_WIDGETS: DashboardWidgetDefinition[] = [
     category: 'analytics',
     requiredPermissions: ['view_financials'],
     moduleDependencies: ['accounting'],
+    workspacePermissions: ['can_view_finance_overview'],
     defaultLayout: { widgetId: 'finance-pulse', x: 0, y: 12, w: 6, h: 4, isCollapsed: false, isEnabled: true },
     component: FinancePulseWidget,
   },
@@ -576,6 +691,8 @@ export const DASHBOARD_WIDGETS: DashboardWidgetDefinition[] = [
     description: 'Daily throughput, queue pressure, and procurement execution status.',
     category: 'operations',
     requiredPermissions: ['view_dashboard'],
+    moduleDependencies: ['weighbridge', 'procurement'],
+    workspacePermissions: ['can_view_weighbridge_overview', 'can_view_procurement_overview'],
     defaultLayout: { widgetId: 'operations-pulse', x: 6, y: 12, w: 6, h: 4, isCollapsed: false, isEnabled: true },
     component: OperationsPulseWidget,
   },
@@ -587,5 +704,40 @@ export const DASHBOARD_WIDGETS: DashboardWidgetDefinition[] = [
     requiredPermissions: ['view_shortcuts'],
     defaultLayout: { widgetId: 'shortcut-stack', x: 0, y: 16, w: 12, h: 3, isCollapsed: false, isEnabled: true },
     component: ShortcutStackWidget,
+  },
+  {
+    id: 'inventory-pulse', title: 'Inventory Control', description: 'Stock availability, reservations, warehouses, and valuation.', category: 'operations',
+    requiredPermissions: ['view_dashboard'], workspacePermissions: ['can_view_inventory_overview'], moduleDependencies: ['inventory'],
+    defaultLayout: { widgetId: 'inventory-pulse', x: 0, y: 19, w: 6, h: 4, isCollapsed: false, isEnabled: true }, component: InventoryPulseWidget,
+  },
+  {
+    id: 'crm-pipeline', title: 'CRM Pipeline', description: 'Opportunity value, follow-ups, and closing activity.', category: 'analytics',
+    requiredPermissions: ['view_dashboard'], workspacePermissions: ['can_view_crm_overview'], moduleDependencies: ['crm'],
+    defaultLayout: { widgetId: 'crm-pipeline', x: 6, y: 19, w: 6, h: 4, isCollapsed: false, isEnabled: true }, component: CrmPipelineWidget,
+  },
+  {
+    id: 'procurement-pulse', title: 'Procurement Execution', description: 'Purchase orders, requisitions, budgets, and committed value.', category: 'operations',
+    requiredPermissions: ['view_dashboard'], workspacePermissions: ['can_view_procurement_overview'], moduleDependencies: ['procurement'],
+    defaultLayout: { widgetId: 'procurement-pulse', x: 0, y: 23, w: 6, h: 4, isCollapsed: false, isEnabled: true }, component: ProcurementPulseWidget,
+  },
+  {
+    id: 'support-pulse', title: 'Customer Support', description: 'Support workload, priority queues, ownership, and resolution progress.', category: 'workflows',
+    requiredPermissions: ['view_dashboard'], workspacePermissions: ['can_view_ticketing_overview'], moduleDependencies: ['ticketing'],
+    defaultLayout: { widgetId: 'support-pulse', x: 6, y: 23, w: 6, h: 4, isCollapsed: false, isEnabled: true }, component: SupportPulseWidget,
+  },
+  {
+    id: 'people-pulse', title: 'People & Payroll', description: 'Staff availability, administration, and payroll-cycle progress.', category: 'overview',
+    requiredPermissions: ['view_dashboard'], workspacePermissions: ['can_view_hr_overview'], moduleDependencies: ['hr-payroll'],
+    defaultLayout: { widgetId: 'people-pulse', x: 0, y: 27, w: 6, h: 4, isCollapsed: false, isEnabled: true }, component: PeoplePulseWidget,
+  },
+  {
+    id: 'budget-pulse', title: 'Budget Control', description: 'Budget allocation, commitments, actual spend, and available balance.', category: 'analytics',
+    requiredPermissions: ['view_financials'], workspacePermissions: ['can_view_budgeting_overview'], moduleDependencies: ['budgeting'],
+    defaultLayout: { widgetId: 'budget-pulse', x: 6, y: 27, w: 6, h: 4, isCollapsed: false, isEnabled: true }, component: BudgetPulseWidget,
+  },
+  {
+    id: 'sales-pulse', title: 'Sales Pipeline', description: 'Orders, estimates, recurring revenue, and sales pipeline value.', category: 'analytics',
+    requiredPermissions: ['view_financials'], workspacePermissions: ['can_view_sales_overview'], moduleDependencies: ['sales'],
+    defaultLayout: { widgetId: 'sales-pulse', x: 0, y: 31, w: 6, h: 4, isCollapsed: false, isEnabled: true }, component: SalesPulseWidget,
   },
 ];

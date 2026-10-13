@@ -1247,6 +1247,31 @@ class TokenLogoutAPIView(APIView):
         )
 
 
+class ActiveRoleAPIView(APIView):
+    """Switch the current user's active role within their active organization."""
+
+    permission_classes = (IsAuthenticated,)
+
+    def post(self, request):
+        try:
+            role_id = int(request.data.get("role_id"))
+        except (TypeError, ValueError):
+            return error_response("role_id is required.", status_code=status.HTTP_400_BAD_REQUEST)
+
+        role = request.user.groups.filter(pk=role_id).first()
+        if role is None:
+            return error_response("You can only switch to a role assigned to your account.", status_code=status.HTTP_403_FORBIDDEN)
+        membership = (
+            OrganizationMembership.objects.filter(user=request.user, is_active=True, is_default=True).first()
+            or OrganizationMembership.objects.filter(user=request.user, is_active=True).order_by("tenant__name").first()
+        )
+        if membership is None:
+            return error_response("No active organization membership was found.", status_code=status.HTTP_400_BAD_REQUEST)
+        membership.active_role_group_name = role.name
+        membership.save(update_fields=["active_role_group_name", "updated_at"])
+        return success_response("Active role switched.", data=UserProfileSerializer(request.user).data)
+
+
 class _SuperAdminRequired:
     """
     Mixin that enforces is_superuser=True on ALL DRF action methods.
@@ -1913,6 +1938,22 @@ class AuditEventLogListAPIView(APIView):
         actor_id = request.query_params.get("actor_id")
         if actor_id:
             qs = qs.filter(actor_id=actor_id)
+        status_value = request.query_params.get("status")
+        if status_value:
+            qs = qs.filter(status=status_value)
+        branch_id = request.query_params.get("branch_id")
+        if branch_id:
+            qs = qs.filter(branch_id=branch_id)
+        search = request.query_params.get("search", "").strip()
+        if search:
+            qs = qs.filter(
+                Q(object_repr__icontains=search)
+                | Q(model_label__icontains=search)
+                | Q(note__icontains=search)
+                | Q(actor__username__icontains=search)
+                | Q(actor__first_name__icontains=search)
+                | Q(actor__last_name__icontains=search)
+            )
         limit = min(int(request.query_params.get("limit", 100) or 100), 500)
 
         serializer = AuditEventLogSerializer(qs.order_by("-created_at", "-id")[:limit], many=True)
@@ -1952,6 +1993,17 @@ class AuditAccessLogListAPIView(APIView):
         request_path = request.query_params.get("request_path")
         if request_path:
             qs = qs.filter(request_path__icontains=request_path)
+        status_code = request.query_params.get("status_code")
+        if status_code and status_code.isdigit():
+            qs = qs.filter(status_code=int(status_code))
+        search = request.query_params.get("search", "").strip()
+        if search:
+            qs = qs.filter(
+                Q(request_path__icontains=search)
+                | Q(actor__username__icontains=search)
+                | Q(actor__first_name__icontains=search)
+                | Q(actor__last_name__icontains=search)
+            )
         limit = min(int(request.query_params.get("limit", 100) or 100), 500)
 
         serializer = AuditAccessLogSerializer(qs.order_by("-created_at", "-id")[:limit], many=True)

@@ -278,7 +278,7 @@ export function ReceiptDialog({ transaction: t, open, onOpenChange, token }: Rec
 
         {/* Receipt preview */}
         <div>
-          <div className="receipt" style={{ fontFamily: "'Courier New', monospace", border: `2px solid ${branding.primary_color}`, padding: 16, fontSize: 12, color: '#000', background: '#fff' }}>
+          <div className="receipt" style={{ fontFamily: "'Courier New', monospace", border: `2px solid ${branding.primary_color}`, padding: 16, fontSize: 13, lineHeight: 1.2, color: '#000', background: '#fff' }}>
             {/* Header */}
             <div className="header" style={{ textAlign: 'center', borderBottom: `2px dashed ${branding.primary_color}`, paddingBottom: 10, marginBottom: 10 }}>
               {branding.logo_url && (

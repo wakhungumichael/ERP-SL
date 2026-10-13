@@ -325,7 +325,7 @@ function EditUserDialog({
     is_active: true,
     is_tenant_admin: false,
   });
-  const [selectedRoleId, setSelectedRoleId] = useState('');
+  const [selectedRoleIds, setSelectedRoleIds] = useState<string[]>([]);
 
   useEffect(() => {
     if (!user) return;
@@ -341,7 +341,7 @@ function EditUserDialog({
       is_active: Boolean(user.is_active),
       is_tenant_admin: Boolean((user as any).is_org_admin ?? user.is_tenant_admin),
     });
-    setSelectedRoleId(user.groups?.[0]?.id ? String(user.groups[0].id) : '');
+    setSelectedRoleIds(Array.isArray(user.groups) ? user.groups.map((group: any) => String(group.id)) : []);
   }, [user]);
 
   const { data: assignableRolesData } = useQuery({
@@ -469,9 +469,9 @@ function EditUserDialog({
       if (activeOrganizationId) payload.branch_id = form.branch_id || null;
       if (role === 'superadmin' && activeOrganizationId) payload.is_tenant_admin = form.is_tenant_admin;
       const updated = await api(token!, `/users/${user.id}/update/`, 'PATCH', payload);
-      if (selectedRoleId) {
+      if (selectedRoleIds.length) {
         await api(token!, `/users/${user.id}/assign-roles/`, 'POST', {
-          group_ids: [Number(selectedRoleId)],
+          group_ids: selectedRoleIds.map(Number),
           replace_existing: true,
         });
       }
@@ -525,18 +525,17 @@ function EditUserDialog({
           </div>
           {!form.is_tenant_admin && (
             <div className="space-y-1.5">
-              <Label>Role</Label>
-              <Select value={selectedRoleId} onValueChange={setSelectedRoleId}>
-                <SelectTrigger><SelectValue placeholder="Select role…" /></SelectTrigger>
-                <SelectContent>
-                  {assignableRoles.map(candidate => (
-                    <SelectItem key={candidate.id} value={String(candidate.id)}>
-                      {candidate.display_name || candidate.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <p className="text-xs text-muted-foreground">Custom roles created in Roles &amp; Permissions are available here.</p>
+              <Label>Roles</Label>
+              <div className="max-h-44 space-y-2 overflow-y-auto rounded-md border p-3">
+                {assignableRoles.map(candidate => {
+                  const roleId = String(candidate.id);
+                  return <label key={candidate.id} className="flex cursor-pointer items-center gap-2 text-sm">
+                    <input type="checkbox" checked={selectedRoleIds.includes(roleId)} onChange={(event) => setSelectedRoleIds((current) => event.target.checked ? [...current, roleId] : current.filter((id) => id !== roleId))} />
+                    {candidate.display_name || candidate.name}
+                  </label>;
+                })}
+              </div>
+              <p className="text-xs text-muted-foreground">Assign one or more roles. The user chooses their active role at sign-in or from their profile.</p>
             </div>
           )}
           {((user as any)?.organization_id ?? user?.tenant_id) && (

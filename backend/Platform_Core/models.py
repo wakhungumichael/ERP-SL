@@ -784,6 +784,9 @@ class OrganizationMembership(TimeStampedModel):
     )
     role = models.CharField(max_length=32, choices=ROLE_CHOICES, default="member")
     role_group_name = models.CharField(max_length=150, blank=True)
+    # A user may hold several Django groups. This is the role they are actively
+    # working under in this organization; it never grants an unassigned group.
+    active_role_group_name = models.CharField(max_length=150, blank=True)
     is_org_admin = models.BooleanField(default=False)
     is_default = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)

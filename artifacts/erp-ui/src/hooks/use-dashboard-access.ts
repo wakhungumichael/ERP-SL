@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useCallback, useMemo } from 'react';
 import { useAuth } from '@/context/use-auth';
 import type { DashboardPermission } from '@/components/dashboard/types';
 
@@ -43,7 +43,7 @@ export function useDashboardAccess() {
     return new Set(perms);
   }, [user]);
 
-  const hasPermission = (permission: DashboardPermission): boolean => {
+  const hasPermission = useCallback((permission: DashboardPermission): boolean => {
     const aliases = PERMISSION_ALIASES[permission] as string[];
 
     if (permission === 'view_dashboard') {
@@ -71,11 +71,11 @@ export function useDashboardAccess() {
     }
 
     return aliases.some((entry) => granted.has(entry));
-  };
+  }, [granted, role]);
 
   const canViewSensitive = hasPermission('view_financials_sensitive');
-  const hasWorkspacePermission = (codename: string) =>
-    ADMIN_ROLES.has(role) || granted.has(`Platform_Core.${codename}`);
+  const hasWorkspacePermission = useCallback((codename: string) =>
+    ADMIN_ROLES.has(role) || granted.has(`Platform_Core.${codename}`), [granted, role]);
 
   return {
     role,

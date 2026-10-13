@@ -1744,7 +1744,7 @@ export default function OrganizationSettings() {
     queryFn: () => api(token!, `/tenants/self/`),
     enabled: !!token,
   });
-  const { data: settingsData, isLoading: settingsLoading, dataUpdatedAt: settingsDataUpdatedAt } = useQuery({
+  const { data: settingsData, isLoading: settingsLoading } = useQuery({
     queryKey: ['my-tenant-settings', organizationId],
     queryFn: () => api(token!, `/tenants/${organizationId}/settings/`),
     enabled: !!organizationId,
@@ -1915,7 +1915,7 @@ export default function OrganizationSettings() {
     const hasSettingsPayload = settings && typeof settings === 'object';
     if (!hasSettingsPayload) return;
     setSettingsForm(buildSettingsForm(settings));
-  }, [activeMembershipId, organizationId, settingsLoading, settingsDataUpdatedAt]);
+  }, [activeMembershipId, organizationId, settingsLoading]);
 
   const saveTenant = useMutation({
     mutationFn: () => api(token!, `/tenants/self/`, 'PATCH', {
@@ -1948,12 +1948,17 @@ export default function OrganizationSettings() {
     onError: (e: any) => toast({ title: 'Create failed', description: e.message, variant: 'destructive' }),
   });
   const saveSettings = useMutation({
-    mutationFn: (fields: readonly string[]) => api(
-      token!,
-      `/tenants/${organizationId}/settings/`,
-      'PUT',
-      buildSettingsPayload(settingsForm, fields),
-    ),
+    mutationFn: async (fields: readonly string[]) => {
+      await api(
+        token!,
+        `/tenants/${organizationId}/settings/`,
+        'PUT',
+        buildSettingsPayload(settingsForm, fields),
+      );
+      // Use a fresh server response so background query refetches cannot put
+      // older SMTP values back into the form after a successful save.
+      return api(token!, `/tenants/${organizationId}/settings/`);
+    },
     onSuccess: (response) => {
       const saved = response?.data ?? response;
       setSettingsForm(buildSettingsForm(saved));
@@ -1968,9 +1973,16 @@ export default function OrganizationSettings() {
     mutationFn: async () => {
       const payload = buildSettingsPayload(settingsForm, EMAIL_SETTINGS_FIELDS);
       await api(token!, `/tenants/${organizationId}/settings/`, 'PUT', payload);
-      return api(token!, `/tenants/${organizationId}/settings/test-smtp/`, 'POST');
+      const savedSettings = await api(token!, `/tenants/${organizationId}/settings/`);
+      const testResult = await api(token!, `/tenants/${organizationId}/settings/test-smtp/`, 'POST');
+      return { savedSettings, testResult };
     },
-    onSuccess: (r) => toast({ title: 'Test email sent', description: r.data?.message }),
+    onSuccess: ({ savedSettings, testResult }) => {
+      const saved = savedSettings?.data ?? savedSettings;
+      setSettingsForm(buildSettingsForm(saved));
+      qc.setQueryData(['my-tenant-settings', organizationId], savedSettings);
+      toast({ title: 'Test email sent', description: testResult.data?.message });
+    },
     onError: (e: any) => toast({ title: 'Test failed', description: e.message, variant: 'destructive' }),
   });
 

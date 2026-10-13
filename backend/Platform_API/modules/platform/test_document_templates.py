@@ -52,6 +52,35 @@ class TenantDocumentTemplateTests(TestCase):
         settings_obj.refresh_from_db()
         self.assertEqual(settings_obj.receipt_template_id, template.id)
 
+    def test_tenant_admin_smtp_settings_persist_after_reload(self):
+        response = self.client.put(
+            reverse("tenant-settings", kwargs={"pk": self.tenant.id}),
+            {
+                "support_email": "receipts@template-tenant.example",
+                "smtp_host": "mail.template-tenant.example",
+                "smtp_port": 465,
+                "smtp_user": "receipts@template-tenant.example",
+                "smtp_password": "test-mailbox-password",
+                "smtp_use_tls": False,
+                "smtp_use_ssl": True,
+                "smtp_allow_insecure_ssl": False,
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+
+        reloaded = self.client.get(
+            reverse("tenant-settings", kwargs={"pk": self.tenant.id})
+        )
+        self.assertEqual(reloaded.status_code, 200, reloaded.data)
+        settings_data = reloaded.data["data"]
+        self.assertEqual(settings_data["support_email"], "receipts@template-tenant.example")
+        self.assertEqual(settings_data["smtp_host"], "mail.template-tenant.example")
+        self.assertEqual(settings_data["smtp_port"], 465)
+        self.assertEqual(settings_data["smtp_user"], "receipts@template-tenant.example")
+        self.assertTrue(settings_data["smtp_password_configured"])
+        self.assertNotIn("smtp_password", settings_data)
+
     def test_template_library_is_seeded_for_tenant_admin(self):
         response = self.client.get(reverse("document-template-list"))
         self.assertEqual(response.status_code, 200, response.data)

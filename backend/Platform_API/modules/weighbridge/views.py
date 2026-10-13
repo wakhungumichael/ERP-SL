@@ -385,6 +385,36 @@ class WeighingOperationTypeSerializer(serializers.ModelSerializer):
         }
         return mapping.get(obj.flow_kind, "First Weight")
 
+    def validate(self, attrs):
+        """Keep each tenant's operational flows unambiguous for weighment entry."""
+        instance = getattr(self, "instance", None)
+        flow_kind = attrs.get("flow_kind", getattr(instance, "flow_kind", None))
+        tenant = getattr(instance, "tenant", None)
+        if instance is None:
+            tenant = _get_request_user_tenant(self.context["request"].user)
+
+        if flow_kind:
+            duplicates = WeighingOperationType.objects.filter(
+                tenant=tenant,
+                flow_kind=flow_kind,
+            )
+            if instance is not None:
+                duplicates = duplicates.exclude(pk=instance.pk)
+            if duplicates.exists():
+                flow_label = dict(WeighingOperationType.FLOW_KIND_CHOICES).get(flow_kind, flow_kind)
+                raise serializers.ValidationError(
+                    {
+                        "flow_kind": (
+                            f"A {flow_label} operation type already exists for this organization. "
+                            "Edit, reorder, or deactivate the existing type instead."
+                        )
+                    }
+                )
+
+        if "code" in attrs:
+            attrs["code"] = attrs["code"].strip().upper().replace(" ", "_")
+        return attrs
+
 
 class ReportColumnInputSerializer(serializers.Serializer):
     key = serializers.CharField()
@@ -584,11 +614,18 @@ def _ensure_default_weighing_operation_types(tenant):
         return []
     created = []
     for row in DEFAULT_WEIGHING_OPERATION_TYPES:
-        obj, _ = WeighingOperationType.objects.get_or_create(
-            tenant=tenant,
-            code=row["code"],
-            defaults=row,
+        # Honour a pre-existing custom workflow instead of creating a duplicate
+        # default type for the same first, second, single, or axle flow.
+        obj = (
+            WeighingOperationType.objects.filter(
+                tenant=tenant,
+                flow_kind=row["flow_kind"],
+            )
+            .order_by("-is_default", "display_order", "id")
+            .first()
         )
+        if obj is None:
+            obj = WeighingOperationType.objects.create(tenant=tenant, **row)
         created.append(obj)
     return created
 

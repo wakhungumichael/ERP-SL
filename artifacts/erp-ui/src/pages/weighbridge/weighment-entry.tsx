@@ -32,6 +32,7 @@ type OperationType = {
   flow_kind: string;
   legacy_weight_type: string;
   is_active: boolean;
+  is_default?: boolean;
 };
 
 type CameraPreview = {
@@ -395,7 +396,18 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
   const vehicleList = Array.isArray(vehicles) ? vehicles : (vehicles as any)?.results ?? [];
   const searchedVehicles = Array.isArray(vehicleSearchResults) ? vehicleSearchResults : (vehicleSearchResults as any)?.results ?? [];
   const vehicleTypeList = Array.isArray(vehicleTypesRaw) ? vehicleTypesRaw : (vehicleTypesRaw as any)?.results ?? [];
-  const operationTypeList: OperationType[] = (Array.isArray(operationTypesRaw) ? operationTypesRaw : (operationTypesRaw as any)?.results ?? []).filter((row: any) => row.is_active);
+  const operationTypeList: OperationType[] = Array.from(
+    (Array.isArray(operationTypesRaw) ? operationTypesRaw : (operationTypesRaw as any)?.results ?? [])
+      .filter((row: any) => row.is_active)
+      .reduce((unique: Map<string, OperationType>, row: OperationType) => {
+        const existing = unique.get(row.flow_kind);
+        // The API prevents duplicate workflows. This shields operators from
+        // historical duplicate data until the migration repairs it.
+        if (!existing || (!existing.is_default && row.is_default)) unique.set(row.flow_kind, row);
+        return unique;
+      }, new Map<string, OperationType>())
+      .values(),
+  );
   const selectedOperation = operationTypeList.find((row) => String(row.id) === operationTypeId) ?? null;
   const isSecondFlow = selectedOperation?.flow_kind === 'second';
   const activeVehicleId = isSecondFlow ? selectedVehicle?.id ?? null : (vehicleId ? parseInt(vehicleId, 10) : null);
@@ -1126,7 +1138,7 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
                             setVehicleForm((current) => ({ ...current, number_plate: plate }));
                             setPlateRecognition(null);
                           }}
-                          placeholder="e.g. KBS596L, KBS 596L, or ZX 4646"
+                          placeholder="Enter vehicle plate"
                         />
                         <Button type="button" variant="outline" className="shrink-0" onClick={() => void findVehicleByPlate()}>
                           <Search className="mr-1.5 h-4 w-4" />Find vehicle

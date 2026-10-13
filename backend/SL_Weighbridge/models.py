@@ -273,6 +273,12 @@ class WeighingOperationType(models.Model):
     class Meta:
         ordering = ['display_order', 'name']
         unique_together = [('tenant', 'code')]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['tenant', 'flow_kind'],
+                name='unique_weighing_operation_flow_per_tenant',
+            ),
+        ]
 
     def __str__(self):
         return self.name

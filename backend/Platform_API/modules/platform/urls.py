@@ -1,6 +1,7 @@
 from django.urls import path
 
 from .views import (
+    ActiveRoleAPIView,
     AuditAccessLogListAPIView,
     AuditEventLogListAPIView,
     AuthStatusAPIView,
@@ -112,6 +113,7 @@ urlpatterns = [
     path("auth/forgot-password/", ForgotPasswordAPIView.as_view(), name="platform-auth-forgot-password"),
     path("auth/me/", CurrentUserAPIView.as_view(), name="platform-auth-me"),
     path("auth/change-password/", ChangePasswordAPIView.as_view(), name="platform-auth-change-password"),
+    path("auth/active-role/", ActiveRoleAPIView.as_view(), name="platform-auth-active-role"),
     path("auth/switch-organization/", SwitchOrganizationAPIView.as_view(), name="platform-auth-switch-organization"),
     path("auth/logout/", TokenLogoutAPIView.as_view(), name="platform-auth-logout"),
     # Workspace / nav

@@ -28,6 +28,7 @@ export function useDashboardLayout(
 ) {
   const storageKey = `sl-erp-dashboard-layout:${STORAGE_VERSION}:${storageScope}`;
   const [customizeMode, setCustomizeMode] = useState(false);
+  const [activeStorageKey, setActiveStorageKey] = useState(storageKey);
   const [layout, setLayout] = useState<DashboardLayoutItem[]>(() => {
     try {
       const raw = localStorage.getItem(storageKey);
@@ -38,15 +39,29 @@ export function useDashboardLayout(
     }
   });
 
+  // A user can switch tenant or active role without remounting this page.
+  // Reload the corresponding saved layout instead of carrying the previous scope.
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(storageKey);
+      setLayout(normalizeLayout(widgets, raw ? (JSON.parse(raw) as DashboardLayoutItem[]) : null));
+      setActiveStorageKey(storageKey);
+    } catch {
+      setLayout(normalizeLayout(widgets, null));
+      setActiveStorageKey(storageKey);
+    }
+  }, [storageKey]);
+
   useEffect(() => {
     setLayout((current) => normalizeLayout(widgets, current));
   }, [widgets]);
 
   useEffect(() => {
+    if (activeStorageKey !== storageKey) return;
     try {
       localStorage.setItem(storageKey, JSON.stringify(layout));
     } catch {}
-  }, [layout, storageKey]);
+  }, [activeStorageKey, layout, storageKey]);
 
   const updateItem = (widgetId: DashboardWidgetId, patch: Partial<DashboardLayoutItem>) => {
     setLayout((current) =>

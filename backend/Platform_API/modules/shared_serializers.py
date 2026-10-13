@@ -963,6 +963,7 @@ class OrganizationMembershipSerializer(serializers.ModelSerializer):
             "branches",
             "role",
             "role_group_name",
+            "active_role_group_name",
             "is_org_admin",
             "is_default",
             "is_active",
@@ -996,6 +997,8 @@ class UserProfileSerializer(serializers.ModelSerializer):
     memberships = serializers.SerializerMethodField()
     active_membership_id = serializers.SerializerMethodField()
     active_role = serializers.SerializerMethodField()
+    active_role_group_name = serializers.SerializerMethodField()
+    available_roles = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -1027,6 +1030,8 @@ class UserProfileSerializer(serializers.ModelSerializer):
             "memberships",
             "active_membership_id",
             "active_role",
+            "active_role_group_name",
+            "available_roles",
         )
 
     def get_permissions(self, obj):
@@ -1131,13 +1136,28 @@ class UserProfileSerializer(serializers.ModelSerializer):
     def get_active_role(self, obj):
         membership = self._active_membership(obj)
         if membership:
+            active_name = (membership.active_role_group_name or "").strip()
+            if active_name:
+                return active_name
             return membership.role
         return "system_admin" if self.get_is_tenant_admin(obj) else None
+
+    def get_active_role_group_name(self, obj):
+        membership = self._active_membership(obj)
+        return (membership.active_role_group_name or "").strip() if membership else ""
+
+    def get_available_roles(self, obj):
+        tenant_id = self.get_tenant_id(obj)
+        return [
+            {"id": group.id, "name": group.name, "display_name": display_role_name(group.name, tenant_id)}
+            for group in obj.groups.order_by("name")
+        ]
 
 
 class TokenLoginSerializer(serializers.Serializer):
     username = serializers.CharField()
     password = serializers.CharField(write_only=True, trim_whitespace=False)
+    active_role_id = serializers.IntegerField(required=False, min_value=1)
 
     def _bootstrap_membership_from_legacy_profile(self, user):
         profile = getattr(user, "tenant_profile", None)
@@ -1199,6 +1219,17 @@ class TokenLoginSerializer(serializers.Serializer):
                 "Your organization's account has been suspended. Please contact your platform administrator."
             )
         self._bootstrap_membership_from_legacy_profile(user)
+        requested_role_id = attrs.get("active_role_id")
+        if requested_role_id:
+            role = user.groups.filter(pk=requested_role_id).first()
+            if role is None:
+                raise serializers.ValidationError({"active_role_id": "Choose one of your assigned roles."})
+            membership = OrganizationMembership.objects.filter(user=user, is_active=True, is_default=True).first()
+            if membership is None:
+                membership = OrganizationMembership.objects.filter(user=user, is_active=True).order_by("tenant__name").first()
+            if membership:
+                membership.active_role_group_name = role.name
+                membership.save(update_fields=["active_role_group_name", "updated_at"])
         attrs["user"] = user
         return attrs
 

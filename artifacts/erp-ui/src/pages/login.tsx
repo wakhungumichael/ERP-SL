@@ -84,6 +84,7 @@ export default function Login() {
   const [createdWorkspace, setCreatedWorkspace] = useState(false);
   const [preferredPlanId, setPreferredPlanId] = useState(requestedPlanId);
   const [pendingAuth, setPendingAuth] = useState<{ token: string; user: Record<string, unknown> | null } | null>(null);
+  const [roleChoiceAuth, setRoleChoiceAuth] = useState<{ token: string; user: Record<string, unknown>; roleId: string } | null>(null);
   const [registerForm, setRegisterForm] = useState({
     name: '',
     email: '',
@@ -188,6 +189,11 @@ export default function Login() {
           const authToken = (payload?.token ?? (raw as Record<string, unknown>)?.token) as string | undefined;
           const user = (payload?.user ?? (raw as Record<string, unknown>)?.user) as Record<string, unknown> | undefined;
           if (authToken) {
+            const roles = Array.isArray((user as any)?.available_roles) ? (user as any).available_roles : [];
+            if (user && roles.length > 1) {
+              setRoleChoiceAuth({ token: authToken, user, roleId: String(roles[0]?.id ?? '') });
+              return;
+            }
             setToken(authToken, user ?? null);
             setLocation(getWorkspaceHomePath(role, user ?? null));
           }
@@ -826,6 +832,40 @@ export default function Login() {
             >
               {forgotSubmitting ? 'Sending…' : 'Send Reset'}
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!roleChoiceAuth} onOpenChange={(open) => { if (!open) setRoleChoiceAuth(null); }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Choose Your Role</DialogTitle>
+            <DialogDescription>Select the role you want to use for this session. You can switch it later from your profile.</DialogDescription>
+          </DialogHeader>
+          <Select value={roleChoiceAuth?.roleId ?? ''} onValueChange={(roleId) => setRoleChoiceAuth((current) => current ? { ...current, roleId } : current)}>
+            <SelectTrigger><SelectValue placeholder="Select role" /></SelectTrigger>
+            <SelectContent>
+              {((roleChoiceAuth?.user as any)?.available_roles ?? []).map((entry: any) => (
+                <SelectItem key={entry.id} value={String(entry.id)}>{entry.display_name || entry.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <DialogFooter>
+            <Button onClick={async () => {
+              if (!roleChoiceAuth?.roleId) return;
+              const response = await fetch('/api/platform/auth/active-role/', {
+                method: 'POST',
+                headers: { Authorization: `Token ${roleChoiceAuth.token}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ role_id: Number(roleChoiceAuth.roleId) }),
+              });
+              if (!response.ok) {
+                toast({ title: 'Could not select role', description: 'Please try again.', variant: 'destructive' });
+                return;
+              }
+              setToken(roleChoiceAuth.token, roleChoiceAuth.user);
+              setRoleChoiceAuth(null);
+              setLocation('/');
+            }} style={{ backgroundColor: brand }}>Continue</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

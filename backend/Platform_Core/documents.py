@@ -318,24 +318,24 @@ def _receipt_stylesheet(primary_color):
       /* Keep receipts on one physical A5 landscape sheet in browsers and xhtml2pdf. */
       @page {{ size: A5 landscape; margin: 4mm; }}
       body {{ margin: 0; background: #f3f4f6; color: #111827; font-family: Arial, Helvetica, sans-serif; }}
-      .wb-receipt {{ width: 202mm; height: 140mm; max-height: 140mm; margin: 12px auto; padding: 3mm 4mm; overflow: hidden; background: #fff; border: 1px solid {brand_color}; font-size: 7.5pt; line-height: 1.1; page-break-inside: avoid; break-inside: avoid; }}
+      .wb-receipt {{ width: 202mm; margin: 12px auto; padding: 4mm; background: #fff; border: 1px solid {brand_color}; font-size: 8.5pt; line-height: 1.18; page-break-inside: avoid; break-inside: avoid; }}
       .wb-receipt__header {{ display: grid; grid-template-columns: 38mm 1fr; align-items: center; gap: 3mm; padding-bottom: 1.5mm; border-bottom: 2px solid {brand_color}; }}
       .wb-receipt__logo {{ display: block; width: 36mm; max-height: 13mm; object-fit: contain; object-position: left center; }}
       .wb-receipt__company {{ font-size: 13pt; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }}
-      .wb-receipt__branch {{ margin-top: .5mm; font-size: 7.5pt; font-weight: 700; }}
-      .wb-receipt__contact {{ grid-column: 1 / -1; color: #4b5563; font-size: 7pt; }}
+      .wb-receipt__branch {{ margin-top: .5mm; font-size: 8.5pt; font-weight: 700; }}
+      .wb-receipt__contact {{ grid-column: 1 / -1; color: #4b5563; font-size: 8pt; }}
       .wb-receipt__title-row {{ display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 3mm; padding: 1.75mm 0; border-bottom: 1px dashed {brand_color}; }}
-      .wb-receipt__kicker {{ font-size: 7.5pt; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; color: {brand_color}; }}
-      .wb-receipt__title-row strong {{ font-size: 11pt; }}
-      .wb-receipt__issue {{ text-align: right; font-size: 7.5pt; }}
-      .wb-receipt__issue span, .wb-receipt__payment span {{ display: block; color: #6b7280; font-size: 7pt; text-transform: uppercase; letter-spacing: .08em; }}
-      .wb-receipt__status {{ padding: 1mm 2.5mm; border: 1px solid #6b7280; font-size: 7.5pt; font-weight: 800; letter-spacing: .08em; white-space: nowrap; }}
+      .wb-receipt__kicker {{ font-size: 8.5pt; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; color: {brand_color}; }}
+      .wb-receipt__title-row strong {{ font-size: 12pt; }}
+      .wb-receipt__issue {{ text-align: right; font-size: 8.5pt; }}
+      .wb-receipt__issue span, .wb-receipt__payment span {{ display: block; color: #6b7280; font-size: 8pt; text-transform: uppercase; letter-spacing: .08em; }}
+      .wb-receipt__status {{ padding: 1mm 2.5mm; border: 1px solid #6b7280; font-size: 8.5pt; font-weight: 800; letter-spacing: .08em; white-space: nowrap; }}
       .wb-receipt__status.is-paid {{ color: #047857; border-color: #047857; background: #ecfdf5; }}
       .wb-receipt__status.is-pending {{ color: #b45309; border-color: #b45309; background: #fffbeb; }}
       .wb-receipt__details, .wb-receipt__weights {{ width: 100%; border-collapse: collapse; }}
       .wb-receipt__details {{ margin: 1.5mm 0; }}
       .wb-receipt__details th, .wb-receipt__details td {{ padding: .8mm 1.25mm; border-bottom: 1px solid #e5e7eb; text-align: left; }}
-      .wb-receipt__details th {{ width: 14%; color: #6b7280; font-size: 7pt; letter-spacing: .07em; text-transform: uppercase; }}
+      .wb-receipt__details th {{ width: 14%; color: #6b7280; font-size: 8pt; letter-spacing: .07em; text-transform: uppercase; }}
       .wb-receipt__details td {{ width: 36%; font-weight: 700; }}
       .wb-receipt__weights thead, .wb-receipt__weights thead th {{ background: {brand_color}; color: #fff; }}
       .wb-receipt__weights th, .wb-receipt__weights td {{ padding: 1.15mm; border: 1px solid #d1d5db; text-align: left; }}
@@ -346,10 +346,10 @@ def _receipt_stylesheet(primary_color):
       .wb-receipt__payment strong {{ font-size: 9pt; }}
       .wb-receipt__payment .wb-receipt__charge {{ text-align: right; }}
       .wb-receipt__payment .wb-receipt__charge strong {{ color: {brand_color}; font-size: 11pt; }}
-      .wb-receipt__footer {{ margin-top: 1.5mm; padding-top: 1mm; border-top: 1px solid #e5e7eb; text-align: center; color: #6b7280; font-size: 7pt; }}
+      .wb-receipt__footer {{ margin-top: 1.5mm; padding-top: 1mm; border-top: 1px solid #e5e7eb; text-align: center; color: #6b7280; font-size: 8pt; }}
       @media print {{
         html, body {{ width: 210mm; height: 148mm; margin: 0; padding: 0; overflow: hidden; background: #fff; }}
-        .wb-receipt {{ width: 202mm; height: 140mm; max-height: 140mm; margin: 0; }}
+        .wb-receipt {{ width: 202mm; margin: 0; }}
       }}
     """
 
@@ -359,26 +359,26 @@ def _receipt_pdf_stylesheet(primary_color):
     brand_color = _receipt_brand_color(primary_color)
     return f"""
       @page {{ size: A5 landscape; margin: 4mm; }}
-      body {{ margin: 0; color: #111827; font-family: Arial, Helvetica, sans-serif; font-size: 7.5pt; line-height: 1.1; }}
-      .wb-receipt {{ width: 202mm; margin: 0; padding: 3mm 4mm; background: #fff; border: 1px solid {brand_color}; }}
+      body {{ margin: 0; color: #111827; font-family: Arial, Helvetica, sans-serif; font-size: 8.5pt; line-height: 1.18; }}
+      .wb-receipt {{ width: 202mm; margin: 0; padding: 4mm; background: #fff; border: 1px solid {brand_color}; }}
       .wb-receipt__header {{ padding-bottom: 1.5mm; border-bottom: 2px solid {brand_color}; text-align: center; }}
       .wb-receipt__logo {{ width: 34mm; height: 11mm; object-fit: contain; }}
       .wb-receipt__company {{ font-size: 12pt; font-weight: bold; letter-spacing: 1pt; text-transform: uppercase; }}
-      .wb-receipt__branch {{ margin-top: 1mm; font-size: 8pt; font-weight: bold; }}
-      .wb-receipt__contact {{ margin-top: 1mm; color: #4b5563; font-size: 7pt; }}
+      .wb-receipt__branch {{ margin-top: 1mm; font-size: 9pt; font-weight: bold; }}
+      .wb-receipt__contact {{ margin-top: 1mm; color: #4b5563; font-size: 8pt; }}
       .wb-receipt__title-row {{ padding: 1.5mm 0; border-bottom: 1px dashed {brand_color}; text-align: center; }}
       .wb-receipt__title-row > div {{ display: inline-block; vertical-align: middle; margin: 0 5mm; }}
-      .wb-receipt__kicker {{ color: {brand_color}; font-size: 7pt; font-weight: bold; letter-spacing: 1pt; text-transform: uppercase; }}
-      .wb-receipt__title-row strong {{ font-size: 10pt; }}
-      .wb-receipt__issue {{ font-size: 7pt; }}
-      .wb-receipt__issue span, .wb-receipt__payment span {{ display: block; color: #6b7280; font-size: 6.5pt; text-transform: uppercase; letter-spacing: .5pt; }}
-      .wb-receipt__status {{ padding: 1mm 2.5mm; border: 1px solid #6b7280; font-size: 7pt; font-weight: bold; letter-spacing: .5pt; }}
+      .wb-receipt__kicker {{ color: {brand_color}; font-size: 8pt; font-weight: bold; letter-spacing: 1pt; text-transform: uppercase; }}
+      .wb-receipt__title-row strong {{ font-size: 11pt; }}
+      .wb-receipt__issue {{ font-size: 8pt; }}
+      .wb-receipt__issue span, .wb-receipt__payment span {{ display: block; color: #6b7280; font-size: 7.5pt; text-transform: uppercase; letter-spacing: .5pt; }}
+      .wb-receipt__status {{ padding: 1mm 2.5mm; border: 1px solid #6b7280; font-size: 8pt; font-weight: bold; letter-spacing: .5pt; }}
       .wb-receipt__status.is-paid {{ color: #047857; border-color: #047857; background: #ecfdf5; }}
       .wb-receipt__status.is-pending {{ color: #b45309; border-color: #b45309; background: #fffbeb; }}
       .wb-receipt__details, .wb-receipt__weights {{ width: 100%; border-collapse: collapse; }}
       .wb-receipt__details {{ margin: 1.5mm 0; }}
       .wb-receipt__details th, .wb-receipt__details td {{ padding: .8mm 1.25mm; border-bottom: 1px solid #e5e7eb; text-align: left; }}
-      .wb-receipt__details th {{ width: 14%; color: #6b7280; font-size: 6.5pt; letter-spacing: .5pt; text-transform: uppercase; }}
+      .wb-receipt__details th {{ width: 14%; color: #6b7280; font-size: 7.5pt; letter-spacing: .5pt; text-transform: uppercase; }}
       .wb-receipt__details td {{ width: 36%; font-weight: bold; }}
       .wb-receipt__weights thead, .wb-receipt__weights thead th {{ background: {brand_color}; color: #fff; }}
       .wb-receipt__weights th, .wb-receipt__weights td {{ padding: 1mm; border: 1px solid #d1d5db; text-align: left; }}
@@ -390,7 +390,7 @@ def _receipt_pdf_stylesheet(primary_color):
       .wb-receipt__payment strong {{ font-size: 8pt; }}
       .wb-receipt__payment .wb-receipt__charge {{ text-align: right; }}
       .wb-receipt__payment .wb-receipt__charge strong {{ color: {brand_color}; font-size: 10pt; }}
-      .wb-receipt__footer {{ margin-top: 1.5mm; padding-top: 1mm; border-top: 1px solid #e5e7eb; text-align: center; color: #6b7280; font-size: 6.5pt; }}
+      .wb-receipt__footer {{ margin-top: 1.5mm; padding-top: 1mm; border-top: 1px solid #e5e7eb; text-align: center; color: #6b7280; font-size: 7.5pt; }}
     """
 
 

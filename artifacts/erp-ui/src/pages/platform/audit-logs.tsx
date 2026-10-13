@@ -19,9 +19,13 @@ type AuditEvent = {
   object_pk?: string;
   object_repr?: string;
   note?: string;
+  changes?: Record<string, unknown>;
   metadata?: Record<string, unknown>;
   created_at?: string;
 };
+
+type FieldChange = { before?: unknown; after?: unknown; related_ids?: unknown[] };
+const HIDDEN_FIELDS = new Set(['tenant', 'tenant_id', 'branch', 'branch_id', 'created_by', 'created_by_id', 'last_modified_by', 'last_modified_by_id']);
 
 type AccessEvent = {
   id: number;
@@ -46,6 +50,25 @@ function formatLabel(value?: string | null) {
   return value.replace(/_/g, ' ').replace(/\b\w/g, char => char.toUpperCase());
 }
 
+function fieldLabel(field: string) {
+  return field.replace(/_id$/, '').replace(/_/g, ' ').replace(/\b\w/g, char => char.toUpperCase());
+}
+
+function formatValue(value: unknown) {
+  if (value === null || value === undefined || value === '') return '—';
+  if (value === true) return 'Yes';
+  if (value === false) return 'No';
+  if (Array.isArray(value)) return value.length ? value.join(', ') : 'None';
+  if (typeof value === 'object') return JSON.stringify(value);
+  return String(value);
+}
+
+function changedFields(event: AuditEvent) {
+  if (event.event_type === 'create' || event.event_type === 'delete') return [];
+  return Object.entries(event.changes ?? {}).filter(([field]) => !HIDDEN_FIELDS.has(field) && !field.endsWith('_at'))
+    .map(([field, value]) => ({ field, value: (value ?? {}) as FieldChange }));
+}
+
 function readMetaString(metadata: Record<string, unknown> | undefined, key: string) {
   const value = metadata?.[key];
   if (value === null || value === undefined || value === '') return '—';
@@ -55,11 +78,17 @@ function readMetaString(metadata: Record<string, unknown> | undefined, key: stri
 export default function AuditLogsPage() {
   const { token, role } = useAuth();
   const [search, setSearch] = useState('');
+  const [eventGroup, setEventGroup] = useState('');
+  const [eventStatus, setEventStatus] = useState('');
 
   const eventQuery = useQuery({
-    queryKey: ['platform-audit-events'],
+    queryKey: ['platform-audit-events', eventGroup, eventStatus, search],
     queryFn: async () => {
-      const response = await fetch('/api/platform/audit/events/?limit=150', {
+      const params = new URLSearchParams({ limit: '150' });
+      if (eventGroup) params.set('event_group', eventGroup);
+      if (eventStatus) params.set('status', eventStatus);
+      if (search.trim()) params.set('search', search.trim());
+      const response = await fetch(`/api/platform/audit/events/?${params.toString()}`, {
         headers: token ? { Authorization: `Token ${token}` } : {},
       });
       const payload = await response.json();
@@ -73,9 +102,11 @@ export default function AuditLogsPage() {
   });
 
   const accessQuery = useQuery({
-    queryKey: ['platform-access-events'],
+    queryKey: ['platform-access-events', search],
     queryFn: async () => {
-      const response = await fetch('/api/platform/audit/access/?limit=150', {
+      const params = new URLSearchParams({ limit: '150' });
+      if (search.trim()) params.set('search', search.trim());
+      const response = await fetch(`/api/platform/audit/access/?${params.toString()}`, {
         headers: token ? { Authorization: `Token ${token}` } : {},
       });
       const payload = await response.json();
@@ -136,14 +167,18 @@ export default function AuditLogsPage() {
           ? 'Cross-tenant oversight for data changes, workflow actions, and user access.'
           : 'Tenant-scoped visibility into record changes and access activity.'}
         actions={
-          <div className="relative w-full sm:w-80">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={search}
-            onChange={event => setSearch(event.target.value)}
-            placeholder="Search actor, tenant, model, path..."
-            className="pl-9"
-          />
+          <div className="flex w-full flex-wrap gap-2 sm:w-auto">
+            <div className="relative w-full sm:w-80">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search actor, record, model, path..." className="pl-9" />
+            </div>
+            <select value={eventGroup} onChange={event => setEventGroup(event.target.value)} className="h-10 rounded-md border bg-background px-3 text-sm">
+              <option value="">All categories</option>
+              <option value="data_lifecycle">Data changes</option><option value="workflow">Workflow</option><option value="security">Security</option><option value="access">Access</option><option value="integration">Integration</option><option value="system">System</option>
+            </select>
+            <select value={eventStatus} onChange={event => setEventStatus(event.target.value)} className="h-10 rounded-md border bg-background px-3 text-sm">
+              <option value="">All outcomes</option><option value="success">Success</option><option value="warning">Warning</option><option value="failed">Failed</option>
+            </select>
           </div>
         }
       />
@@ -210,6 +245,14 @@ export default function AuditLogsPage() {
                       <div><span className="font-semibold">IP:</span> {readMetaString(row.metadata, 'client_ip')}</div>
                     </div>
                     {row.note ? <p className="mt-3 text-sm text-muted-foreground">{row.note}</p> : null}
+                    {changedFields(row).length > 0 ? (
+                      <div className="mt-4 overflow-hidden rounded-lg border">
+                        <div className="grid grid-cols-[0.8fr_1fr_1fr] gap-3 bg-muted/40 px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-muted-foreground"><span>Field</span><span>Previous value</span><span>New value</span></div>
+                        {changedFields(row).map(({ field, value }) => (
+                          <div key={field} className="grid grid-cols-[0.8fr_1fr_1fr] gap-3 border-t px-3 py-2 text-sm"><span className="font-medium">{fieldLabel(field)}</span><span className="break-words text-muted-foreground">{formatValue(value.before)}</span><span className="break-words font-medium text-emerald-700">{formatValue(value.after ?? value.related_ids)}</span></div>
+                        ))}
+                      </div>
+                    ) : null}
                   </div>
                 ))
               )}

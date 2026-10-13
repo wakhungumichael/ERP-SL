@@ -17,7 +17,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from django.conf import settings
-from django.db.models import Q
+from django.db.models import Q, Sum
 from django.http import HttpResponse
 from django.core.mail import EmailMultiAlternatives
 from django.utils import timezone
@@ -89,6 +89,36 @@ def _can_view_customer_statements(user):
     if _is_customer_admin(user) or user.has_perm("SL_Sales.can_view_customer_statements"):
         return True
     return False
+
+
+class SalesDashboardView(APIView):
+    """Tenant-scoped sales control metrics for the workspace dashboard."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from Platform_API.modules.mixins import require_workspace_permission
+
+        require_workspace_permission(request.user, "can_view_sales_overview")
+        estimates = _apply_tenant_filter(Estimate.objects.all(), request.user)
+        orders = _apply_tenant_filter(SalesOrder.objects.all(), request.user)
+        recurring = _apply_tenant_filter(RecurringInvoice.objects.all(), request.user)
+        open_orders = orders.exclude(status__in=["fulfilled", "cancelled", "invoiced"])
+        pipeline = estimates.filter(status__in=["sent", "accepted"]).aggregate(total=Sum("total"))["total"] or Decimal("0")
+
+        return Response({
+            "counts": {
+                "estimates": estimates.count(),
+                "sent_estimates": estimates.filter(status="sent").count(),
+                "open_orders": open_orders.count(),
+                "confirmed_orders": orders.filter(status="confirmed").count(),
+                "recurring_invoices": recurring.count(),
+            },
+            "totals": {
+                "estimate_pipeline": pipeline,
+                "open_order_value": open_orders.aggregate(total=Sum("total"))["total"] or Decimal("0"),
+            },
+        })
 
 
 def _get_tenant_default_tax_rate(tenant):

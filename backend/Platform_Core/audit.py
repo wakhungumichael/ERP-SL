@@ -22,6 +22,11 @@ _TRACKED_EXTERNAL_MODEL_LABELS = {
     "auth.Group",
     "auth.User",
 }
+_SENSITIVE_FIELD_MARKERS = (
+    "password", "secret", "token", "api_key", "private_key", "access_key",
+    "refresh_key", "credential", "smtp_",
+)
+_NOISY_FIELD_NAMES = {"id", "created_at", "updated_at"}
 
 
 def set_audit_request(request: HttpRequest | None):
@@ -89,6 +94,11 @@ def _should_track_model(model):
 def _instance_snapshot(instance):
     data = {}
     for field in instance._meta.concrete_fields:
+        # Audit evidence must never become a second store of credentials.  Timestamps
+        # and surrogate IDs are available on the event itself and add no business value.
+        name = field.name.lower()
+        if name in _NOISY_FIELD_NAMES or any(marker in name for marker in _SENSITIVE_FIELD_MARKERS):
+            continue
         data[field.name] = field.value_from_object(instance)
     return data
 

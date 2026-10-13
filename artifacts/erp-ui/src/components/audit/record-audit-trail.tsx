@@ -24,6 +24,30 @@ type AuditEvent = {
   created_at?: string;
 };
 
+type FieldChange = { before?: unknown; after?: unknown; action?: string; related_ids?: unknown[] };
+
+const HIDDEN_FIELDS = new Set(['tenant', 'tenant_id', 'branch', 'branch_id', 'created_by', 'created_by_id', 'last_modified_by', 'last_modified_by_id']);
+
+function fieldLabel(field: string) {
+  return field.replace(/_id$/, '').replace(/_/g, ' ').replace(/\b\w/g, char => char.toUpperCase());
+}
+
+function formatValue(value: unknown) {
+  if (value === null || value === undefined || value === '') return '—';
+  if (value === true) return 'Yes';
+  if (value === false) return 'No';
+  if (Array.isArray(value)) return value.length ? value.join(', ') : 'None';
+  if (typeof value === 'object') return JSON.stringify(value);
+  return String(value);
+}
+
+function changeRows(changes: Record<string, unknown> | undefined, eventType?: string) {
+  if (eventType === 'create' || eventType === 'delete') return [];
+  return Object.entries(changes ?? {})
+    .filter(([field]) => !HIDDEN_FIELDS.has(field) && !field.endsWith('_at'))
+    .map(([field, value]) => ({ field, change: (value ?? {}) as FieldChange }));
+}
+
 function formatDate(value?: string | null) {
   if (!value) return '—';
   return new Date(value).toLocaleString('en-KE');
@@ -126,7 +150,7 @@ export function RecordAuditTrail({
             ) : (
               <div className="space-y-3">
                 {events.map(event => {
-                  const changedFields = Object.keys(event.changes ?? {});
+                  const changes = changeRows(event.changes, event.event_type);
                   return (
                     <div key={event.id} className="rounded-xl border p-4">
                       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -155,15 +179,17 @@ export function RecordAuditTrail({
                       {event.note ? (
                         <p className="mt-2 text-sm text-muted-foreground">{event.note}</p>
                       ) : null}
-                      {changedFields.length > 0 ? (
-                        <div className="mt-3 flex flex-wrap gap-2">
-                          {changedFields.map(field => (
-                            <span
-                              key={field}
-                              className="rounded-full border bg-muted/30 px-2.5 py-1 text-[10px] font-bold uppercase tracking-widest text-muted-foreground"
-                            >
-                              {field.replace(/_/g, ' ')}
-                            </span>
+                      {changes.length > 0 ? (
+                        <div className="mt-4 overflow-hidden rounded-lg border">
+                          <div className="grid grid-cols-[0.8fr_1fr_1fr] gap-3 bg-muted/40 px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+                            <span>Field</span><span>Previous value</span><span>New value</span>
+                          </div>
+                          {changes.map(({ field, change }) => (
+                            <div key={field} className="grid grid-cols-[0.8fr_1fr_1fr] gap-3 border-t px-3 py-2 text-sm">
+                              <span className="font-medium">{fieldLabel(field)}</span>
+                              <span className="break-words text-muted-foreground">{formatValue(change.before)}</span>
+                              <span className="break-words font-medium text-emerald-700">{formatValue(change.after ?? change.related_ids)}</span>
+                            </div>
                           ))}
                         </div>
                       ) : null}

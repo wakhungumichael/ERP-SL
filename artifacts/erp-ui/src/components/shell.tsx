@@ -488,6 +488,23 @@ export function Shell({ children }: { children: React.ReactNode }) {
     },
   });
 
+  const switchRoleMutation = useMutation({
+    mutationFn: async (roleId: string) => {
+      const res = await fetch('/api/platform/auth/active-role/', {
+        method: 'POST',
+        headers: { Authorization: `Token ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ role_id: Number(roleId) }),
+      });
+      const payload = await res.json();
+      if (!res.ok) throw new Error(payload?.message || payload?.detail || 'Failed to switch role.');
+      return payload;
+    },
+    onSuccess: async () => {
+      await refreshUser();
+      setLocation('/');
+    },
+  });
+
   useEffect(() => {
     if (!profileOpen) return;
     setProfileForm({
@@ -1087,6 +1104,28 @@ export function Shell({ children }: { children: React.ReactNode }) {
                       ? 'Switching organization...'
                       : 'ERP data and access will follow the selected organization context.'}
                   </div>
+                </div>
+              </div>
+            )}
+
+            {Array.isArray((user as any)?.available_roles) && (user as any).available_roles.length > 1 && (
+              <div className="rounded-xl border p-4">
+                <div className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">Active Role</div>
+                <div className="mt-3 space-y-2">
+                  <Select
+                    value={String((user as any)?.available_roles.find((entry: any) => entry.name === (user as any)?.active_role_group_name)?.id ?? '')}
+                    onValueChange={(value) => {
+                      if (value && !switchRoleMutation.isPending) switchRoleMutation.mutate(value);
+                    }}
+                  >
+                    <SelectTrigger><SelectValue placeholder="Select role" /></SelectTrigger>
+                    <SelectContent>
+                      {(user as any).available_roles.map((entry: any) => (
+                        <SelectItem key={entry.id} value={String(entry.id)}>{entry.display_name || entry.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">{switchRoleMutation.isPending ? 'Switching role...' : 'Switch role to change your workspace view and starting page.'}</p>
                 </div>
               </div>
             )}

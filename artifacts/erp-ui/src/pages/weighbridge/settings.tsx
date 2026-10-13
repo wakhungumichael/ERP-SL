@@ -912,11 +912,11 @@ function OperationTypesTab() {
           onRowClick={(row) => { setForm({ ...row }); setOpen(true); }}
           rowActions={(row) => (
             <div className="flex items-center gap-1 justify-end">
-              <button onClick={() => { setForm({ ...row }); setOpen(true); }} className="h-7 w-7 inline-flex items-center justify-center rounded hover:bg-muted transition-colors">
+              <button onClick={(event) => { event.stopPropagation(); setForm({ ...row }); setOpen(true); }} className="h-7 w-7 inline-flex items-center justify-center rounded hover:bg-muted transition-colors">
                 <Pencil className="h-3.5 w-3.5" />
               </button>
               {!row.is_default ? (
-                <button onClick={() => setDelId(row.id)} className="h-7 w-7 inline-flex items-center justify-center rounded hover:bg-red-50 text-destructive transition-colors">
+                <button onClick={(event) => { event.stopPropagation(); setDelId(row.id); }} className="h-7 w-7 inline-flex items-center justify-center rounded hover:bg-red-50 text-destructive transition-colors">
                   <Trash2 className="h-3.5 w-3.5" />
                 </button>
               ) : null}
