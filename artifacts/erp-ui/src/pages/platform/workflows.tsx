@@ -142,6 +142,7 @@ export default function WorkflowCenter() {
   const { toast } = useToast();
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<number | null>(null);
   const [catalogSearch, setCatalogSearch] = useState('');
+  const [studioTab, setStudioTab] = useState('workflow');
   const [selectedCatalogEntity, setSelectedCatalogEntity] = useState<(typeof workflowCatalog)[number]>(workflowCatalog[0]);
   const [workflowForm, setWorkflowForm] = useState({
     code: 'weighbridge-transaction-approval',
@@ -237,6 +238,10 @@ export default function WorkflowCenter() {
     setNodeForm((prev) => ({ ...prev, workflow: String(selectedWorkflow.id) }));
     setTransitionForm((prev) => ({ ...prev, workflow: String(selectedWorkflow.id) }));
   }, [selectedWorkflow]);
+
+  useEffect(() => {
+    setStudioTab('workflow');
+  }, [selectedWorkflowId]);
 
   const createWorkflow = useMutation({
     mutationFn: () => api(token!, '/workflows/definitions/', 'POST', workflowForm),
@@ -636,7 +641,18 @@ export default function WorkflowCenter() {
                 </CardHeader>
               </Card>
 
-              <div className="grid gap-6 2xl:grid-cols-[minmax(0,1.1fr)_420px]">
+              <Tabs value={studioTab} onValueChange={setStudioTab} className="rounded-2xl border bg-card p-2 shadow-sm">
+                <TabsList className="h-auto w-full justify-start gap-1 overflow-x-auto bg-transparent p-0">
+                  <TabsTrigger className="rounded-xl px-4 py-2.5" value="workflow">Workflow</TabsTrigger>
+                  <TabsTrigger className="rounded-xl px-4 py-2.5" value="departments">Departments</TabsTrigger>
+                  <TabsTrigger className="rounded-xl px-4 py-2.5" value="nodes">Nodes</TabsTrigger>
+                  <TabsTrigger className="rounded-xl px-4 py-2.5" value="transitions">Transitions</TabsTrigger>
+                  <TabsTrigger className="rounded-xl px-4 py-2.5" value="roles">Roles & Committees</TabsTrigger>
+                  <TabsTrigger className="rounded-xl px-4 py-2.5" value="conditions">Conditions</TabsTrigger>
+                </TabsList>
+              </Tabs>
+
+              <div className={cn('grid gap-6 2xl:grid-cols-[minmax(0,1.1fr)_420px]', studioTab !== 'workflow' && 'hidden')}>
                 <div className="space-y-6">
                   <Card>
                     <CardHeader>
@@ -1085,6 +1101,95 @@ export default function WorkflowCenter() {
                   </Card>
                 </div>
               </div>
+
+              {studioTab === 'departments' ? (
+                <Card>
+                  <CardHeader>
+                    <div className="flex flex-col gap-1">
+                      <CardTitle>Workflow Departments</CardTitle>
+                      <p className="text-sm text-muted-foreground">Use approval groups as the operational departments or committees that receive this workflow's work.</p>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="space-y-5">
+                    <div className="grid gap-3 md:grid-cols-3">
+                      <div className="rounded-2xl border bg-muted/30 p-4"><div className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Workflow</div><div className="mt-1 font-semibold">{selectedWorkflow.name}</div></div>
+                      <div className="rounded-2xl border bg-muted/30 p-4"><div className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Available departments</div><div className="mt-1 text-2xl font-semibold">{groups.length}</div></div>
+                      <div className="rounded-2xl border bg-muted/30 p-4"><div className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Assigned nodes</div><div className="mt-1 text-2xl font-semibold">{selectedNodes.filter((node) => node.approval_group_name).length}</div></div>
+                    </div>
+                    <Table>
+                      <TableHeader><TableRow><TableHead>Department / committee</TableHead><TableHead>Used by node</TableHead><TableHead>Approval model</TableHead><TableHead>Next setup step</TableHead></TableRow></TableHeader>
+                      <TableBody>
+                        {groups.map((group) => {
+                          const linkedNodes = selectedNodes.filter((node) => node.approval_group === group.id || node.approval_group_name === group.name);
+                          return <TableRow key={group.id}><TableCell className="font-medium">{group.name}</TableCell><TableCell>{linkedNodes.length ? linkedNodes.map((node) => node.name).join(', ') : 'Not yet assigned'}</TableCell><TableCell>{linkedNodes.length ? linkedNodes.map((node) => node.approval_mode).join(', ') : 'Configure on a node'}</TableCell><TableCell className="text-muted-foreground">Assign this group from the Nodes tab</TableCell></TableRow>;
+                        })}
+                        {groups.length === 0 ? <TableRow><TableCell colSpan={4} className="py-10 text-center text-muted-foreground">No approval groups are available. Create roles or committees in Platform Admin, then return here to route a node to them.</TableCell></TableRow> : null}
+                      </TableBody>
+                    </Table>
+                  </CardContent>
+                </Card>
+              ) : null}
+
+              {studioTab === 'nodes' ? (
+                <Card>
+                  <CardHeader><div className="flex flex-wrap items-start justify-between gap-3"><div><CardTitle>Approval Node Records</CardTitle><p className="mt-1 text-sm text-muted-foreground">Each row is a child record of {selectedWorkflow.name}. Define the responsible role, voting behavior, SLA and financial scope.</p></div><Button size="sm" onClick={() => setStudioTab('workflow')}>Add node</Button></div></CardHeader>
+                  <CardContent>
+                    <Table>
+                      <TableHeader><TableRow><TableHead>Order</TableHead><TableHead>Node</TableHead><TableHead>Role / committee</TableHead><TableHead>Action rule</TableHead><TableHead>Next route</TableHead></TableRow></TableHeader>
+                      <TableBody>
+                        {selectedNodes.map((node) => {
+                          const next = selectedTransitions.filter((transition) => transition.from_node === node.id).map((transition) => transition.to_node_name || 'Unnamed node').join(', ');
+                          return <TableRow key={node.id}><TableCell>{node.step_order}</TableCell><TableCell><div className="font-medium">{node.name}</div><div className="text-xs text-muted-foreground">{node.node_type}{node.is_initial ? ' · start node' : ''}</div></TableCell><TableCell>{node.approval_group_name || node.assigned_user_name || 'Unassigned'}</TableCell><TableCell>{node.approval_mode} · {node.required_approvals} required</TableCell><TableCell>{next || 'No transition yet'}</TableCell></TableRow>;
+                        })}
+                        {selectedNodes.length === 0 ? <TableRow><TableCell colSpan={5} className="py-10 text-center text-muted-foreground">No nodes created. Use the Workflow tab to add the first approval node.</TableCell></TableRow> : null}
+                      </TableBody>
+                    </Table>
+                  </CardContent>
+                </Card>
+              ) : null}
+
+              {studioTab === 'transitions' ? (
+                <Card>
+                  <CardHeader><div className="flex flex-wrap items-start justify-between gap-3"><div><CardTitle>Transition Records</CardTitle><p className="mt-1 text-sm text-muted-foreground">These child records decide where a document goes after an action. Use them for approve, reject, return and escalation paths.</p></div><Button size="sm" onClick={() => setStudioTab('workflow')}>Add transition</Button></div></CardHeader>
+                  <CardContent>
+                    <Table>
+                      <TableHeader><TableRow><TableHead>From node</TableHead><TableHead>Decision</TableHead><TableHead>To node</TableHead><TableHead>Priority</TableHead><TableHead>Default</TableHead></TableRow></TableHeader>
+                      <TableBody>
+                        {selectedTransitions.map((transition) => <TableRow key={transition.id}><TableCell>{transition.from_node_name || 'Unknown'}</TableCell><TableCell><div className="font-medium">{transition.name}</div><div className="text-xs text-muted-foreground">{transition.decision || transition.transition_key}</div></TableCell><TableCell>{transition.to_node_name || 'Unknown'}</TableCell><TableCell>{transition.priority}</TableCell><TableCell>{transition.is_default ? 'Yes' : 'No'}</TableCell></TableRow>)}
+                        {selectedTransitions.length === 0 ? <TableRow><TableCell colSpan={5} className="py-10 text-center text-muted-foreground">No transitions created. Use the Workflow tab to connect nodes.</TableCell></TableRow> : null}
+                      </TableBody>
+                    </Table>
+                  </CardContent>
+                </Card>
+              ) : null}
+
+              {studioTab === 'roles' ? (
+                <Card>
+                  <CardHeader><div className="flex flex-wrap items-start justify-between gap-3"><div><CardTitle>Roles & Committee Assignments</CardTitle><p className="mt-1 text-sm text-muted-foreground">A role or committee can be reused by many workflows and can serve one or many nodes within this workflow.</p></div><Button size="sm" variant="outline" onClick={() => setStudioTab('workflow')}>Assign to node</Button></div></CardHeader>
+                  <CardContent className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                    {groups.map((group) => {
+                      const linkedNodes = selectedNodes.filter((node) => node.approval_group === group.id || node.approval_group_name === group.name);
+                      return <div key={group.id} className="rounded-2xl border p-5"><div className="flex items-start justify-between gap-2"><div className="font-semibold">{group.name}</div><Badge variant={linkedNodes.length ? 'default' : 'outline'}>{linkedNodes.length ? 'In use' : 'Available'}</Badge></div><p className="mt-3 text-sm text-muted-foreground">{linkedNodes.length ? `Assigned to ${linkedNodes.map((node) => node.name).join(', ')}.` : 'Not assigned to a workflow node yet.'}</p><div className="mt-4 text-xs text-muted-foreground">Manage membership under Platform Admin roles, then select it on an approval node.</div></div>;
+                    })}
+                    {groups.length === 0 ? <div className="col-span-full rounded-2xl border border-dashed p-8 text-center text-sm text-muted-foreground">No roles or committees are available for this tenant.</div> : null}
+                  </CardContent>
+                </Card>
+              ) : null}
+
+              {studioTab === 'conditions' ? (
+                <Card>
+                  <CardHeader><CardTitle>Conditional Routing</CardTitle><p className="text-sm text-muted-foreground">Conditions are held on transitions, so every route remains transparent and auditable against the document data.</p></CardHeader>
+                  <CardContent>
+                    <Table>
+                      <TableHeader><TableRow><TableHead>Route</TableHead><TableHead>Rule</TableHead><TableHead>Result</TableHead><TableHead>Fallback</TableHead></TableRow></TableHeader>
+                      <TableBody>
+                        {selectedTransitions.map((transition) => <TableRow key={transition.id}><TableCell>{transition.from_node_name || 'Unknown'} <ArrowRight className="mx-2 inline h-3.5 w-3.5" /> {transition.to_node_name || 'Unknown'}</TableCell><TableCell>{transition.condition_operator === 'always' ? 'Always run' : `${transition.condition_field || 'field'} ${transition.condition_operator} ${transition.condition_value || '-'}`}</TableCell><TableCell>{transition.decision || transition.transition_key}</TableCell><TableCell>{transition.is_default ? 'Default path' : 'Conditional path'}</TableCell></TableRow>)}
+                        {selectedTransitions.length === 0 ? <TableRow><TableCell colSpan={4} className="py-10 text-center text-muted-foreground">No conditions defined. Add transitions first, then configure their field rules on the Workflow tab.</TableCell></TableRow> : null}
+                      </TableBody>
+                    </Table>
+                  </CardContent>
+                </Card>
+              ) : null}
             </>
           ) : (
             <div className="space-y-6">
