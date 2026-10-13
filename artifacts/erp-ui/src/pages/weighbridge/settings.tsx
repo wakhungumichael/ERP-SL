@@ -1852,6 +1852,69 @@ type TellerReceiptSettings = {
   teller_receipt_max_age_hours: number;
 };
 
+type VehicleUseSettings = {
+  allow_shared_weighbridge_vehicles: boolean;
+};
+
+function VehicleUseTab() {
+  const { token, user } = useAuth();
+  const { toast } = useToast();
+  const tenantId = (user as any)?.tenant_id as number | undefined;
+  const [form, setForm] = useState<VehicleUseSettings>({ allow_shared_weighbridge_vehicles: false });
+  const [saving, setSaving] = useState(false);
+  const { data, isLoading } = useQuery({
+    queryKey: ['weighbridge-vehicle-use-settings', tenantId],
+    enabled: !!token && !!tenantId,
+    queryFn: async () => {
+      const response = await fetch(`/api/platform/tenants/${tenantId}/settings/`, { headers: { Authorization: `Token ${token}` } });
+      if (!response.ok) throw new Error('Could not load vehicle-use settings.');
+      const payload = await response.json();
+      return (payload?.data ?? payload) as VehicleUseSettings;
+    },
+  });
+
+  useEffect(() => {
+    if (data) setForm({ allow_shared_weighbridge_vehicles: Boolean(data.allow_shared_weighbridge_vehicles) });
+  }, [data]);
+
+  async function save() {
+    if (!tenantId || !token) return;
+    setSaving(true);
+    try {
+      const response = await fetch(`/api/platform/tenants/${tenantId}/settings/`, {
+        method: 'PUT',
+        headers: { Authorization: `Token ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(form),
+      });
+      if (!response.ok) throw new Error(await response.text());
+      toast({ title: 'Vehicle-use settings saved' });
+    } catch (error) {
+      toast({ title: 'Could not save vehicle-use settings', description: parseErrors(String(error)), variant: 'destructive' });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!tenantId) return <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">Select a tenant workspace to configure vehicle use.</p>;
+
+  return (
+    <div className="max-w-2xl space-y-5 rounded-lg border bg-card p-5">
+      <div>
+        <h3 className="font-semibold">Shared Customer Vehicles</h3>
+        <p className="mt-1 text-sm text-muted-foreground">Allow a cashier to bill one customer for a vehicle registered to another customer, such as a hired truck or shared fleet vehicle.</p>
+      </div>
+      <div className="flex items-start justify-between gap-4 rounded-lg border p-4">
+        <div>
+          <Label htmlFor="allow-shared-vehicles" className="font-medium">Allow hired or shared vehicles</Label>
+          <p className="mt-1 text-xs text-muted-foreground">The registered owner is retained and shown to the cashier. The selected transaction customer receives the charge and statement entry.</p>
+        </div>
+        <Switch id="allow-shared-vehicles" checked={form.allow_shared_weighbridge_vehicles} disabled={isLoading} onCheckedChange={(value) => setForm({ allow_shared_weighbridge_vehicles: value })} />
+      </div>
+      <Button onClick={save} disabled={saving || isLoading}>{saving ? 'Saving...' : 'Save vehicle-use settings'}</Button>
+    </div>
+  );
+}
+
 function TellerReceiptAccessTab() {
   const { token, user } = useAuth();
   const { toast } = useToast();
@@ -1979,6 +2042,9 @@ export default function WeighbridgeSettings() {
           <TabsTrigger value="teller-receipts" className="gap-1.5">
             <ReceiptText className="h-3.5 w-3.5" /> Teller Receipts
           </TabsTrigger>
+          <TabsTrigger value="vehicle-use" className="gap-1.5">
+            <Truck className="h-3.5 w-3.5" /> Vehicle Use
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="indicator"><IndicatorConfigTab /></TabsContent>
@@ -1988,6 +2054,7 @@ export default function WeighbridgeSettings() {
         <TabsContent value="discounts"><DiscountsTab /></TabsContent>
         <TabsContent value="surveillance"><SurveillanceTab /></TabsContent>
         <TabsContent value="teller-receipts"><TellerReceiptAccessTab /></TabsContent>
+        <TabsContent value="vehicle-use"><VehicleUseTab /></TabsContent>
       </Tabs>
     </div>
   );

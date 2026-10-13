@@ -3,6 +3,7 @@ from . import views
 
 urlpatterns = [
     path("dashboard/",                              views.WeighbridgeDashboardView.as_view(),        name="wb-dashboard"),
+    path("operational-policy/",                     views.WeighbridgeOperationalPolicyView.as_view(), name="wb-operational-policy"),
     path("transactions/",                           views.TransactionListCreateView.as_view(),       name="wb-transactions"),
     path("transactions/export/csv/",               views.TransactionExportCSVView.as_view(),        name="wb-transactions-export-csv"),
     path("reports/document/",                      views.WeighbridgeReportDocumentView.as_view(),    name="wb-report-document"),

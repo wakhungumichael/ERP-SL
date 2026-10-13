@@ -321,6 +321,25 @@ class TransactionSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({
                 "payment_status": "Payment can be marked paid only after the transaction has been approved and completed."
             })
+
+        customer = attrs.get("customer") or getattr(self.instance, "customer", None)
+        vehicle = attrs.get("vehicle") or getattr(self.instance, "vehicle", None)
+        if customer and vehicle and vehicle.customer_id != customer.id:
+            tenant = getattr(customer, "tenant", None) or getattr(vehicle, "tenant", None)
+            sharing_allowed = bool(
+                tenant
+                and TenantSettings.objects.filter(
+                    tenant=tenant,
+                    allow_shared_weighbridge_vehicles=True,
+                ).exists()
+            )
+            if not sharing_allowed:
+                raise serializers.ValidationError({
+                    "vehicle": (
+                        "This vehicle is registered to a different customer. "
+                        "Enable 'Shared customer vehicles' in Weighbridge Settings to bill a hired or shared vehicle."
+                    )
+                })
         return attrs
 
 
@@ -917,6 +936,21 @@ def _require_weighbridge_model_permission(user, codename):
     raise PermissionDenied("You do not have permission to perform this action.")
 
 
+class WeighbridgeOperationalPolicyView(APIView):
+    """Expose non-sensitive tenant policy flags needed by cashier workflows."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        tenant = _get_request_user_tenant(request.user)
+        if tenant is None:
+            return Response({"allow_shared_weighbridge_vehicles": False})
+        settings_obj, _ = TenantSettings.objects.get_or_create(tenant=tenant)
+        return Response({
+            "allow_shared_weighbridge_vehicles": settings_obj.allow_shared_weighbridge_vehicles,
+        })
+
+
 # ── Views ─────────────────────────────────────────────────────────────────────
 
 class WeighbridgeDashboardView(APIView):
@@ -1068,6 +1102,7 @@ class TransactionListCreateView(generics.ListCreateAPIView):
         user_tenant = _get_request_user_tenant(self.request.user)
         validated = serializer.validated_data
         vehicle = validated.get("vehicle")
+        customer = validated.get("customer")
         operation_type = validated.get("operation_type")
         weight_type = validated.get("weight_type") or ""
         flow_kind = _resolve_payload_flow_kind(operation_type=operation_type, weight_type=weight_type)
@@ -1077,6 +1112,12 @@ class TransactionListCreateView(generics.ListCreateAPIView):
         capture_permission = "can_capture_second_weight" if weight_type == "Second Weight" else "can_capture_first_weight"
         if not _has_weighbridge_process_permission(self.request.user, capture_permission):
             raise PermissionDenied("You do not have permission for this weight-capture step.")
+
+        if user_tenant and (
+            (getattr(customer, "tenant_id", None) not in (None, user_tenant.id))
+            or (getattr(vehicle, "tenant_id", None) not in (None, user_tenant.id))
+        ):
+            raise serializers.ValidationError({"vehicle": "The selected customer and vehicle must belong to your workspace."})
 
         if flow_kind == "second":
             first_weight = validated.get("paired_first_transaction")

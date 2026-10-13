@@ -869,6 +869,9 @@ class TenantSettings(TimeStampedModel):
     # A value of zero leaves the respective limit disabled.
     teller_receipt_latest_records = models.PositiveIntegerField(default=0)
     teller_receipt_max_age_hours = models.PositiveIntegerField(default=0)
+    # When enabled, a transaction may bill a customer other than the vehicle's
+    # registered owner.  The owner relationship itself is never changed.
+    allow_shared_weighbridge_vehicles = models.BooleanField(default=False)
 
     class Meta:
         ordering = ["tenant__name"]

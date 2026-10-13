@@ -871,6 +871,7 @@ class TenantSettingsSerializer(serializers.ModelSerializer):
             "smtp_allow_insecure_ssl", "smtp_password_configured",
             "default_payment_terms_days",
             "teller_receipt_latest_records", "teller_receipt_max_age_hours",
+            "allow_shared_weighbridge_vehicles",
             "created_at", "updated_at",
         )
         read_only_fields = ("id", "tenant", "created_at", "updated_at")

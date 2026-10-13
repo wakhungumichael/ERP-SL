@@ -348,9 +348,19 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
     // not only the first alphabetic page of customers.
     queryFn: async () => fetch('/api/commercial-weighbridge/customers/?page_size=1000&search=', { headers: authHeaders() }).then((res) => res.json()),
   });
+  const { data: vehicleUseSettings } = useQuery({
+    queryKey: ['wb-vehicle-use-settings'],
+    queryFn: async () => {
+      const response = await fetch('/api/commercial-weighbridge/operational-policy/', { headers: authHeaders() });
+      if (!response.ok) throw new Error('Could not load vehicle-use settings.');
+      const payload = await response.json();
+      return payload?.data ?? payload;
+    },
+  });
+  const allowSharedVehicles = Boolean(vehicleUseSettings?.allow_shared_weighbridge_vehicles);
   const { data: vehicles } = useQuery({
-    queryKey: ['wb-vehicles-entry', customerId],
-    queryFn: async () => fetch(`/api/commercial-weighbridge/vehicles/?customer_id=${customerId}`, { headers: authHeaders() }).then((res) => res.json()),
+    queryKey: ['wb-vehicles-entry', customerId, allowSharedVehicles],
+    queryFn: async () => fetch(`/api/commercial-weighbridge/vehicles/?${allowSharedVehicles ? '' : `customer_id=${customerId}`}`, { headers: authHeaders() }).then((res) => res.json()),
     enabled: !!customerId,
   });
   const { data: vehicleSearchResults, isFetching: searchingVehicles } = useQuery({
@@ -509,9 +519,18 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
     () => vehicleList.map((vehicle: any) => ({
       value: String(vehicle.id),
       label: vehicle.number_plate,
-      meta: vehicle.vehicle_type_name || '',
+      meta: [vehicle.customer_name ? `Owner: ${vehicle.customer_name}` : '', vehicle.vehicle_type_name].filter(Boolean).join(' · '),
     })),
     [vehicleList],
+  );
+
+  const selectedEntryVehicle = vehicleList.find((vehicle: any) => String(vehicle.id) === vehicleId);
+  const selectedCustomer = customerList.find((customer: any) => String(customer.id) === customerId);
+  const isSharedVehicleUse = Boolean(
+    allowSharedVehicles
+    && selectedEntryVehicle
+    && customerId
+    && String(selectedEntryVehicle.customer) !== customerId,
   );
 
   const itemOptions = useMemo(
@@ -632,7 +651,9 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
       setManualWeight('');
       return;
     }
-    setCustomerId(String(vehicle.customer));
+    // Shared-vehicle mode keeps the selected billing customer. If no customer
+    // was selected yet, use the registered owner as the initial choice.
+    if (!allowSharedVehicles || !customerId) setCustomerId(String(vehicle.customer));
     setVehicleId(String(vehicle.id));
     setVehicleTypeId(vehicle.vehicle_type ? String(vehicle.vehicle_type) : '');
     void populateVehicleHistoryDefaults(vehicle.id);
@@ -1133,6 +1154,11 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
                         <InlineFormError messages={transactionErrors.errors.fields.vehicle} />
                         <InlineFormError messages={transactionErrors.errors.fields.vehicle_type} />
                       </div>
+                      {isSharedVehicleUse ? (
+                        <div className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 md:col-span-2">
+                          Shared vehicle: <strong>{selectedEntryVehicle?.number_plate}</strong> is registered to <strong>{selectedEntryVehicle?.customer_name}</strong>, but this weighment will be billed to <strong>{selectedCustomer?.name}</strong>.
+                        </div>
+                      ) : null}
                       {duplicateOpenFirstWeight ? <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 md:col-span-2">Open draft found for this vehicle: <span className="font-mono font-bold">TX-{String(duplicateOpenFirstWeight.id).padStart(5, '0')}</span>. Complete or approve that {duplicateOpenFirstWeight.operation_type_name.toLowerCase()} record before saving another one.</div> : null}
                     </div>
                   </section>
