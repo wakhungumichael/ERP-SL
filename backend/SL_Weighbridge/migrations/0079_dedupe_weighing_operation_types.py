@@ -33,6 +33,10 @@ def dedupe_operation_types(apps, schema_editor):
 
 class Migration(migrations.Migration):
 
+    # PostgreSQL must commit the transaction re-linking/deleting duplicate
+    # operation types before the unique constraint can be added.
+    atomic = False
+
     dependencies = [
         ("SL_Weighbridge", "0078_item_branch"),
     ]
