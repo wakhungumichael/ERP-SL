@@ -80,39 +80,20 @@ function HeroWidget({ tenantContext }: DashboardWidgetComponentProps) {
   }).format(new Date());
 
   return (
-    <div className="grid gap-5 lg:grid-cols-[1.2fr_0.8fr]">
-      <div className="space-y-4">
+    <div className="flex flex-wrap items-end justify-between gap-5">
+      <div className="space-y-3">
         <div className="flex flex-wrap items-center gap-2">
-          <Badge className="border-transparent bg-primary/10 text-primary hover:bg-primary/10">ERP Control Tower</Badge>
+          <Badge className="border-transparent bg-primary/10 text-primary hover:bg-primary/10">Live business overview</Badge>
           <Badge variant="outline">{tenantContext.role.replace('_', ' ')}</Badge>
-          <Badge variant="outline">{today}</Badge>
         </div>
         <div className="space-y-2">
-          <h1 className="text-3xl font-black tracking-tight">
-            Today
-          </h1>
-          <p className="max-w-2xl text-sm text-muted-foreground">
-            {today}
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Link href="/platform/organization-settings">
-            <Button size="sm" className="gap-2">
-              Settings
-              <ArrowRight className="h-4 w-4" />
-            </Button>
-          </Link>
-          <Link href="/platform/roles">
-            <Button size="sm" variant="outline" className="gap-2">
-              Roles
-            </Button>
-          </Link>
+          <h1 className="text-2xl font-black tracking-tight">{tenantContext.tenantName || 'Business workspace'}</h1>
+          <p className="max-w-2xl text-sm text-muted-foreground">Monitor operational throughput, payment exposure, and work needing attention. Data is limited to your role and assigned branches.</p>
         </div>
       </div>
-      <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-1 xl:grid-cols-3">
-        <MetricTile label="Code" value={tenantContext.tenantCode || 'live'} />
-        <MetricTile label="Modules" value={tenantContext.activeModuleSlugs.length || tenantContext.sections.length} tone="positive" />
-        <MetricTile label="Currency" value={tenantContext.branding.currency} />
+      <div className="rounded-xl border border-primary/20 bg-primary/5 px-4 py-3 text-right">
+        <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-muted-foreground">Reporting date</div>
+        <div className="mt-1 text-sm font-bold">{today}</div>
       </div>
     </div>
   );
@@ -420,7 +401,7 @@ function FinancePulseWidget({ tenantContext, canViewSensitive }: DashboardWidget
   );
 }
 
-function OperationsPulseWidget({ tenantContext }: DashboardWidgetComponentProps) {
+function OperationsPulseWidget({ tenantContext, canViewSensitive }: DashboardWidgetComponentProps) {
   const token = useDashboardToken();
   const weighbridgeQuery = useQuery({
     queryKey: ['dashboard-widget-ops-weight', tenantContext.tenantId],
@@ -432,26 +413,40 @@ function OperationsPulseWidget({ tenantContext }: DashboardWidgetComponentProps)
       return res.json();
     },
   });
-  const procurementQuery = useQuery({
-    queryKey: ['dashboard-widget-ops-procurement', tenantContext.tenantId],
-    enabled: !!token && !!tenantContext.tenantId,
-    staleTime: 60000,
-    queryFn: async () => {
-      const res = await fetch('/api/procurement/dashboard/', { headers: buildHeaders(token) });
-      if (!res.ok) throw new Error(`${res.status}`);
-      return res.json();
-    },
-  });
-
   const wb = weighbridgeQuery.data ?? {};
-  const procurement = procurementQuery.data ?? {};
+  const totals = wb.totals ?? {};
+  const activity = Array.isArray(wb.daily_activity) ? wb.daily_activity : [];
+  const maxTransactions = Math.max(...activity.map((entry: { transactions?: number }) => Number(entry.transactions || 0)), 1);
 
   return (
-    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-      <MetricTile label="Bridge Today" value={Number(wb.totals?.transactions_today || 0)} />
-      <MetricTile label="Net Weight Today" value={`${Number(wb.totals?.net_weight_today || 0).toLocaleString()} kg`} />
-      <MetricTile label="PO Approved" value={Number(procurement.counts?.approved || 0)} tone="positive" />
-      <MetricTile label="Req Blocked" value={Number(procurement.requisitions?.blocked || 0)} tone="warning" />
+    <div className="space-y-5">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <MetricTile label="Weighments today" value={Number(totals.transactions_today || 0)} />
+        <MetricTile label="Net weight today" value={`${Number(totals.net_weight_today || 0).toLocaleString()} kg`} tone="positive" />
+        <MetricTile label="Completed charges this month" value={formatMoney(Number(totals.total_charge || 0), tenantContext, !canViewSensitive)} tone="positive" />
+        <MetricTile label="Pending payment tickets" value={Number(totals.pending_payments || 0)} tone="warning" />
+      </div>
+      <div>
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <div>
+            <div className="text-sm font-bold">Seven-day weighment trend</div>
+            <p className="text-xs text-muted-foreground">Recorded transactions per day across your permitted branches.</p>
+          </div>
+          <Link href="/weighbridge/transactions"><Button variant="outline" size="sm">View transactions <ArrowRight className="ml-1 h-3.5 w-3.5" /></Button></Link>
+        </div>
+        <div className="grid h-28 grid-cols-7 items-end gap-2 rounded-xl border bg-muted/20 px-3 pb-2 pt-3">
+          {activity.map((entry: { date: string; transactions: number }) => {
+            const label = new Intl.DateTimeFormat(tenantContext.branding.locale, { weekday: 'short', timeZone: tenantContext.branding.timezone }).format(new Date(`${entry.date}T12:00:00`));
+            const transactions = Number(entry.transactions || 0);
+            return <div key={entry.date} className="flex h-full min-w-0 flex-col justify-end gap-1 text-center">
+              <div className="text-[10px] font-bold text-muted-foreground">{transactions}</div>
+              <div className="min-h-1 rounded-t bg-primary/80" style={{ height: `${Math.max(5, (transactions / maxTransactions) * 72)}%` }} title={`${transactions} transactions`} />
+              <div className="text-[10px] text-muted-foreground">{label}</div>
+            </div>;
+          })}
+          {!activity.length ? <div className="col-span-7 self-center text-center text-sm text-muted-foreground">No weighment activity recorded in the last seven days.</div> : null}
+        </div>
+      </div>
     </div>
   );
 }
@@ -618,11 +613,11 @@ function SalesPulseWidget({ tenantContext, canViewSensitive }: DashboardWidgetCo
 export const DASHBOARD_WIDGETS: DashboardWidgetDefinition[] = [
   {
     id: 'hero',
-    title: 'Tenant Command Header',
-    description: 'Brand-aware ERP identity, tenant scope, and top-level workspace orientation.',
+    title: 'Business Overview',
+    description: 'Role-aware operational overview for the current tenant and assigned branches.',
     category: 'overview',
     requiredPermissions: ['view_dashboard'],
-    defaultLayout: { widgetId: 'hero', x: 0, y: 0, w: 12, h: 3, isCollapsed: false, isEnabled: true },
+    defaultLayout: { widgetId: 'hero', x: 0, y: 0, w: 12, h: 2, isCollapsed: false, isEnabled: true },
     component: HeroWidget,
   },
   {
@@ -662,7 +657,7 @@ export const DASHBOARD_WIDGETS: DashboardWidgetDefinition[] = [
     description: 'Config-driven module cards aligned to the active tenant subscription and navigation.',
     category: 'overview',
     requiredPermissions: ['view_shortcuts'],
-    defaultLayout: { widgetId: 'module-map', x: 4, y: 7, w: 4, h: 5, isCollapsed: false, isEnabled: true },
+    defaultLayout: { widgetId: 'module-map', x: 4, y: 7, w: 4, h: 5, isCollapsed: false, isEnabled: false },
     component: ModuleMapWidget,
   },
   {
@@ -687,13 +682,13 @@ export const DASHBOARD_WIDGETS: DashboardWidgetDefinition[] = [
   },
   {
     id: 'operations-pulse',
-    title: 'Operations Pulse',
-    description: 'Daily throughput, queue pressure, and procurement execution status.',
+    title: 'Weighbridge Performance',
+    description: 'Live business throughput, payments, completed charges, and daily activity trend.',
     category: 'operations',
     requiredPermissions: ['view_dashboard'],
-    moduleDependencies: ['weighbridge', 'procurement'],
-    workspacePermissions: ['can_view_weighbridge_overview', 'can_view_procurement_overview'],
-    defaultLayout: { widgetId: 'operations-pulse', x: 6, y: 12, w: 6, h: 4, isCollapsed: false, isEnabled: true },
+    moduleDependencies: ['weighbridge'],
+    workspacePermissions: ['can_view_weighbridge_overview'],
+    defaultLayout: { widgetId: 'operations-pulse', x: 0, y: 2, w: 12, h: 5, isCollapsed: false, isEnabled: true },
     component: OperationsPulseWidget,
   },
   {

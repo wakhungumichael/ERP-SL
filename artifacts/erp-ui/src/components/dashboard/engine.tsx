@@ -30,6 +30,49 @@ function ordered(items: DashboardLayoutItem[]) {
   return [...items].sort((a, b) => a.y - b.y || a.x - b.x);
 }
 
+// Role filtering can remove widgets from the middle of a saved layout. Pack the
+// remaining cards for the normal dashboard view so missing cards leave no gaps.
+function compactVisibleLayout(items: DashboardLayoutItem[], columns: number) {
+  if (columns === 1) return items;
+
+  const occupied = new Set<string>();
+  const isFree = (x: number, y: number, width: number, height: number) => {
+    for (let row = y; row < y + height; row += 1) {
+      for (let column = x; column < x + width; column += 1) {
+        if (occupied.has(`${column}:${row}`)) return false;
+      }
+    }
+    return true;
+  };
+  const occupy = (x: number, y: number, width: number, height: number) => {
+    for (let row = y; row < y + height; row += 1) {
+      for (let column = x; column < x + width; column += 1) occupied.add(`${column}:${row}`);
+    }
+  };
+
+  return ordered(items).map((item) => {
+    const width = Math.min(Math.max(1, item.w), columns);
+    const height = Math.max(1, item.h);
+    const preferredX = Math.min(Math.max(0, item.x), columns - width);
+    let y = 0;
+    let x = preferredX;
+
+    while (true) {
+      const candidates = [preferredX, ...Array.from({ length: columns - width + 1 }, (_, index) => index)
+        .filter((candidate) => candidate !== preferredX)];
+      const available = candidates.find((candidate) => isFree(candidate, y, width, height));
+      if (available !== undefined) {
+        x = available;
+        break;
+      }
+      y += 1;
+    }
+
+    occupy(x, y, width, height);
+    return { ...item, x, y, w: width, h: height };
+  });
+}
+
 function WidgetChrome({
   item,
   definition,
@@ -213,7 +256,8 @@ export function DashboardGridEngine({
   const columns = useViewportColumns();
   const [draggingId, setDraggingId] = useState<DashboardWidgetId | null>(null);
   const widgetMap = useMemo(() => new Map(widgets.map((widget) => [widget.id, widget])), [widgets]);
-  const rendered = ordered(layout).filter((item) => item.isEnabled && widgetMap.has(item.widgetId));
+  const visibleItems = ordered(layout).filter((item) => item.isEnabled && widgetMap.has(item.widgetId));
+  const rendered = customizeMode ? visibleItems : compactVisibleLayout(visibleItems, columns);
 
   return (
     <div

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { DashboardLayoutItem, DashboardWidgetDefinition, DashboardWidgetId } from '@/components/dashboard/types';
 
-const STORAGE_VERSION = 'v2';
+const STORAGE_VERSION = 'v3';
 
 function normalizeLayout(
   widgets: DashboardWidgetDefinition[],

@@ -64,11 +64,11 @@ export default function Dashboard() {
     <header className="flex flex-wrap items-end justify-between gap-4 border-b border-border/80 pb-5">
       <div>
         <div className="flex flex-wrap items-center gap-2">
-          <Badge className="bg-primary/10 text-primary hover:bg-primary/10">Role-based workspace</Badge>
-          <Badge variant="outline">{widgets.length} available panels</Badge>
+          <Badge className="bg-primary/10 text-primary hover:bg-primary/10">Business performance</Badge>
+          <Badge variant="outline">Role-based view</Badge>
         </div>
         <h1 className="mt-3 text-2xl font-black tracking-tight">{greeting(tenantContext.branding.timezone)}, {tenantContext.displayName || tenantContext.tenantName}</h1>
-        <p className="mt-1 text-sm text-muted-foreground">A live view of the modules and controls available to your current role.</p>
+        <p className="mt-1 text-sm text-muted-foreground">Live operational, collection, and workflow signals for your current role.</p>
       </div>
       <div className="flex items-center gap-3">
         <div className="hidden items-center gap-2 rounded-lg border bg-card px-3 py-2 text-xs text-muted-foreground shadow-sm sm:inline-flex"><CalendarDays className="h-3.5 w-3.5 text-primary" />{today}</div>

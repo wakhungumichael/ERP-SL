@@ -1003,6 +1003,8 @@ class WeighbridgeDashboardView(APIView):
         # transactions.  Superusers see the global picture.
         # Profileless non-superusers get an empty queryset (deny-all).
         qs = _apply_tenant_filter(Transaction.objects.all(), request.user)
+        qs = qs.filter(branch_id__in=_allowed_branch_ids(request.user))
+        qs = _apply_transaction_visibility_scope(qs, request.user)
 
         if branch_id := request.query_params.get("branch_id"):
             qs = qs.filter(branch_id=branch_id)
@@ -1017,6 +1019,18 @@ class WeighbridgeDashboardView(APIView):
         ]
 
         recent = TransactionSerializer(qs.order_by("-created_at")[:10], many=True).data
+        daily_activity = []
+        for days_ago in range(6, -1, -1):
+            date = today - timedelta(days=days_ago)
+            day_qs = qs.filter(created_at__date=date)
+            completed_qs = day_qs.filter(status="Completed")
+            daily_activity.append({
+                "date": date.isoformat(),
+                "transactions": day_qs.count(),
+                "completed": completed_qs.count(),
+                "net_weight": float(sum(t.net_weight or 0 for t in day_qs.filter(net_weight__isnull=False))),
+                "charges": float(sum(t.charge or 0 for t in completed_qs)),
+            })
 
         return Response({
             "totals": {
@@ -1033,6 +1047,7 @@ class WeighbridgeDashboardView(APIView):
                 ),
             },
             "status_breakdown": status_breakdown,
+            "daily_activity": daily_activity,
             "recent_transactions": recent,
         })
 
