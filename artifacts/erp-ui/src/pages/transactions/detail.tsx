@@ -15,6 +15,7 @@ import {
 import { Link } from 'wouter';
 import { ReceiptDialog } from '@/components/weighbridge/receipt';
 import { RecordAuditTrail } from '@/components/audit/record-audit-trail';
+import { WorkflowForwardButton } from '@/components/workflow/workflow-forward-button';
 import { CAN_APPROVE, CAN_RECALL, CAN_EXPORT } from '@/lib/roles';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
@@ -412,6 +413,17 @@ export default function TransactionDetail({ id }: { id: string }) {
 
         {/* Action buttons */}
         <div className="flex flex-wrap gap-2">
+          {['Draft', 'Recalled'].includes(tx.status) ? (
+            <WorkflowForwardButton
+              moduleSlug="weighbridge"
+              entityType="weighbridge_transaction"
+              entityId={tx.id}
+              reference={tx.transaction_number || `TX-${tx.id}`}
+              title={`Approval required: ${tx.transaction_number || `TX-${tx.id}`}`}
+              detail={`Weighbridge transaction for ${tx.customer_name || tx.customer_display || 'the selected customer'} is ready for review.`}
+              onForwarded={() => queryClient.invalidateQueries({ queryKey: getGetTransactionQueryKey(numericId) })}
+            />
+          ) : null}
           {canApprove && (
             <Button
               size="sm"

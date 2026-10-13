@@ -42,7 +42,7 @@ from Platform_Core.platform import (
 from Platform_Core.template_library import ensure_shared_document_template_library
 from Platform_Core.documents import _safe_logo_url, render_document_template_preview
 from Platform_Core.backup_service import create_backup_archive, resolve_backup_directory
-from Platform_Core.audit import get_record_audit_summary
+from Platform_Core.audit import get_record_audit_summary, log_business_event
 from Platform_Core.models import (
     AuditAccessLog,
     AuditEventLog,
@@ -1900,6 +1900,200 @@ class WorkflowInboxAPIView(APIView):
             "Workflow inbox loaded successfully.",
             data={"results": payload, "count": len(payload)},
         )
+
+
+def _workflow_actor_can_action(item, user):
+    if _is_superadmin(user):
+        return True
+    if item.assigned_user_id:
+        return item.assigned_user_id == user.id
+    return item.assigned_group_id in set(user.groups.values_list("id", flat=True))
+
+
+def _workflow_first_actionable_node(workflow):
+    """Resolve the configured entry node without assuming a module-specific model."""
+    nodes = list(workflow.nodes.filter(is_active=True).select_related("approval_group", "assigned_user").order_by("step_order", "id"))
+    if not nodes:
+        return None
+    current = next((node for node in nodes if node.is_initial), None) or next(
+        (node for node in nodes if node.node_type == "start"), nodes[0]
+    )
+    visited = set()
+    while current and current.id not in visited:
+        visited.add(current.id)
+        if current.node_type in {"approval", "review", "task"}:
+            return current
+        transition = workflow.transitions.filter(
+            from_node=current,
+            is_active=True,
+        ).order_by("-is_default", "priority", "id").select_related("to_node").first()
+        current = transition.to_node if transition else None
+    return None
+
+
+def _workflow_next_actionable_node(item):
+    if not item.workflow_id or not item.node_definition_id:
+        return None
+    transition = item.workflow.transitions.filter(
+        from_node=item.node_definition,
+        is_active=True,
+    ).filter(Q(decision__in=["approve", "next", ""]) | Q(is_default=True)).order_by(
+        "-is_default", "priority", "id"
+    ).select_related("to_node", "to_node__approval_group", "to_node__assigned_user").first()
+    if not transition:
+        return None
+    current = transition.to_node
+    visited = set()
+    while current and current.id not in visited:
+        visited.add(current.id)
+        if current.node_type in {"approval", "review", "task"}:
+            return current
+        next_transition = item.workflow.transitions.filter(
+            from_node=current,
+            is_active=True,
+        ).order_by("-is_default", "priority", "id").select_related("to_node").first()
+        current = next_transition.to_node if next_transition else None
+    return None
+
+
+class WorkflowForwardAPIView(APIView):
+    """Create an inbox item from a tenant workflow binding for any ERP entity."""
+
+    permission_classes = (IsAuthenticated,)
+
+    def post(self, request):
+        tenant = _request_tenant_or_none(request.user)
+        if tenant is None:
+            raise PermissionDenied("Your account is not linked to an organization.")
+
+        module_slug = str(request.data.get("module_slug") or "").strip()
+        entity_type = str(request.data.get("entity_type") or "").strip()
+        entity_id = request.data.get("entity_id")
+        trigger_event = str(request.data.get("trigger_event") or "submit").strip()
+        if not module_slug or not entity_type or not entity_id:
+            raise ValidationError({"detail": "module_slug, entity_type, and entity_id are required."})
+        try:
+            entity_id = int(entity_id)
+        except (TypeError, ValueError):
+            raise ValidationError({"entity_id": "Use a valid numeric record ID."})
+
+        bindings = WorkflowEntityBinding.objects.select_related("workflow").filter(
+            workflow__tenant=tenant,
+            workflow__is_active=True,
+            module_slug=module_slug,
+            entity_type=entity_type,
+            is_active=True,
+        )
+        if binding_id := request.data.get("binding_id"):
+            bindings = bindings.filter(id=binding_id)
+        binding = bindings.filter(Q(trigger_events__contains=[trigger_event]) | Q(trigger_events=[])).order_by(
+            "-is_primary", "id"
+        ).first()
+        if not binding:
+            raise ValidationError({"detail": "No active workflow is configured for this module record and trigger."})
+
+        existing = WorkflowInboxItem.objects.filter(
+            tenant=tenant,
+            workflow=binding.workflow,
+            module_slug=module_slug,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            status="pending",
+        ).first()
+        if existing:
+            return success_response("This record is already in the approval queue.", data=WorkflowInboxItemSerializer(existing).data)
+
+        node = _workflow_first_actionable_node(binding.workflow)
+        if node is None or (node.node_type == "approval" and not node.approval_group_id and not node.assigned_user_id):
+            raise ValidationError({"detail": "The configured workflow needs an active routed approval, review, or task node."})
+
+        reference = str(request.data.get("reference") or f"{entity_type}-{entity_id}")[:80]
+        title = str(request.data.get("title") or f"Approval required: {binding.entity_label}")[:200]
+        detail = str(request.data.get("detail") or f"{binding.entity_label} {reference} was forwarded for {node.name}.")
+        metadata = request.data.get("metadata") if isinstance(request.data.get("metadata"), dict) else {}
+        metadata.update({"submitted_by": request.user.id, "trigger_event": trigger_event, "binding_id": binding.id})
+
+        item = WorkflowInboxItem.objects.create(
+            tenant=tenant,
+            workflow=binding.workflow,
+            node_definition=node,
+            module_slug=module_slug,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            reference=reference,
+            title=title,
+            detail=detail,
+            route_path=binding.route_path,
+            action_url=f"/api/platform/workflows/inbox/{{id}}/action/",
+            assigned_group=node.approval_group,
+            assigned_user=node.assigned_user,
+            quick_actions=["approve", "reject"],
+            metadata=metadata,
+        )
+        log_business_event(
+            event_group="workflow",
+            event_type="forwarded",
+            tenant=tenant,
+            actor=request.user,
+            obj=item,
+            note=f"{binding.entity_label} {reference} forwarded to {node.name}.",
+            metadata={"module_slug": module_slug, "entity_type": entity_type, "entity_id": entity_id, "workflow_id": binding.workflow_id},
+        )
+        return success_response("Record forwarded for approval.", data=WorkflowInboxItemSerializer(item).data, status=status.HTTP_201_CREATED)
+
+
+class WorkflowInboxActionAPIView(APIView):
+    """Advance, reject, or complete a generic workflow inbox record."""
+
+    permission_classes = (IsAuthenticated,)
+
+    def post(self, request, pk):
+        item = get_object_or_404(
+            WorkflowInboxItem.objects.select_related("tenant", "workflow", "node_definition", "assigned_group", "assigned_user"),
+            pk=pk,
+        )
+        if not _is_superadmin(request.user) and item.tenant_id != getattr(_request_tenant_or_none(request.user), "id", None):
+            raise PermissionDenied("This approval does not belong to your organization.")
+        if item.status != "pending":
+            raise ValidationError({"detail": "This workflow item has already been actioned."})
+        if not _workflow_actor_can_action(item, request.user):
+            raise PermissionDenied("This approval is not assigned to your user or role.")
+
+        decision = str(request.data.get("decision") or "approve").lower()
+        if decision not in {"approve", "reject"}:
+            raise ValidationError({"decision": "Use approve or reject."})
+        item.acted_by = request.user
+        item.acted_at = timezone.now()
+        if decision == "reject":
+            item.status = "rejected"
+            item.save(update_fields=["status", "acted_by", "acted_at", "updated_at"])
+            log_business_event(event_group="workflow", event_type="rejected", tenant=item.tenant, actor=request.user, obj=item, note=f"{item.reference or item.title} rejected.")
+            return success_response("Workflow item rejected.", data=WorkflowInboxItemSerializer(item).data)
+
+        next_node = _workflow_next_actionable_node(item)
+        item.status = "approved" if next_node else "completed"
+        item.save(update_fields=["status", "acted_by", "acted_at", "updated_at"])
+        log_business_event(event_group="workflow", event_type="approved" if next_node else "completed", tenant=item.tenant, actor=request.user, obj=item, note=f"{item.reference or item.title} approved.")
+        if next_node:
+            next_item = WorkflowInboxItem.objects.create(
+                tenant=item.tenant,
+                workflow=item.workflow,
+                node_definition=next_node,
+                module_slug=item.module_slug,
+                entity_type=item.entity_type,
+                entity_id=item.entity_id,
+                reference=item.reference,
+                title=item.title,
+                detail=f"{item.reference or item.title} is awaiting {next_node.name}.",
+                route_path=item.route_path,
+                action_url=f"/api/platform/workflows/inbox/{{id}}/action/",
+                assigned_group=next_node.approval_group,
+                assigned_user=next_node.assigned_user,
+                quick_actions=["approve", "reject"],
+                metadata={**(item.metadata or {}), "previous_inbox_item_id": item.id},
+            )
+            return success_response("Approval recorded and forwarded to the next step.", data=WorkflowInboxItemSerializer(next_item).data)
+        return success_response("Workflow completed.", data=WorkflowInboxItemSerializer(item).data)
 
 
 class AuditEventLogListAPIView(APIView):

@@ -14,6 +14,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
+import { WorkflowInboxActions } from '@/components/workflow/workflow-inbox-actions';
 import type {
   DashboardTenantContextValue,
   DashboardWidgetComponentProps,
@@ -342,9 +343,10 @@ function WorkflowInboxWidget({ tenantContext }: DashboardWidgetComponentProps) {
             <Badge variant="secondary">{item.reference || 'Workflow'}</Badge>
           </div>
           <div className="mt-3">
-            <Link href={item.route_path || '/dashboard'} className="text-sm font-medium text-primary hover:underline">
-              Open request
-            </Link>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <Link href={item.route_path || '/dashboard'} className="text-sm font-medium text-primary hover:underline">Open request</Link>
+              {item.quick_actions?.includes('approve') ? <WorkflowInboxActions itemId={item.id} /> : null}
+            </div>
           </div>
         </div>
       ))}

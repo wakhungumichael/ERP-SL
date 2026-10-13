@@ -76,6 +76,8 @@ from .views import (
     WorkflowDefinitionListCreateAPIView,
     WorkflowEntityBindingDetailAPIView,
     WorkflowEntityBindingListCreateAPIView,
+    WorkflowForwardAPIView,
+    WorkflowInboxActionAPIView,
     WorkflowInboxAPIView,
     WorkflowNodeDefinitionDetailAPIView,
     WorkflowNodeDefinitionListCreateAPIView,
@@ -135,6 +137,8 @@ urlpatterns = [
     path("workflows/transitions/", WorkflowTransitionDefinitionListCreateAPIView.as_view(), name="workflow-transition-list"),
     path("workflows/transitions/<int:pk>/", WorkflowTransitionDefinitionDetailAPIView.as_view(), name="workflow-transition-detail"),
     path("workflows/inbox/", WorkflowInboxAPIView.as_view(), name="workflow-inbox"),
+    path("workflows/forward/", WorkflowForwardAPIView.as_view(), name="workflow-forward"),
+    path("workflows/inbox/<int:pk>/action/", WorkflowInboxActionAPIView.as_view(), name="workflow-inbox-action"),
     # Users & roles
     path("users/", PlatformUserListAPIView.as_view(), name="platform-user-list"),
     path("users/<int:pk>/", PlatformUserDetailAPIView.as_view(), name="platform-user-detail"),
