@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { GitBranchPlus, Link2, Route, Workflow } from 'lucide-react';
+import { ArrowRight, Blocks, CircleDot, GitBranchPlus, Link2, Route, Search, Send, ShieldCheck, Workflow } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -114,18 +114,23 @@ function api(token: string, path: string, method = 'GET', body?: object) {
   });
 }
 
-const entityTypeOptions = [
-  'procurement_requisition',
-  'purchase_order',
-  'goods_receipt',
-  'vendor_bill',
-  'payment_batch',
-  'journal_entry',
-  'sales_order',
-];
+const workflowCatalog = [
+  { module: 'Weighbridge', moduleSlug: 'weighbridge', entityType: 'weighbridge_transaction', label: 'Weighment Transaction', routePath: '/weighbridge/transactions', apiPath: '/api/commercial-weighbridge/transactions/', trigger: 'complete' },
+  { module: 'Sales', moduleSlug: 'sales', entityType: 'sales_order', label: 'Sales Order', routePath: '/sales/orders', apiPath: '/api/sales/orders/', trigger: 'submit' },
+  { module: 'Procurement', moduleSlug: 'procurement', entityType: 'procurement_requisition', label: 'Procurement Requisition', routePath: '/procurement/requisitions', apiPath: '/api/procurement/requisitions/', trigger: 'submit' },
+  { module: 'Purchases', moduleSlug: 'purchases', entityType: 'purchase_order', label: 'Purchase Order', routePath: '/purchases/orders', apiPath: '/api/purchases/orders/', trigger: 'submit' },
+  { module: 'Purchases', moduleSlug: 'purchases', entityType: 'goods_receipt', label: 'Goods Receipt', routePath: '/purchases/goods-receipts', apiPath: '/api/purchases/goods-receipts/', trigger: 'complete' },
+  { module: 'Finance', moduleSlug: 'accounting', entityType: 'vendor_bill', label: 'Vendor Bill', routePath: '/finance/vendor-bills', apiPath: '/api/accounting/vendor-bills/', trigger: 'submit' },
+  { module: 'Finance', moduleSlug: 'accounting', entityType: 'payment_batch', label: 'Payment Batch', routePath: '/finance/payments', apiPath: '/api/accounting/payment-batches/', trigger: 'submit' },
+  { module: 'Finance', moduleSlug: 'accounting', entityType: 'journal_entry', label: 'Journal Entry', routePath: '/finance/journal-entries', apiPath: '/api/accounting/journal-entries/', trigger: 'post' },
+  { module: 'Inventory', moduleSlug: 'inventory', entityType: 'stock_adjustment', label: 'Stock Adjustment', routePath: '/inventory/adjustments', apiPath: '/api/inventory/adjustments/', trigger: 'submit' },
+  { module: 'People', moduleSlug: 'hr', entityType: 'leave_request', label: 'Leave Request', routePath: '/hr/leave-requests', apiPath: '/api/hr/leave-requests/', trigger: 'submit' },
+] as const;
+
+const entityTypeOptions = workflowCatalog.map((item) => item.entityType);
 
 const triggerOptions = ['submit', 'approve', 'complete', 'post', 'close'];
-const moduleSlugOptions = ['procurement', 'purchases', 'accounting', 'sales', 'inventory', 'hr', 'platform'];
+const moduleSlugOptions = [...new Set(workflowCatalog.map((item) => item.moduleSlug)), 'platform'];
 const nodeTypeOptions = ['start', 'approval', 'review', 'condition', 'notification', 'task', 'end'];
 const approvalModeOptions = ['single', 'any_one', 'all_members', 'quorum'];
 const operatorOptions = ['always', 'eq', 'neq', 'gt', 'gte', 'lt', 'lte', 'contains', 'in', 'is_true', 'is_false'];
@@ -136,22 +141,24 @@ export default function WorkflowCenter() {
   const qc = useQueryClient();
   const { toast } = useToast();
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<number | null>(null);
+  const [catalogSearch, setCatalogSearch] = useState('');
+  const [selectedCatalogEntity, setSelectedCatalogEntity] = useState<(typeof workflowCatalog)[number]>(workflowCatalog[0]);
   const [workflowForm, setWorkflowForm] = useState({
-    code: '',
-    name: '',
-    entity_type: 'procurement_requisition',
+    code: 'weighbridge-transaction-approval',
+    name: 'Weighment Transaction Approval',
+    entity_type: 'weighbridge_transaction',
     scope: 'document',
-    trigger_event: 'submit',
-    description: '',
+    trigger_event: 'complete',
+    description: 'Approval route for completed Weighment Transaction records in Weighbridge.',
   });
   const [bindingForm, setBindingForm] = useState({
     workflow: '',
-    module_slug: 'procurement',
-    entity_type: 'procurement_requisition',
-    entity_label: 'Procurement Requisition',
-    route_path: '/procurement/requisitions',
-    api_base_path: '/api/procurement/requisitions/',
-    trigger_events: 'submit,approve,reject',
+    module_slug: 'weighbridge',
+    entity_type: 'weighbridge_transaction',
+    entity_label: 'Weighment Transaction',
+    route_path: '/weighbridge/transactions',
+    api_base_path: '/api/commercial-weighbridge/transactions/',
+    trigger_events: 'complete,approve,reject',
     is_primary: true,
   });
   const [nodeForm, setNodeForm] = useState({
@@ -398,22 +405,62 @@ export default function WorkflowCenter() {
     () => [...(selectedWorkflow?.steps ?? [])].sort((a, b) => a.step_order - b.step_order || a.id - b.id),
     [selectedWorkflow],
   );
+  const visibleCatalog = useMemo(() => {
+    const needle = catalogSearch.trim().toLowerCase();
+    if (!needle) return workflowCatalog;
+    return workflowCatalog.filter((item) => `${item.module} ${item.label} ${item.entityType}`.toLowerCase().includes(needle));
+  }, [catalogSearch]);
+
+  const chooseCatalogEntity = (entity: (typeof workflowCatalog)[number]) => {
+    setSelectedCatalogEntity(entity);
+    setWorkflowForm({
+      code: `${entity.entityType.replace(/_/g, '-')}-approval`,
+      name: `${entity.label} Approval`,
+      entity_type: entity.entityType,
+      scope: 'document',
+      trigger_event: entity.trigger,
+      description: `Approval route for ${entity.label} records in ${entity.module}.`,
+    });
+    setBindingForm((previous) => ({
+      ...previous,
+      module_slug: entity.moduleSlug,
+      entity_type: entity.entityType,
+      entity_label: entity.label,
+      route_path: entity.routePath,
+      api_base_path: entity.apiPath,
+      trigger_events: `${entity.trigger},approve,reject`,
+    }));
+  };
 
   return (
-    <div className="space-y-6 p-6">
-      <div className="flex flex-col gap-2">
-        <h1 className="text-3xl font-semibold tracking-tight">Workflow Center</h1>
-        <p className="max-w-4xl text-sm text-muted-foreground">
-          Build workflows as a live workspace instead of a popup. Select a workflow, link ERP models, add nodes,
-          define committee behavior, and route transitions from the same screen.
-        </p>
+    <div className="space-y-5 p-6">
+      <div className="rounded-3xl border bg-gradient-to-br from-primary/10 via-background to-background p-6 shadow-sm">
+        <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
+          <div className="max-w-3xl space-y-2">
+            <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-primary">
+              <Workflow className="h-4 w-4" /> Approval Workspace
+            </div>
+            <h1 className="text-3xl font-semibold tracking-tight">Workflow Studio</h1>
+            <p className="text-sm leading-6 text-muted-foreground">
+              Configure how each ERP document is submitted, reviewed, approved, returned, and completed. Start with a business record,
+              assign approver roles, then connect the route that users follow from the document's <span className="font-medium text-foreground">Forward for approval</span> action.
+            </p>
+          </div>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <div className="rounded-2xl border bg-background/80 px-4 py-3"><div className="text-xl font-semibold">{summary.workflowCount}</div><div className="text-xs text-muted-foreground">Workflows</div></div>
+            <div className="rounded-2xl border bg-background/80 px-4 py-3"><div className="text-xl font-semibold">{summary.nodeCount}</div><div className="text-xs text-muted-foreground">Approval nodes</div></div>
+            <div className="rounded-2xl border bg-background/80 px-4 py-3"><div className="text-xl font-semibold">{summary.transitionCount}</div><div className="text-xs text-muted-foreground">Routes</div></div>
+            <div className="rounded-2xl border bg-background/80 px-4 py-3"><div className="text-xl font-semibold">{summary.activeGroups}</div><div className="text-xs text-muted-foreground">Approver groups</div></div>
+          </div>
+        </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-4">
-        <Card><CardHeader><CardTitle className="text-base">Workflows</CardTitle></CardHeader><CardContent className="text-3xl font-semibold">{summary.workflowCount}</CardContent></Card>
-        <Card><CardHeader><CardTitle className="text-base">Nodes</CardTitle></CardHeader><CardContent className="text-3xl font-semibold">{summary.nodeCount}</CardContent></Card>
-        <Card><CardHeader><CardTitle className="text-base">Transitions</CardTitle></CardHeader><CardContent className="text-3xl font-semibold">{summary.transitionCount}</CardContent></Card>
-        <Card><CardHeader><CardTitle className="text-base">Active Groups</CardTitle></CardHeader><CardContent className="text-3xl font-semibold">{summary.activeGroups}</CardContent></Card>
+      <div className="flex flex-wrap items-center gap-2 border-b pb-3 text-sm">
+        <Badge className="rounded-full px-3 py-1" variant="default">1. Select document</Badge>
+        <ArrowRight className="h-4 w-4 text-muted-foreground" />
+        <Badge className="rounded-full px-3 py-1" variant="outline">2. Configure approver nodes</Badge>
+        <ArrowRight className="h-4 w-4 text-muted-foreground" />
+        <Badge className="rounded-full px-3 py-1" variant="outline">3. Connect decisions and publish</Badge>
       </div>
 
       {defsQuery.isError ? (
@@ -432,13 +479,48 @@ export default function WorkflowCenter() {
         </Card>
       ) : null}
 
-      <div className="grid gap-6 xl:grid-cols-[320px_minmax(0,1fr)]">
+      <div className="grid gap-6 xl:grid-cols-[330px_minmax(0,1fr)]">
         <div className="space-y-6">
+          <Card className="overflow-hidden">
+            <CardHeader className="border-b bg-muted/25">
+              <div className="flex items-center gap-2">
+                <Blocks className="h-5 w-5 text-primary" />
+                <CardTitle>ERP Document Catalogue</CardTitle>
+              </div>
+              <p className="text-sm text-muted-foreground">Pick the record that needs a forward-for-approval route.</p>
+            </CardHeader>
+            <CardContent className="space-y-3 p-3">
+              <div className="relative">
+                <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+                <Input className="pl-9" value={catalogSearch} onChange={(event) => setCatalogSearch(event.target.value)} placeholder="Search modules or records" />
+              </div>
+              <ScrollArea className="h-[340px] pr-3">
+                <div className="space-y-1">
+                  {visibleCatalog.map((entity) => (
+                    <button
+                      type="button"
+                      key={entity.entityType}
+                      onClick={() => chooseCatalogEntity(entity)}
+                      className={cn(
+                        'flex w-full items-center justify-between rounded-xl border px-3 py-3 text-left transition-colors',
+                        selectedCatalogEntity.entityType === entity.entityType ? 'border-primary bg-primary/10' : 'border-transparent hover:border-border hover:bg-muted/60',
+                      )}
+                    >
+                      <span><span className="block text-xs font-medium uppercase tracking-wider text-muted-foreground">{entity.module}</span><span className="block font-medium">{entity.label}</span></span>
+                      <ArrowRight className="h-4 w-4 text-muted-foreground" />
+                    </button>
+                  ))}
+                  {visibleCatalog.length === 0 ? <p className="px-3 py-6 text-center text-sm text-muted-foreground">No matching ERP document.</p> : null}
+                </div>
+              </ScrollArea>
+            </CardContent>
+          </Card>
+
           <Card>
             <CardHeader>
               <div className="flex items-center gap-2">
                 <GitBranchPlus className="h-5 w-5 text-primary" />
-                <CardTitle>Create Workflow</CardTitle>
+                <CardTitle>Create {selectedCatalogEntity.label} Route</CardTitle>
               </div>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -1005,11 +1087,63 @@ export default function WorkflowCenter() {
               </div>
             </>
           ) : (
-            <Card>
-              <CardContent className="py-16 text-center text-sm text-muted-foreground">
-                Create a workflow from the builder on the left to open the design workspace.
-              </CardContent>
-            </Card>
+            <div className="space-y-6">
+              <Card className="overflow-hidden border-primary/25">
+                <CardHeader className="border-b bg-primary/5">
+                  <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-primary"><CircleDot className="h-4 w-4" /> Selected ERP record</div>
+                      <CardTitle className="text-2xl">{selectedCatalogEntity.label}</CardTitle>
+                      <p className="text-sm text-muted-foreground">{selectedCatalogEntity.module} · {selectedCatalogEntity.routePath}</p>
+                    </div>
+                    <Badge variant="outline">Triggers on {selectedCatalogEntity.trigger}</Badge>
+                  </div>
+                </CardHeader>
+                <CardContent className="grid gap-5 p-6 lg:grid-cols-[minmax(0,1fr)_290px]">
+                  <div className="space-y-5">
+                    <div>
+                      <h2 className="font-semibold">Approval route preview</h2>
+                      <p className="mt-1 text-sm text-muted-foreground">Create this workflow to open the live design canvas, add role-based nodes, and define the route between them.</p>
+                    </div>
+                    <div className="flex flex-col gap-3 md:flex-row md:items-stretch">
+                      {[
+                        ['Document submitted', 'The record is ready for approval.'],
+                        ['Role review', 'A selected role, group, or committee acts.'],
+                        ['Approved or returned', 'The next route or final document action applies.'],
+                      ].map(([title, description], index) => (
+                        <div key={title} className="flex flex-1 items-center gap-3 rounded-2xl border bg-background p-4">
+                          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary text-sm font-semibold text-primary-foreground">{index + 1}</div>
+                          <div><div className="font-medium">{title}</div><div className="text-xs leading-5 text-muted-foreground">{description}</div></div>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="rounded-2xl border border-dashed bg-muted/20 p-4 text-sm">
+                      <div className="flex items-center gap-2 font-medium"><Send className="h-4 w-4 text-primary" /> Document action</div>
+                      <p className="mt-1 text-muted-foreground">Once linked, users see <span className="font-medium text-foreground">Forward for approval</span> on the {selectedCatalogEntity.label} record. Their action opens the first eligible approval node and puts the task in the approver inbox.</p>
+                    </div>
+                  </div>
+                  <div className="rounded-2xl border bg-muted/25 p-5">
+                    <ShieldCheck className="h-7 w-7 text-primary" />
+                    <h3 className="mt-4 font-semibold">Ready to build</h3>
+                    <p className="mt-1 text-sm leading-6 text-muted-foreground">The form at left is prefilled for this ERP record. Save it, then configure its nodes and transitions here.</p>
+                    <div className="mt-5 space-y-2 text-sm">
+                      <div className="flex justify-between border-b pb-2"><span className="text-muted-foreground">Entity</span><span className="font-medium">{selectedCatalogEntity.entityType}</span></div>
+                      <div className="flex justify-between border-b pb-2"><span className="text-muted-foreground">Module</span><span className="font-medium">{selectedCatalogEntity.module}</span></div>
+                      <div className="flex justify-between"><span className="text-muted-foreground">Default trigger</span><span className="font-medium">{selectedCatalogEntity.trigger}</span></div>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader><CardTitle>How the live designer works</CardTitle></CardHeader>
+                <CardContent className="grid gap-4 md:grid-cols-3 text-sm">
+                  <div className="rounded-xl border p-4"><div className="font-medium">1. Bind the model</div><p className="mt-1 text-muted-foreground">Connect the workflow to its ERP screen and API so the document action is available in context.</p></div>
+                  <div className="rounded-xl border p-4"><div className="font-medium">2. Add approver nodes</div><p className="mt-1 text-muted-foreground">Set a responsible role or committee, voting mode, amount limit, SLA and dashboard notification.</p></div>
+                  <div className="rounded-xl border p-4"><div className="font-medium">3. Draw the decisions</div><p className="mt-1 text-muted-foreground">Connect nodes with approve, reject and conditional routes. The workflow map remains the operational source of truth.</p></div>
+                </CardContent>
+              </Card>
+            </div>
           )}
         </div>
       </div>
