@@ -418,6 +418,8 @@ export default function WorkflowCenter() {
 
   const chooseCatalogEntity = (entity: (typeof workflowCatalog)[number]) => {
     setSelectedCatalogEntity(entity);
+    // Choosing a catalogue document starts a new route instead of leaving an unrelated workflow open.
+    setSelectedWorkflowId(null);
     setWorkflowForm({
       code: `${entity.entityType.replace(/_/g, '-')}-approval`,
       name: `${entity.label} Approval`,
@@ -521,7 +523,7 @@ export default function WorkflowCenter() {
             </CardContent>
           </Card>
 
-          <Card>
+          {!selectedWorkflow ? <Card>
             <CardHeader>
               <div className="flex items-center gap-2">
                 <GitBranchPlus className="h-5 w-5 text-primary" />
@@ -567,7 +569,7 @@ export default function WorkflowCenter() {
                 Save Workflow
               </Button>
             </CardContent>
-          </Card>
+          </Card> : null}
 
           <Card>
             <CardHeader>
@@ -652,8 +654,8 @@ export default function WorkflowCenter() {
                 </TabsList>
               </Tabs>
 
-              <div className={cn('grid gap-6 2xl:grid-cols-[minmax(0,1.1fr)_420px]', studioTab !== 'workflow' && 'hidden')}>
-                <div className="space-y-6">
+              <div className={cn('grid gap-6', studioTab === 'workflow' ? '2xl:grid-cols-[minmax(0,1.1fr)_420px]' : 'grid-cols-1', !['workflow', 'nodes', 'transitions'].includes(studioTab) && 'hidden')}>
+                <div className={cn('space-y-6', studioTab !== 'workflow' && 'hidden')}>
                   <Card>
                     <CardHeader>
                       <CardTitle>Workflow Map</CardTitle>
@@ -725,7 +727,7 @@ export default function WorkflowCenter() {
                     </CardContent>
                   </Card>
 
-                  <Card>
+                  <Card className={cn(studioTab !== 'workflow' && 'hidden')}>
                     <CardContent className="pt-6">
                       <Tabs defaultValue="bindings" className="space-y-4">
                         <TabsList>
@@ -862,7 +864,7 @@ export default function WorkflowCenter() {
                 </div>
 
                 <div className="space-y-6">
-                  <Card>
+                  <Card className={cn(studioTab !== 'workflow' && 'hidden')}>
                     <CardHeader>
                       <div className="flex items-center gap-2">
                         <Link2 className="h-5 w-5 text-primary" />
@@ -911,7 +913,7 @@ export default function WorkflowCenter() {
                     </CardContent>
                   </Card>
 
-                  <Card>
+                  <Card className={cn(studioTab !== 'nodes' && 'hidden')}>
                     <CardHeader>
                       <div className="flex items-center gap-2">
                         <Workflow className="h-5 w-5 text-primary" />
@@ -1014,7 +1016,7 @@ export default function WorkflowCenter() {
                     </CardContent>
                   </Card>
 
-                  <Card>
+                  <Card className={cn(studioTab !== 'transitions' && 'hidden')}>
                     <CardHeader>
                       <div className="flex items-center gap-2">
                         <Route className="h-5 w-5 text-primary" />
