@@ -17,6 +17,7 @@ from datetime import timedelta
 from django.db.models import Q, Count, Sum, Prefetch
 from django.utils import timezone
 from datetime import date
+from django.contrib.auth.models import User
 from rest_framework import serializers, viewsets, filters
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -41,6 +42,9 @@ class OrganisationSerializer(serializers.ModelSerializer):
     contact_count = serializers.SerializerMethodField()
     open_leads    = serializers.SerializerMethodField()
     assigned_to_name = serializers.ReadOnlyField()
+    # Accept the values browser forms send for optional fields. They are
+    # normalized to blank strings in validate() before saving the model.
+    website = serializers.CharField(required=False, allow_blank=True, allow_null=True)
 
     class Meta:
         model  = Organisation
@@ -50,6 +54,13 @@ class OrganisationSerializer(serializers.ModelSerializer):
             "assigned_to", "assigned_to_name", "contact_count", "open_leads", "created_at", "updated_at",
         ]
         read_only_fields = ["id", "assigned_to_name", "created_at", "updated_at", "contact_count", "open_leads"]
+        extra_kwargs = {
+            "industry": {"allow_null": True},
+            "email": {"allow_null": True},
+            "phone": {"allow_null": True},
+            "address": {"allow_null": True},
+            "notes": {"allow_null": True},
+        }
 
     def get_contact_count(self, obj):
         return obj.contacts.count()
@@ -68,6 +79,22 @@ class OrganisationSerializer(serializers.ModelSerializer):
             if any(" ".join(name.split()).casefold() == normalized for name in matches.values_list("name", flat=True)):
                 raise serializers.ValidationError("A company with this name already exists in your organization.")
         return value.strip()
+
+    def validate(self, attrs):
+        # Browser forms commonly submit optional text values as null.  CRM's
+        # model fields intentionally store those values as blank strings.
+        for field in ("industry", "website", "email", "phone", "address", "notes"):
+            if attrs.get(field) is None:
+                attrs[field] = ""
+
+        return attrs
+
+    def validate_website(self, value):
+        if not value:
+            return value
+        website = value.strip()
+        # Accept the domains users naturally type while persisting a valid URL.
+        return website if "://" in website else f"https://{website}"
 
 
 class ContactSerializer(serializers.ModelSerializer):

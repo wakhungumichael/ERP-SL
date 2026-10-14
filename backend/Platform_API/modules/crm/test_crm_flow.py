@@ -246,6 +246,35 @@ class CRMEndToEndFlowTests(TestCase):
         self.assertEqual(activities.data.get("count", len(activities.data)), 0)
         self.assertEqual(dashboard.data["summary"]["companies"], 0)
 
+    def test_company_create_accepts_browser_optional_values_and_domain(self):
+        response = self.client.post(
+            reverse("organisation-list"),
+            {
+                "name": "Agriculture and Food Authority",
+                "type": "customer",
+                "industry": None,
+                "email": None,
+                "phone": None,
+                "website": "afa.go.ke",
+                "address": None,
+                "notes": None,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data["website"], "https://afa.go.ke")
+        self.assertEqual(response.data["email"], "")
+        self.assertEqual(response.data["phone"], "")
+
+    def test_performance_endpoint_returns_owner_metrics(self):
+        Organisation.objects.create(name="Metrics Co", tenant=self.tenant, assigned_to=self.user)
+
+        response = self.client.get(reverse("crm-performance"))
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertIn("results", response.data)
+
     def test_crm_rejects_cross_tenant_relationship_links(self):
         other_tenant = Tenant.objects.create(
             name="Other CRM",

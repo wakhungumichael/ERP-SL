@@ -212,7 +212,13 @@ export default function CompaniesPage() {
         body: JSON.stringify(payload),
       });
       const body = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(body?.error || body?.name?.[0] || 'Could not save company');
+      if (!res.ok) {
+        const fieldErrors = Object.entries(body ?? {})
+          .filter(([key]) => key !== 'error' && key !== 'detail')
+          .map(([field, messages]) => `${field}: ${Array.isArray(messages) ? messages.join(', ') : String(messages)}`)
+          .join(' ');
+        throw new Error(body?.error || body?.detail || fieldErrors || 'Could not save company');
+      }
       return body;
     },
     onSuccess: (savedCompany) => {
@@ -362,16 +368,23 @@ export default function CompaniesPage() {
           </>
         )}
         filterSlot={(
-          <Select value={typeFilter} onValueChange={(value) => { setTypeFilter(value); setPage(1); }}>
-            <SelectTrigger className="h-8 w-[170px]"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Types</SelectItem>
-              <SelectItem value="customer">Customer</SelectItem>
-              <SelectItem value="prospect">Prospect</SelectItem>
-              <SelectItem value="partner">Partner</SelectItem>
-              <SelectItem value="other">Other</SelectItem>
-            </SelectContent>
-          </Select>
+          <div className="flex flex-wrap gap-2">
+            <Select value={typeFilter} onValueChange={(value) => { setTypeFilter(value); setPage(1); }}>
+              <SelectTrigger className="h-8 w-[170px]"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Types</SelectItem>
+                <SelectItem value="customer">Customer</SelectItem>
+                <SelectItem value="prospect">Prospect</SelectItem>
+                <SelectItem value="partner">Partner</SelectItem>
+                <SelectItem value="other">Other</SelectItem>
+              </SelectContent>
+            </Select>
+            <Input className="h-8 w-[150px]" placeholder="Industry" value={industryFilter} onChange={(event) => { setIndustryFilter(event.target.value); setPage(1); }} />
+            <Select value={ownerFilter || 'all'} onValueChange={(value) => { setOwnerFilter(value === 'all' ? '' : value); setPage(1); }}>
+              <SelectTrigger className="h-8 w-[160px]"><SelectValue placeholder="Owner" /></SelectTrigger>
+              <SelectContent><SelectItem value="all">All owners</SelectItem>{users.map((user: any) => <SelectItem key={user.id} value={String(user.id)}>{user.full_name || user.username || user.email}</SelectItem>)}</SelectContent>
+            </Select>
+          </div>
         )}
         toolsSlot={<ListingColumnPicker columns={ALL_COLUMNS.map((column) => ({ key: column.key, label: column.label }))} visibleKeys={visibleKeys} onChange={(keys) => { setVisibleKeys(keys); saveColumns(keys); }} />}
       />
@@ -420,8 +433,6 @@ export default function CompaniesPage() {
                 <SelectItem value="other">Other</SelectItem>
               </SelectContent>
             </Select>
-            <Input className="h-8 w-[150px]" placeholder="Industry" value={industryFilter} onChange={(event) => { setIndustryFilter(event.target.value); setPage(1); }} />
-            <Select value={ownerFilter || 'all'} onValueChange={(value) => { setOwnerFilter(value === 'all' ? '' : value); setPage(1); }}><SelectTrigger className="h-8 w-[150px]"><SelectValue placeholder="Owner" /></SelectTrigger><SelectContent><SelectItem value="all">All owners</SelectItem>{users.map((user: any) => <SelectItem key={user.id} value={String(user.id)}>{user.full_name || user.username || user.email}</SelectItem>)}</SelectContent></Select>
           </div>
           <div className="space-y-2">
             <Label>Industry</Label>
