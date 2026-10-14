@@ -71,6 +71,30 @@ class Product(AuditMetadataMixin, models.Model):
         return f"{self.code} — {self.name}" if self.code else self.name
 
 
+class OrganisationCharge(AuditMetadataMixin, models.Model):
+    """Tenant-configured tax, levy, or fee rule used by sales documents."""
+    CALCULATION_CHOICES = [("percentage", "Percentage"), ("fixed", "Fixed amount")]
+    APPLY_TO_CHOICES = [("estimate", "Estimates"), ("invoice", "Invoices"), ("both", "Estimates and invoices")]
+
+    tenant = models.ForeignKey("Platform_Core.Tenant", on_delete=models.CASCADE, related_name="sales_charges")
+    name = models.CharField(max_length=120)
+    code = models.CharField(max_length=40, blank=True)
+    calculation_type = models.CharField(max_length=12, choices=CALCULATION_CHOICES, default="percentage")
+    rate = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    applies_to = models.CharField(max_length=12, choices=APPLY_TO_CHOICES, default="both")
+    is_active = models.BooleanField(default=True)
+    is_default = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["name"]
+        unique_together = ("tenant", "name")
+
+    def __str__(self):
+        return self.name
+
+
 # ── Estimates / Quotes ────────────────────────────────────────────────────────
 
 class Estimate(AuditMetadataMixin, models.Model):
@@ -99,6 +123,7 @@ class Estimate(AuditMetadataMixin, models.Model):
     subtotal        = models.DecimalField(max_digits=14, decimal_places=2, default=0)
     discount_total  = models.DecimalField(max_digits=14, decimal_places=2, default=0)
     tax_total       = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    charge_total    = models.DecimalField(max_digits=14, decimal_places=2, default=0)
     total           = models.DecimalField(max_digits=14, decimal_places=2, default=0)
 
     notes  = models.TextField(blank=True)
@@ -137,8 +162,9 @@ class Estimate(AuditMetadataMixin, models.Model):
         self.tax_total = sum(
             li.line_total * (li.tax_rate / 100) for li in lines
         )
-        self.total = self.subtotal + self.tax_total - self.discount_total
-        self.save(update_fields=["subtotal", "tax_total", "total", "updated_at"])
+        self.charge_total = sum(charge.amount for charge in self.charges.all())
+        self.total = self.subtotal + self.tax_total + self.charge_total - self.discount_total
+        self.save(update_fields=["subtotal", "tax_total", "charge_total", "total", "updated_at"])
 
     def __str__(self):
         return self.estimate_number or f"Estimate #{self.pk}"
@@ -166,6 +192,19 @@ class EstimateLineItem(AuditMetadataMixin, models.Model):
 
     def __str__(self):
         return f"{self.estimate} — {self.description}"
+
+
+class EstimateCharge(AuditMetadataMixin, models.Model):
+    """Immutable amount snapshot of an organisation charge applied to an estimate."""
+    estimate = models.ForeignKey(Estimate, on_delete=models.CASCADE, related_name="charges")
+    charge_rule = models.ForeignKey(OrganisationCharge, on_delete=models.SET_NULL, null=True, blank=True, related_name="estimate_snapshots")
+    name = models.CharField(max_length=120)
+    calculation_type = models.CharField(max_length=12, choices=OrganisationCharge.CALCULATION_CHOICES)
+    rate = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    amount = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+
+    class Meta:
+        ordering = ["id"]
 
 
 class SalesOrder(AuditMetadataMixin, models.Model):

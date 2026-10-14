@@ -52,6 +52,7 @@ from Platform_API.modules.mixins import (
 from Platform_API.modules.payments.views import reconcile_invoice_payment_state
 from SL_Sales.models import (
     Product, Estimate, EstimateLineItem,
+    OrganisationCharge, EstimateCharge,
     RecurringInvoice, RecurringInvoiceLineItem,
     SalesOrder, SalesOrderLineItem,
 )
@@ -140,6 +141,17 @@ def _apply_default_tax_to_lines(lines_data, tenant):
             line_copy["tax_rate"] = default_tax_rate
         normalized_lines.append(line_copy)
     return normalized_lines
+
+
+def _sync_estimate_charges(estimate, rules):
+    estimate.charges.all().delete()
+    base_amount = sum(line.line_total for line in estimate.line_items.all()) - estimate.discount_total
+    for rule in rules:
+        amount = base_amount * rule.rate / Decimal("100") if rule.calculation_type == "percentage" else rule.rate
+        EstimateCharge.objects.create(
+            estimate=estimate, charge_rule=rule, name=rule.name,
+            calculation_type=rule.calculation_type, rate=rule.rate, amount=max(amount, Decimal("0")),
+        )
 
 
 def _resolve_invoice_customer(*, tenant, customer=None, customer_name=""):
@@ -589,8 +601,23 @@ class EstimateLineItemSerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "line_total"]
 
 
+class OrganisationChargeSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = OrganisationCharge
+        fields = ["id", "name", "code", "calculation_type", "rate", "applies_to", "is_active", "is_default", "created_at", "updated_at"]
+        read_only_fields = ["id", "created_at", "updated_at"]
+
+
+class EstimateChargeSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = EstimateCharge
+        fields = ["id", "charge_rule", "name", "calculation_type", "rate", "amount"]
+        read_only_fields = fields
+
+
 class EstimateSerializer(serializers.ModelSerializer):
     line_items   = EstimateLineItemSerializer(many=True, read_only=True)
+    charges = EstimateChargeSerializer(many=True, read_only=True)
     customer_display = serializers.SerializerMethodField()
 
     class Meta:
@@ -598,13 +625,13 @@ class EstimateSerializer(serializers.ModelSerializer):
         fields = [
             "id", "tenant", "branch", "customer", "customer_name", "customer_display",
             "estimate_number", "issue_date", "expiry_date", "status",
-            "subtotal", "discount_total", "tax_total", "total",
+            "subtotal", "discount_total", "tax_total", "charge_total", "total",
             "notes", "terms", "converted_to_invoice", "converted_to_sales_order",
-            "line_items", "created_at", "updated_at",
+            "line_items", "charges", "created_at", "updated_at",
         ]
         read_only_fields = [
             "id", "tenant", "estimate_number",
-            "subtotal", "tax_total", "total",
+            "subtotal", "tax_total", "charge_total", "total",
             "converted_to_invoice", "converted_to_sales_order", "created_at", "updated_at",
         ]
 
@@ -616,6 +643,7 @@ class EstimateSerializer(serializers.ModelSerializer):
 
 class EstimateWriteSerializer(serializers.ModelSerializer):
     line_items = EstimateLineItemSerializer(many=True, required=False)
+    charge_ids = serializers.PrimaryKeyRelatedField(queryset=OrganisationCharge.objects.all(), many=True, required=False, write_only=True)
 
     class Meta:
         model = Estimate
@@ -623,7 +651,7 @@ class EstimateWriteSerializer(serializers.ModelSerializer):
             "branch", "customer", "customer_name",
             "issue_date", "expiry_date", "status",
             "discount_total", "notes", "terms",
-            "line_items",
+            "line_items", "charge_ids",
         ]
 
     def _resolve_customer_fields(self, validated_data):
@@ -647,15 +675,22 @@ class EstimateWriteSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         lines_data = validated_data.pop("line_items", [])
+        charge_rules = validated_data.pop("charge_ids", None)
         validated_data = self._resolve_customer_fields(validated_data)
         estimate = Estimate.objects.create(**validated_data)
         for line_data in _apply_default_tax_to_lines(lines_data, estimate.tenant):
             EstimateLineItem.objects.create(estimate=estimate, **line_data)
+        if charge_rules is None:
+            charge_rules = OrganisationCharge.objects.filter(tenant=estimate.tenant, is_active=True, is_default=True).filter(applies_to__in=["estimate", "both"])
+        if any(rule.tenant_id != estimate.tenant_id or rule.applies_to not in ("estimate", "both") for rule in charge_rules):
+            raise serializers.ValidationError({"charge_ids": "Choose active estimate charges from your organization."})
+        _sync_estimate_charges(estimate, [rule for rule in charge_rules if rule.is_active])
         estimate.recalculate()
         return estimate
 
     def update(self, instance, validated_data):
         lines_data = validated_data.pop("line_items", None)
+        charge_rules = validated_data.pop("charge_ids", None)
         validated_data = self._resolve_customer_fields(validated_data)
         for attr, val in validated_data.items():
             setattr(instance, attr, val)
@@ -664,6 +699,10 @@ class EstimateWriteSerializer(serializers.ModelSerializer):
             instance.line_items.all().delete()
             for line_data in _apply_default_tax_to_lines(lines_data, instance.tenant):
                 EstimateLineItem.objects.create(estimate=instance, **line_data)
+        if charge_rules is not None:
+            if any(rule.tenant_id != instance.tenant_id or rule.applies_to not in ("estimate", "both") for rule in charge_rules):
+                raise serializers.ValidationError({"charge_ids": "Choose active estimate charges from your organization."})
+            _sync_estimate_charges(instance, [rule for rule in charge_rules if rule.is_active])
         instance.recalculate()
         return instance
 
@@ -858,6 +897,27 @@ class ProductDetailView(generics.RetrieveUpdateDestroyAPIView):
 
     def get_queryset(self):
         return _apply_tenant_filter(Product.objects.all(), self.request.user)
+
+
+class OrganisationChargeListCreateView(generics.ListCreateAPIView):
+    """Manage the tenant's reusable sales tax, levy, and fee rules."""
+    serializer_class = OrganisationChargeSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        tenant = _tenant_or_400(self.request.user)
+        return OrganisationCharge.objects.filter(tenant=tenant)
+
+    def perform_create(self, serializer):
+        serializer.save(tenant=_tenant_or_400(self.request.user))
+
+
+class OrganisationChargeDetailView(generics.RetrieveUpdateDestroyAPIView):
+    serializer_class = OrganisationChargeSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        return OrganisationCharge.objects.filter(tenant=_tenant_or_400(self.request.user))
 
 
 # ── Estimates ─────────────────────────────────────────────────────────────────
@@ -1091,6 +1151,14 @@ class EstimateConvertView(APIView):
                     line_total=line.line_total,
                     product_name=getattr(line.product, "name", ""),
                 ),
+            )
+        for charge in estimate.charges.all():
+            InvoiceLine.objects.create(
+                invoice=invoice,
+                description=f"{charge.name} ({charge.rate}{'%' if charge.calculation_type == 'percentage' else ''})",
+                quantity=1,
+                unit_price=charge.amount,
+                total_amount=charge.amount,
             )
 
         estimate.converted_to_invoice = invoice

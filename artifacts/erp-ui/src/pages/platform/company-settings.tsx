@@ -88,6 +88,52 @@ const DEFAULT_LANDING_PAGE_CONFIG = {
   enabled: true,
 };
 
+function OrganisationChargesPanel() {
+  const { token } = useAuth();
+  const { toast } = useToast();
+  const [form, setForm] = useState({ name: '', code: '', calculation_type: 'percentage', rate: '0', applies_to: 'both', is_default: true });
+  const { data: charges = [], refetch, isLoading } = useQuery({
+    queryKey: ['organisation-sales-charges', token], enabled: !!token,
+    queryFn: async () => {
+      const response = await fetch('/api/sales/charges/', { headers: { Authorization: `Token ${token}` } });
+      if (!response.ok) throw new Error('Could not load taxes and charges.');
+      return response.json();
+    },
+  });
+  async function save() {
+    if (!form.name.trim()) {
+      toast({ title: 'Charge name is required', variant: 'destructive' });
+      return;
+    }
+    const response = await fetch('/api/sales/charges/', {
+      method: 'POST', headers: { Authorization: `Token ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...form, name: form.name.trim(), code: form.code.trim(), rate: Number(form.rate || 0), is_active: true }),
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      toast({ title: 'Could not save charge', description: body?.name?.[0] || body?.detail || 'Check the charge details and try again.', variant: 'destructive' });
+      return;
+    }
+    setForm({ name: '', code: '', calculation_type: 'percentage', rate: '0', applies_to: 'both', is_default: true });
+    toast({ title: 'Tax or charge saved' }); refetch();
+  }
+  async function toggle(charge: any) {
+    await fetch(`/api/sales/charges/${charge.id}/`, { method: 'PATCH', headers: { Authorization: `Token ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ is_active: !charge.is_active }) });
+    refetch();
+  }
+  return <Card><CardHeader className="bg-muted/20 border-b py-3 px-4"><CardTitle className="text-xs font-bold uppercase tracking-widest">Organization Taxes & Charges</CardTitle></CardHeader><CardContent className="space-y-5 p-6">
+    <p className="text-sm text-muted-foreground">Configure VAT, PPRA tender levies, withholding, or fixed service charges once. Default active rules are applied to new estimates and copied to invoices when converted.</p>
+    <div className="grid gap-3 md:grid-cols-6">
+      <Input className="md:col-span-2" value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} placeholder="PPRA Tender Levy" />
+      <Input value={form.code} onChange={e => setForm(p => ({ ...p, code: e.target.value }))} placeholder="PPRA" />
+      <Select value={form.calculation_type} onValueChange={value => setForm(p => ({ ...p, calculation_type: value }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="percentage">Percentage</SelectItem><SelectItem value="fixed">Fixed amount</SelectItem></SelectContent></Select>
+      <Input value={form.rate} onChange={e => setForm(p => ({ ...p, rate: e.target.value }))} type="number" min="0" step="0.01" placeholder="Rate" />
+      <Button onClick={save}>Add charge</Button>
+    </div>
+    <div className="rounded-lg border divide-y">{isLoading ? <p className="p-4 text-sm text-muted-foreground">Loading charges…</p> : charges.length ? charges.map((charge: any) => <div key={charge.id} className="flex items-center justify-between gap-3 p-3"><div><p className="font-medium text-sm">{charge.name} {charge.code ? `(${charge.code})` : ''}</p><p className="text-xs text-muted-foreground">{charge.calculation_type === 'percentage' ? `${charge.rate}% of estimate value` : `Fixed ${charge.rate}`} · {charge.is_default ? 'Default on new estimates' : 'Optional'}</p></div><Button size="sm" variant="outline" onClick={() => toggle(charge)}>{charge.is_active ? 'Active' : 'Inactive'}</Button></div>) : <p className="p-4 text-sm text-muted-foreground">No organization charges configured yet.</p>}</div>
+  </CardContent></Card>;
+}
+
 const DEFAULT_SUPPORT_FORM_FIELDS = [
   { key: 'requester_name', label: 'Full name', type: 'text', placeholder: 'Your full name', required: false, enabled: true, options: [] },
   { key: 'requester_email', label: 'Email address', type: 'email', placeholder: 'you@example.com', required: true, enabled: true, options: [] },
@@ -2341,6 +2387,7 @@ export default function OrganizationSettings() {
           )}
           <TabsTrigger value="email" className="gap-1.5"><Mail className="h-3.5 w-3.5" /> Email</TabsTrigger>
           <TabsTrigger value="invoicing" className="gap-1.5"><FileText className="h-3.5 w-3.5" /> Invoicing</TabsTrigger>
+          <TabsTrigger value="taxes-charges" className="gap-1.5"><FileText className="h-3.5 w-3.5" /> Taxes & Charges</TabsTrigger>
           <TabsTrigger value="templates" className="gap-1.5"><LayoutTemplate className="h-3.5 w-3.5" /> Templates</TabsTrigger>
           <TabsTrigger value="users" className="gap-1.5"><Users className="h-3.5 w-3.5" /> Users</TabsTrigger>
           <TabsTrigger value="branches" className="gap-1.5"><GitBranch className="h-3.5 w-3.5" /> Branches</TabsTrigger>
@@ -3095,6 +3142,10 @@ export default function OrganizationSettings() {
               )}
             </CardContent>
           </Card>
+        </TabsContent>
+
+        <TabsContent value="taxes-charges" className="mt-6">
+          <OrganisationChargesPanel />
         </TabsContent>
 
         <TabsContent value="templates" className="mt-6">

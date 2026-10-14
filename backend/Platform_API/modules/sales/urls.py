@@ -6,6 +6,8 @@ urlpatterns = [
     # Products & Services
     path("products/",         views.ProductListCreateView.as_view(),  name="sales-product-list"),
     path("products/<int:pk>/",views.ProductDetailView.as_view(),      name="sales-product-detail"),
+    path("charges/",          views.OrganisationChargeListCreateView.as_view(), name="sales-charge-list"),
+    path("charges/<int:pk>/", views.OrganisationChargeDetailView.as_view(), name="sales-charge-detail"),
 
     # Estimates
     path("estimates/",                          views.EstimateListCreateView.as_view(),  name="estimate-list"),
