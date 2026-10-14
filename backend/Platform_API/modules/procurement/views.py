@@ -349,6 +349,16 @@ def _apply_purchase_order_tenant_filter(user, qs):
     ).distinct()
 
 
+def _apply_goods_receipt_tenant_filter(user, qs):
+    """Goods receipts are always tenant-owned and do not have ``created_by``."""
+    tenant = _resolve_tenant(user)
+    if tenant is None:
+        return qs
+    if tenant is False:
+        return qs.none()
+    return qs.filter(tenant=tenant)
+
+
 def _validate_tenant_owned_relation(*, tenant, obj, label):
     if obj is None or tenant is None:
         return None
@@ -1361,7 +1371,7 @@ class GoodsReceiptListCreateView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        qs = _apply_purchase_order_tenant_filter(
+        qs = _apply_goods_receipt_tenant_filter(
             request.user,
             GoodsReceiptNote.objects.prefetch_related("lines").select_related("purchase_order", "received_by"),
         ).order_by("-created_at")
@@ -1395,7 +1405,7 @@ class GoodsReceiptDetailView(APIView):
 
     def _get(self, request, pk):
         try:
-            return _apply_purchase_order_tenant_filter(
+            return _apply_goods_receipt_tenant_filter(
                 request.user,
                 GoodsReceiptNote.objects.prefetch_related("lines").select_related("purchase_order", "received_by"),
             ).get(pk=pk)

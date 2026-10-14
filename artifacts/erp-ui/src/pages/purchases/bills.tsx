@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Link } from 'wouter';
 import { useAuth } from '@/context/use-auth';
 import { useToast } from '@/hooks/use-toast';
+import { apiErrorFromResponse, formatApiError } from '@/lib/api-errors';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -276,25 +277,42 @@ export default function BillsPage() {
       toast({ title: 'Supplier name is required', variant: 'destructive' });
       return;
     }
+    const validLines = lines.filter((line) => line.description.trim() && line.quantity > 0);
+    if (validLines.length === 0) {
+      toast({
+        title: 'Add a bill line',
+        description: 'Enter a description and a quantity greater than zero for at least one line.',
+        variant: 'destructive',
+      });
+      return;
+    }
     setSaving(true);
     try {
       const r = await fetch(BASE_URL + '/api/purchases/bills/', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: 'Token ' + token },
         body: JSON.stringify({
-          ...form,
+          supplier_name: form.supplier_name.trim(),
+          reference: form.reference.trim(),
+          ...(form.issue_date ? { issue_date: form.issue_date } : {}),
+          due_date: form.due_date || null,
+          notes: form.notes.trim(),
           purchase_order: (form as any).purchase_order ? Number((form as any).purchase_order) : null,
           goods_receipt: (form as any).goods_receipt ? Number((form as any).goods_receipt) : null,
-          line_items: lines,
+          line_items: validLines,
         }),
       });
-      if (!r.ok) throw new Error('Failed');
+      if (!r.ok) throw await apiErrorFromResponse(r, 'The supplier bill could not be saved.');
       toast({ title: 'Bill created successfully' });
       refetch();
       setOpen(false);
       setPage(1);
-    } catch {
-      toast({ title: 'Error creating bill', variant: 'destructive' });
+    } catch (error) {
+      toast({
+        title: 'Could not create supplier bill',
+        description: formatApiError(error, 'The supplier bill could not be saved. Please check the details and try again.'),
+        variant: 'destructive',
+      });
     } finally {
       setSaving(false);
     }

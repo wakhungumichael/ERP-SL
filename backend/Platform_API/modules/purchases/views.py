@@ -105,6 +105,18 @@ class BillWriteSerializer(serializers.ModelSerializer):
             "line_items",
         ]
 
+    def to_internal_value(self, data):
+        # Browsers submit an empty string for an unfilled date input. Treat it
+        # as the optional value it represents instead of rejecting the bill.
+        normalized = data.copy() if hasattr(data, "copy") else dict(data)
+        if normalized.get("due_date") == "":
+            normalized["due_date"] = None
+        if normalized.get("issue_date") == "":
+            # Let the model's default use today's date when no issue date was
+            # chosen; ``null`` is not valid for this required database field.
+            normalized.pop("issue_date", None)
+        return super().to_internal_value(normalized)
+
     def _sync_lines(self, instance, lines_data):
         instance.line_items.all().delete()
         for line_data in _apply_default_tax_to_lines(lines_data, instance.tenant):
