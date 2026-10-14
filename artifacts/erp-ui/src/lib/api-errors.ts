@@ -1,5 +1,18 @@
 const GENERIC_ERROR_KEYS = new Set(['detail', 'error', 'errors', 'message', 'non_field_errors', 'nonFieldErrors', '__all__']);
 
+const FRIENDLY_SYSTEM_ERRORS: Array<[RegExp, string]> = [
+  [/^(?:failed|fetch failed|request failed|error)$/i, 'We could not complete that request. Please try again.'],
+  [/failed to fetch|networkerror|network request failed/i, 'We could not reach the server. Check your connection and try again.'],
+  [/^401$|not authenticated|authentication credentials were not provided|session.*expired/i, 'Your session has expired. Please sign in again.'],
+  [/^403$|permission denied|not authorized|forbidden/i, 'You do not have permission to complete this action.'],
+  [/^404$|not found/i, 'The requested record is no longer available. Refresh the page and try again.'],
+  [/^409$|conflict/i, 'This record was changed by another user. Refresh the page before trying again.'],
+  [/^429$|too many requests/i, 'Too many requests were sent. Please wait a moment and try again.'],
+  [/^5\d\d$|internal server error|server error|api server returned an html page|<!doctype html|<html[\s>]/i, 'The server could not complete this request. Please try again.'],
+  [/popup.*blocked/i, 'Your browser blocked the new window. Allow pop-ups for this site and try again.'],
+  [/integrityerror|traceback|django|psycopg|databaseerror|sqlstate|typeerror|referenceerror|cannot read propert|is not defined/i, 'The record could not be saved because of a server data issue. Please contact your administrator if it continues.'],
+];
+
 export type FormValidationErrors = {
   fields: Record<string, string[]>;
   form: string[];
@@ -33,6 +46,17 @@ function fieldLabel(field: string) {
     .replace(/\[[0-9]+\]/g, '')
     .replace(/_/g, ' ')
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+/** Converts HTTP, browser, and server diagnostics into a message an ERP user can act on. */
+export function toUserFriendlyError(value: unknown, fallback = 'We could not complete that request. Please try again.') {
+  const raw = value instanceof Error ? value.message : String(value ?? '');
+  const clean = raw.trim().replace(/\s+/g, ' ');
+  if (!clean) return fallback;
+  for (const [pattern, message] of FRIENDLY_SYSTEM_ERRORS) {
+    if (pattern.test(clean)) return message;
+  }
+  return clean;
 }
 
 function friendlyFieldMessage(field: string | null, message: string) {
@@ -93,7 +117,7 @@ function collectErrors(value: unknown, field: string | null, result: FormValidat
         // Treat malformed JSON as a normal server message.
       }
     }
-    const message = friendlyFieldMessage(field, trimmed);
+    const message = friendlyFieldMessage(field, toUserFriendlyError(trimmed));
     if (message) {
       if (field) result.fields[field] = [...(result.fields[field] ?? []), message];
       else result.form.push(message);
@@ -132,7 +156,7 @@ export function parseFormErrors(value: unknown): FormValidationErrors {
 export function formatApiError(value: unknown, fallback = 'The request could not be completed. Please check the form and try again.') {
   const errors = parseFormErrors(value);
   const messages = Array.from(new Set([...Object.values(errors.fields).flat(), ...errors.form]));
-  return messages.length > 0 ? messages.join(' ') : fallback;
+  return messages.length > 0 ? messages.join(' ') : toUserFriendlyError(value, fallback);
 }
 
 export async function apiErrorFromResponse(response: Response, fallback?: string) {

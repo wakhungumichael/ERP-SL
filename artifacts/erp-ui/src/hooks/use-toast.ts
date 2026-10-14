@@ -1,6 +1,6 @@
 import * as React from 'react';
 import type { ToastActionElement, ToastProps } from '@/components/ui/toast';
-import { formatApiError } from '@/lib/api-errors';
+import { toUserFriendlyError } from '@/lib/api-errors';
 
 const TOAST_LIMIT = 1;
 const TOAST_REMOVE_DELAY = 1000000;
@@ -138,11 +138,7 @@ type Toast = Omit<ToasterToast, 'id'>;
 
 function normalizeToastDescription(description: React.ReactNode) {
   if (typeof description !== 'string') return description;
-  const trimmed = description.trim();
-  const looksLikeJson =
-    (trimmed.startsWith('{') && trimmed.endsWith('}')) ||
-    (trimmed.startsWith('[') && trimmed.endsWith(']'));
-  return looksLikeJson ? formatApiError(trimmed) : description;
+  return toUserFriendlyError(description, description);
 }
 
 function toast({ ...props }: Toast) {

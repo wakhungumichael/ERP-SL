@@ -1,5 +1,8 @@
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryCache, QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Toaster } from '@/components/ui/toaster';
+import { toast } from '@/hooks/use-toast';
+import { formatApiError } from '@/lib/api-errors';
+import { ERPErrorBoundary } from '@/components/erp/error-boundary';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Route, Switch, Router as WouterRouter } from 'wouter';
 import { Shell } from '@/components/shell';
@@ -97,6 +100,18 @@ import AccountingPostingRules from '@/pages/accounting/posting-rules';
 import AccountingReports from '@/pages/accounting/reports';
 
 const queryClient = new QueryClient({
+  queryCache: new QueryCache({
+    onError: (error, query) => {
+      // Loading errors rarely have a page-level handler. Give users a clear
+      // notification without duplicating mutation toasts managed by forms.
+      if (query.state.data !== undefined) return;
+      toast({
+        title: 'Unable to load this information',
+        description: formatApiError(error, 'Refresh the page and try again.'),
+        variant: 'destructive',
+      });
+    },
+  }),
   defaultOptions: {
     queries: { retry: 1, staleTime: 30_000 },
   },
@@ -466,15 +481,17 @@ function Router() {
 
 export default function App() {
   return (
-    <QueryClientProvider client={queryClient}>
-      <AuthProvider>
-        <TooltipProvider>
-          <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}>
-            <Router />
-          </WouterRouter>
-          <Toaster />
-        </TooltipProvider>
-      </AuthProvider>
-    </QueryClientProvider>
+    <ERPErrorBoundary>
+      <QueryClientProvider client={queryClient}>
+        <AuthProvider>
+          <TooltipProvider>
+            <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}>
+              <Router />
+            </WouterRouter>
+            <Toaster />
+          </TooltipProvider>
+        </AuthProvider>
+      </QueryClientProvider>
+    </ERPErrorBoundary>
   );
 }
