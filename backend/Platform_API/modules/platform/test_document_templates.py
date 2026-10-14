@@ -4,6 +4,7 @@ from django.urls import reverse
 from rest_framework.test import APIClient
 
 from Platform_Core.models import DocumentTemplate, Tenant, TenantSettings, TenantUserProfile
+from Platform_Core.template_library import ensure_shared_document_template_library
 
 
 class TenantDocumentTemplateTests(TestCase):
@@ -90,6 +91,25 @@ class TenantDocumentTemplateTests(TestCase):
         invoice_templates = [t for t in results if t.get("document_type") == "invoice"]
         self.assertGreaterEqual(len(purchase_order_templates), 3)
         self.assertGreaterEqual(len(invoice_templates), 3)
+
+    def test_duplicate_legacy_shared_template_does_not_break_settings(self):
+        DocumentTemplate.objects.create(
+            tenant=None,
+            name="Invoice Modern",
+            document_type="invoice",
+            engine="html",
+        )
+        DocumentTemplate.objects.create(
+            tenant=None,
+            name="Invoice Modern",
+            document_type="invoice",
+            engine="html",
+        )
+
+        ensure_shared_document_template_library()
+        response = self.client.get(reverse("tenant-settings", kwargs={"pk": self.tenant.id}))
+
+        self.assertEqual(response.status_code, 200, response.data)
 
     def test_tenant_admin_can_preview_shared_template_with_tenant_branding(self):
         response = self.client.get(reverse("document-template-list"))

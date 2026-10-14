@@ -189,19 +189,26 @@ def ensure_shared_document_template_library():
     for document_type, document_label in DOCUMENTS:
         for index, (variant_key, variant_label) in enumerate(VARIANTS):
             name = f"{document_label} {variant_label}"
-            _, was_created = DocumentTemplate.objects.get_or_create(
+            # Older deployments could seed this library more than once because
+            # DocumentTemplate has no uniqueness constraint. Keep the oldest
+            # shared record as the canonical template rather than crashing a
+            # settings request or deleting a customer's historical templates.
+            template = DocumentTemplate.objects.filter(
                 tenant=None,
                 document_type=document_type,
                 name=name,
-                defaults={
-                    "engine": "html",
-                    "is_default": index == 0,
-                    "is_active": True,
-                    "subject_template": f"{document_label} {{{{ document.number }}}}",
-                    "body_template": _body(document_label, variant_key),
-                    "stylesheet": _stylesheet(variant_key),
-                },
-            )
-            if was_created:
+            ).order_by("id").first()
+            if template is None:
+                DocumentTemplate.objects.create(
+                    tenant=None,
+                    document_type=document_type,
+                    name=name,
+                    engine="html",
+                    is_default=index == 0,
+                    is_active=True,
+                    subject_template=f"{document_label} {{{{ document.number }}}}",
+                    body_template=_body(document_label, variant_key),
+                    stylesheet=_stylesheet(variant_key),
+                )
                 created += 1
     return created
