@@ -124,6 +124,7 @@ const ORGANIZATION_CURRENCIES = ['KES', 'USD', 'EUR', 'GBP', 'UGX', 'TZS'];
 const PAGINATION_PAGE_SIZES = [5, 10, 25, 50];
 
 const BRANDING_SETTINGS_FIELDS = ['primary_color', 'workspace_name'] as const;
+const PLATFORM_BRANDING_FIELDS = ['branding_mode', 'dedicated_tenant', 'platform_name', 'logo_url', 'primary_color', 'footer_text', 'support_email'] as const;
 const PUBLIC_SITE_SETTINGS_FIELDS = ['login_page_config', 'landing_page_config', 'footer_menu'] as const;
 const EMAIL_SETTINGS_FIELDS = [
   'support_email', 'smtp_host', 'smtp_port', 'smtp_user', 'smtp_password',
@@ -1749,6 +1750,11 @@ export default function OrganizationSettings() {
     queryFn: () => api(token!, `/tenants/${organizationId}/settings/`),
     enabled: !!organizationId,
   });
+  const { data: platformBrandingData } = useQuery({
+    queryKey: ['platform-branding-settings'],
+    queryFn: () => api(token!, '/settings/branding/'),
+    enabled: !!token && role === 'superadmin',
+  });
   const { data: branchData, refetch: refetchBranches } = useQuery({
     queryKey: ['my-branches', organizationId],
     queryFn: () => api(token!, `/tenants/${organizationId}/branches/`),
@@ -1765,19 +1771,14 @@ export default function OrganizationSettings() {
   const branches: any[] = branchData?.data?.branches ?? branchData?.results ?? [];
   const templates: any[] = templateData?.results ?? templateData?.data?.results ?? templateData?.data ?? templateData ?? [];
   const canManagePublicSite = role === 'superadmin' || role === 'tenant_admin';
-  const publicSiteTitle = role === 'superadmin' ? 'Platform Public Site' : 'Organization Public Site';
-  const publicLandingUrl = role === 'superadmin'
-    ? '/landing'
-    : (tenant.code ? `/landing/${tenant.code}` : '/landing');
-  const publicLoginUrl = role === 'superadmin'
-    ? '/login'
-    : (tenant.code ? `/login/${tenant.code}` : '/login');
-  const publicSupportUrl = role === 'superadmin'
-    ? '/landing/support'
-    : (tenant.code ? `/landing/${tenant.code}/support` : '/landing/support');
+  const publicSiteTitle = 'Organization Public Site';
+  const publicLandingUrl = tenant.code ? `/landing/${tenant.code}` : '/landing';
+  const publicLoginUrl = tenant.code ? `/login/${tenant.code}` : '/login';
+  const publicSupportUrl = tenant.code ? `/landing/${tenant.code}/support` : '/landing/support';
 
   const [tenantForm, setTenantForm] = useState<any>(null);
   const [settingsForm, setSettingsForm] = useState<any>(null);
+  const [platformBrandingForm, setPlatformBrandingForm] = useState<any>(null);
   const [branchDialog, setBranchDialog] = useState<{ open: boolean; branch?: any }>({ open: false });
   const [templateDialogOpen, setTemplateDialogOpen] = useState(false);
   const [uploadingLogo, setUploadingLogo] = useState(false);
@@ -1917,6 +1918,13 @@ export default function OrganizationSettings() {
     setSettingsForm(buildSettingsForm(settings));
   }, [activeMembershipId, organizationId, settingsLoading]);
 
+  useEffect(() => {
+    const profile = platformBrandingData?.data ?? platformBrandingData;
+    if (role === 'superadmin' && profile && typeof profile === 'object') {
+      setPlatformBrandingForm(profile);
+    }
+  }, [platformBrandingData, role]);
+
   const saveTenant = useMutation({
     mutationFn: () => api(token!, `/tenants/self/`, 'PATCH', {
       ...tenantForm,
@@ -1968,6 +1976,21 @@ export default function OrganizationSettings() {
       void qc.invalidateQueries({ queryKey: ['public-site-config'] });
     },
     onError: (e: any) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
+  });
+  const savePlatformBranding = useMutation({
+    mutationFn: async () => api(
+      token!,
+      '/settings/branding/',
+      'PUT',
+      buildSettingsPayload(platformBrandingForm, PLATFORM_BRANDING_FIELDS),
+    ),
+    onSuccess: (response) => {
+      setPlatformBrandingForm(response?.data ?? response);
+      qc.setQueryData(['platform-branding-settings'], response);
+      void qc.invalidateQueries({ queryKey: ['public-site-config'] });
+      toast({ title: 'SaaS platform branding saved' });
+    },
+    onError: (e: any) => toast({ title: 'Unable to save SaaS branding', description: e.message, variant: 'destructive' }),
   });
   const testSmtp = useMutation({
     mutationFn: async () => {
@@ -2410,6 +2433,68 @@ export default function OrganizationSettings() {
         </TabsContent>
 
         <TabsContent value="branding" className="mt-6">
+          {role === 'superadmin' && platformBrandingForm && (
+            <Card className="mb-6 border-amber-300 bg-amber-50/40">
+              <CardHeader className="border-b border-amber-200 py-3 px-4">
+                <CardTitle className="text-xs font-bold uppercase tracking-widest">SaaS Platform Identity</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-5 p-6">
+                <p className="text-sm text-muted-foreground">
+                  This controls the default SL-ERP login, landing page, support page, and installed app for this domain. It never changes a tenant workspace, documents, or another tenant's branding.
+                </p>
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <Label>Deployment Mode</Label>
+                    <Select value={platformBrandingForm.branding_mode ?? 'saas'} onValueChange={(value) => setPlatformBrandingForm((p: any) => ({ ...p, branding_mode: value, dedicated_tenant: value === 'saas' ? null : p?.dedicated_tenant ?? '' }))}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="saas">SaaS platform branding</SelectItem>
+                        <SelectItem value="dedicated">Dedicated tenant branding</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">Use SaaS for SL-ERP cloud. Use Dedicated only for a single-tenant installation such as Metrix.</p>
+                  </div>
+                  {platformBrandingForm.branding_mode === 'dedicated' && (
+                    <div className="space-y-1.5">
+                      <Label>Dedicated Tenant</Label>
+                      <Select value={String(platformBrandingForm.dedicated_tenant ?? '')} onValueChange={(value) => setPlatformBrandingForm((p: any) => ({ ...p, dedicated_tenant: Number(value) }))}>
+                        <SelectTrigger><SelectValue placeholder="Choose the tenant whose brand this server uses" /></SelectTrigger>
+                        <SelectContent className="max-h-72">
+                          {organizations.map((organization: any) => <SelectItem key={organization.id} value={String(organization.id)}>{organization.name}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+                  <div className="space-y-1.5">
+                    <Label>Platform Name</Label>
+                    <Input value={platformBrandingForm.platform_name ?? ''} onChange={(e) => setPlatformBrandingForm((p: any) => ({ ...p, platform_name: e.target.value }))} placeholder="SL ERP" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Platform Logo URL</Label>
+                    <Input value={platformBrandingForm.logo_url ?? ''} onChange={(e) => setPlatformBrandingForm((p: any) => ({ ...p, logo_url: e.target.value }))} placeholder="https://.../logo.png" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Platform Brand Color</Label>
+                    <div className="flex gap-3">
+                      <Input type="color" className="h-10 w-16 p-1" value={platformBrandingForm.primary_color ?? '#E85D26'} onChange={(e) => setPlatformBrandingForm((p: any) => ({ ...p, primary_color: e.target.value }))} />
+                      <Input className="font-mono" value={platformBrandingForm.primary_color ?? '#E85D26'} onChange={(e) => setPlatformBrandingForm((p: any) => ({ ...p, primary_color: e.target.value }))} />
+                    </div>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Support Email</Label>
+                    <Input type="email" value={platformBrandingForm.support_email ?? ''} onChange={(e) => setPlatformBrandingForm((p: any) => ({ ...p, support_email: e.target.value }))} placeholder="support@sl-erp.example" />
+                  </div>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Platform Footer</Label>
+                  <Input value={platformBrandingForm.footer_text ?? ''} onChange={(e) => setPlatformBrandingForm((p: any) => ({ ...p, footer_text: e.target.value }))} placeholder="Built for growing businesses." />
+                </div>
+                <Button onClick={() => savePlatformBranding.mutate()} disabled={savePlatformBranding.isPending}>
+                  {savePlatformBranding.isPending ? 'Saving…' : 'Save SaaS Platform Branding'}
+                </Button>
+              </CardContent>
+            </Card>
+          )}
           <Card>
             <CardHeader className="bg-muted/20 border-b py-3 px-4">
               <CardTitle className="text-xs font-bold uppercase tracking-widest">Branding</CardTitle>
@@ -2436,14 +2521,14 @@ export default function OrganizationSettings() {
                         disabled={uploadingLogo}
                       />
                       <p className="text-xs text-muted-foreground">
-                        {uploadingLogo ? 'Uploading logo…' : 'Upload PNG, JPG, or SVG logo. This logo appears on sign-in and public-facing pages.'}
+                        {uploadingLogo ? 'Uploading logo…' : 'Upload PNG, JPG, or SVG logo. This logo appears in this organization workspace and its documents.'}
                       </p>
                     </div>
                     <div className="space-y-4">
                       <div className="space-y-1.5">
                         <Label>Application Name</Label>
                         <Input value={settingsForm.workspace_name ?? ''} onChange={sf('workspace_name')} placeholder={tenant?.name ?? 'Business Workspace'} />
-                        <p className="text-xs text-muted-foreground">Shown in the browser, installed app, and workspace identity. Example: Metrix Weighbridge.</p>
+                        <p className="text-xs text-muted-foreground">Shown in this organization workspace, its installed app, and customer-facing documents.</p>
                       </div>
                       <div className="space-y-1.5">
                         <Label>Brand Color</Label>
@@ -2462,7 +2547,7 @@ export default function OrganizationSettings() {
                           />
                         </div>
                         <p className="text-xs text-muted-foreground">
-                          Used across sign-in, public pages, invoices, estimates, statements, and customer-facing documents.
+                          Used across this organization workspace, invoices, estimates, statements, and customer-facing documents.
                         </p>
                       </div>
                       <div className="rounded-2xl border p-5" style={{ background: `linear-gradient(135deg, ${settingsForm.primary_color ?? '#E85D26'} 0%, #ffffff 85%)` }}>
@@ -2498,11 +2583,7 @@ export default function OrganizationSettings() {
                 {settingsForm && (
                   <>
                     <div className="rounded-2xl border bg-muted/20 p-4">
-                      <p className="text-sm font-semibold">
-                        {role === 'superadmin'
-                          ? 'These settings drive the SaaS owner public site.'
-                          : 'These settings drive this organization public site.'}
-                      </p>
+                      <p className="text-sm font-semibold">These settings drive this organization public site.</p>
                       <div className="mt-3 flex flex-wrap gap-3 text-sm">
                         <a href={publicLandingUrl} className="font-medium text-primary hover:underline">Preview landing: {publicLandingUrl}</a>
                         <a href={publicLoginUrl} className="font-medium text-primary hover:underline">Preview login: {publicLoginUrl}</a>

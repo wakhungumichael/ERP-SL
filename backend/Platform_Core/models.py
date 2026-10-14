@@ -934,6 +934,47 @@ class TenantSettings(TimeStampedModel):
         return f"Settings for {self.tenant.name}"
 
 
+class PlatformBrandingSettings(TimeStampedModel):
+    """Singleton configuration for the public SaaS shell.
+
+    TenantSettings remains tenant scoped. This separate profile prevents a
+    tenant administrator from changing the public identity of other tenants.
+    """
+
+    MODE_SAAS = "saas"
+    MODE_DEDICATED = "dedicated"
+    BRANDING_MODE_CHOICES = (
+        (MODE_SAAS, "SaaS platform branding"),
+        (MODE_DEDICATED, "Dedicated tenant branding"),
+    )
+
+    branding_mode = models.CharField(max_length=20, choices=BRANDING_MODE_CHOICES, default=MODE_SAAS)
+    dedicated_tenant = models.ForeignKey(
+        Tenant, on_delete=models.SET_NULL, blank=True, null=True,
+        related_name="dedicated_platform_branding_profiles",
+    )
+    platform_name = models.CharField(max_length=120, blank=True, default="SL ERP")
+    logo_url = models.CharField(max_length=500, blank=True)
+    logo_file = models.ImageField(upload_to="platform_logos/", blank=True, null=True)
+    primary_color = models.CharField(max_length=20, blank=True, default="#E85D26")
+    footer_text = models.TextField(blank=True)
+    support_email = models.EmailField(blank=True)
+    login_page_config = models.JSONField(blank=True, default=dict)
+    footer_menu = models.JSONField(blank=True, default=list)
+    landing_page_config = models.JSONField(blank=True, default=dict)
+
+    class Meta:
+        verbose_name = "platform branding settings"
+        verbose_name_plural = "platform branding settings"
+
+    def clean(self):
+        if self.branding_mode == self.MODE_DEDICATED and not self.dedicated_tenant_id:
+            raise ValidationError({"dedicated_tenant": "Choose a tenant when dedicated branding is enabled."})
+
+    def __str__(self):
+        return f"Platform branding ({self.get_branding_mode_display()})"
+
+
 class IntegrationEndpoint(TimeStampedModel):
     INTEGRATION_TYPE_CHOICES = [
         ("indicator", "Indicator"),

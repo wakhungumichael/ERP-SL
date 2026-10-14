@@ -20,6 +20,7 @@ from Platform_Core.models import (
     ModuleDefinition,
     OrganizationMembership,
     PlanModule,
+    PlatformBrandingSettings,
     PricingRule,
     PricingRuleType,
     SubscriptionPlan,
@@ -888,6 +889,37 @@ class TenantSettingsSerializer(serializers.ModelSerializer):
         # Never return the SMTP secret itself; administrators only need to know
         # whether a saved credential is available for mail delivery.
         return bool(obj.smtp_password)
+
+
+class PlatformBrandingSettingsSerializer(serializers.ModelSerializer):
+    logo_url = serializers.CharField(required=False, allow_blank=True)
+    logo_file = serializers.ImageField(required=False, allow_null=True)
+
+    class Meta:
+        model = PlatformBrandingSettings
+        fields = (
+            "id", "branding_mode", "dedicated_tenant", "platform_name",
+            "logo_url", "logo_file", "primary_color", "footer_text", "support_email",
+            "login_page_config", "footer_menu", "landing_page_config",
+            "created_at", "updated_at",
+        )
+        read_only_fields = ("id", "created_at", "updated_at")
+
+    def to_representation(self, obj):
+        data = super().to_representation(obj)
+        if getattr(obj, "logo_file", None):
+            try:
+                data["logo_url"] = obj.logo_file.url
+            except Exception:
+                pass
+        return data
+
+    def validate(self, attrs):
+        mode = attrs.get("branding_mode", getattr(self.instance, "branding_mode", "saas"))
+        dedicated_tenant = attrs.get("dedicated_tenant", getattr(self.instance, "dedicated_tenant", None))
+        if mode == PlatformBrandingSettings.MODE_DEDICATED and not dedicated_tenant:
+            raise serializers.ValidationError({"dedicated_tenant": "Choose a tenant when dedicated branding is enabled."})
+        return attrs
 
     def validate(self, attrs):
         use_tls = attrs.get("smtp_use_tls", getattr(self.instance, "smtp_use_tls", True))

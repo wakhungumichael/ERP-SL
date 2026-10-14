@@ -20,6 +20,7 @@ from .models import (
     LicenseKey,
     ModuleDefinition,
     PlanModule,
+    PlatformBrandingSettings,
     PricingRule,
     PricingRuleType,
     SubscriptionPlan,
@@ -82,6 +83,12 @@ class TenantAdmin(AuditAdminMixin, admin.ModelAdmin):
     list_filter = ("industry", "status", "is_active", "default_currency")
     search_fields = ("name", "code", "primary_domain", "subdomain", "contact_email")
     inlines = [TenantModuleActivationInline]
+
+
+@admin.register(PlatformBrandingSettings)
+class PlatformBrandingSettingsAdmin(AuditAdminMixin, admin.ModelAdmin):
+    list_display = ("platform_name", "branding_mode", "dedicated_tenant", "updated_at")
+    list_select_related = ("dedicated_tenant",)
 
 
 @admin.register(Industry)

@@ -26,6 +26,7 @@ from .views import (
     PlanModuleDetailAPIView,
     PlanModuleListCreateAPIView,
     PlatformPermissionListAPIView,
+    PlatformBrandingSettingsAPIView,
     PlatformRoleDetailAPIView,
     PlatformRoleListAPIView,
     PlatformUserDetailAPIView,
@@ -154,6 +155,7 @@ urlpatterns = [
     path("audit/events/", AuditEventLogListAPIView.as_view(), name="platform-audit-event-list"),
     path("audit/access/", AuditAccessLogListAPIView.as_view(), name="platform-audit-access-list"),
     path("audit/record-trail/", RecordAuditTrailAPIView.as_view(), name="platform-record-audit-trail"),
+    path("settings/branding/", PlatformBrandingSettingsAPIView.as_view(), name="platform-branding-settings"),
     # Tenants
     path("tenants/", TenantListCreateAPIView.as_view(), name="tenant-list"),
     path("tenants/self/", TenantSelfAPIView.as_view(), name="tenant-self"),

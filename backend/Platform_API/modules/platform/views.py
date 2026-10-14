@@ -54,6 +54,7 @@ from Platform_Core.models import (
     ModuleDefinition,
     OrganizationMembership,
     PlanModule,
+    PlatformBrandingSettings,
     PricingRule,
     PricingRuleType,
     SubscriptionPlan,
@@ -93,6 +94,7 @@ from .serializers import (
     OrganizationMembershipSerializer,
     PermissionSummarySerializer,
     PlanModuleSerializer,
+    PlatformBrandingSettingsSerializer,
     PricingRuleSerializer,
     PricingRuleTypeSerializer,
     SubscriptionModuleSyncSerializer,
@@ -259,6 +261,26 @@ def _public_site_tenant():
     return Tenant.objects.filter(is_active=True).order_by("name").first()
 
 
+def _platform_branding_settings():
+    """Return the singleton public SaaS profile without using tenant state."""
+    profile, _ = PlatformBrandingSettings.objects.get_or_create(pk=1)
+    return profile
+
+
+def _public_branding_source(tenant=None, explicit_tenant=False):
+    """Resolve public branding without leaking tenant changes into the SaaS shell."""
+    if explicit_tenant and tenant is not None:
+        settings_obj, _ = TenantSettings.objects.get_or_create(tenant=tenant, defaults={"invoice_prefix": "INV"})
+        return tenant, settings_obj, "tenant"
+
+    platform_profile = _platform_branding_settings()
+    if platform_profile.branding_mode == PlatformBrandingSettings.MODE_DEDICATED and platform_profile.dedicated_tenant_id:
+        dedicated_tenant = platform_profile.dedicated_tenant
+        settings_obj, _ = TenantSettings.objects.get_or_create(tenant=dedicated_tenant, defaults={"invoice_prefix": "INV"})
+        return dedicated_tenant, settings_obj, "dedicated"
+    return None, platform_profile, "platform"
+
+
 def _resolve_saas_billing_gateway(*, tenant):
     if tenant is None:
         return None
@@ -335,10 +357,11 @@ def _auto_create_subscription_billing_request(*, subscription, requested_by):
 
 
 def _default_login_page_config(tenant):
+    platform_name = _platform_branding_settings().platform_name if tenant is None else "SL ERP"
     return {
-        "eyebrow": "SL ERP",
-        "title": "SL ERP",
-        "subtitle": "SL ERP for small businesses, growing companies, and large enterprises.",
+        "eyebrow": platform_name,
+        "title": platform_name,
+        "subtitle": f"{platform_name} for small businesses, growing companies, and large enterprises.",
         "description": "A scalable business system built to support everyday operations, finance, billing, and control at every stage of growth.",
         "show_landing_page_link": True,
         "show_public_registration": True,
@@ -347,9 +370,10 @@ def _default_login_page_config(tenant):
 
 
 def _default_landing_page_config(tenant):
+    platform_name = _platform_branding_settings().platform_name if tenant is None else "SL ERP"
     return {
-        "eyebrow": "SL ERP",
-        "headline": "SL ERP for small businesses, growing companies, and large enterprises.",
+        "eyebrow": platform_name,
+        "headline": f"{platform_name} for small businesses, growing companies, and large enterprises.",
         "subheadline": "Manage finance, operations, inventory, HR, CRM, support, and approvals in one connected business system.",
         "description": (
             "Replace scattered tools with one scalable ERP built for visibility, speed, "
@@ -369,7 +393,7 @@ def _default_landing_page_config(tenant):
 
 
 def _default_support_page_config(tenant):
-    tenant_name = tenant.name if tenant else getattr(settings, "PLATFORM_NAME", "SL-ERP Platform")
+    tenant_name = tenant.name if tenant else _platform_branding_settings().platform_name or getattr(settings, "PLATFORM_NAME", "SL-ERP Platform")
     return {
         "eyebrow": "Customer Support",
         "headline": "How can we help today?",
@@ -790,6 +814,7 @@ class PublicSiteConfigurationAPIView(APIView):
     def get(self, request):
         tenant_code = request.GET.get("tenant_code")
         tenant_id = request.GET.get("tenant_id")
+        explicit_tenant = bool(tenant_code or tenant_id)
         if tenant_code:
             tenant = Tenant.objects.filter(code=tenant_code, is_active=True).first()
             if tenant is None:
@@ -799,29 +824,26 @@ class PublicSiteConfigurationAPIView(APIView):
             if tenant is None:
                 return error_response("Tenant public site not found.", status_code=status.HTTP_404_NOT_FOUND)
         else:
-            tenant = _public_site_tenant()
-        settings_obj = None
-        if tenant:
-            settings_obj, _ = TenantSettings.objects.get_or_create(
-                tenant=tenant,
-                defaults={"invoice_prefix": "INV"},
-            )
-
-        serialized_settings = (
-            TenantSettingsSerializer(settings_obj, context={"request": request}).data
-            if settings_obj
-            else {}
+            tenant = None
+        resolved_tenant, settings_obj, site_scope = _public_branding_source(
+            tenant=tenant,
+            explicit_tenant=explicit_tenant,
         )
+
+        if site_scope == "platform":
+            serialized_settings = PlatformBrandingSettingsSerializer(settings_obj, context={"request": request}).data
+        else:
+            serialized_settings = TenantSettingsSerializer(settings_obj, context={"request": request}).data
         login_page_config = {
-            **_default_login_page_config(tenant),
+            **_default_login_page_config(resolved_tenant),
             **(serialized_settings.get("login_page_config") or {}),
         }
         landing_page_config = {
-            **_default_landing_page_config(tenant),
+            **_default_landing_page_config(resolved_tenant),
             **(serialized_settings.get("landing_page_config") or {}),
         }
         support_page_config = {
-            **_default_support_page_config(tenant),
+            **_default_support_page_config(resolved_tenant),
             **((serialized_settings.get("landing_page_config") or {}).get("support_page") or {}),
         }
         plans = SubscriptionPlan.objects.filter(is_active=True).prefetch_related("modules").order_by("price", "name")
@@ -830,7 +852,7 @@ class PublicSiteConfigurationAPIView(APIView):
         return success_response(
             "Public site configuration loaded.",
             data={
-                "tenant": TenantSerializer(tenant).data if tenant else None,
+                "tenant": TenantSerializer(resolved_tenant).data if resolved_tenant else None,
                 "branding": {
                     "logo_url": serialized_settings.get("logo_url") or "",
                     "primary_color": serialized_settings.get("primary_color") or "#E85D26",
@@ -844,7 +866,7 @@ class PublicSiteConfigurationAPIView(APIView):
                 "footer_menu": _normalize_footer_menu(serialized_settings.get("footer_menu")),
                 "plans": SubscriptionPlanSerializer(plans, many=True).data,
                 "modules": ModuleDefinitionSerializer(public_modules, many=True).data,
-                "site_scope": "owner" if _is_owner_tenant(tenant) else "tenant",
+                "site_scope": site_scope,
             },
         )
 
@@ -856,11 +878,15 @@ class PublicWebManifestAPIView(APIView):
 
     def get(self, request):
         tenant_code = request.GET.get("tenant_code", "").strip()
-        tenant = Tenant.objects.filter(code=tenant_code, is_active=True).first() if tenant_code else _public_site_tenant()
-        settings_obj = getattr(tenant, "settings", None) if tenant else None
+        tenant = Tenant.objects.filter(code=tenant_code, is_active=True).first() if tenant_code else None
+        resolved_tenant, settings_obj, _ = _public_branding_source(
+            tenant=tenant,
+            explicit_tenant=bool(tenant_code),
+        )
         name = (
             getattr(settings_obj, "workspace_name", "")
-            or getattr(tenant, "name", "")
+            or getattr(settings_obj, "platform_name", "")
+            or getattr(resolved_tenant, "name", "")
             or "Business Workspace"
         )
         logo_url = _safe_logo_url(settings_obj, request) if settings_obj else ""
@@ -3129,6 +3155,37 @@ class TenantUserInviteAPIView(APIView):
 
 
 # ── Tenant Settings ────────────────────────────────────────────────────────────
+
+class PlatformBrandingSettingsAPIView(APIView):
+    """Platform-wide SaaS shell configuration; never writable by tenant admins."""
+
+    permission_classes = [IsAuthenticated, IsSuperAdminPermission]
+    parser_classes = [JSONParser, MultiPartParser, FormParser]
+
+    def get(self, request):
+        profile = _platform_branding_settings()
+        return success_response(
+            "Platform branding loaded.",
+            data=PlatformBrandingSettingsSerializer(profile, context={"request": request}).data,
+        )
+
+    def put(self, request):
+        profile = _platform_branding_settings()
+        serializer = PlatformBrandingSettingsSerializer(
+            profile,
+            data=request.data,
+            partial=True,
+            context={"request": request},
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return success_response(
+            "Platform branding saved.",
+            data=PlatformBrandingSettingsSerializer(profile, context={"request": request}).data,
+        )
+
+    def patch(self, request):
+        return self.put(request)
 
 class TenantSettingsAPIView(APIView):
     permission_classes = [IsAuthenticated]

@@ -130,10 +130,11 @@ export function useTenantTheme() {
   });
 
   const publicSite = publicSiteQuery.data;
-  const publicBranding = publicSite?.branding ?? {};
 
   const tenantContext = useMemo<DashboardTenantContextValue>(() => {
-    const primaryColor = settings.primary_color || publicBranding.primary_color || '#E85D26';
+    // Signed-in workspaces always use their own tenant profile. Public SaaS
+    // branding must never become a fallback that masks a tenant's identity.
+    const primaryColor = settings.primary_color || '#E85D26';
     const displayName = (user as any)?.first_name
       ? `${(user as any).first_name} ${(user as any)?.last_name ?? ''}`.trim()
       : ((user as any)?.username ?? 'ERP User');
@@ -153,17 +154,17 @@ export function useTenantTheme() {
           : [],
       sections: normalizeSections(workspace),
       branding: {
-        logoUrl: settings.logo_url || publicBranding.logo_url || '',
+        logoUrl: settings.logo_url || '',
         primaryColor,
         workspaceName: settings.workspace_name || tenant.name || publicSite?.tenant?.name || '',
         currency: tenant.default_currency || 'KES',
         locale: tenant.default_currency === 'USD' ? 'en-US' : 'en-KE',
         timezone: tenant.timezone || 'Africa/Nairobi',
-        footerText: settings.footer_text || publicBranding.footer_text || '',
-        supportEmail: settings.support_email || publicBranding.support_email || '',
+        footerText: settings.footer_text || '',
+        supportEmail: settings.support_email || '',
       },
     };
-  }, [organizationId, publicBranding, publicSite?.tenant?.name, role, settings, tenant, tenantCode, user, userId, workspace]);
+  }, [organizationId, publicSite?.tenant?.name, role, settings, tenant, tenantCode, user, userId, workspace]);
 
   useEffect(() => {
     const root = document.documentElement;
