@@ -143,6 +143,24 @@ def _safe_decimal(value):
     return Decimal(str(value or 0))
 
 
+POSTING_BILL_STATUSES = {"received", "approved", "paid", "overdue"}
+
+
+def _validate_bill_posting_period(*, tenant, issue_date, status_value, source_label):
+    """Keep drafts editable while protecting closed accounting periods from postings."""
+    if status_value not in POSTING_BILL_STATUSES or assert_posting_allowed is None:
+        return None
+    try:
+        assert_posting_allowed(
+            tenant=tenant,
+            posting_date=issue_date,
+            source_label=source_label,
+        )
+    except ValueError as exc:
+        return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+    return None
+
+
 def _clear_match_exceptions(bill):
     MatchException.objects.filter(bill=bill).delete()
 
@@ -328,15 +346,14 @@ class BillListCreateView(APIView):
         ser = BillWriteSerializer(data=request.data)
         if not ser.is_valid():
             return Response(ser.errors, status=status.HTTP_400_BAD_REQUEST)
-        if assert_posting_allowed is not None:
-            try:
-                assert_posting_allowed(
-                    tenant=tenant if tenant is not None else None,
-                    posting_date=ser.validated_data.get("issue_date"),
-                    source_label="bill",
-                )
-            except ValueError as exc:
-                return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        period_error = _validate_bill_posting_period(
+            tenant=tenant if tenant is not None else None,
+            issue_date=ser.validated_data.get("issue_date"),
+            status_value=ser.validated_data.get("status", "draft"),
+            source_label="bill",
+        )
+        if period_error:
+            return period_error
         obj = ser.save(
             tenant=tenant if tenant is not None else None,
             created_by=request.user,
@@ -377,15 +394,14 @@ class BillDetailView(APIView):
         ser = BillWriteSerializer(obj, data=request.data, partial=True)
         if not ser.is_valid():
             return Response(ser.errors, status=status.HTTP_400_BAD_REQUEST)
-        if assert_posting_allowed is not None:
-            try:
-                assert_posting_allowed(
-                    tenant=getattr(obj, "tenant", None),
-                    posting_date=ser.validated_data.get("issue_date") or obj.issue_date,
-                    source_label="bill update",
-                )
-            except ValueError as exc:
-                return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        period_error = _validate_bill_posting_period(
+            tenant=getattr(obj, "tenant", None),
+            issue_date=ser.validated_data.get("issue_date") or obj.issue_date,
+            status_value=ser.validated_data.get("status", obj.status),
+            source_label="bill update",
+        )
+        if period_error:
+            return period_error
         updated = ser.save()
         try:
             sync_bill_posting(updated)
