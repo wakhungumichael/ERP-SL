@@ -166,6 +166,14 @@ export const STATIC_NAV: NavSection[] = [
       { key: 'reports-dashboard', title: 'ERP Reports', path: '/reports/dashboard', roles: CAN_VIEW_REPORTS_WORKSPACE },
     ],
   },
+  {
+    key: 'workflows',
+    title: 'Workflows',
+    roles: ERP_USERS,
+    items: [
+      { key: 'workflow-approvals', title: 'Approvals & Notifications', path: '/workflows/approvals', roles: ERP_USERS },
+    ],
+  },
 
   // ── HR ───────────────────────────────────────────────────────────────────────
   {

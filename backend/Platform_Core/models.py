@@ -491,6 +491,7 @@ class WorkflowTransitionDefinition(TimeStampedModel):
 class WorkflowInboxItem(TimeStampedModel):
     STATUS_CHOICES = [
         ("pending", "Pending"),
+        ("deferred", "Deferred"),
         ("approved", "Approved"),
         ("rejected", "Rejected"),
         ("cancelled", "Cancelled"),
@@ -550,6 +551,8 @@ class WorkflowInboxItem(TimeStampedModel):
         null=True,
     )
     acted_at = models.DateTimeField(blank=True, null=True)
+    deferred_until = models.DateTimeField(blank=True, null=True)
+    defer_reason = models.TextField(blank=True)
     quick_actions = models.JSONField(blank=True, default=list)
     metadata = models.JSONField(blank=True, default=dict)
 

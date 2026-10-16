@@ -1,6 +1,6 @@
 import { Link, useLocation } from 'wouter';
 import { useAuthLogout } from '@workspace/api-client-react';
-import { LogOut, Scale, ChevronRight, ChevronDown, Search, UserCircle2, Settings, PanelTop, X, Menu, ShieldAlert, LayoutDashboard, ShoppingCart, Package, Landmark, Users, Ticket, BarChart3, ClipboardList, Factory, Store, Wrench, Boxes, FileText, Truck, CreditCard, FolderKanban, ContactRound, Download } from 'lucide-react';
+import { LogOut, Scale, ChevronRight, ChevronDown, Search, UserCircle2, Settings, PanelTop, X, Menu, ShieldAlert, LayoutDashboard, ShoppingCart, Package, Landmark, Users, Ticket, BarChart3, ClipboardList, Factory, Store, Wrench, Boxes, FileText, Truck, CreditCard, FolderKanban, ContactRound, Download, Bell } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { Input } from '@/components/ui/input';
@@ -694,6 +694,18 @@ export function Shell({ children }: { children: React.ReactNode }) {
       ? `${(user as any).first_name} ${(user as any).last_name ?? ''}`.trim()
       : (user as any)?.username ?? 'User';
   const email = (user as any)?.email ?? 'No email available';
+  const workflowNotifications = useQuery({
+    queryKey: ['workflow-notifications', token],
+    enabled: !!token,
+    refetchInterval: 60_000,
+    queryFn: async () => {
+      const response = await fetch('/api/platform/workflows/inbox/?status=pending&limit=99', { headers: { Authorization: `Token ${token}` } });
+      if (!response.ok) return { count: 0 };
+      const body = await response.json();
+      return body?.data ?? body;
+    },
+  });
+  const approvalCount = Number(workflowNotifications.data?.count ?? 0);
   const openRoute = (path: string) => {
     setLocation(path);
     setGlobalSearch('');
@@ -890,6 +902,10 @@ export function Shell({ children }: { children: React.ReactNode }) {
           </div>
 
           <div className="flex items-center gap-3">
+            <Button variant="ghost" size="icon" onClick={() => setLocation('/workflows/approvals')} className="relative text-muted-foreground hover:text-foreground" title="Workflow approvals and notifications">
+              <Bell className="h-5 w-5" />
+              {approvalCount > 0 ? <span className="absolute right-0 top-0 min-w-4 rounded-full bg-destructive px-1 text-center text-[10px] font-bold leading-4 text-destructive-foreground">{approvalCount > 99 ? '99+' : approvalCount}</span> : null}
+            </Button>
             <span className={`hidden sm:inline-block px-2.5 py-1 rounded text-[11px] font-bold uppercase tracking-widest ${ROLE_COLORS[effectiveRole]}`}>
               {isLoading ? 'Loading' : ROLE_LABELS[effectiveRole]}
             </span>

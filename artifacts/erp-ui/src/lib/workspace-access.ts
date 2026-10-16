@@ -65,6 +65,7 @@ const ROUTE_ACCESS_RULES: RouteAccessRule[] = [
   { pathPrefix: '/ticketing', modules: ['ticketing'], roles: ERP_USERS },
 
   { pathPrefix: '/reports/dashboard', modules: ['reporting'], roles: REPORT_USERS },
+  { pathPrefix: '/workflows/approvals', roles: ERP_USERS },
 
   { pathPrefix: '/hr/staff', modules: ['hr', 'hr-payroll', 'hcm'], roles: ADMIN_UP },
 

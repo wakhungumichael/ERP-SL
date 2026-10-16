@@ -1678,6 +1678,8 @@ class WorkflowInboxItemSerializer(serializers.ModelSerializer):
             "acted_by",
             "acted_by_name",
             "acted_at",
+            "deferred_until",
+            "defer_reason",
             "quick_actions",
             "metadata",
             "created_at",

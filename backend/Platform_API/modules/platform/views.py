@@ -2082,10 +2082,14 @@ class WorkflowInboxAPIView(APIView):
                     Q(assigned_user=request.user) | Q(assigned_group_id__in=group_ids)
                 )
         if status_value := request.query_params.get("status"):
+            if status_value == "all":
+                status_value = ""
+        if status_value:
             qs = qs.filter(status=status_value)
         else:
             qs = qs.filter(status="pending")
-        payload = WorkflowInboxItemSerializer(qs.order_by("-created_at")[:20], many=True).data
+        limit = min(max(int(request.query_params.get("limit", 50)), 1), 200)
+        payload = WorkflowInboxItemSerializer(qs.order_by("-created_at")[:limit], many=True).data
         return success_response(
             "Workflow inbox loaded successfully.",
             data={"results": payload, "count": len(payload)},
@@ -2245,14 +2249,29 @@ class WorkflowInboxActionAPIView(APIView):
         )
         if not _is_superadmin(request.user) and item.tenant_id != getattr(_request_tenant_or_none(request.user), "id", None):
             raise PermissionDenied("This approval does not belong to your organization.")
-        if item.status != "pending":
+        if item.status not in {"pending", "deferred"}:
             raise ValidationError({"detail": "This workflow item has already been actioned."})
         if not _workflow_actor_can_action(item, request.user):
             raise PermissionDenied("This approval is not assigned to your user or role.")
 
         decision = str(request.data.get("decision") or "approve").lower()
-        if decision not in {"approve", "reject"}:
-            raise ValidationError({"decision": "Use approve or reject."})
+        if decision not in {"approve", "reject", "defer", "resume"}:
+            raise ValidationError({"decision": "Use approve, reject, defer, or resume."})
+        if decision == "defer":
+            if item.status != "pending":
+                raise ValidationError({"detail": "Only pending workflow items can be deferred."})
+            item.status = "deferred"
+            item.defer_reason = str(request.data.get("reason") or "").strip()
+            item.deferred_until = request.data.get("deferred_until") or None
+            item.save(update_fields=["status", "defer_reason", "deferred_until", "updated_at"])
+            return success_response("Workflow item deferred.", data=WorkflowInboxItemSerializer(item).data)
+        if decision == "resume":
+            if item.status != "deferred":
+                raise ValidationError({"detail": "Only deferred workflow items can be resumed."})
+            item.status = "pending"
+            item.deferred_until = None
+            item.save(update_fields=["status", "deferred_until", "updated_at"])
+            return success_response("Workflow item returned to your approval queue.", data=WorkflowInboxItemSerializer(item).data)
         item.acted_by = request.user
         item.acted_at = timezone.now()
         if decision == "reject":
