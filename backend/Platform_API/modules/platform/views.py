@@ -2768,11 +2768,13 @@ class AuditExportAPIView(APIView):
 
     def get(self, request):
         dataset = str(request.query_params.get("dataset") or "events").lower()
-        export_format = str(request.query_params.get("format") or "csv").lower()
+        # DRF reserves `format` for renderer negotiation. Use a dedicated
+        # parameter so audit downloads reach this view instead of returning 404.
+        export_format = str(request.query_params.get("export_format") or "csv").lower()
         if dataset not in {"events", "access"}:
             raise ValidationError({"dataset": "Use events or access."})
         if export_format not in {"csv", "pdf"}:
-            raise ValidationError({"format": "Use csv or pdf."})
+            raise ValidationError({"export_format": "Use csv or pdf."})
 
         user = request.user
         can_view = _can_view_tenant_audit_logs(user) if dataset == "events" else _can_view_tenant_access_logs(user)

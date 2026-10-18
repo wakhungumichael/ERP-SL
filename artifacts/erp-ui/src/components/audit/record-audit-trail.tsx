@@ -84,7 +84,7 @@ export function RecordAuditTrail({ modelLabel, objectPk }: { modelLabel: string;
     if (!token) return;
     setExporting(true);
     try {
-      const params = new URLSearchParams({ dataset: 'events', format, model_label: modelLabel, object_pk: String(objectPk) });
+      const params = new URLSearchParams({ dataset: 'events', export_format: format, model_label: modelLabel, object_pk: String(objectPk) });
       const response = await fetch(`/api/platform/audit/export/?${params}`, { headers: { Authorization: `Token ${token}` } });
       if (!response.ok) throw await apiErrorFromResponse(response, 'We could not generate this audit export. Please try again.');
       const url = URL.createObjectURL(await response.blob()); const link = document.createElement('a'); link.href = url; link.download = `audit-record-${objectPk}.${format}`; document.body.appendChild(link); link.click(); link.remove(); window.setTimeout(() => URL.revokeObjectURL(url), 60_000);

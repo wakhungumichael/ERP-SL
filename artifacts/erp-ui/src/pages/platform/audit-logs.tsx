@@ -72,7 +72,7 @@ export default function AuditLogsPage() {
     const exportKey = `${dataset}-${format}`;
     setExporting(exportKey);
     try {
-      const params = new URLSearchParams({ dataset, format });
+      const params = new URLSearchParams({ dataset, export_format: format });
       if (search.trim()) params.set('search', search.trim());
       if (dataset === 'events') {
         if (eventGroup) params.set('event_group', eventGroup);
