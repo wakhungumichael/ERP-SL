@@ -355,14 +355,13 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
     queryFn: async () => fetch('/api/commercial-weighbridge/customers/?page_size=1000&search=', { headers: authHeaders() }).then((res) => res.json()),
   });
   const { data: vehicleUseSettings } = useQuery({
-    // Use the same tenant settings record shown on Weighbridge Settings. This
-    // keeps the cashier flow and the saved shared-vehicle toggle in lockstep.
-    queryKey: ['weighbridge-vehicle-use-settings', tenantId],
+    // Cashiers cannot read administrative tenant settings. This narrow,
+    // read-only policy endpoint exposes only the flag needed at weighment time.
+    queryKey: ['weighbridge-operational-policy', tenantId],
     queryFn: async () => {
-      const response = await fetch(`/api/platform/tenants/${tenantId}/settings/`, { headers: authHeaders() });
+      const response = await fetch('/api/commercial-weighbridge/operational-policy/', { headers: authHeaders() });
       if (!response.ok) throw new Error('Could not load vehicle-use settings.');
-      const payload = await response.json();
-      return payload?.data ?? payload;
+      return response.json();
     },
     enabled: Boolean(tenantId),
     staleTime: 0,
