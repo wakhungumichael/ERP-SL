@@ -1,3 +1,4 @@
+/* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { useMemo, useState } from 'react';
 import { Link } from 'wouter';
 import { ArrowRight, Boxes, PackageCheck, Search, ShoppingCart, Truck } from 'lucide-react';

@@ -1,3 +1,4 @@
+/* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 export interface PublicNavLink {
   label: string;
   href: string;

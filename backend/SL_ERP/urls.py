@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu.
 from django.conf import settings
 from django.conf.urls.static import static
 from django.contrib import admin

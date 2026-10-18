@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu.
 from django.core.management.base import BaseCommand
 
 from Platform_Core.models import TenantSubscription

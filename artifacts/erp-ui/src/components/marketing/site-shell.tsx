@@ -1,3 +1,4 @@
+/* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { ArrowRight, Menu, X } from 'lucide-react';
 import { useState } from 'react';
 import { Link } from 'wouter';

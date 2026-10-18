@@ -1,3 +1,4 @@
+/* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App.tsx';

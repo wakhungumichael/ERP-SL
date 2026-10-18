@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu.
 """
 Migration: Overweight Surveillance sub-module
   - Extend CameraConfig with branch FK, camera_type, hikvision_channel,

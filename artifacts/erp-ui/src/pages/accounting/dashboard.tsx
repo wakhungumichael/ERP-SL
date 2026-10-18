@@ -1,3 +1,4 @@
+/* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Link } from 'wouter';

@@ -1,3 +1,4 @@
+/* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 'use client';
 
 import * as CollapsiblePrimitive from '@radix-ui/react-collapsible';

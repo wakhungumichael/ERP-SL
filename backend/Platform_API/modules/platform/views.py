@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu.
 import csv
 from datetime import timedelta
 from io import BytesIO

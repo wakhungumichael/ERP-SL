@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu.
 """
 Management command: seed platform ModuleDefinitions and SubscriptionPlans.
 Safe to run multiple times — uses get_or_create and updates existing records.

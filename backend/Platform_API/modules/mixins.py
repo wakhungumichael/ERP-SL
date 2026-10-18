@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu.
 """
 Shared DRF mixins for Platform_API module views.
 """

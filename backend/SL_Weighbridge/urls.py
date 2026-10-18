@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu.
 from django.urls import path
 from . import views  
 from .views import get_weight

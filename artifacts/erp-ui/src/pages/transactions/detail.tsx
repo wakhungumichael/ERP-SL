@@ -1,3 +1,4 @@
+/* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { useEffect, useState } from 'react';
 import { useAuth } from '@/context/use-auth';
 import { useQuery, useQueryClient } from '@tanstack/react-query';

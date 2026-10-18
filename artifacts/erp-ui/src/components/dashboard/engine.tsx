@@ -1,3 +1,4 @@
+/* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { useEffect, useMemo, useState } from 'react';
 import { ChevronDown, ChevronUp, GripVertical, MoveLeft, MoveRight, MoveUp, MoveDown, ScanSearch, SlidersHorizontal } from 'lucide-react';
 import { Button } from '@/components/ui/button';

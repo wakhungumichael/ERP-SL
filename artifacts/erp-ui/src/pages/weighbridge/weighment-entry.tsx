@@ -1,3 +1,4 @@
+/* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { useEffect, useMemo, useState } from 'react';
 import { useLocation } from 'wouter';
 import { useCreateTransaction, getListTransactionsQueryKey } from '@workspace/api-client-react';

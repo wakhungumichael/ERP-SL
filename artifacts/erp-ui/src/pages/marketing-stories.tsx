@@ -1,3 +1,4 @@
+/* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { MessageSquareQuote } from 'lucide-react';
 import { Link } from 'wouter';
 import { MarketingSiteShell } from '@/components/marketing/site-shell';

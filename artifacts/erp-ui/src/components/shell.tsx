@@ -1,3 +1,4 @@
+/* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { Link, useLocation } from 'wouter';
 import { useAuthLogout } from '@workspace/api-client-react';
 import { LogOut, Scale, ChevronRight, ChevronDown, Search, UserCircle2, Settings, PanelTop, X, Menu, ShieldAlert, LayoutDashboard, ShoppingCart, Package, Landmark, Users, Ticket, BarChart3, ClipboardList, Factory, Store, Wrench, Boxes, FileText, Truck, CreditCard, FolderKanban, ContactRound, Download, Bell } from 'lucide-react';

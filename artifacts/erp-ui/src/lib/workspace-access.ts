@@ -1,3 +1,4 @@
+/* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import type { AppRole } from '@/lib/roles';
 import { hasMenuPathPermission } from '@/lib/permission-access';
 

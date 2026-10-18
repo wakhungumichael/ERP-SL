@@ -1,3 +1,4 @@
+/* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import * as React from 'react';
 import type { ToastActionElement, ToastProps } from '@/components/ui/toast';
 import { toUserFriendlyError } from '@/lib/api-errors';

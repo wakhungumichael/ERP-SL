@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu.
 from unittest.mock import patch
 
 from django.contrib.auth.models import User

@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu.
 """
 Management command: seed_sales
 Seeds realistic test data for:

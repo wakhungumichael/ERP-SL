@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu.
 from decimal import Decimal
 
 from Platform_Core.models import ModuleDefinition, PricingRule

@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu.
 """
 Management command: seed_demo
 Creates realistic demo data for SL-ERP development/demo environments.

@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu.
 from django.contrib import admin
 
 from .models import Budget, BudgetCheckLog, BudgetCommitment, BudgetLine

@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu.
 from .audit import clear_audit_request, log_access_event, set_audit_request
 
 

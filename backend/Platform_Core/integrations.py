@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu.
 """
 Platform integration helpers stub.
 Provides build_integration_health_snapshot and indicator_source_registry

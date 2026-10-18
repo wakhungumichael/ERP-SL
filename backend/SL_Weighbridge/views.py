@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu.
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from rest_framework import status

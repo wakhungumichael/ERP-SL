@@ -1,3 +1,4 @@
+/* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import { Link } from 'wouter';
 import { useAuth } from '@/context/use-auth';

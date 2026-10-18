@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu.
 from rest_framework import serializers
 from .models import Transaction, IndicatorConfig
 

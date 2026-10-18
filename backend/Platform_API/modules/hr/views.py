@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu.
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from rest_framework import serializers, status

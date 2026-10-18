@@ -1,3 +1,4 @@
+/* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 const PATH_PERMISSION_RULES: Array<{ prefix: string; permissions: string[] }> = [
   { prefix: '/dashboard', permissions: ['Platform_Core.can_view_workspace_dashboard'] },
   { prefix: '/workspace/operations/dashboard', permissions: ['Platform_Core.can_view_weighbridge_overview'] },

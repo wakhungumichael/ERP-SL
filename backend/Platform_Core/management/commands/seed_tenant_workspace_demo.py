@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu.
 import random
 from datetime import timedelta
 from decimal import Decimal

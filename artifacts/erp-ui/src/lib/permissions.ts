@@ -1,3 +1,4 @@
+/* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 type PermissionUser = {
   is_superuser?: boolean;
   is_tenant_admin?: boolean;

@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu.
 from types import SimpleNamespace
 
 from django.test import SimpleTestCase

@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu.
 # myproject/__init__.py
 
 from __future__ import absolute_import, unicode_literals

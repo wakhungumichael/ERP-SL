@@ -1,3 +1,4 @@
+/* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { CircleAlert } from 'lucide-react';
 import type { ComponentProps } from 'react';
 import type { FormValidationErrors } from '@/lib/api-errors';

@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu.
 from datetime import timedelta
 from decimal import Decimal
 from unittest.mock import patch

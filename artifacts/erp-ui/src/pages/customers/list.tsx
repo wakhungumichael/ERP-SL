@@ -1,3 +1,4 @@
+/* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Mail, Phone, Plus, Search, Trash2, UserCheck, UserX } from 'lucide-react';

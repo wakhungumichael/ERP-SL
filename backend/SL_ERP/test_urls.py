@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu.
 from django.test import RequestFactory, SimpleTestCase, override_settings
 from django.urls import resolve
 

@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu.
 from Platform_Core.models import Tenant, TenantBranch
 from SL_Weighbridge.models import Branch, Company
 

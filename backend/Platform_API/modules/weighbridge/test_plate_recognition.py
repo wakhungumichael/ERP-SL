@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu.
 import base64
 from io import BytesIO
 from unittest.mock import patch

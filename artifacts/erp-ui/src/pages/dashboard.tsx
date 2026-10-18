@@ -1,3 +1,4 @@
+/* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { useMemo } from 'react';
 import { CalendarDays, LayoutGrid, RotateCcw, Settings2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';

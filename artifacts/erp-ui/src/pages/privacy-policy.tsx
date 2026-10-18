@@ -1,3 +1,4 @@
+/* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { MarketingSiteShell } from '@/components/marketing/site-shell';
 import { useMarketingSite } from '@/components/marketing/site-data';
 

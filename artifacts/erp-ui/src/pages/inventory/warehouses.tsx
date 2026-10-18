@@ -1,3 +1,4 @@
+/* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { useMemo } from 'react';
 import { Link } from 'wouter';
 import { ArrowRightLeft, Building2, MapPinned, ShieldCheck, Truck } from 'lucide-react';

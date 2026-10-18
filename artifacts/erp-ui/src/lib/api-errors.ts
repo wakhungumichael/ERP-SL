@@ -1,3 +1,4 @@
+/* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 const GENERIC_ERROR_KEYS = new Set(['detail', 'error', 'errors', 'message', 'non_field_errors', 'nonFieldErrors', '__all__']);
 
 const FRIENDLY_SYSTEM_ERRORS: Array<[RegExp, string]> = [

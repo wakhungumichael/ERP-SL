@@ -1,3 +1,4 @@
+/* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import type { AppRole } from '@/lib/roles';
 
 const DASHBOARD_PERMISSION = 'Platform_Core.can_view_workspace_dashboard';

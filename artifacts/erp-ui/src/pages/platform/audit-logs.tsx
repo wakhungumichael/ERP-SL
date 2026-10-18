@@ -1,3 +1,4 @@
+/* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Activity, ChevronDown, ChevronRight, Clock3, Download, FileText, Search, Server, Shield, UserRound, Waypoints } from 'lucide-react';

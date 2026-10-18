@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu.
 # management/commands/test_indicator.py
 from SL_Weighbridge.models import IndicatorConfig
 from SL_Weighbridge.utils import capture_weight_from_indicator

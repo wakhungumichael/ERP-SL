@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu.
 """
 Migration 0047: Invoice System Overhaul
 - Add source_module, source_id to Invoice

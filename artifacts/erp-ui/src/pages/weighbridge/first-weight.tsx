@@ -1,3 +1,4 @@
+/* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 /**
  * First Weight — captures gross weight from the live indicator.
  *

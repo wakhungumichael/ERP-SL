@@ -1,3 +1,4 @@
+/* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { Link } from 'wouter';
 import { Button } from '@/components/ui/button';
 

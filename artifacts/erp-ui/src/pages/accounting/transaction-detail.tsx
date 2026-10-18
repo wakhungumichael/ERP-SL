@@ -1,3 +1,4 @@
+/* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, BadgeCheck, BookOpen, RotateCcw, Send } from 'lucide-react';
 import { useAuth } from '@/context/use-auth';

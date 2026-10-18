@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu.
 #!/usr/bin/env python
 """Django's command-line utility for administrative tasks."""
 import os

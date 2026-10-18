@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu.
 from SL_Sales.models import Product
 from SL_Weighbridge.models import VehicleType
 

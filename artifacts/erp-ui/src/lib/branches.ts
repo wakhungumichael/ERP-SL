@@ -1,3 +1,4 @@
+/* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import type { QueryClient } from '@tanstack/react-query';
 
 export type ErpBranch = {

@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu.
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Optional

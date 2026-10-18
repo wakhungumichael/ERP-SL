@@ -1,3 +1,4 @@
+/* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { useCallback, useMemo } from 'react';
 import { useAuth } from '@/context/use-auth';
 import type { DashboardPermission } from '@/components/dashboard/types';

@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu.
 def get_printer_command(printer_config, transaction):
     """Return the appropriate command based on the printer type."""
     if printer_config.printer_type == 'Zebra':

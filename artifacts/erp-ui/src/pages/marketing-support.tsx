@@ -1,3 +1,4 @@
+/* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { useEffect, useMemo, useState } from 'react';
 import { CheckCircle2, Search, Send } from 'lucide-react';
 import { MarketingSiteShell } from '@/components/marketing/site-shell';

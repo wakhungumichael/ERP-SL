@@ -1,3 +1,4 @@
+/* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { Link } from 'wouter';
 import { ArrowRight, CheckCircle2, Compass, Network, ShieldCheck } from 'lucide-react';
 import { MarketingSiteShell } from '@/components/marketing/site-shell';
