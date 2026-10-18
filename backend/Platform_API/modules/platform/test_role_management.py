@@ -140,6 +140,26 @@ class TenantRoleManagementTests(TestCase):
         assigned_ids = set(self.regular_user_a.groups.values_list("id", flat=True))
         self.assertEqual(assigned_ids, {self.finance_group.pk, self.custom_role_a.pk})
 
+    def test_user_directory_honors_requested_page_size(self):
+        User.objects.create_user(username="directory-user-a", password="pass")
+        User.objects.create_user(username="directory-user-b", password="pass")
+        for username in ("directory-user-a", "directory-user-b"):
+            TenantUserProfile.objects.create(
+                user=User.objects.get(username=username),
+                tenant=self.tenant_a,
+                is_tenant_admin=False,
+            )
+        self.client.force_authenticate(user=self.tenant_admin_a)
+
+        response = self.client.get(
+            reverse("platform-user-list"),
+            {"page": 1, "page_size": 2},
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["count"], 3)
+        self.assertEqual(len(response.data["results"]), 2)
+
     def test_tenant_admin_cannot_assign_other_tenant_custom_role(self):
         self.client.force_authenticate(user=self.tenant_admin_a)
 

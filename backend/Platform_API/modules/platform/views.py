@@ -32,6 +32,7 @@ from rest_framework.authentication import BasicAuthentication, TokenAuthenticati
 from rest_framework import status
 from rest_framework.permissions import AllowAny, BasePermission, IsAuthenticated
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
+from rest_framework.pagination import PageNumberPagination
 from rest_framework.views import APIView
 from rest_framework.authtoken.models import Token
 from rest_framework.exceptions import PermissionDenied, ValidationError
@@ -88,6 +89,13 @@ from Platform_Core.models import (
     WorkflowStepDefinition,
     WorkflowTransitionDefinition,
 )
+
+
+class PlatformPageNumberPagination(PageNumberPagination):
+    """Bounded page-size control for platform administration directories."""
+
+    page_size_query_param = "page_size"
+    max_page_size = 100
 
 from .serializers import (
     AuditAccessLogSerializer,
@@ -1380,8 +1388,10 @@ class PlatformUserListAPIView(ModuleAPIViewMixin, generics.ListAPIView):
         "organization_memberships__branch",
     ).all()
     serializer_class = UserProfileSerializer
+    pagination_class = PlatformPageNumberPagination
     search_fields = ("username", "first_name", "last_name", "email")
     ordering_fields = ("username", "date_joined", "last_login", "is_active", "is_staff")
+    ordering = ("first_name", "last_name", "username")
 
     def list(self, request, *args, **kwargs):
         if not _is_superadmin(request.user):
@@ -1396,6 +1406,16 @@ class PlatformUserListAPIView(ModuleAPIViewMixin, generics.ListAPIView):
     def get_queryset(self):
         qs = super().get_queryset()
         if _is_superadmin(self.request.user):
+            tenant_id = self.request.query_params.get("tenant_id")
+            if tenant_id:
+                try:
+                    tenant_id = int(tenant_id)
+                except (TypeError, ValueError):
+                    return qs.none()
+                return qs.filter(
+                    Q(tenant_profile__tenant_id=tenant_id)
+                    | Q(organization_memberships__tenant_id=tenant_id, organization_memberships__is_active=True)
+                ).distinct()
             return qs
         # Organization admins see only users in their own organization
         profile = _tenant_admin_profile(self.request.user)

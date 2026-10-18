@@ -15,6 +15,7 @@ import {
 } from '@/components/ui/select';
 import { Users as UsersIcon, Plus, Search, RefreshCw, ShieldCheck, UserX, UserCheck, Pencil, Copy, Eye, EyeOff } from 'lucide-react';
 import { detectRole, ROLE_LABELS, ROLE_COLORS, type AppRole } from '@/lib/roles';
+import { ListingPagination } from '@/components/erp/listing/pagination';
 
 const BASE = '/api/platform';
 
@@ -714,6 +715,8 @@ export default function Users() {
   const qc = useQueryClient();
   const [search, setSearch] = useState('');
   const [tenantFilter, setTenantFilter] = useState('all');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
   const [showInvite, setShowInvite] = useState(false);
   const [editingUser, setEditingUser] = useState<any | null>(null);
   const [passwordResult, setPasswordResult] = useState<PasswordResult | null>(null);
@@ -722,10 +725,11 @@ export default function Users() {
     : (tenantFilter !== 'all' ? tenantFilter : undefined);
 
   const { data, isLoading, refetch } = useQuery({
-    queryKey: ['platform-users', search, tenantFilter],
+    queryKey: ['platform-users', search, tenantFilter, page, pageSize],
     queryFn: () => {
-      const p = new URLSearchParams({ page_size: '200' });
+      const p = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
       if (search) p.set('search', search);
+      if (tenantFilter !== 'all') p.set('tenant_id', tenantFilter);
       return api(token!, `/users/?${p}`);
     },
     enabled: !!token,
@@ -750,10 +754,8 @@ export default function Users() {
     onError: (e: any) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
   });
 
-  let users: any[] = data?.results ?? [];
-  if (tenantFilter !== 'all') {
-    users = users.filter((u: any) => (u.organization_id ?? u.tenant_id) === Number(tenantFilter));
-  }
+  const users: any[] = data?.results ?? [];
+  const totalUsers = Number(data?.count ?? users.length);
 
   return (
     <div className="space-y-6">
@@ -778,10 +780,10 @@ export default function Users() {
       <div className="flex flex-wrap gap-3">
         <div className="relative flex-1 min-w-[200px]">
           <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-          <Input className="pl-8" placeholder="Search users…" value={search} onChange={e => setSearch(e.target.value)} />
+          <Input className="pl-8" placeholder="Search users…" value={search} onChange={e => { setSearch(e.target.value); setPage(1); }} />
         </div>
         {role === 'superadmin' && (
-          <Select value={tenantFilter} onValueChange={setTenantFilter}>
+          <Select value={tenantFilter} onValueChange={(value) => { setTenantFilter(value); setPage(1); }}>
             <SelectTrigger className="w-48"><SelectValue placeholder="All Organizations" /></SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All Organizations</SelectItem>
@@ -797,7 +799,7 @@ export default function Users() {
         <CardHeader className="bg-muted/20 border-b py-3 px-4">
           <CardTitle className="text-xs font-bold uppercase tracking-widest flex items-center justify-between">
             <span>User Directory</span>
-            <span className="text-muted-foreground font-normal normal-case">{users.length} users</span>
+            <span className="text-muted-foreground font-normal normal-case">{totalUsers.toLocaleString()} users</span>
           </CardTitle>
         </CardHeader>
         <CardContent className="p-0">
@@ -872,6 +874,13 @@ export default function Users() {
             </div>
           )}
         </CardContent>
+        <ListingPagination
+          page={page}
+          pageSize={pageSize}
+          totalCount={totalUsers}
+          onPage={setPage}
+          onPageSize={setPageSize}
+        />
       </Card>
 
       <InviteUserDialog open={showInvite} onClose={() => setShowInvite(false)} tenantId={activeInviteTenantId} />
