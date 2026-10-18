@@ -138,9 +138,9 @@ function normalizeNavRoles(value: unknown): AppRole[] {
   );
 }
 
-function useWorkspaceNav(token: string | null): NavSection[] {
+function useWorkspaceNav(token: string | null, activeRole: string): NavSection[] {
   const { data } = useQuery({
-    queryKey: ['workspace-nav', token ?? 'anonymous'],
+    queryKey: ['workspace-nav', token ?? 'anonymous', activeRole],
     queryFn: async () => {
       const res = await fetch('/api/platform/workspace/navigation/', {
         headers: { Authorization: `Token ${token}` },
@@ -420,7 +420,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const [profileForm, setProfileForm] = useState({ first_name: '', last_name: '', email: '', username: '' });
   const [passwordForm, setPasswordForm] = useState({ current_password: '', new_password: '', new_password_confirmation: '' });
   const [profileMessage, setProfileMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
-  const apiNav = useWorkspaceNav(token);
+  const apiNav = useWorkspaceNav(token, String((user as any)?.active_role_group_name ?? ''));
   const memberships = Array.isArray((user as any)?.memberships) ? (user as any).memberships : [];
   const activeMembershipId = (user as any)?.active_membership_id ? String((user as any).active_membership_id) : '';
   const activeOrganizationName = tenantContext.tenantName

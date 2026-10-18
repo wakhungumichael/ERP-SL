@@ -1070,6 +1070,17 @@ class UserProfileSerializer(serializers.ModelSerializer):
         )
 
     def get_permissions(self, obj):
+        membership = self._active_membership(obj)
+        active_role_name = (getattr(membership, "active_role_group_name", "") or "").strip()
+        if active_role_name and not obj.is_superuser:
+            active_group = obj.groups.filter(name=active_role_name).first()
+            if active_group is not None:
+                return sorted(
+                    f"{app_label}.{codename}"
+                    for app_label, codename in active_group.permissions.values_list(
+                        "content_type__app_label", "codename"
+                    )
+                )
         return sorted(obj.get_all_permissions())
 
     def _profile(self, obj):

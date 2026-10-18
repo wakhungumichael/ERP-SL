@@ -269,13 +269,18 @@ export function detectRole(user: {
 } | null | undefined): AppRole {
   if (!user) return 'guest';
   if (user.is_superuser) return 'superadmin';
+  const activeRole = String(user.active_role ?? '').toLowerCase().replace(/[^a-z0-9]/g, '_');
+  if (activeRole) {
+    if (['owner', 'system_admin', 'tenant_admin', 'organization_admin'].includes(activeRole)) return 'tenant_admin';
+    if (['finance', 'accountant', 'billing'].includes(activeRole)) return 'finance';
+    if (['operator', 'operations', 'ops'].includes(activeRole)) return 'operator';
+    // Custom roles are permission-driven and must not inherit another role's UI.
+    return 'operator';
+  }
   if (
     user.is_tenant_admin
     || user.is_org_admin
-    || ['owner', 'system_admin'].includes(String(user.active_role ?? '').toLowerCase())
   ) return 'tenant_admin';
-  if (String(user.active_role ?? '').toLowerCase() === 'finance') return 'finance';
-  if (String(user.active_role ?? '').toLowerCase() === 'operator') return 'operator';
 
   const groupNames = (user.groups || []).map(g =>
     (typeof g === 'string' ? g : g.name).toLowerCase().replace(/[^a-z0-9]/g, '_')

@@ -285,6 +285,26 @@ def build_workspace_navigation(*, user, tenant=None):
     active_module_slugs = get_active_tenant_module_slugs(tenant)
     has_tenant_context = tenant is not None
     user_group_ids = set(user.groups.values_list("id", flat=True)) if user.is_authenticated else set()
+    active_permission_codes = None
+
+    # A user can hold several roles, but their workspace session has one active
+    # role. Navigation must not combine access from every assigned role.
+    if user.is_authenticated and not user.is_superuser:
+        memberships = user.organization_memberships.filter(is_active=True)
+        if tenant is not None:
+            memberships = memberships.filter(tenant=tenant)
+        membership = memberships.filter(is_default=True).first() or memberships.order_by("tenant__name").first()
+        active_role_name = (getattr(membership, "active_role_group_name", "") or "").strip()
+        if active_role_name:
+            active_group = user.groups.filter(name=active_role_name).first()
+            if active_group is not None:
+                user_group_ids = {active_group.id}
+                active_permission_codes = {
+                    f"{app_label}.{codename}"
+                    for app_label, codename in active_group.permissions.values_list(
+                        "content_type__app_label", "codename"
+                    )
+                }
 
     sections = []
     queryset = (
@@ -301,7 +321,11 @@ def build_workspace_navigation(*, user, tenant=None):
         for item in section.items.filter(is_active=True):
             if has_tenant_context and item.required_module_id and item.required_module.slug not in active_module_slugs:
                 continue
-            if item.required_permission and not user.has_perm(item.required_permission):
+            if item.required_permission and (
+                item.required_permission not in active_permission_codes
+                if active_permission_codes is not None
+                else not user.has_perm(item.required_permission)
+            ):
                 continue
 
             access_rows = [row for row in item.role_access.all() if row.can_view]
