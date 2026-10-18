@@ -2198,12 +2198,10 @@ class WorkflowInboxAPIView(APIView):
             qs = qs.filter(metadata__submitted_by=request.user.id)
         elif scope == "decided":
             qs = qs.filter(acted_by=request.user)
-        if status_value := request.query_params.get("status"):
-            if status_value == "all":
-                status_value = ""
-        if status_value:
+        status_value = request.query_params.get("status")
+        if status_value and status_value != "all":
             qs = qs.filter(status=status_value)
-        else:
+        elif not status_value:
             qs = qs.filter(status="pending")
         try:
             page = max(int(request.query_params.get("page", 1)), 1)
