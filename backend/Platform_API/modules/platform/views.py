@@ -2817,6 +2817,20 @@ class AuditExportAPIView(APIView):
         rows = list(qs.order_by("-created_at", "-id")[:1000])
         exported_at = timezone.localtime().strftime("%Y-%m-%d %H:%M")
         if dataset == "events":
+            def changed_fields_for_export(changes):
+                """Support both current structured diffs and older simple audit values."""
+                fields = []
+                for key, change in (changes or {}).items():
+                    if key in {"id", "tenant", "tenant_id", "branch", "branch_id"}:
+                        continue
+                    if isinstance(change, dict):
+                        before = change.get("before", "—")
+                        after = change.get("after", change.get("related_ids", change.get("action", "—")))
+                    else:
+                        before, after = "—", change
+                    fields.append(f"{key}: {before} -> {after}")
+                return "; ".join(fields)
+
             headers = ["Timestamp", "Actor", "Tenant", "Branch", "Category", "Action", "Outcome", "Model", "Record", "Record ID", "Changed fields", "Notes", "Client IP"]
             values = [[
                 timezone.localtime(row.created_at).strftime("%Y-%m-%d %H:%M:%S"),
@@ -2824,7 +2838,7 @@ class AuditExportAPIView(APIView):
                 row.tenant.name if row.tenant_id else "Global", row.branch.name if row.branch_id else "",
                 row.get_event_group_display(), row.event_type.replace("_", " ").title(), row.status.title(),
                 row.model_label, row.object_repr, row.object_pk,
-                "; ".join(f"{key}: {value.get('before', '—')} -> {value.get('after', value.get('related_ids', value.get('action', '—')))}" for key, value in (row.changes or {}).items() if key not in {"id", "tenant", "tenant_id", "branch", "branch_id"}),
+                changed_fields_for_export(row.changes),
                 row.note, (row.metadata or {}).get("client_ip", ""),
             ] for row in rows]
         else:
