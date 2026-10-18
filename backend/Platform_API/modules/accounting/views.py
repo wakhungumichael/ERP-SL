@@ -1971,7 +1971,39 @@ class AccountingPostingRuleListCreateView(APIView):
                 Q(debit_account__code__icontains=q) |
                 Q(credit_account__code__icontains=q)
             )
-        return Response(AccountingPostingRuleSerializer(qs, many=True).data)
+        # Preserve the legacy array response for integrations that omit page,
+        # while the ERP list uses a bounded, count-aware response.
+        if "page" not in p and "page_size" not in p:
+            return Response(AccountingPostingRuleSerializer(qs, many=True).data)
+        try:
+            page = max(int(p.get("page", 1)), 1)
+        except (TypeError, ValueError):
+            page = 1
+        try:
+            page_size = int(p.get("page_size", 25))
+        except (TypeError, ValueError):
+            page_size = 25
+        page_size = min(max(page_size, 1), 100)
+        total_count = qs.count()
+        total_pages = max((total_count + page_size - 1) // page_size, 1)
+        page = min(page, total_pages)
+        offset = (page - 1) * page_size
+        summary = {
+            "total": total_count,
+            "active": qs.filter(is_active=True).count(),
+            "primary": qs.filter(is_primary=True).count(),
+            "payment": qs.filter(source_type="payment").count(),
+        }
+        return Response({
+            "results": AccountingPostingRuleSerializer(qs[offset:offset + page_size], many=True).data,
+            "pagination": {
+                "page": page,
+                "page_size": page_size,
+                "total_count": total_count,
+                "total_pages": total_pages,
+            },
+            "summary": summary,
+        })
 
     def post(self, request):
         if not HAS_ACCOUNTING:

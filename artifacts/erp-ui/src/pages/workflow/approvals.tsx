@@ -1,6 +1,6 @@
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { useState } from "react";
-import { Bell, Check, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Clock3, Eye, ExternalLink, Paperclip, RotateCcw, X } from "lucide-react";
+import { Bell, Check, Clock3, Eye, ExternalLink, Paperclip, RotateCcw, X } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { useAuth } from "@/context/use-auth";
@@ -23,6 +23,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { apiErrorFromResponse, formatApiError } from "@/lib/api-errors";
+import { ListingPagination } from "@/components/erp/listing/pagination";
 
 type QueueTab =
   "requests" | "deferred" | "submitted" | "history" | "notifications";
@@ -67,25 +68,6 @@ function displayWorkflowRole(role?: string | null) {
   return match?.[1] || role;
 }
 
-function QueuePager({ page, totalPages, totalCount, onPageChange }: { page: number; totalPages: number; totalCount: number; onPageChange: (page: number) => void }) {
-  if (totalCount === 0) return null;
-  const start = Math.max(1, Math.min(page - 2, totalPages - 4));
-  const end = Math.min(totalPages, start + 4);
-  const pages = Array.from({ length: end - start + 1 }, (_, index) => start + index);
-  return (
-    <div className="flex flex-col gap-3 border-t px-5 py-3 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
-      <span>Page {page} of {totalPages} · {totalCount} record{totalCount === 1 ? "" : "s"}</span>
-      <div className="flex items-center gap-1">
-        <Button size="icon" variant="outline" className="h-8 w-8" aria-label="First page" disabled={page === 1} onClick={() => onPageChange(1)}><ChevronsLeft className="h-4 w-4" /></Button>
-        <Button size="icon" variant="outline" className="h-8 w-8" aria-label="Previous page" disabled={page === 1} onClick={() => onPageChange(page - 1)}><ChevronLeft className="h-4 w-4" /></Button>
-        {pages.map((value) => <Button key={value} size="sm" variant={value === page ? "default" : "outline"} className="h-8 min-w-8 px-2" onClick={() => onPageChange(value)}>{value}</Button>)}
-        <Button size="icon" variant="outline" className="h-8 w-8" aria-label="Next page" disabled={page === totalPages} onClick={() => onPageChange(page + 1)}><ChevronRight className="h-4 w-4" /></Button>
-        <Button size="icon" variant="outline" className="h-8 w-8" aria-label="Last page" disabled={page === totalPages} onClick={() => onPageChange(totalPages)}><ChevronsRight className="h-4 w-4" /></Button>
-      </div>
-    </div>
-  );
-}
-
 export default function WorkflowApprovals() {
   const { token } = useAuth();
   const { toast } = useToast();
@@ -96,10 +78,10 @@ export default function WorkflowApprovals() {
   const [reviewTab, setReviewTab] = useState("summary");
   const [reviewComment, setReviewComment] = useState("");
   const [page, setPage] = useState(1);
-  const pageSize = 10;
+  const [pageSize, setPageSize] = useState(10);
   const config = tabCopy[tab];
   const queue = useQuery({
-    queryKey: ["workflow-approvals", tab, page, token],
+    queryKey: ["workflow-approvals", tab, page, pageSize, token],
     enabled: !!token && tab !== "notifications",
     queryFn: async () => {
       const params = new URLSearchParams({
@@ -121,7 +103,7 @@ export default function WorkflowApprovals() {
     },
   });
   const notifications = useQuery({
-    queryKey: ["workflow-notifications", page, token],
+    queryKey: ["workflow-notifications", page, pageSize, token],
     enabled: !!token,
     queryFn: async () => {
       const response = await fetch(`/api/platform/notifications/?page=${page}&page_size=${pageSize}`, {
@@ -343,7 +325,7 @@ export default function WorkflowApprovals() {
             )}
           </CardContent>
         </Card>
-        <QueuePager page={notificationPagination.page} totalPages={notificationPagination.total_pages} totalCount={notificationPagination.total_count} onPageChange={setPage} />
+        <ListingPagination page={notificationPagination.page} pageSize={pageSize} totalCount={notificationPagination.total_count} onPage={setPage} onPageSize={setPageSize} />
         </>
       ) : (
         <>
@@ -436,7 +418,7 @@ export default function WorkflowApprovals() {
               )}
             </CardContent>
           </Card>
-          <QueuePager page={queuePagination.page} totalPages={queuePagination.total_pages} totalCount={queuePagination.total_count} onPageChange={setPage} />
+          <ListingPagination page={queuePagination.page} pageSize={pageSize} totalCount={queuePagination.total_count} onPage={setPage} onPageSize={setPageSize} />
         </>
       )}
       <Dialog

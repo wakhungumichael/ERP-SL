@@ -13,6 +13,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { GitBranch, Pencil, Trash2, Plus } from 'lucide-react';
+import { ListingPagination } from '@/components/erp/listing/pagination';
 
 const BASE_URL = import.meta.env.BASE_URL?.replace(/\/$/, '') ?? '';
 
@@ -34,6 +35,12 @@ type PostingRule = {
   description: string;
   is_active: boolean;
   is_primary: boolean;
+};
+
+type PostingRulePage = {
+  results: PostingRule[];
+  pagination: { page: number; page_size: number; total_count: number; total_pages: number };
+  summary: { total: number; active: number; primary: number; payment: number };
 };
 
 const SOURCE_OPTIONS = [
@@ -73,6 +80,8 @@ export default function AccountingPostingRules() {
   const [filterSource, setFilterSource] = useState('');
   const [filterActive, setFilterActive] = useState('');
   const [search, setSearch] = useState('');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -84,16 +93,18 @@ export default function AccountingPostingRules() {
   if (filterSource) params.set('source_type', filterSource);
   if (filterActive) params.set('is_active', filterActive);
   if (search.trim()) params.set('search', search.trim());
+  params.set('page', String(page));
+  params.set('page_size', String(pageSize));
 
   const { data, isLoading, refetch } = useQuery({
-    queryKey: ['accounting-posting-rules', token, filterSource, filterActive, search],
+    queryKey: ['accounting-posting-rules', token, filterSource, filterActive, search, page, pageSize],
     enabled: !!token,
     queryFn: async () => {
       const r = await fetch(BASE_URL + '/api/accounting/posting-rules/?' + params.toString(), {
         headers: { Authorization: 'Token ' + token },
       });
       if (!r.ok) throw new Error('Failed to fetch posting rules');
-      return r.json() as Promise<PostingRule[]>;
+      return r.json() as Promise<PostingRulePage>;
     },
   });
 
@@ -121,16 +132,12 @@ export default function AccountingPostingRules() {
     },
   });
 
-  const rules = data ?? [];
+  const rules = data?.results ?? [];
   const journals = journalsData?.journals ?? [];
   const accounts = (accountsData ?? []).filter((account) => account.allow_posting !== false);
 
-  const counts = useMemo(() => ({
-    total: rules.length,
-    active: rules.filter((rule) => rule.is_active).length,
-    primary: rules.filter((rule) => rule.is_primary).length,
-    payment: rules.filter((rule) => rule.source_type === 'payment').length,
-  }), [rules]);
+  const counts = useMemo(() => data?.summary ?? ({ total: 0, active: 0, primary: 0, payment: 0 }), [data]);
+  const totalCount = data?.pagination?.total_count ?? 0;
 
   function openCreate() {
     setEditRule(null);
@@ -242,8 +249,8 @@ export default function AccountingPostingRules() {
       </div>
 
       <div className="flex flex-wrap gap-3">
-        <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search name, journal, account, or method" className="w-full md:w-80" />
-        <Select value={filterSource || '__all__'} onValueChange={(value) => setFilterSource(value === '__all__' ? '' : value)}>
+        <Input value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} placeholder="Search name, journal, account, or method" className="w-full md:w-80" />
+        <Select value={filterSource || '__all__'} onValueChange={(value) => { setFilterSource(value === '__all__' ? '' : value); setPage(1); }}>
           <SelectTrigger className="w-44">
             <SelectValue placeholder="All sources" />
           </SelectTrigger>
@@ -254,7 +261,7 @@ export default function AccountingPostingRules() {
             ))}
           </SelectContent>
         </Select>
-        <Select value={filterActive || '__all__'} onValueChange={(value) => setFilterActive(value === '__all__' ? '' : value)}>
+        <Select value={filterActive || '__all__'} onValueChange={(value) => { setFilterActive(value === '__all__' ? '' : value); setPage(1); }}>
           <SelectTrigger className="w-36">
             <SelectValue placeholder="Status" />
           </SelectTrigger>
@@ -268,11 +275,6 @@ export default function AccountingPostingRules() {
 
       {isLoading ? (
         <div className="py-16 text-center text-muted-foreground">Loading…</div>
-      ) : rules.length === 0 ? (
-        <div className="flex flex-col items-center gap-3 py-20 text-muted-foreground">
-          <GitBranch className="h-10 w-10 opacity-40" />
-          <p className="text-sm">No posting rules found</p>
-        </div>
       ) : (
         <div className="rounded-lg border">
           <Table>
@@ -322,8 +324,17 @@ export default function AccountingPostingRules() {
                   </TableCell>
                 </TableRow>
               ))}
+              {!rules.length ? (
+                <TableRow>
+                  <TableCell colSpan={8} className="py-16 text-center text-muted-foreground">
+                    <GitBranch className="mx-auto mb-3 h-10 w-10 opacity-40" />
+                    No posting rules found
+                  </TableCell>
+                </TableRow>
+              ) : null}
             </TableBody>
           </Table>
+          <ListingPagination page={data?.pagination?.page ?? page} pageSize={pageSize} totalCount={totalCount} onPage={setPage} onPageSize={setPageSize} />
         </div>
       )}
 
