@@ -662,6 +662,19 @@ def _resolve_membership_role(role_group_name, is_org_admin):
     return "member"
 
 
+def _resolve_membership_role_group(role_group_name, *, tenant_id):
+    """Resolve a tenant-safe primary organization role from its internal name."""
+    name = str(role_group_name or "").strip()
+    if not name:
+        return None
+    group = Group.objects.filter(name=name).first()
+    if group is None:
+        raise ValidationError({"role_group_name": "Select a valid organization role."})
+    if group.name not in TENANT_ASSIGNABLE_SHARED_ROLE_NAMES and not _role_belongs_to_tenant(group, tenant_id):
+        raise ValidationError({"role_group_name": "The selected role does not belong to this organization."})
+    return group
+
+
 def _tenant_visible_roles_queryset(user):
     if _is_superadmin(user):
         return Group.objects.all()
@@ -4267,6 +4280,7 @@ class PlatformUserMembershipListCreateAPIView(APIView):
             assigned_branches = [branch] if branch else []
 
         role_group_name = str(request.data.get("role_group_name") or request.data.get("role_group") or "").strip()
+        role_group = _resolve_membership_role_group(role_group_name, tenant_id=tenant.id)
         is_org_admin = bool(request.data.get("is_org_admin")) or role_group_name == "Tenant Admin"
         role = str(request.data.get("role") or _resolve_membership_role(role_group_name, is_org_admin)).strip() or "member"
         is_default = bool(request.data.get("is_default"))
@@ -4285,6 +4299,8 @@ class PlatformUserMembershipListCreateAPIView(APIView):
                 },
             )
             membership.branches.set(assigned_branches)
+            if role_group:
+                target_user.groups.add(role_group)
             if is_default or not OrganizationMembership.objects.filter(user=target_user, is_default=True, is_active=True).exclude(pk=membership.pk).exists():
                 OrganizationMembership.objects.filter(user=target_user).exclude(pk=membership.pk).update(is_default=False)
                 membership.is_default = True
@@ -4333,10 +4349,19 @@ class PlatformUserMembershipDetailAPIView(APIView):
             if membership.branch_id is None and assigned_branches:
                 membership.branch = assigned_branches[0]
 
-        if "role" in request.data:
-            membership.role = str(request.data.get("role") or "member")
+        role_group = None
         if "role_group_name" in request.data:
             membership.role_group_name = str(request.data.get("role_group_name") or "")
+            role_group = _resolve_membership_role_group(
+                membership.role_group_name,
+                tenant_id=membership.tenant_id,
+            )
+            membership.role = _resolve_membership_role(
+                membership.role_group_name,
+                membership.is_org_admin,
+            )
+        elif "role" in request.data:
+            membership.role = str(request.data.get("role") or "member")
         if "is_org_admin" in request.data:
             membership.is_org_admin = bool(request.data.get("is_org_admin"))
         if "is_active" in request.data:
@@ -4348,6 +4373,8 @@ class PlatformUserMembershipDetailAPIView(APIView):
             membership.save()
             if assigned_branches is not None:
                 membership.branches.set(assigned_branches)
+            if role_group:
+                membership.user.groups.add(role_group)
             if bool(request.data.get("is_default")):
                 OrganizationMembership.objects.filter(user=membership.user).exclude(pk=membership.pk).update(is_default=False)
                 membership.is_default = True

@@ -66,14 +66,6 @@ interface AssignableRole {
   is_assignable?: boolean;
 }
 
-const MEMBERSHIP_ROLE_OPTIONS = [
-  { value: 'owner', label: 'Owner' },
-  { value: 'system_admin', label: 'System Admin' },
-  { value: 'finance', label: 'Finance' },
-  { value: 'operator', label: 'Operator' },
-  { value: 'member', label: 'Member' },
-];
-
 interface PasswordResult {
   username: string;
   email: string;
@@ -352,19 +344,21 @@ function EditUserDialog({
     enabled: open && !!token && !!user,
   });
   const editedUserTenantId = String(user?.organization_id ?? user?.tenant_id ?? '');
-  const assignableRoles: AssignableRole[] = (assignableRolesData?.results ?? []).filter(
-    (candidate: AssignableRole) => candidate.is_assignable !== false
-      && (!candidate.name.startsWith('tenant:') || candidate.name.startsWith(`tenant:${editedUserTenantId}:`)),
+  const allAssignableRoles: AssignableRole[] = (assignableRolesData?.results ?? []).filter(
+    (candidate: AssignableRole) => candidate.is_assignable !== false,
+  );
+  const assignableRoles = allAssignableRoles.filter(
+    (candidate) => !candidate.name.startsWith('tenant:') || candidate.name.startsWith(`tenant:${editedUserTenantId}:`),
   );
 
   const [membershipForm, setMembershipForm] = useState({
     tenant_id: '',
-    role: 'member',
+    role_group_name: '',
     is_default: false,
   });
 
   useEffect(() => {
-    setMembershipForm({ tenant_id: '', role: 'member', is_default: false });
+    setMembershipForm({ tenant_id: '', role_group_name: '', is_default: false });
   }, [user?.id]);
 
   const { data: accessibleTenantsData } = useQuery({
@@ -382,12 +376,15 @@ function EditUserDialog({
   const memberships = membershipsData?.data?.memberships ?? membershipsData?.memberships ?? [];
 
   const selectedMembership = memberships.find((entry: any) => String(entry.tenant) === membershipForm.tenant_id);
+  const membershipRoles = allAssignableRoles.filter(
+    (candidate) => !candidate.name.startsWith('tenant:') || candidate.name.startsWith(`tenant:${membershipForm.tenant_id}:`),
+  );
 
   useEffect(() => {
     if (!selectedMembership) return;
     setMembershipForm({
       tenant_id: String(selectedMembership.tenant),
-      role: selectedMembership.role || 'member',
+      role_group_name: selectedMembership.role_group_name || '',
       is_default: Boolean(selectedMembership.is_default),
     });
   }, [selectedMembership?.id]);
@@ -401,19 +398,10 @@ function EditUserDialog({
 
   const membershipMutation = useMutation({
     mutationFn: async () => {
-      const roleValue = membershipForm.role;
-      const roleGroupName = roleValue === 'system_admin' || roleValue === 'owner'
-        ? 'Tenant Admin'
-        : roleValue === 'finance'
-          ? 'Finance'
-          : roleValue === 'operator'
-            ? 'Operator'
-            : '';
       const payload: any = {
         tenant_id: Number(membershipForm.tenant_id),
-        role: roleValue,
-        role_group_name: roleGroupName,
-        is_org_admin: roleValue === 'owner' || roleValue === 'system_admin',
+        role_group_name: membershipForm.role_group_name,
+        is_org_admin: false,
         is_default: membershipForm.is_default,
         branch_id: form.branch_id || null,
         branch_ids: form.branch_ids.map(Number),
@@ -440,7 +428,7 @@ function EditUserDialog({
       qc.invalidateQueries({ queryKey: ['platform-users'] });
       qc.invalidateQueries({ queryKey: ['platform-auth-me'] });
       toast({ title: 'Organization membership removed' });
-      setMembershipForm({ tenant_id: '', role: 'member', is_default: false });
+      setMembershipForm({ tenant_id: '', role_group_name: '', is_default: false });
     },
     onError: (e: any) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
   });
@@ -585,7 +573,7 @@ function EditUserDialog({
                   <div>
                     <p className="font-medium">{membership.organization_name ?? membership.tenant_name}</p>
                     <p className="text-xs text-muted-foreground">
-                      {membership.role}{membership.branch_name ? ` · ${membership.branch_name}` : ''}{membership.is_default ? ' · Default' : ''}
+                      {membership.role_display || membership.role}{membership.branch_name ? ` · ${membership.branch_name}` : ''}{membership.is_default ? ' · Default' : ''}
                     </p>
                   </div>
                   <div className="flex gap-2">
@@ -600,7 +588,7 @@ function EditUserDialog({
                       size="sm"
                       onClick={() => setMembershipForm({
                         tenant_id: String(membership.tenant),
-                        role: membership.role || 'member',
+                        role_group_name: membership.role_group_name || '',
                         is_default: Boolean(membership.is_default),
                       })}
                     >
@@ -616,7 +604,7 @@ function EditUserDialog({
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label>Organization</Label>
-                <Select value={membershipForm.tenant_id} onValueChange={value => setMembershipForm(p => ({ ...p, tenant_id: value }))}>
+                <Select value={membershipForm.tenant_id} onValueChange={value => setMembershipForm(p => ({ ...p, tenant_id: value, role_group_name: '' }))}>
                   <SelectTrigger><SelectValue placeholder="Select organization" /></SelectTrigger>
                   <SelectContent>
                     {accessibleTenants.map((tenant: any) => (
@@ -626,12 +614,13 @@ function EditUserDialog({
                 </Select>
               </div>
               <div className="space-y-1.5">
-                <Label>Org Role</Label>
-                <Select value={membershipForm.role} onValueChange={value => setMembershipForm(p => ({ ...p, role: value }))}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                <Label>Primary Organization Role</Label>
+                <Select value={membershipForm.role_group_name || '__member__'} onValueChange={value => setMembershipForm(p => ({ ...p, role_group_name: value === '__member__' ? '' : value }))}>
+                  <SelectTrigger><SelectValue placeholder="Select role" /></SelectTrigger>
                   <SelectContent>
-                    {MEMBERSHIP_ROLE_OPTIONS.map(option => (
-                      <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                    <SelectItem value="__member__">Member (no primary role)</SelectItem>
+                    {membershipRoles.map(option => (
+                      <SelectItem key={option.id} value={option.name}>{option.display_name || displayGroupName(option)}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>

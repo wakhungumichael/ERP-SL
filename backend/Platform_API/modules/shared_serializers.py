@@ -972,6 +972,7 @@ class OrganizationMembershipSerializer(serializers.ModelSerializer):
     branch_name = serializers.CharField(source="branch.name", read_only=True)
     branch_ids = serializers.SerializerMethodField()
     branches = serializers.SerializerMethodField()
+    role_display = serializers.SerializerMethodField()
 
     def get_branch_ids(self, obj):
         branch_ids = list(obj.branches.values_list("id", flat=True))
@@ -984,6 +985,11 @@ class OrganizationMembershipSerializer(serializers.ModelSerializer):
         if obj.branch_id and not any(branch["id"] == obj.branch_id for branch in branches):
             branches.insert(0, {"id": obj.branch_id, "name": obj.branch.name})
         return branches
+
+    def get_role_display(self, obj):
+        if obj.role_group_name:
+            return display_role_name(obj.role_group_name, obj.tenant_id)
+        return obj.get_role_display()
 
     class Meta:
         model = OrganizationMembership
@@ -998,6 +1004,7 @@ class OrganizationMembershipSerializer(serializers.ModelSerializer):
             "branches",
             "role",
             "role_group_name",
+            "role_display",
             "active_role_group_name",
             "is_org_admin",
             "is_default",
