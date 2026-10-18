@@ -33,6 +33,7 @@ import { apiErrorFromResponse, formatApiError } from '@/lib/api-errors';
 
 const STATUS_COLORS: Record<string, string> = {
   Draft:     'bg-slate-100 text-slate-800 border-slate-200 dark:bg-slate-900/30 dark:text-slate-300',
+  'In Progress': 'bg-blue-100 text-blue-800 border-blue-200 dark:bg-blue-900/30 dark:text-blue-300',
   Recalled:  'bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-900/30 dark:text-amber-400',
   Rejected:  'bg-rose-100 text-rose-800 border-rose-200 dark:bg-rose-900/30 dark:text-rose-400',
   Completed: 'bg-emerald-100 text-emerald-800 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-400',
@@ -709,6 +710,7 @@ export default function TransactionsList() {
               <SelectContent>
                 <SelectItem value="__all__" className="text-xs">All Statuses</SelectItem>
                 <SelectItem value="Draft" className="text-xs">Draft</SelectItem>
+                <SelectItem value="In Progress" className="text-xs">In Progress - Awaiting Approval</SelectItem>
                 <SelectItem value="Recalled" className="text-xs">Recalled</SelectItem>
                 <SelectItem value="Rejected" className="text-xs">Rejected</SelectItem>
                 <SelectItem value="Completed" className="text-xs">Completed</SelectItem>
