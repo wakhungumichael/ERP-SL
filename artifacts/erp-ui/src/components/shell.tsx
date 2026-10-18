@@ -566,6 +566,9 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const userPermissions = new Set<string>(
     Array.isArray((user as any)?.permissions) ? (user as any).permissions.map(String) : [],
   );
+  const canReviewWorkflow = effectiveRole === 'superadmin'
+    || effectiveRole === 'tenant_admin'
+    || userPermissions.has('Platform_Core.approve_workflow');
   const roleCanSeeItem = (item: NavSection['items'][number]) => {
     if (!usesPermissionDrivenNavigation) return true;
     if (item.requiredPermission) return userPermissions.has(item.requiredPermission);
@@ -906,10 +909,12 @@ export function Shell({ children }: { children: React.ReactNode }) {
           </div>
 
           <div className="flex items-center gap-3">
-            <Button variant="ghost" size="icon" onClick={() => setLocation('/workflows/approvals')} className="relative text-muted-foreground hover:text-foreground" title="Workflow approvals and notifications">
-              <Bell className="h-5 w-5" />
-              {approvalCount > 0 ? <span className="absolute right-0 top-0 min-w-4 rounded-full bg-destructive px-1 text-center text-[10px] font-bold leading-4 text-destructive-foreground">{approvalCount > 99 ? '99+' : approvalCount}</span> : null}
-            </Button>
+            {canReviewWorkflow ? (
+              <Button variant="ghost" size="icon" onClick={() => setLocation('/workflows/approvals')} className="relative text-muted-foreground hover:text-foreground" title="Workflow approvals and notifications">
+                <Bell className="h-5 w-5" />
+                {approvalCount > 0 ? <span className="absolute right-0 top-0 min-w-4 rounded-full bg-destructive px-1 text-center text-[10px] font-bold leading-4 text-destructive-foreground">{approvalCount > 99 ? '99+' : approvalCount}</span> : null}
+              </Button>
+            ) : null}
             {availableRoles.length > 1 ? (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>

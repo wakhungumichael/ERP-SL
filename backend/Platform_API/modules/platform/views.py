@@ -1816,13 +1816,17 @@ def _workflow_admin_allowed(user, permission_codename):
         _is_superadmin(user)
         or _active_organization_membership(user, require_admin=True)
         or getattr(getattr(user, "tenant_profile", None), "is_tenant_admin", False)
-        or user.has_perm(f"Platform_Core.{permission_codename}")
+        or _active_role_has_workflow_permission(user, permission_codename)
     )
 
 
 def _active_role_has_workflow_permission(user, permission_codename):
     """Resolve workflow rights from the active role, not every assigned role."""
-    if _is_superadmin(user) or _active_organization_membership(user, require_admin=True):
+    if (
+        _is_superadmin(user)
+        or _active_organization_membership(user, require_admin=True)
+        or getattr(getattr(user, "tenant_profile", None), "is_tenant_admin", False)
+    ):
         return True
     membership = _active_organization_membership(user)
     active_role_name = (getattr(membership, "active_role_group_name", "") or "").strip()
@@ -1840,6 +1844,21 @@ def _active_role_has_workflow_permission(user, permission_codename):
 
 def _workflow_forward_allowed(user):
     return _active_role_has_workflow_permission(user, "forward_workflow")
+
+
+def _active_workflow_group_ids(user):
+    """Limit workflow work to the role selected for the active organization."""
+    membership = _active_organization_membership(user)
+    active_role_name = (getattr(membership, "active_role_group_name", "") or "").strip()
+    if active_role_name:
+        return set(user.groups.filter(name=active_role_name).values_list("id", flat=True))
+    # Preserve legacy behavior only until an account selects an active role.
+    return set(user.groups.values_list("id", flat=True))
+
+
+def _active_workflow_role_name(user):
+    membership = _active_organization_membership(user)
+    return (getattr(membership, "active_role_group_name", "") or "").strip()
 
 
 def _validate_workflow_definition(workflow):
@@ -2128,16 +2147,25 @@ class WorkflowInboxAPIView(APIView):
             if tenant is None:
                 qs = qs.none()
             else:
-                group_ids = set(request.user.groups.values_list("id", flat=True))
+                group_ids = _active_workflow_group_ids(request.user)
+                active_role_name = _active_workflow_role_name(request.user)
                 qs = qs.filter(tenant=tenant)
                 if scope == "submitted":
                     qs = qs.filter(metadata__submitted_by=request.user.id)
+                    if active_role_name:
+                        qs = qs.filter(metadata__submitted_role=active_role_name)
+                elif scope == "decided":
+                    qs = qs.filter(acted_by=request.user).filter(
+                        Q(assigned_user=request.user) | Q(assigned_group_id__in=group_ids)
+                    )
                 elif scope == "all" and _workflow_admin_allowed(request.user, "view_workflowdefinition"):
                     pass
                 else:
                     qs = qs.filter(Q(assigned_user=request.user) | Q(assigned_group_id__in=group_ids))
         elif scope == "submitted":
             qs = qs.filter(metadata__submitted_by=request.user.id)
+        elif scope == "decided":
+            qs = qs.filter(acted_by=request.user)
         if status_value := request.query_params.get("status"):
             if status_value == "all":
                 status_value = ""
@@ -2145,11 +2173,35 @@ class WorkflowInboxAPIView(APIView):
             qs = qs.filter(status=status_value)
         else:
             qs = qs.filter(status="pending")
-        limit = min(max(int(request.query_params.get("limit", 50)), 1), 200)
-        payload = WorkflowInboxItemSerializer(qs.order_by("-created_at")[:limit], many=True).data
+        try:
+            page = max(int(request.query_params.get("page", 1)), 1)
+        except (TypeError, ValueError):
+            page = 1
+        try:
+            page_size = int(request.query_params.get("page_size", request.query_params.get("limit", 50)))
+        except (TypeError, ValueError):
+            page_size = 50
+        page_size = min(max(page_size, 1), 200)
+        total_count = qs.count()
+        total_pages = max((total_count + page_size - 1) // page_size, 1)
+        page = min(page, total_pages)
+        offset = (page - 1) * page_size
+        payload = WorkflowInboxItemSerializer(qs.order_by("-created_at")[offset:offset + page_size], many=True).data
         return success_response(
             "Workflow inbox loaded successfully.",
-            data={"results": payload, "count": len(payload), "scope": scope},
+            data={
+                "results": payload,
+                "count": total_count,
+                "scope": scope,
+                "pagination": {
+                    "page": page,
+                    "page_size": page_size,
+                    "total_count": total_count,
+                    "total_pages": total_pages,
+                    "has_previous": page > 1,
+                    "has_next": page < total_pages,
+                },
+            },
         )
 
 
@@ -2207,7 +2259,7 @@ def _workflow_actor_can_action(item, user):
         return True
     if item.assigned_user_id:
         return item.assigned_user_id == user.id
-    return item.assigned_group_id in set(user.groups.values_list("id", flat=True))
+    return item.assigned_group_id in _active_workflow_group_ids(user)
 
 
 def _workflow_actor_can_view(item, user):
@@ -2320,6 +2372,7 @@ def _append_workflow_history(item, actor, action, comment=""):
         "actor_id": actor.id,
         "stage": item.node_definition.name if item.node_definition_id else "Workflow review",
         "role": item.assigned_group.name if item.assigned_group_id else "",
+        "actor_role": _active_workflow_role_name(actor),
         "comment": comment.strip(),
         "at": timezone.now().isoformat(),
     })
@@ -2496,6 +2549,7 @@ class WorkflowForwardAPIView(APIView):
         metadata = request.data.get("metadata") if isinstance(request.data.get("metadata"), dict) else {}
         metadata.update({
             "submitted_by": request.user.id,
+            "submitted_role": _active_workflow_role_name(request.user),
             "trigger_event": trigger_event,
             "binding_id": binding.id,
             "workflow_history": [
@@ -2505,6 +2559,7 @@ class WorkflowForwardAPIView(APIView):
                     "actor_id": request.user.id,
                     "stage": node.name,
                     "role": node.approval_group.name if node.approval_group_id else "",
+                    "actor_role": _active_workflow_role_name(request.user),
                     "comment": "",
                     "at": timezone.now().isoformat(),
                 }
@@ -2674,9 +2729,35 @@ class SystemNotificationAPIView(APIView):
             qs = qs.none()
         if request.query_params.get("unread") in {"1", "true"}:
             qs = qs.filter(is_read=False)
-        limit = min(max(int(request.query_params.get("limit", 50)), 1), 200)
-        results = list(qs[:limit].values("id", "category", "title", "message", "route_path", "source_type", "source_id", "is_read", "read_at", "created_at", "metadata"))
-        return success_response("Notifications loaded successfully.", data={"results": results, "unread_count": qs.filter(is_read=False).count()})
+        try:
+            page = max(int(request.query_params.get("page", 1)), 1)
+        except (TypeError, ValueError):
+            page = 1
+        try:
+            page_size = int(request.query_params.get("page_size", request.query_params.get("limit", 50)))
+        except (TypeError, ValueError):
+            page_size = 50
+        page_size = min(max(page_size, 1), 200)
+        total_count = qs.count()
+        total_pages = max((total_count + page_size - 1) // page_size, 1)
+        page = min(page, total_pages)
+        offset = (page - 1) * page_size
+        results = list(qs[offset:offset + page_size].values("id", "category", "title", "message", "route_path", "source_type", "source_id", "is_read", "read_at", "created_at", "metadata"))
+        return success_response(
+            "Notifications loaded successfully.",
+            data={
+                "results": results,
+                "unread_count": qs.filter(is_read=False).count(),
+                "pagination": {
+                    "page": page,
+                    "page_size": page_size,
+                    "total_count": total_count,
+                    "total_pages": total_pages,
+                    "has_previous": page > 1,
+                    "has_next": page < total_pages,
+                },
+            },
+        )
 
     def post(self, request):
         tenant = _request_tenant_or_none(request.user)

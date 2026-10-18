@@ -62,7 +62,7 @@ const PATH_PERMISSION_RULES: Array<{ prefix: string; permissions: string[] }> = 
   { prefix: '/reports/dashboard', permissions: ['Platform_Core.can_view_erp_reports'] },
   // Workflow access is independent of the source module: an assigned approver
   // must be able to review requests even without that module's list permission.
-  { prefix: '/workflows/approvals', permissions: ['Platform_Core.approve_workflow', 'Platform_Core.forward_workflow'] },
+  { prefix: '/workflows/approvals', permissions: ['Platform_Core.approve_workflow'] },
   { prefix: '/manufacturing/overview', permissions: ['Platform_Core.can_view_manufacturing_overview'] },
   { prefix: '/retail/overview', permissions: ['Platform_Core.can_view_retail_overview'] },
   { prefix: '/services/overview', permissions: ['Platform_Core.can_view_services_overview'] },

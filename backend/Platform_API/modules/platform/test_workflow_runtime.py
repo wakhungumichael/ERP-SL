@@ -196,3 +196,54 @@ class WorkflowRuntimeTests(TestCase):
         second = WorkflowInboxItem.objects.get(entity_id=93, status="pending")
         self.assertEqual(second.assigned_group, finance)
         self.assertTrue(SystemNotification.objects.filter(recipient=finance_user, source_id=second.id).exists())
+
+    def test_inbox_scopes_pagination_submissions_and_decisions_to_active_role(self):
+        cashier = Group.objects.create(name="Workflow Cashier")
+        supervisor = Group.objects.create(name="Workflow Supervisor")
+        self.approver.groups.add(cashier, supervisor)
+        membership = OrganizationMembership.objects.create(
+            user=self.approver,
+            tenant=self.tenant,
+            role="member",
+            active_role_group_name=cashier.name,
+            is_default=True,
+        )
+
+        def create_item(entity_id, *, group, status="pending", submitted_role="", acted=False):
+            return WorkflowInboxItem.objects.create(
+                tenant=self.tenant,
+                workflow=self.workflow,
+                node_definition=self.workflow.nodes.get(code="operator-review"),
+                entity_type="weighbridge_transaction",
+                entity_id=entity_id,
+                title=f"Approval required: TX-{entity_id}",
+                status=status,
+                assigned_group=group,
+                acted_by=self.approver if acted else None,
+                metadata={"submitted_by": self.approver.id, "submitted_role": submitted_role},
+            )
+
+        cashier_pending = create_item(101, group=cashier, submitted_role=cashier.name)
+        cashier_pending_second = create_item(102, group=cashier, submitted_role=cashier.name)
+        supervisor_pending = create_item(103, group=supervisor, submitted_role=supervisor.name)
+        cashier_decision = create_item(104, group=cashier, status="completed", submitted_role=cashier.name, acted=True)
+        create_item(105, group=supervisor, status="completed", submitted_role=supervisor.name, acted=True)
+
+        self.client.force_authenticate(self.approver)
+        inbox = self.client.get(reverse("workflow-inbox"), {"page": 1, "page_size": 1})
+        self.assertEqual(inbox.status_code, 200, inbox.data)
+        self.assertEqual(inbox.data["data"]["count"], 2)
+        self.assertEqual(inbox.data["data"]["pagination"]["total_pages"], 2)
+        self.assertEqual(inbox.data["data"]["results"][0]["assigned_group"], cashier.id)
+        self.assertNotEqual(inbox.data["data"]["results"][0]["id"], supervisor_pending.id)
+
+        submissions = self.client.get(reverse("workflow-inbox"), {"scope": "submitted", "status": "all"})
+        self.assertEqual({row["id"] for row in submissions.data["data"]["results"]}, {cashier_pending.id, cashier_pending_second.id, cashier_decision.id})
+
+        decisions = self.client.get(reverse("workflow-inbox"), {"scope": "decided", "status": "all"})
+        self.assertEqual([row["id"] for row in decisions.data["data"]["results"]], [cashier_decision.id])
+
+        membership.active_role_group_name = supervisor.name
+        membership.save(update_fields=["active_role_group_name", "updated_at"])
+        supervisor_inbox = self.client.get(reverse("workflow-inbox"))
+        self.assertEqual([row["id"] for row in supervisor_inbox.data["data"]["results"]], [supervisor_pending.id])

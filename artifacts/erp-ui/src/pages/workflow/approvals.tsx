@@ -1,6 +1,6 @@
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { useState } from "react";
-import { Bell, Check, Clock3, Eye, ExternalLink, Paperclip, RotateCcw, X } from "lucide-react";
+import { Bell, Check, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Clock3, Eye, ExternalLink, Paperclip, RotateCcw, X } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { useAuth } from "@/context/use-auth";
@@ -51,7 +51,7 @@ const tabCopy: Record<
   history: {
     label: "My decisions",
     status: "all",
-    scope: "assigned",
+    scope: "decided",
     empty: "No completed workflow activity yet.",
   },
   notifications: {
@@ -59,6 +59,25 @@ const tabCopy: Record<
     empty: "You have no notifications.",
   },
 };
+
+function QueuePager({ page, totalPages, totalCount, onPageChange }: { page: number; totalPages: number; totalCount: number; onPageChange: (page: number) => void }) {
+  if (totalCount === 0) return null;
+  const start = Math.max(1, Math.min(page - 2, totalPages - 4));
+  const end = Math.min(totalPages, start + 4);
+  const pages = Array.from({ length: end - start + 1 }, (_, index) => start + index);
+  return (
+    <div className="flex flex-col gap-3 border-t px-5 py-3 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+      <span>Page {page} of {totalPages} · {totalCount} record{totalCount === 1 ? "" : "s"}</span>
+      <div className="flex items-center gap-1">
+        <Button size="icon" variant="outline" className="h-8 w-8" aria-label="First page" disabled={page === 1} onClick={() => onPageChange(1)}><ChevronsLeft className="h-4 w-4" /></Button>
+        <Button size="icon" variant="outline" className="h-8 w-8" aria-label="Previous page" disabled={page === 1} onClick={() => onPageChange(page - 1)}><ChevronLeft className="h-4 w-4" /></Button>
+        {pages.map((value) => <Button key={value} size="sm" variant={value === page ? "default" : "outline"} className="h-8 min-w-8 px-2" onClick={() => onPageChange(value)}>{value}</Button>)}
+        <Button size="icon" variant="outline" className="h-8 w-8" aria-label="Next page" disabled={page === totalPages} onClick={() => onPageChange(page + 1)}><ChevronRight className="h-4 w-4" /></Button>
+        <Button size="icon" variant="outline" className="h-8 w-8" aria-label="Last page" disabled={page === totalPages} onClick={() => onPageChange(totalPages)}><ChevronsRight className="h-4 w-4" /></Button>
+      </div>
+    </div>
+  );
+}
 
 export default function WorkflowApprovals() {
   const { token } = useAuth();
@@ -69,15 +88,18 @@ export default function WorkflowApprovals() {
   const [reviewing, setReviewing] = useState<any>(null);
   const [reviewTab, setReviewTab] = useState("summary");
   const [reviewComment, setReviewComment] = useState("");
+  const [page, setPage] = useState(1);
+  const pageSize = 10;
   const config = tabCopy[tab];
   const queue = useQuery({
-    queryKey: ["workflow-approvals", tab, token],
+    queryKey: ["workflow-approvals", tab, page, token],
     enabled: !!token && tab !== "notifications",
     queryFn: async () => {
       const params = new URLSearchParams({
         status: config.status || "pending",
         scope: config.scope || "assigned",
-        limit: "100",
+        page: String(page),
+        page_size: String(pageSize),
       });
       const response = await fetch(`/api/platform/workflows/inbox/?${params}`, {
         headers: { Authorization: `Token ${token}` },
@@ -92,10 +114,10 @@ export default function WorkflowApprovals() {
     },
   });
   const notifications = useQuery({
-    queryKey: ["workflow-notifications", token],
+    queryKey: ["workflow-notifications", page, token],
     enabled: !!token,
     queryFn: async () => {
-      const response = await fetch("/api/platform/notifications/?limit=100", {
+      const response = await fetch(`/api/platform/notifications/?page=${page}&page_size=${pageSize}`, {
         headers: { Authorization: `Token ${token}` },
       });
       if (!response.ok)
@@ -130,6 +152,8 @@ export default function WorkflowApprovals() {
       ["approved", "rejected", "completed"].includes(item.status),
   );
   const notificationItems = notifications.data?.results ?? [];
+  const queuePagination = queue.data?.pagination ?? { page, total_pages: 1, total_count: items.length };
+  const notificationPagination = notifications.data?.pagination ?? { page, total_pages: 1, total_count: notificationItems.length };
   const refresh = () => {
     queryClient.invalidateQueries({ queryKey: ["workflow-approvals"] });
     queryClient.invalidateQueries({ queryKey: ["workflow-notifications"] });
@@ -225,16 +249,12 @@ export default function WorkflowApprovals() {
             Workflow Requests
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Review every request assigned to your workflow role across the
-            organization. Source-module list filters do not restrict this
-            approval queue.
+            Review records assigned to your currently selected workflow role.
+            Source-module list filters do not restrict this approval queue.
           </p>
         </div>
-        <Link href="/platform/workflows">
-          <Button variant="outline">Configure workflows</Button>
-        </Link>
       </div>
-      <Tabs value={tab} onValueChange={(value) => setTab(value as QueueTab)}>
+      <Tabs value={tab} onValueChange={(value) => { setTab(value as QueueTab); setPage(1); }}>
         <TabsList className="h-auto flex-wrap justify-start gap-1 bg-muted/60 p-1">
           {(Object.keys(tabCopy) as QueueTab[]).map((value) => (
             <TabsTrigger key={value} value={value}>
@@ -247,6 +267,7 @@ export default function WorkflowApprovals() {
         </TabsList>
       </Tabs>
       {tab === "notifications" ? (
+        <>
         <Card>
           <CardHeader className="flex-row items-center justify-between">
             <div>
@@ -272,7 +293,7 @@ export default function WorkflowApprovals() {
               </div>
             ) : (
               <div className="divide-y">
-                {notificationItems.map((notice: any) => (
+                {notificationItems.map((notice: any, index: number) => (
                   <div
                     key={notice.id}
                     className={`flex gap-3 p-5 ${notice.is_read ? "" : "bg-primary/5"}`}
@@ -280,6 +301,7 @@ export default function WorkflowApprovals() {
                     <Bell className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-xs font-semibold tabular-nums text-muted-foreground">#{(page - 1) * pageSize + index + 1}</span>
                         <p className="font-medium">{notice.title}</p>
                         {!notice.is_read && <Badge>New</Badge>}
                       </div>
@@ -314,13 +336,15 @@ export default function WorkflowApprovals() {
             )}
           </CardContent>
         </Card>
+        <QueuePager page={notificationPagination.page} totalPages={notificationPagination.total_pages} totalCount={notificationPagination.total_count} onPageChange={setPage} />
+        </>
       ) : (
         <>
           <div className="grid gap-4 sm:grid-cols-3">
             <Card>
               <CardHeader className="pb-2">
                 <CardDescription>Records shown</CardDescription>
-                <CardTitle className="text-3xl">{items.length}</CardTitle>
+                <CardTitle className="text-3xl">{queuePagination.total_count}</CardTitle>
               </CardHeader>
             </Card>
             <Card>
@@ -350,13 +374,14 @@ export default function WorkflowApprovals() {
                 </div>
               ) : (
                 <div className="divide-y">
-                  {items.map((item: any) => (
+                  {items.map((item: any, index: number) => (
                     <div
                       key={item.id}
                       className="flex flex-col gap-4 p-5 lg:flex-row lg:items-center lg:justify-between"
                     >
                       <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-xs font-semibold tabular-nums text-muted-foreground">#{(page - 1) * pageSize + index + 1}</span>
                           <h2 className="font-semibold">{item.title}</h2>
                           <Badge variant="outline">
                             {item.reference || item.entity_type}
@@ -404,6 +429,7 @@ export default function WorkflowApprovals() {
               )}
             </CardContent>
           </Card>
+          <QueuePager page={queuePagination.page} totalPages={queuePagination.total_pages} totalCount={queuePagination.total_count} onPageChange={setPage} />
         </>
       )}
       <Dialog
