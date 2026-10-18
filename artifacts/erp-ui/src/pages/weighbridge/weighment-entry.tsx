@@ -334,6 +334,7 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
   const [itemForm, setItemForm] = useState({ name: '', description: '' });
 
   const fetchToken = () => localStorage.getItem('sl-erp-token') || '';
+  const tenantId = (user as any)?.tenant_id as number | undefined;
   const userBranchId = String((user as any)?.branch_id ?? '');
   const userBranchName = String((user as any)?.branch_name ?? '');
   const assignedBranchIds = useMemo(() => extractAssignedBranchIds(user), [user]);
@@ -353,15 +354,22 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
     queryFn: async () => fetch('/api/commercial-weighbridge/customers/?page_size=1000&search=', { headers: authHeaders() }).then((res) => res.json()),
   });
   const { data: vehicleUseSettings } = useQuery({
-    queryKey: ['wb-vehicle-use-settings'],
+    // Use the same tenant settings record shown on Weighbridge Settings. This
+    // keeps the cashier flow and the saved shared-vehicle toggle in lockstep.
+    queryKey: ['weighbridge-vehicle-use-settings', tenantId],
     queryFn: async () => {
-      const response = await fetch('/api/commercial-weighbridge/operational-policy/', { headers: authHeaders() });
+      const response = await fetch(`/api/platform/tenants/${tenantId}/settings/`, { headers: authHeaders() });
       if (!response.ok) throw new Error('Could not load vehicle-use settings.');
       const payload = await response.json();
       return payload?.data ?? payload;
     },
+    enabled: Boolean(tenantId),
+    staleTime: 0,
+    refetchOnMount: 'always',
   });
-  const allowSharedVehicles = Boolean(vehicleUseSettings?.allow_shared_weighbridge_vehicles);
+  // Shared billing is opt-in: missing, stale, or malformed configuration must
+  // never make vehicles available to a different customer.
+  const allowSharedVehicles = vehicleUseSettings?.allow_shared_weighbridge_vehicles === true;
   const { data: vehicles } = useQuery({
     queryKey: ['wb-vehicles-entry', customerId, allowSharedVehicles],
     queryFn: async () => {
