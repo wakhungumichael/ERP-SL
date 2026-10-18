@@ -2199,10 +2199,11 @@ class WorkflowInboxAPIView(APIView):
                     if active_role_name:
                         qs = qs.filter(metadata__submitted_role=active_role_name)
                 elif scope == "decided":
-                    # Decision history belongs to the person who made the
-                    # decision. Unlike pending work, it must remain visible
-                    # after that person switches to another active role.
-                    qs = qs.filter(acted_by=request.user)
+                    # Keep personal decision history aligned with the active
+                    # workspace role, just like submissions and deferred work.
+                    qs = qs.filter(acted_by=request.user).filter(
+                        Q(assigned_user=request.user) | Q(assigned_group_id__in=group_ids)
+                    )
                 elif scope == "all" and _workflow_admin_allowed(request.user, "view_workflowdefinition"):
                     pass
                 else:
