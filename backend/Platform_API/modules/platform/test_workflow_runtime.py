@@ -227,7 +227,7 @@ class WorkflowRuntimeTests(TestCase):
         cashier_pending_second = create_item(102, group=cashier, submitted_role=cashier.name)
         supervisor_pending = create_item(103, group=supervisor, submitted_role=supervisor.name)
         cashier_decision = create_item(104, group=cashier, status="completed", submitted_role=cashier.name, acted=True)
-        create_item(105, group=supervisor, status="completed", submitted_role=supervisor.name, acted=True)
+        supervisor_decision = create_item(105, group=supervisor, status="completed", submitted_role=supervisor.name, acted=True)
 
         self.client.force_authenticate(self.approver)
         inbox = self.client.get(reverse("workflow-inbox"), {"page": 1, "page_size": 1})
@@ -241,7 +241,10 @@ class WorkflowRuntimeTests(TestCase):
         self.assertEqual({row["id"] for row in submissions.data["data"]["results"]}, {cashier_pending.id, cashier_pending_second.id, cashier_decision.id})
 
         decisions = self.client.get(reverse("workflow-inbox"), {"scope": "decided", "status": "all"})
-        self.assertEqual([row["id"] for row in decisions.data["data"]["results"]], [cashier_decision.id])
+        self.assertEqual(
+            {row["id"] for row in decisions.data["data"]["results"]},
+            {cashier_decision.id, supervisor_decision.id},
+        )
 
         membership.active_role_group_name = supervisor.name
         membership.save(update_fields=["active_role_group_name", "updated_at"])
