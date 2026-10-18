@@ -1665,7 +1665,7 @@ class WorkflowDefinitionSerializer(serializers.ModelSerializer):
 class WorkflowInboxItemSerializer(serializers.ModelSerializer):
     tenant = TenantSummarySerializer(read_only=True)
     workflow_name = serializers.CharField(source="workflow.name", read_only=True)
-    assigned_group_name = serializers.CharField(source="assigned_group.name", read_only=True)
+    assigned_group_name = serializers.SerializerMethodField()
     assigned_user_name = serializers.SerializerMethodField()
     acted_by_name = serializers.SerializerMethodField()
 
@@ -1705,6 +1705,13 @@ class WorkflowInboxItemSerializer(serializers.ModelSerializer):
     def get_assigned_user_name(self, obj):
         if obj.assigned_user:
             return obj.assigned_user.get_full_name() or obj.assigned_user.username
+        return None
+
+    def get_assigned_group_name(self, obj):
+        # Tenant-scoped group names are internal identifiers such as
+        # ``tenant:2:Supervisor``; workflow users should see only the role.
+        if obj.assigned_group:
+            return display_role_name(obj.assigned_group.name, obj.tenant_id)
         return None
 
     def get_acted_by_name(self, obj):

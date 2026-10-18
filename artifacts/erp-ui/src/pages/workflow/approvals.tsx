@@ -60,6 +60,13 @@ const tabCopy: Record<
   },
 };
 
+function displayWorkflowRole(role?: string | null) {
+  if (!role) return role;
+  // Old workflow history can contain an internal group key: tenant:<id>:<role>.
+  const match = role.match(/^tenant:\d+:(.+)$/);
+  return match?.[1] || role;
+}
+
 function QueuePager({ page, totalPages, totalCount, onPageChange }: { page: number; totalPages: number; totalCount: number; onPageChange: (page: number) => void }) {
   if (totalCount === 0) return null;
   const start = Math.max(1, Math.min(page - 2, totalPages - 4));
@@ -401,7 +408,7 @@ export default function WorkflowApprovals() {
                         </p>
                         <p className="mt-2 text-xs text-muted-foreground">
                           {item.workflow_name || "Workflow"} ·{" "}
-                          {item.assigned_group_name ||
+                          {displayWorkflowRole(item.assigned_group_name) ||
                             item.assigned_user_name ||
                             "Assigned approver"}
                           {item.defer_reason
@@ -469,8 +476,8 @@ export default function WorkflowApprovals() {
                       Approver role
                     </div>
                     <div className="mt-1 font-medium">
-                      {subject.data?.current_role ||
-                        reviewing?.assigned_group_name ||
+                      {displayWorkflowRole(subject.data?.current_role) ||
+                        displayWorkflowRole(reviewing?.assigned_group_name) ||
                         reviewing?.assigned_user_name ||
                         "Unassigned"}
                     </div>
@@ -533,7 +540,7 @@ export default function WorkflowApprovals() {
                         </div>
                         <p className="mt-1 text-sm text-muted-foreground">
                           {event.actor}
-                          {event.role ? ` · ${event.role}` : ""}
+                          {event.role ? ` · ${displayWorkflowRole(event.role)}` : ""}
                           {event.stage ? ` · ${event.stage}` : ""}
                         </p>
                         {event.comment ? (

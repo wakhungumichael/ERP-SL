@@ -144,6 +144,7 @@ from rest_framework.permissions import BasePermission
 from Platform_API.modules.shared_serializers import (
     PROTECTED_SHARED_ROLE_NAMES,
     TENANT_ASSIGNABLE_SHARED_ROLE_NAMES,
+    display_role_name,
     tenant_role_prefix,
 )
 
@@ -2275,7 +2276,7 @@ class WorkflowRequirementAPIView(APIView):
                 "in_progress": bool(active_item),
                 "current_stage": active_item.node_definition.name if active_item and active_item.node_definition_id else None,
                 "current_role": (
-                    active_item.assigned_group.name if active_item and active_item.assigned_group_id else
+                    display_role_name(active_item.assigned_group.name, active_item.tenant_id) if active_item and active_item.assigned_group_id else
                     ((active_item.assigned_user.get_full_name() or active_item.assigned_user.username)
                      if active_item and active_item.assigned_user_id else None)
                 ),
@@ -2401,7 +2402,7 @@ def _append_workflow_history(item, actor, action, comment=""):
         "actor": actor.get_full_name() or actor.username,
         "actor_id": actor.id,
         "stage": item.node_definition.name if item.node_definition_id else "Workflow review",
-        "role": item.assigned_group.name if item.assigned_group_id else "",
+        "role": display_role_name(item.assigned_group.name, item.tenant_id) if item.assigned_group_id else "",
         "actor_role": _active_workflow_role_name(actor),
         "comment": comment.strip(),
         "at": timezone.now().isoformat(),
@@ -2588,7 +2589,7 @@ class WorkflowForwardAPIView(APIView):
                     "actor": request.user.get_full_name() or request.user.username,
                     "actor_id": request.user.id,
                     "stage": node.name,
-                    "role": node.approval_group.name if node.approval_group_id else "",
+                    "role": display_role_name(node.approval_group.name, tenant.pk) if node.approval_group_id else "",
                     "actor_role": _active_workflow_role_name(request.user),
                     "comment": "",
                     "at": timezone.now().isoformat(),
@@ -2648,7 +2649,7 @@ class WorkflowInboxSubjectAPIView(APIView):
                 "subject": _workflow_subject_summary(item),
                 "workflow_history": (item.metadata or {}).get("workflow_history") or [],
                 "current_stage": item.node_definition.name if item.node_definition_id else "Workflow review",
-                "current_role": item.assigned_group.name if item.assigned_group_id else (
+                "current_role": display_role_name(item.assigned_group.name, item.tenant_id) if item.assigned_group_id else (
                     item.assigned_user.get_full_name() or item.assigned_user.username if item.assigned_user_id else "Unassigned"
                 ),
             },
