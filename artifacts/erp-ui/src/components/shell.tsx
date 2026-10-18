@@ -422,6 +422,9 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const [profileMessage, setProfileMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const apiNav = useWorkspaceNav(token, String((user as any)?.active_role_group_name ?? ''));
   const memberships = Array.isArray((user as any)?.memberships) ? (user as any).memberships : [];
+  const availableRoles = Array.isArray((user as any)?.available_roles) ? (user as any).available_roles : [];
+  const activeRoleGroupName = String((user as any)?.active_role_group_name ?? '');
+  const activeRoleEntry = availableRoles.find((entry: any) => entry.name === activeRoleGroupName);
   const activeMembershipId = (user as any)?.active_membership_id ? String((user as any).active_membership_id) : '';
   const activeOrganizationName = tenantContext.tenantName
     || (user as any)?.organization_name
@@ -907,9 +910,44 @@ export function Shell({ children }: { children: React.ReactNode }) {
               <Bell className="h-5 w-5" />
               {approvalCount > 0 ? <span className="absolute right-0 top-0 min-w-4 rounded-full bg-destructive px-1 text-center text-[10px] font-bold leading-4 text-destructive-foreground">{approvalCount > 99 ? '99+' : approvalCount}</span> : null}
             </Button>
-            <span className={`hidden sm:inline-block px-2.5 py-1 rounded text-[11px] font-bold uppercase tracking-widest ${ROLE_COLORS[effectiveRole]}`}>
-              {isLoading ? 'Loading' : ROLE_LABELS[effectiveRole]}
-            </span>
+            {availableRoles.length > 1 ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={switchRoleMutation.isPending}
+                    className={`hidden h-7 gap-1 rounded px-2.5 text-[11px] font-bold uppercase tracking-widest sm:inline-flex ${ROLE_COLORS[effectiveRole]}`}
+                    title="Switch active role"
+                  >
+                    {switchRoleMutation.isPending ? 'Switching' : (activeRoleEntry?.display_name || ROLE_LABELS[effectiveRole])}
+                    <ChevronDown className="h-3.5 w-3.5" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-60">
+                  <DropdownMenuLabel>Switch active role</DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  {availableRoles.map((entry: any) => {
+                    const isActive = entry.name === activeRoleGroupName;
+                    return (
+                      <DropdownMenuItem
+                        key={entry.id}
+                        disabled={isActive || switchRoleMutation.isPending}
+                        onSelect={() => switchRoleMutation.mutate(String(entry.id))}
+                        className="flex items-center justify-between gap-3"
+                      >
+                        <span className="truncate">{entry.display_name || entry.name}</span>
+                        {isActive ? <span className="text-xs font-medium text-primary">Active</span> : null}
+                      </DropdownMenuItem>
+                    );
+                  })}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : (
+              <span className={`hidden sm:inline-block px-2.5 py-1 rounded text-[11px] font-bold uppercase tracking-widest ${ROLE_COLORS[effectiveRole]}`}>
+                {isLoading ? 'Loading' : ROLE_LABELS[effectiveRole]}
+              </span>
+            )}
             <div className="hidden md:block text-sm font-medium text-foreground truncate max-w-[12rem]">{displayName}</div>
             <Button
               variant="ghost"
@@ -936,6 +974,26 @@ export function Shell({ children }: { children: React.ReactNode }) {
                   )}
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator />
+                {availableRoles.length > 1 ? (
+                  <>
+                    <DropdownMenuLabel className="text-xs font-medium text-muted-foreground">Active role</DropdownMenuLabel>
+                    {availableRoles.map((entry: any) => {
+                      const isActive = entry.name === activeRoleGroupName;
+                      return (
+                        <DropdownMenuItem
+                          key={entry.id}
+                          disabled={isActive || switchRoleMutation.isPending}
+                          onSelect={() => switchRoleMutation.mutate(String(entry.id))}
+                          className="flex items-center justify-between gap-3"
+                        >
+                          <span className="truncate">{entry.display_name || entry.name}</span>
+                          {isActive ? <span className="text-xs font-medium text-primary">Active</span> : null}
+                        </DropdownMenuItem>
+                      );
+                    })}
+                    <DropdownMenuSeparator />
+                  </>
+                ) : null}
                 <DropdownMenuItem onSelect={() => setProfileOpen(true)}>
                   <UserCircle2 className="h-4 w-4" />
                   View Profile
