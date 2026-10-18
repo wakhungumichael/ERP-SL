@@ -521,6 +521,15 @@ TENANT_MANAGEABLE_PLATFORM_CORE_MODELS = {
     "workflowtransitiondefinition",
 }
 
+# Audit evidence is tenant-scoped by default. Tenant administrators may grant
+# review and export of their own organization's logs, but never cross-tenant
+# (global) visibility.
+TENANT_AUDIT_PERMISSION_CODENAMES = {
+    "view_tenant_audit_logs",
+    "view_tenant_access_logs",
+    "export_audit_logs",
+}
+
 TENANT_WORKSPACE_PERMISSION_CODENAMES = {
     "can_view_workspace_dashboard",
     "can_access_finance_workspace",
@@ -675,6 +684,11 @@ def _tenant_manageable_permissions_queryset(tenant):
             content_type__app_label="Platform_Core",
             content_type__model="tenantsettings",
             codename__in=TENANT_WORKSPACE_PERMISSION_CODENAMES,
+        )
+        | Q(
+            content_type__app_label="Platform_Core",
+            content_type__model__in=["auditeventlog", "auditaccesslog"],
+            codename__in=TENANT_AUDIT_PERMISSION_CODENAMES,
         )
     )
 

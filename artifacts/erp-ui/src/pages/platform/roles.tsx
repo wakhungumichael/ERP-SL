@@ -521,7 +521,7 @@ function PermissionMatrix({
                   <h3 className="text-sm font-semibold">Audit & access logs</h3>
                   <p className="mt-0.5 text-xs text-muted-foreground">Choose whether this role can review organization evidence, access activity, exports, or platform-wide logs.</p>
                 </div>
-                <span className="text-xs text-muted-foreground">{auditPermissions.filter(permission => selected.has(permission.id)).length}/{AUDIT_PERMISSION_CODES.length} available</span>
+                <span className="text-xs text-muted-foreground">{auditPermissions.filter(permission => selected.has(permission.id)).length}/{auditPermissions.length} selected</span>
               </div>
               {auditPermissions.length > 0 ? (
                 <div className="mt-3 flex flex-wrap gap-2">
