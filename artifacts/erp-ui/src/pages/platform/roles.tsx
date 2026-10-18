@@ -132,6 +132,14 @@ const CRUD_LABELS: Record<string, string> = {
   view: 'View', add: 'Add', change: 'Edit', delete: 'Delete',
 };
 
+const AUDIT_PERMISSION_CODES = [
+  'view_tenant_audit_logs',
+  'view_tenant_access_logs',
+  'export_audit_logs',
+  'view_global_audit_logs',
+  'view_global_access_logs',
+];
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function extractCrudAction(codename: string): string | null {
@@ -409,8 +417,17 @@ function PermissionMatrix({
       ...section.models.flatMap(group => [...Object.values(group.perms), ...group.actions]),
       ...section.standaloneActions,
     ].filter(permission => codes.includes(permission.codename)).map(permission => permission.id);
+    if (enabledIds.length === 0) {
+      toast({
+        title: 'Audit permissions are not available yet',
+        description: 'Apply the latest Platform_Core migrations, refresh this page, then try again.',
+        variant: 'destructive',
+      });
+      return;
+    }
     setSelected(prev => new Set([...prev, ...enabledIds]));
     setDirty(true);
+    toast({ title: `${enabledIds.length} permission${enabledIds.length === 1 ? '' : 's'} selected`, description: 'Save Permissions to apply this role access.' });
   };
 
   const saveMutation = useMutation({
@@ -454,6 +471,13 @@ function PermissionMatrix({
         ].join(' ').toLowerCase().includes(searchTerm);
         const visibleModels = section.models.filter(matchesSearch);
         const visibleStandalone = section.standaloneActions.filter(permission => !searchTerm || `${ACTION_CODENAMES[permission.codename] ?? permission.name} ${permission.codename}`.toLowerCase().includes(searchTerm));
+        const permissionsByCode = new Map([
+          ...section.models.flatMap(group => [...Object.values(group.perms), ...group.actions]),
+          ...section.standaloneActions,
+        ].map(permission => [permission.codename, permission]));
+        const auditPermissions = AUDIT_PERMISSION_CODES
+          .map(code => permissionsByCode.get(code))
+          .filter((permission): permission is Perm => Boolean(permission));
 
         return (
             <AccordionItem key={section.appLabel} value={section.appLabel} className="border-border">
@@ -490,6 +514,26 @@ function PermissionMatrix({
                 <Button size="sm" variant="outline" disabled={!editable} onClick={() => enablePermissionCodes(section, ['view_tenant_audit_logs', 'view_tenant_access_logs', 'export_audit_logs'])}>Enable audit reviewer</Button>
               </div>
             </div>}
+
+                {section.appLabel === 'Platform_Core' && <section className="mt-3 rounded-xl border bg-card p-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-sm font-semibold">Audit & access logs</h3>
+                  <p className="mt-0.5 text-xs text-muted-foreground">Choose whether this role can review organization evidence, access activity, exports, or platform-wide logs.</p>
+                </div>
+                <span className="text-xs text-muted-foreground">{auditPermissions.filter(permission => selected.has(permission.id)).length}/{AUDIT_PERMISSION_CODES.length} available</span>
+              </div>
+              {auditPermissions.length > 0 ? (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {auditPermissions.map(permission => <label key={permission.id} className="flex cursor-pointer items-center gap-2 rounded-md border px-3 py-2 text-sm hover:bg-muted/30">
+                    <Checkbox checked={selected.has(permission.id)} onCheckedChange={() => editable && toggle(permission.id)} disabled={!editable} className="border-amber-400 data-[state=checked]:bg-amber-500 data-[state=checked]:border-amber-500" />
+                    {ACTION_CODENAMES[permission.codename] ?? permission.name}
+                  </label>)}
+                </div>
+              ) : (
+                <p className="mt-3 rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground">Audit permissions will appear after the latest Platform Core migrations are applied.</p>
+              )}
+            </section>}
 
                 {visibleStandalone.length > 0 && <section className="mt-3 rounded-xl border bg-card p-4">
               <h3 className="text-sm font-semibold">Workspace & special access</h3>
