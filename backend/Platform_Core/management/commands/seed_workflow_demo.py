@@ -56,7 +56,7 @@ WORKFLOW_TEMPLATES = [
 
 
 class Command(BaseCommand):
-    help = "Seed reusable, published example workflows for one local organization."
+    help = "Seed reusable published workflow examples without duplicating active document bindings."
 
     def add_arguments(self, parser):
         parser.add_argument("--tenant-code", default="workflow-demo", help="Organization code to receive the sample workflows.")
@@ -87,6 +87,20 @@ class Command(BaseCommand):
 
     def _seed_tenant(self, tenant):
         for template in WORKFLOW_TEMPLATES:
+            active_binding = WorkflowEntityBinding.objects.filter(
+                workflow__tenant=tenant,
+                workflow__is_active=True,
+                workflow__status="published",
+                module_slug=template["module"],
+                entity_type=template["entity"],
+                is_active=True,
+            ).first()
+            if active_binding:
+                self.stdout.write(
+                    f"Skipped {template['name']}: {active_binding.workflow.name} is already active for "
+                    f"{template['label']}."
+                )
+                continue
             first_group, second_group = [Group.objects.get_or_create(name=name)[0] for name in template["groups"]]
             workflow, created = WorkflowDefinition.objects.get_or_create(
                 tenant=tenant,
