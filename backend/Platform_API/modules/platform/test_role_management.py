@@ -113,7 +113,7 @@ class TenantRoleManagementTests(TestCase):
         self.assertEqual(response.status_code, 403, response.data)
         self.assertIn("Only platform administrators may modify", str(response.data))
 
-    def test_tenant_admin_cannot_assign_or_edit_tenant_admin_roles(self):
+    def test_tenant_admin_can_assign_non_privileged_role_to_tenant_admin(self):
         self.client.force_authenticate(user=self.tenant_admin_a)
 
         response = self.client.post(
@@ -122,8 +122,9 @@ class TenantRoleManagementTests(TestCase):
             format="json",
         )
 
-        self.assertEqual(response.status_code, 403, response.data)
-        self.assertIn("Only platform administrators may change a tenant administrator's roles", str(response.data))
+        self.assertEqual(response.status_code, 200, response.data)
+        assigned_names = set(self.tenant_admin_a.groups.values_list("name", flat=True))
+        self.assertEqual(assigned_names, {"Tenant Admin", "Finance"})
 
     def test_tenant_admin_can_assign_only_own_tenant_roles_to_regular_user(self):
         self.client.force_authenticate(user=self.tenant_admin_a)

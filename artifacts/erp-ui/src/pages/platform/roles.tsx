@@ -27,6 +27,20 @@ import { ERPPageHeader } from '@/components/erp/workspace/workspace-ui';
 
 const BASE = '/api/platform';
 
+function extractApiErrorMessage(payload: any): string {
+  if (!payload) return 'The request could not be completed.';
+  if (typeof payload === 'string') return payload;
+  if (typeof payload.message === 'string' && payload.message.trim()) return payload.message;
+  if (typeof payload.detail === 'string' && payload.detail.trim()) return payload.detail;
+  if (typeof payload.error === 'string' && payload.error.trim()) return payload.error;
+  const errors = payload.errors;
+  if (errors && typeof errors === 'object') {
+    const firstError = Object.values(errors).flat().find(Boolean);
+    if (typeof firstError === 'string' && firstError.trim()) return firstError;
+  }
+  return 'The request could not be completed. Please review the selected role and try again.';
+}
+
 function api(token: string, path: string, method = 'GET', body?: object) {
   return fetch(`${BASE}${path}`, {
     method,
@@ -34,7 +48,7 @@ function api(token: string, path: string, method = 'GET', body?: object) {
     body: body ? JSON.stringify(body) : undefined,
   }).then(async r => {
     const j = await r.json();
-    if (!r.ok) throw new Error(j?.detail || j?.error || JSON.stringify(j));
+    if (!r.ok) throw new Error(extractApiErrorMessage(j));
     return j;
   });
 }

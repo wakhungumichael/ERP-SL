@@ -1470,9 +1470,11 @@ class PlatformUserRoleAssignmentAPIView(APIView):
                     "You may only manage users within your own organization.",
                     status_code=status.HTTP_403_FORBIDDEN,
                 )
-            if target_profile.is_tenant_admin or target_user.groups.filter(name__in=PROTECTED_SHARED_ROLE_NAMES).exists():
+            if target_user.is_superuser or target_user.groups.filter(
+                name__in=(PROTECTED_SHARED_ROLE_NAMES - {"Tenant Admin"})
+            ).exists():
                 return error_response(
-                    "Only platform administrators may change a tenant administrator's roles.",
+                    "Only platform administrators may change platform administrator roles.",
                     status_code=status.HTTP_403_FORBIDDEN,
                 )
 
@@ -1498,6 +1500,13 @@ class PlatformUserRoleAssignmentAPIView(APIView):
                     )
 
         if replace_existing:
+            # An organization administrator can hold operational roles as well.
+            # Preserve the protected administrator group so assigning Finance,
+            # Supervisor, etc. never accidentally removes admin access.
+            if not caller_is_superadmin and target_profile.is_tenant_admin:
+                tenant_admin_group = Group.objects.filter(name="Tenant Admin").first()
+                if tenant_admin_group and tenant_admin_group not in groups:
+                    groups = [*groups, tenant_admin_group]
             target_user.groups.set(groups)
         else:
             target_user.groups.add(*groups)

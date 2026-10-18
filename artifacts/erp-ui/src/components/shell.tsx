@@ -27,7 +27,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet';
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@/context/use-auth';
 import { STATIC_NAV, ROLE_LABELS, ROLE_COLORS, type NavSection } from '@/lib/roles';
 import type { AppRole } from '@/lib/roles';
@@ -409,6 +409,7 @@ function NavSectionItem({ section, location, sidebarCollapsed, open, onToggle }:
 export function Shell({ children }: { children: React.ReactNode }) {
   const [location, setLocation] = useLocation();
   const { token, user, role, isLoading, authErrorStatus, clearToken, refreshUser } = useAuth();
+  const queryClient = useQueryClient();
   const { tenantContext, isLoading: tenantThemeLoading } = useTenantTheme();
   const logout = useAuthLogout();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -504,7 +505,11 @@ export function Shell({ children }: { children: React.ReactNode }) {
       return payload;
     },
     onSuccess: async () => {
+      // Role-scoped API queries may share keys with the prior role. Invalidate
+      // the complete workspace cache before returning to the landing page.
+      await queryClient.invalidateQueries();
       await refreshUser();
+      await queryClient.refetchQueries({ type: 'active' });
       setLocation('/');
     },
   });
