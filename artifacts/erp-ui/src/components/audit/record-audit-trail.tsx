@@ -1,206 +1,56 @@
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { History, ShieldAlert, UserRound } from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { ChevronDown, ChevronRight, Download, History, ShieldAlert, UserRound } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useAuth } from '@/context/use-auth';
 
-type AuditSummary = {
-  created_by_name?: string | null;
-  created_on?: string | null;
-  updated_by_name?: string | null;
-  updated_on?: string | null;
-  deleted_by_name?: string | null;
-  deleted_on?: string | null;
-};
+type AuditSummary = { created_by_name?: string | null; created_on?: string | null; updated_by_name?: string | null; updated_on?: string | null; deleted_by_name?: string | null; deleted_on?: string | null };
+type AuditEvent = { id: number; actor_name?: string | null; event_group?: string; event_type?: string; status?: string; note?: string; object_repr?: string; changes?: Record<string, unknown>; metadata?: Record<string, unknown>; created_at?: string };
+type FieldChange = { before?: unknown; after?: unknown; action?: string; related_ids?: unknown[]; changed_at?: string };
+const HIDDEN_FIELDS = new Set(['id', 'tenant', 'tenant_id', 'branch', 'branch_id', 'created_by', 'created_by_id', 'last_modified_by', 'last_modified_by_id']);
+const label = (value?: string) => value ? value.replace(/_id$/, '').replace(/_/g, ' ').replace(/\b\w/g, char => char.toUpperCase()) : '—';
+const date = (value?: string | null) => value ? new Date(value).toLocaleString('en-KE', { dateStyle: 'medium', timeStyle: 'medium' }) : '—';
+const value = (item: unknown) => item === null || item === undefined || item === '' ? '—' : item === true ? 'Yes' : item === false ? 'No' : Array.isArray(item) ? item.join(', ') || 'None' : typeof item === 'object' ? JSON.stringify(item) : String(item);
+const actor = (event: AuditEvent) => event.actor_name || String(event.metadata?.actor_name || event.metadata?.actor_username || 'System process');
+const fields = (event: AuditEvent) => Object.entries(event.changes ?? {}).filter(([field]) => !HIDDEN_FIELDS.has(field) && !field.endsWith('_at')).map(([field, change]) => ({ field, change: (change ?? {}) as FieldChange }));
 
-type AuditEvent = {
-  id: number;
-  actor_name?: string | null;
-  event_group?: string;
-  event_type?: string;
-  status?: string;
-  note?: string;
-  object_repr?: string;
-  changes?: Record<string, unknown>;
-  created_at?: string;
-};
-
-type FieldChange = { before?: unknown; after?: unknown; action?: string; related_ids?: unknown[] };
-
-const HIDDEN_FIELDS = new Set(['tenant', 'tenant_id', 'branch', 'branch_id', 'created_by', 'created_by_id', 'last_modified_by', 'last_modified_by_id']);
-
-function fieldLabel(field: string) {
-  return field.replace(/_id$/, '').replace(/_/g, ' ').replace(/\b\w/g, char => char.toUpperCase());
+function SummaryField({ name, children }: { name: string; children: React.ReactNode }) {
+  return <div className="rounded-lg border bg-muted/20 p-3"><p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">{name}</p><p className="mt-1 text-sm font-medium">{children}</p></div>;
+}
+function EventRow({ event, showChanges }: { event: AuditEvent; showChanges: boolean }) {
+  const [open, setOpen] = useState(false);
+  const changes = fields(event);
+  return <section className="overflow-hidden rounded-lg border bg-background"><button type="button" onClick={() => setOpen(current => !current)} className="flex w-full flex-wrap items-center gap-x-3 gap-y-2 p-3 text-left hover:bg-muted/30">{open ? <ChevronDown className="h-4 w-4 text-muted-foreground" /> : <ChevronRight className="h-4 w-4 text-muted-foreground" />}<span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-slate-700">{label(event.event_group)}</span><span className="rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-blue-800">{label(event.event_type)}</span><span className="flex-1 text-sm font-medium">{event.object_repr || 'Record event'}</span><span className="flex items-center gap-1 text-xs text-muted-foreground"><UserRound className="h-3.5 w-3.5" />{actor(event)}</span><span className="text-xs text-muted-foreground">{date(event.created_at)}</span></button>{open ? <div className="border-t bg-muted/10 p-3"><div className="grid gap-2 text-sm sm:grid-cols-2"><p><span className="text-muted-foreground">Actor:</span> {actor(event)}</p><p><span className="text-muted-foreground">Outcome:</span> {label(event.status)}</p></div>{event.note ? <p className="mt-3 rounded border-l-4 border-primary/50 bg-background p-2.5 text-sm">{event.note}</p> : null}{showChanges && changes.length ? <div className="mt-3 overflow-x-auto rounded-md border bg-background"><div className="min-w-[700px] divide-y"><div className="grid grid-cols-[0.7fr_1fr_1fr_0.9fr] gap-3 bg-muted/40 px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-muted-foreground"><span>Field</span><span>Previous value</span><span>New value</span><span>Changed at</span></div>{changes.map(({ field, change }) => <div key={field} className="grid grid-cols-[0.7fr_1fr_1fr_0.9fr] gap-3 px-3 py-2.5 text-sm"><span className="font-medium">{label(field)}</span><span className="break-words text-muted-foreground">{value(change.before)}</span><span className="break-words font-medium text-emerald-700">{value(change.after ?? change.related_ids ?? change.action)}</span><span className="text-xs text-muted-foreground">{date(change.changed_at || event.created_at)}</span></div>)}</div></div> : showChanges ? <p className="mt-3 rounded border border-dashed bg-background p-2.5 text-sm text-muted-foreground">No business fields changed in this event.</p> : null}</div> : null}</section>;
 }
 
-function formatValue(value: unknown) {
-  if (value === null || value === undefined || value === '') return '—';
-  if (value === true) return 'Yes';
-  if (value === false) return 'No';
-  if (Array.isArray(value)) return value.length ? value.join(', ') : 'None';
-  if (typeof value === 'object') return JSON.stringify(value);
-  return String(value);
-}
-
-function changeRows(changes: Record<string, unknown> | undefined, eventType?: string) {
-  if (eventType === 'create' || eventType === 'delete') return [];
-  return Object.entries(changes ?? {})
-    .filter(([field]) => !HIDDEN_FIELDS.has(field) && !field.endsWith('_at'))
-    .map(([field, value]) => ({ field, change: (value ?? {}) as FieldChange }));
-}
-
-function formatDate(value?: string | null) {
-  if (!value) return '—';
-  return new Date(value).toLocaleString('en-KE');
-}
-
-function formatEventLabel(value?: string) {
-  if (!value) return 'Event';
-  return value.replace(/_/g, ' ').replace(/\b\w/g, char => char.toUpperCase());
-}
-
-function SummaryField({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-lg border bg-muted/20 p-3">
-      <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">{label}</div>
-      <div className="mt-1 text-sm font-medium">{value}</div>
-    </div>
-  );
-}
-
-export function RecordAuditTrail({
-  modelLabel,
-  objectPk,
-}: {
-  modelLabel: string;
-  objectPk: string | number;
-}) {
-  const { token } = useAuth();
-
-  const { data, isLoading, error } = useQuery({
-    queryKey: ['record-audit-trail', modelLabel, String(objectPk)],
-    queryFn: async () => {
-      const params = new URLSearchParams({
-        model_label: modelLabel,
-        object_pk: String(objectPk),
-      });
-      const response = await fetch(`/api/platform/audit/record-trail/?${params.toString()}`, {
-        headers: token ? { Authorization: `Token ${token}` } : {},
-      });
-      const payload = await response.json();
-      if (!response.ok) {
-        throw new Error(payload?.message ?? payload?.error ?? 'Failed to load audit trail.');
-      }
-      return payload?.data ?? { summary: {}, events: [] };
-    },
-    enabled: Boolean(token) && Boolean(modelLabel) && String(objectPk).length > 0,
-    staleTime: 20_000,
-  });
-
+export function RecordAuditTrail({ modelLabel, objectPk }: { modelLabel: string; objectPk: string | number }) {
+  const { token, user } = useAuth();
+  const [open, setOpen] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const permissions = new Set(Array.isArray((user as any)?.permissions) ? (user as any).permissions.map(String) : []);
+  const canView = Boolean((user as any)?.is_superuser) || permissions.has('Platform_Core.view_tenant_audit_logs') || permissions.has('Platform_Core.view_global_audit_logs');
+  const canExport = Boolean((user as any)?.is_superuser) || permissions.has('Platform_Core.export_audit_logs');
+  const { data, isLoading, error } = useQuery({ queryKey: ['record-audit-trail', modelLabel, String(objectPk)], queryFn: async () => {
+    const params = new URLSearchParams({ model_label: modelLabel, object_pk: String(objectPk) });
+    const response = await fetch(`/api/platform/audit/record-trail/?${params}`, { headers: token ? { Authorization: `Token ${token}` } : {} });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload?.message ?? payload?.error ?? 'Failed to load audit trail.');
+    return payload?.data ?? { summary: {}, events: [] };
+  }, enabled: open && canView && Boolean(token), staleTime: 20_000 });
+  if (!canView) return null;
   const summary: AuditSummary = data?.summary ?? {};
   const events: AuditEvent[] = Array.isArray(data?.events) ? data.events : [];
-
-  return (
-    <Card>
-      <CardHeader className="bg-muted/20 border-b">
-        <CardTitle className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest">
-          <History className="h-4 w-4" /> Audit Trail
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4 p-6">
-        {isLoading ? (
-          <div className="text-sm text-muted-foreground animate-pulse">Loading audit trail…</div>
-        ) : error ? (
-          <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
-            <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />
-            <span>{(error as Error).message}</span>
-          </div>
-        ) : (
-          <>
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-              <SummaryField
-                label="Created"
-                value={
-                  summary.created_by_name
-                    ? `${summary.created_by_name} · ${formatDate(summary.created_on)}`
-                    : formatDate(summary.created_on)
-                }
-              />
-              <SummaryField
-                label="Updated"
-                value={
-                  summary.updated_by_name
-                    ? `${summary.updated_by_name} · ${formatDate(summary.updated_on)}`
-                    : formatDate(summary.updated_on)
-                }
-              />
-              <SummaryField
-                label="Deleted"
-                value={
-                  summary.deleted_on
-                    ? `${summary.deleted_by_name ?? 'Unknown'} · ${formatDate(summary.deleted_on)}`
-                    : 'Not deleted'
-                }
-              />
-            </div>
-
-            {events.length === 0 ? (
-              <div className="rounded-lg border border-dashed p-5 text-sm text-muted-foreground">
-                No audit events have been recorded for this record yet.
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {events.map(event => {
-                  const changes = changeRows(event.changes, event.event_type);
-                  return (
-                    <div key={event.id} className="rounded-xl border p-4">
-                      <div className="flex flex-wrap items-center justify-between gap-3">
-                        <div className="flex items-center gap-2">
-                          <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-bold uppercase tracking-widest text-slate-700">
-                            {formatEventLabel(event.event_group)}
-                          </span>
-                          <span className="rounded-full bg-blue-100 px-2.5 py-1 text-[10px] font-bold uppercase tracking-widest text-blue-800">
-                            {formatEventLabel(event.event_type)}
-                          </span>
-                          <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                            {event.status ?? 'success'}
-                          </span>
-                        </div>
-                        <div className="text-xs font-mono text-muted-foreground">
-                          {formatDate(event.created_at)}
-                        </div>
-                      </div>
-                      <div className="mt-3 flex items-center gap-2 text-sm">
-                        <UserRound className="h-4 w-4 text-muted-foreground" />
-                        <span className="font-medium">{event.actor_name ?? 'System'}</span>
-                        {event.object_repr ? (
-                          <span className="text-muted-foreground">on {event.object_repr}</span>
-                        ) : null}
-                      </div>
-                      {event.note ? (
-                        <p className="mt-2 text-sm text-muted-foreground">{event.note}</p>
-                      ) : null}
-                      {changes.length > 0 ? (
-                        <div className="mt-4 overflow-hidden rounded-lg border">
-                          <div className="grid grid-cols-[0.8fr_1fr_1fr] gap-3 bg-muted/40 px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
-                            <span>Field</span><span>Previous value</span><span>New value</span>
-                          </div>
-                          {changes.map(({ field, change }) => (
-                            <div key={field} className="grid grid-cols-[0.8fr_1fr_1fr] gap-3 border-t px-3 py-2 text-sm">
-                              <span className="font-medium">{fieldLabel(field)}</span>
-                              <span className="break-words text-muted-foreground">{formatValue(change.before)}</span>
-                              <span className="break-words font-medium text-emerald-700">{formatValue(change.after ?? change.related_ids)}</span>
-                            </div>
-                          ))}
-                        </div>
-                      ) : null}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </>
-        )}
-      </CardContent>
-    </Card>
-  );
+  const exportTrail = async (format: 'csv' | 'pdf') => {
+    if (!token) return;
+    setExporting(true);
+    try {
+      const params = new URLSearchParams({ dataset: 'events', format, model_label: modelLabel, object_pk: String(objectPk) });
+      const response = await fetch(`/api/platform/audit/export/?${params}`, { headers: { Authorization: `Token ${token}` } });
+      if (!response.ok) { const body = await response.json().catch(() => null); throw new Error(body?.message ?? body?.error ?? 'Audit export could not be generated.'); }
+      const url = URL.createObjectURL(await response.blob()); const link = document.createElement('a'); link.href = url; link.download = `audit-record-${objectPk}.${format}`; document.body.appendChild(link); link.click(); link.remove(); window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (reason) { window.alert(reason instanceof Error ? reason.message : 'Audit export could not be generated.'); } finally { setExporting(false); }
+  };
+  return <><Button size="sm" variant="outline" className="gap-1.5 text-xs font-bold uppercase tracking-wide" onClick={() => setOpen(true)}><History className="h-3.5 w-3.5" /> Audit Trail</Button><Dialog open={open} onOpenChange={setOpen}><DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-4xl"><DialogHeader><div className="flex flex-wrap items-center justify-between gap-3 pr-8"><DialogTitle className="flex items-center gap-2"><History className="h-5 w-5" /> Audit Trail</DialogTitle>{canExport ? <div className="flex gap-2"><Button size="sm" variant="outline" disabled={exporting} onClick={() => exportTrail('csv')}><Download /> CSV</Button><Button size="sm" variant="outline" disabled={exporting} onClick={() => exportTrail('pdf')}><Download /> PDF</Button></div> : null}</div></DialogHeader>{isLoading ? <div className="p-6 text-sm text-muted-foreground animate-pulse">Loading audit trail…</div> : error ? <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800"><ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />{(error as Error).message}</div> : <Tabs defaultValue="summary" className="mt-2"><TabsList className="w-full justify-start"><TabsTrigger value="summary">Summary</TabsTrigger><TabsTrigger value="activity">Activity ({events.length})</TabsTrigger><TabsTrigger value="changes">Field Changes</TabsTrigger></TabsList><TabsContent value="summary" className="space-y-4 pt-3"><div className="grid gap-3 md:grid-cols-3"><SummaryField name="Created">{summary.created_by_name ? `${summary.created_by_name} · ${date(summary.created_on)}` : date(summary.created_on)}</SummaryField><SummaryField name="Last updated">{summary.updated_by_name ? `${summary.updated_by_name} · ${date(summary.updated_on)}` : date(summary.updated_on)}</SummaryField><SummaryField name="Deleted">{summary.deleted_on ? `${summary.deleted_by_name ?? 'Unknown'} · ${date(summary.deleted_on)}` : 'Not deleted'}</SummaryField></div><div className="rounded-lg border bg-muted/20 p-4 text-sm text-muted-foreground">Select <strong>Activity</strong> to review every event or <strong>Field Changes</strong> to compare stored values. Each entry expands independently.</div></TabsContent><TabsContent value="activity" className="space-y-2 pt-3">{events.length ? events.map(event => <EventRow key={event.id} event={event} showChanges={false} />) : <div className="rounded-lg border border-dashed p-5 text-sm text-muted-foreground">No audit events have been recorded for this record yet.</div>}</TabsContent><TabsContent value="changes" className="space-y-2 pt-3">{events.length ? events.map(event => <EventRow key={event.id} event={event} showChanges />) : <div className="rounded-lg border border-dashed p-5 text-sm text-muted-foreground">No field changes have been recorded for this record yet.</div>}</TabsContent></Tabs>}</DialogContent></Dialog></>;
 }

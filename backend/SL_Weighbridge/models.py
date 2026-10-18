@@ -266,6 +266,10 @@ class WeighingOperationType(models.Model):
     name = models.CharField(max_length=120)
     description = models.TextField(blank=True, null=True)
     flow_kind = models.CharField(max_length=20, choices=FLOW_KIND_CHOICES, default='first')
+    requires_payment = models.BooleanField(
+        default=True,
+        help_text="Whether transactions captured with this operation type require payment.",
+    )
     is_active = models.BooleanField(default=True)
     display_order = models.PositiveIntegerField(default=10)
     is_default = models.BooleanField(default=False)
@@ -375,6 +379,7 @@ class Transaction(models.Model):
     tare_weight_date = models.DateTimeField(null=True, blank=True)
     STATUS_CHOICES = [
         ('Draft', 'Draft'),
+        ('In Progress', 'In Progress'),
         ('Recalled', 'Recalled'),
         ('Rejected', 'Rejected'),
         ('Completed', 'Completed'),

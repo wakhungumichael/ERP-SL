@@ -816,6 +816,7 @@ class TenantSettingsSerializer(serializers.ModelSerializer):
     login_page_config = serializers.JSONField(required=False)
     footer_menu = serializers.JSONField(required=False)
     landing_page_config = serializers.JSONField(required=False)
+    document_status_policy = serializers.JSONField(required=False)
     invoice_template_id = serializers.PrimaryKeyRelatedField(
         source="invoice_template",
         queryset=DocumentTemplate.objects.all(),
@@ -873,6 +874,7 @@ class TenantSettingsSerializer(serializers.ModelSerializer):
             "default_payment_terms_days",
             "teller_receipt_latest_records", "teller_receipt_max_age_hours",
             "allow_shared_weighbridge_vehicles",
+            "document_status_policy",
             "created_at", "updated_at",
         )
         read_only_fields = ("id", "tenant", "created_at", "updated_at")
@@ -1428,9 +1430,10 @@ class AuditEventLogSerializer(serializers.ModelSerializer):
         )
 
     def get_actor_name(self, obj):
-        if obj.actor is None:
-            return None
-        return obj.actor.get_full_name() or obj.actor.username
+        if obj.actor is not None:
+            return obj.actor.get_full_name() or obj.actor.username
+        metadata = obj.metadata or {}
+        return metadata.get("actor_name") or metadata.get("actor_username") or None
 
 
 class AuditAccessLogSerializer(serializers.ModelSerializer):
@@ -1462,9 +1465,10 @@ class AuditAccessLogSerializer(serializers.ModelSerializer):
         )
 
     def get_actor_name(self, obj):
-        if obj.actor is None:
-            return None
-        return obj.actor.get_full_name() or obj.actor.username
+        if obj.actor is not None:
+            return obj.actor.get_full_name() or obj.actor.username
+        metadata = obj.metadata or {}
+        return metadata.get("actor_name") or metadata.get("actor_username") or None
 
 
 class WorkflowStepDefinitionSerializer(serializers.ModelSerializer):

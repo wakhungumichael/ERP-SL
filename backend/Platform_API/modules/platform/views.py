@@ -1,9 +1,12 @@
+import csv
 from datetime import timedelta
+from io import BytesIO
 import logging
 import secrets
 import string
 from pathlib import Path
 from types import SimpleNamespace
+from xml.sax.saxutils import escape
 
 from django.contrib.auth.models import Group, Permission, User
 from django.contrib.auth import logout
@@ -17,6 +20,11 @@ from django.utils.decorators import method_decorator
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.http import FileResponse, HttpResponse, JsonResponse
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4, landscape
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.units import inch
+from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 from rest_framework import generics
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.authentication import BasicAuthentication, TokenAuthentication
@@ -58,6 +66,7 @@ from Platform_Core.models import (
     PricingRule,
     PricingRuleType,
     SubscriptionPlan,
+    SystemNotification,
     SubscriptionBillingRequest,
     Tenant,
     TenantBranch,
@@ -722,6 +731,10 @@ def _can_view_global_audit_logs(user):
 
 def _can_view_tenant_audit_logs(user):
     return _can_view_global_audit_logs(user) or user.has_perm("Platform_Core.view_tenant_audit_logs")
+
+
+def _can_export_audit_logs(user):
+    return bool(getattr(user, "is_superuser", False) or user.has_perm("Platform_Core.export_audit_logs"))
 
 
 def _can_view_global_access_logs(user):
@@ -1814,8 +1827,8 @@ def _validate_workflow_definition(workflow):
     for transition in transitions:
         if transition.from_node_id not in node_ids or transition.to_node_id not in node_ids:
             errors.append("Every active transition must connect active nodes in this workflow.")
-        if transition.condition_operator != "always":
-            errors.append("Conditional routing cannot be published until the safe condition evaluator is enabled.")
+        if transition.condition_operator != "always" and not transition.condition_field:
+            errors.append(f"{transition.name} needs a record field before a condition can be evaluated.")
     if nodes and not any(node.node_type == "end" for node in nodes):
         warnings.append("No explicit end node is configured; the final approval node will complete the workflow.")
     if nodes and not transitions and len(nodes) > 1:
@@ -2072,15 +2085,22 @@ class WorkflowInboxAPIView(APIView):
             "assigned_user",
             "acted_by",
         ).all()
+        scope = request.query_params.get("scope", "assigned")
         if not _is_superadmin(request.user):
             tenant = _request_tenant_or_none(request.user)
             if tenant is None:
                 qs = qs.none()
             else:
                 group_ids = set(request.user.groups.values_list("id", flat=True))
-                qs = qs.filter(tenant=tenant).filter(
-                    Q(assigned_user=request.user) | Q(assigned_group_id__in=group_ids)
-                )
+                qs = qs.filter(tenant=tenant)
+                if scope == "submitted":
+                    qs = qs.filter(metadata__submitted_by=request.user.id)
+                elif scope == "all" and _workflow_admin_allowed(request.user, "view_workflowdefinition"):
+                    pass
+                else:
+                    qs = qs.filter(Q(assigned_user=request.user) | Q(assigned_group_id__in=group_ids))
+        elif scope == "submitted":
+            qs = qs.filter(metadata__submitted_by=request.user.id)
         if status_value := request.query_params.get("status"):
             if status_value == "all":
                 status_value = ""
@@ -2092,7 +2112,55 @@ class WorkflowInboxAPIView(APIView):
         payload = WorkflowInboxItemSerializer(qs.order_by("-created_at")[:limit], many=True).data
         return success_response(
             "Workflow inbox loaded successfully.",
-            data={"results": payload, "count": len(payload)},
+            data={"results": payload, "count": len(payload), "scope": scope},
+        )
+
+
+class WorkflowRequirementAPIView(APIView):
+    """Lets a module determine whether a configured workflow currently applies."""
+
+    permission_classes = (IsAuthenticated,)
+
+    def get(self, request):
+        tenant = _request_tenant_or_none(request.user)
+        module_slug = str(request.query_params.get("module_slug") or "").strip()
+        entity_type = str(request.query_params.get("entity_type") or "").strip()
+        trigger_event = str(request.query_params.get("trigger_event") or "submit").strip()
+        entity_id = request.query_params.get("entity_id")
+        if not tenant or not module_slug or not entity_type:
+            return success_response("Workflow requirement resolved.", data={"required": False, "binding": None})
+        binding = WorkflowEntityBinding.objects.select_related("workflow").filter(
+            workflow__tenant=tenant, workflow__is_active=True, workflow__status="published",
+            module_slug=module_slug, entity_type=entity_type, is_active=True,
+        ).filter(Q(trigger_events__contains=[trigger_event]) | Q(trigger_events=[])).order_by("-is_primary", "id").first()
+        active_item = None
+        if binding and entity_id:
+            try:
+                active_item = WorkflowInboxItem.objects.select_related(
+                    "node_definition", "assigned_group", "assigned_user"
+                ).filter(
+                    tenant=tenant,
+                    workflow=binding.workflow,
+                    module_slug=module_slug,
+                    entity_type=entity_type,
+                    entity_id=int(entity_id),
+                    status__in=["pending", "deferred"],
+                ).order_by("-created_at").first()
+            except (TypeError, ValueError):
+                pass
+        return success_response(
+            "Workflow requirement resolved.",
+            data={
+                "required": bool(binding),
+                "in_progress": bool(active_item),
+                "current_stage": active_item.node_definition.name if active_item and active_item.node_definition_id else None,
+                "current_role": (
+                    active_item.assigned_group.name if active_item and active_item.assigned_group_id else
+                    ((active_item.assigned_user.get_full_name() or active_item.assigned_user.username)
+                     if active_item and active_item.assigned_user_id else None)
+                ),
+                "binding": {"id": binding.id, "workflow_id": binding.workflow_id, "workflow_name": binding.workflow.name} if binding else None,
+            },
         )
 
 
@@ -2102,6 +2170,167 @@ def _workflow_actor_can_action(item, user):
     if item.assigned_user_id:
         return item.assigned_user_id == user.id
     return item.assigned_group_id in set(user.groups.values_list("id", flat=True))
+
+
+def _workflow_actor_can_view(item, user):
+    """Workflow roles may inspect their assigned document without module list access."""
+    if _is_superadmin(user) or _workflow_actor_can_action(item, user):
+        return True
+    if (item.metadata or {}).get("submitted_by") == user.id:
+        return True
+    return _workflow_admin_allowed(user, "view_workflowdefinition")
+
+
+def _workflow_subject_summary(item):
+    """Provide a module-neutral review payload, with adapters for live ERP records."""
+    saved_snapshot = ((item.metadata or {}).get("context") or {}).get("record_snapshot")
+    if item.module_slug == "weighbridge" and item.entity_type == "weighbridge_transaction":
+        from SL_Weighbridge.models import Transaction
+
+        transaction_record = Transaction.objects.filter(pk=item.entity_id, tenant=item.tenant).select_related(
+            "branch", "customer", "vehicle", "item", "vehicle_type"
+        ).first()
+        if transaction_record:
+            return {
+                "reference": getattr(transaction_record, "transaction_number", "") or item.reference,
+                "fields": {
+                    "Branch": getattr(transaction_record.branch, "name", ""),
+                    "Customer": getattr(transaction_record.customer, "name", ""),
+                    "Vehicle": getattr(transaction_record.vehicle, "plate_number", "") or getattr(transaction_record.vehicle, "vehicle_number", ""),
+                    "Commodity": getattr(transaction_record.item, "name", ""),
+                    "Destination": transaction_record.destination,
+                    "Gross weight (kg)": transaction_record.gross_weight or 0,
+                    "Tare weight (kg)": transaction_record.tare_weight or 0,
+                    "Net weight (kg)": transaction_record.net_weight or 0,
+                    "Charge": str(transaction_record.charge or 0),
+                    "Payment status": transaction_record.payment_status,
+                    "Document status": transaction_record.status,
+                    "Approval status": "Approved" if transaction_record.approval_status else "Awaiting workflow approval",
+                },
+            }
+    return {"reference": item.reference, "fields": saved_snapshot or {}}
+
+
+def _workflow_entity_route(binding, entity_id):
+    """Return the most useful record route for inbox users, not just a module list."""
+    if binding.module_slug == "weighbridge" and binding.entity_type == "weighbridge_transaction":
+        return f"/weighbridge/transactions/{entity_id}"
+    return binding.route_path
+
+
+def _sync_workflow_entity_state(item, decision, actor):
+    """Apply final generic workflow decisions to ERP records with supported lifecycle hooks."""
+    if item.module_slug != "weighbridge" or item.entity_type != "weighbridge_transaction":
+        return
+
+    # Keep generic workflows reusable, while retaining the established
+    # weighbridge completion logic (paired tickets, invoices, audit fields).
+    from SL_Weighbridge.models import Transaction
+
+    transaction_record = Transaction.objects.filter(pk=item.entity_id, tenant=item.tenant).first()
+    if transaction_record is None:
+        return
+    transaction_record.last_modified_by = actor
+    if decision == "in_progress":
+        transaction_record.status = "In Progress"
+        transaction_record.approval_status = False
+        transaction_record.save(update_fields=["status", "approval_status", "last_modified_by", "updated_at"])
+        return
+    if decision == "reject":
+        transaction_record.status = "Rejected"
+        transaction_record.approval_status = False
+        if not transaction_record.weight_reason:
+            transaction_record.weight_reason = "Rejected through the workflow approval process."
+        transaction_record.save(update_fields=["status", "approval_status", "weight_reason", "last_modified_by", "updated_at"])
+        return
+    if decision == "complete":
+        from Platform_API.modules.weighbridge.views import _approve_transaction
+
+        _approve_transaction(transaction_record)
+
+
+def _workflow_recipients(node, tenant):
+    if node.assigned_user_id:
+        return User.objects.filter(pk=node.assigned_user_id)
+    if node.approval_group_id:
+        return User.objects.filter(groups=node.approval_group, tenant_profile__tenant=tenant).distinct()
+    return User.objects.none()
+
+
+def _append_workflow_history(item, actor, action, comment=""):
+    """Keep the complete request trail when an item advances to another role."""
+    metadata = dict(item.metadata or {})
+    history = list(metadata.get("workflow_history") or [])
+    history.append({
+        "action": action,
+        "actor": actor.get_full_name() or actor.username,
+        "actor_id": actor.id,
+        "stage": item.node_definition.name if item.node_definition_id else "Workflow review",
+        "role": item.assigned_group.name if item.assigned_group_id else "",
+        "comment": comment.strip(),
+        "at": timezone.now().isoformat(),
+    })
+    metadata["workflow_history"] = history
+    item.metadata = metadata
+    return metadata
+
+
+def _notify_workflow_recipients(item, node, message):
+    if not node.notify_dashboard:
+        return
+    notifications = [
+        SystemNotification(
+            tenant=item.tenant,
+            recipient=user,
+            category="workflow",
+            title=f"Approval required: {item.reference or item.title}",
+            message=message,
+            route_path="/workflows/approvals",
+            source_type="workflow_inbox",
+            source_id=item.id,
+            metadata={"workflow_id": item.workflow_id, "node_id": node.id, "entity_type": item.entity_type, "entity_id": item.entity_id},
+        )
+        for user in _workflow_recipients(node, item.tenant)
+    ]
+    if notifications:
+        SystemNotification.objects.bulk_create(notifications)
+
+
+def _workflow_context_value(item, field):
+    value = item.metadata or {}
+    for part in field.replace("__", ".").split("."):
+        if not isinstance(value, dict):
+            return None
+        value = value.get(part)
+    return value
+
+
+def _workflow_transition_matches(transition, item):
+    operator = transition.condition_operator or "always"
+    if operator == "always":
+        return True
+    actual = _workflow_context_value(item, transition.condition_field)
+    expected = transition.condition_value
+    if operator == "is_true":
+        return actual is True or str(actual).lower() in {"true", "1", "yes"}
+    if operator == "is_false":
+        return actual is False or str(actual).lower() in {"false", "0", "no", ""}
+    if operator == "contains":
+        return str(expected).lower() in str(actual or "").lower()
+    if operator == "in":
+        return str(actual).lower() in {value.strip().lower() for value in str(expected).split(",")}
+    try:
+        actual, expected = float(actual), float(expected)
+    except (TypeError, ValueError):
+        actual, expected = str(actual or "").lower(), str(expected).lower()
+    return {
+        "eq": actual == expected,
+        "neq": actual != expected,
+        "gt": actual > expected,
+        "gte": actual >= expected,
+        "lt": actual < expected,
+        "lte": actual <= expected,
+    }.get(operator, False)
 
 
 def _workflow_first_actionable_node(workflow):
@@ -2128,12 +2357,13 @@ def _workflow_first_actionable_node(workflow):
 def _workflow_next_actionable_node(item):
     if not item.workflow_id or not item.node_definition_id:
         return None
-    transition = item.workflow.transitions.filter(
+    transitions = item.workflow.transitions.filter(
         from_node=item.node_definition,
         is_active=True,
-    ).filter(Q(decision__in=["approve", "next", ""]) | Q(is_default=True)).order_by(
-        "-is_default", "priority", "id"
-    ).select_related("to_node", "to_node__approval_group", "to_node__assigned_user").first()
+    ).filter(Q(decision__in=["approve", "next", ""]) | Q(is_default=True)).order_by("is_default", "priority", "id").select_related("to_node", "to_node__approval_group", "to_node__assigned_user")
+    transition = next((route for route in transitions if _workflow_transition_matches(route, item)), None)
+    if not transition:
+        transition = next((route for route in transitions if route.is_default), None)
     if not transition:
         return None
     current = transition.to_node
@@ -2142,10 +2372,13 @@ def _workflow_next_actionable_node(item):
         visited.add(current.id)
         if current.node_type in {"approval", "review", "task"}:
             return current
-        next_transition = item.workflow.transitions.filter(
+        next_transitions = item.workflow.transitions.filter(
             from_node=current,
             is_active=True,
-        ).order_by("-is_default", "priority", "id").select_related("to_node").first()
+        ).order_by("is_default", "priority", "id").select_related("to_node")
+        next_transition = next((route for route in next_transitions if _workflow_transition_matches(route, item)), None)
+        if not next_transition:
+            next_transition = next((route for route in next_transitions if route.is_default), None)
         current = next_transition.to_node if next_transition else None
     return None
 
@@ -2206,7 +2439,22 @@ class WorkflowForwardAPIView(APIView):
         title = str(request.data.get("title") or f"Approval required: {binding.entity_label}")[:200]
         detail = str(request.data.get("detail") or f"{binding.entity_label} {reference} was forwarded for {node.name}.")
         metadata = request.data.get("metadata") if isinstance(request.data.get("metadata"), dict) else {}
-        metadata.update({"submitted_by": request.user.id, "trigger_event": trigger_event, "binding_id": binding.id})
+        metadata.update({
+            "submitted_by": request.user.id,
+            "trigger_event": trigger_event,
+            "binding_id": binding.id,
+            "workflow_history": [
+                {
+                    "action": "forwarded",
+                    "actor": request.user.get_full_name() or request.user.username,
+                    "actor_id": request.user.id,
+                    "stage": node.name,
+                    "role": node.approval_group.name if node.approval_group_id else "",
+                    "comment": "",
+                    "at": timezone.now().isoformat(),
+                }
+            ],
+        })
 
         item = WorkflowInboxItem.objects.create(
             tenant=tenant,
@@ -2218,13 +2466,14 @@ class WorkflowForwardAPIView(APIView):
             reference=reference,
             title=title,
             detail=detail,
-            route_path=binding.route_path,
+            route_path=_workflow_entity_route(binding, entity_id),
             action_url=f"/api/platform/workflows/inbox/{{id}}/action/",
             assigned_group=node.approval_group,
             assigned_user=node.assigned_user,
             quick_actions=["approve", "reject"],
             metadata=metadata,
         )
+        _sync_workflow_entity_state(item, "in_progress", request.user)
         log_business_event(
             event_group="workflow",
             event_type="forwarded",
@@ -2234,7 +2483,36 @@ class WorkflowForwardAPIView(APIView):
             note=f"{binding.entity_label} {reference} forwarded to {node.name}.",
             metadata={"module_slug": module_slug, "entity_type": entity_type, "entity_id": entity_id, "workflow_id": binding.workflow_id},
         )
+        _notify_workflow_recipients(item, node, f"{reference} was forwarded to {node.name}.")
         return success_response("Record forwarded for approval.", data=WorkflowInboxItemSerializer(item).data, status=status.HTTP_201_CREATED)
+
+
+class WorkflowInboxSubjectAPIView(APIView):
+    """Read a workflow subject through its approval assignment, not module navigation rules."""
+
+    permission_classes = (IsAuthenticated,)
+
+    def get(self, request, pk):
+        item = get_object_or_404(
+            WorkflowInboxItem.objects.select_related("tenant", "workflow", "node_definition", "assigned_group", "assigned_user"),
+            pk=pk,
+        )
+        if not _is_superadmin(request.user) and item.tenant_id != getattr(_request_tenant_or_none(request.user), "id", None):
+            raise PermissionDenied("This workflow request does not belong to your organization.")
+        if not _workflow_actor_can_view(item, request.user):
+            raise PermissionDenied("This workflow request is not assigned to your user or role.")
+        return success_response(
+            "Workflow review details loaded.",
+            data={
+                "item": WorkflowInboxItemSerializer(item).data,
+                "subject": _workflow_subject_summary(item),
+                "workflow_history": (item.metadata or {}).get("workflow_history") or [],
+                "current_stage": item.node_definition.name if item.node_definition_id else "Workflow review",
+                "current_role": item.assigned_group.name if item.assigned_group_id else (
+                    item.assigned_user.get_full_name() or item.assigned_user.username if item.assigned_user_id else "Unassigned"
+                ),
+            },
+        )
 
 
 class WorkflowInboxActionAPIView(APIView):
@@ -2255,34 +2533,53 @@ class WorkflowInboxActionAPIView(APIView):
             raise PermissionDenied("This approval is not assigned to your user or role.")
 
         decision = str(request.data.get("decision") or "approve").lower()
-        if decision not in {"approve", "reject", "defer", "resume"}:
-            raise ValidationError({"decision": "Use approve, reject, defer, or resume."})
+        if decision not in {"approve", "reject", "defer", "resume", "comment"}:
+            raise ValidationError({"decision": "Use approve, reject, defer, resume, or comment."})
+        comment = str(request.data.get("comment") or request.data.get("reason") or "").strip()
+        if decision == "comment":
+            if not comment:
+                raise ValidationError({"comment": "Enter a comment before posting it."})
+            _append_workflow_history(item, request.user, "commented", comment)
+            item.save(update_fields=["metadata", "updated_at"])
+            return success_response("Workflow comment added.", data=WorkflowInboxItemSerializer(item).data)
         if decision == "defer":
             if item.status != "pending":
                 raise ValidationError({"detail": "Only pending workflow items can be deferred."})
             item.status = "deferred"
-            item.defer_reason = str(request.data.get("reason") or "").strip()
+            item.defer_reason = comment
             item.deferred_until = request.data.get("deferred_until") or None
-            item.save(update_fields=["status", "defer_reason", "deferred_until", "updated_at"])
+            _append_workflow_history(item, request.user, "deferred", comment)
+            item.save(update_fields=["status", "defer_reason", "deferred_until", "metadata", "updated_at"])
+            log_business_event(event_group="workflow", event_type="deferred", tenant=item.tenant, actor=request.user, obj=item, note=f"{item.reference or item.title} deferred.")
             return success_response("Workflow item deferred.", data=WorkflowInboxItemSerializer(item).data)
         if decision == "resume":
             if item.status != "deferred":
                 raise ValidationError({"detail": "Only deferred workflow items can be resumed."})
             item.status = "pending"
             item.deferred_until = None
-            item.save(update_fields=["status", "deferred_until", "updated_at"])
+            _append_workflow_history(item, request.user, "resumed", comment)
+            item.save(update_fields=["status", "deferred_until", "metadata", "updated_at"])
+            log_business_event(event_group="workflow", event_type="resumed", tenant=item.tenant, actor=request.user, obj=item, note=f"{item.reference or item.title} resumed.")
             return success_response("Workflow item returned to your approval queue.", data=WorkflowInboxItemSerializer(item).data)
         item.acted_by = request.user
         item.acted_at = timezone.now()
         if decision == "reject":
+            _sync_workflow_entity_state(item, "reject", request.user)
             item.status = "rejected"
-            item.save(update_fields=["status", "acted_by", "acted_at", "updated_at"])
+            _append_workflow_history(item, request.user, "rejected", comment)
+            item.save(update_fields=["status", "acted_by", "acted_at", "metadata", "updated_at"])
             log_business_event(event_group="workflow", event_type="rejected", tenant=item.tenant, actor=request.user, obj=item, note=f"{item.reference or item.title} rejected.")
+            submitter_id = (item.metadata or {}).get("submitted_by")
+            if submitter_id:
+                SystemNotification.objects.create(tenant=item.tenant, recipient_id=submitter_id, category="workflow", title=f"Workflow rejected: {item.reference or item.title}", message=f"{request.user.get_full_name() or request.user.username} rejected this request.", route_path=item.route_path, source_type="workflow_inbox", source_id=item.id)
             return success_response("Workflow item rejected.", data=WorkflowInboxItemSerializer(item).data)
 
         next_node = _workflow_next_actionable_node(item)
+        if not next_node:
+            _sync_workflow_entity_state(item, "complete", request.user)
         item.status = "approved" if next_node else "completed"
-        item.save(update_fields=["status", "acted_by", "acted_at", "updated_at"])
+        _append_workflow_history(item, request.user, "approved" if next_node else "completed", comment)
+        item.save(update_fields=["status", "acted_by", "acted_at", "metadata", "updated_at"])
         log_business_event(event_group="workflow", event_type="approved" if next_node else "completed", tenant=item.tenant, actor=request.user, obj=item, note=f"{item.reference or item.title} approved.")
         if next_node:
             next_item = WorkflowInboxItem.objects.create(
@@ -2302,8 +2599,43 @@ class WorkflowInboxActionAPIView(APIView):
                 quick_actions=["approve", "reject"],
                 metadata={**(item.metadata or {}), "previous_inbox_item_id": item.id},
             )
+            _notify_workflow_recipients(next_item, next_node, f"{item.reference or item.title} is awaiting {next_node.name}.")
             return success_response("Approval recorded and forwarded to the next step.", data=WorkflowInboxItemSerializer(next_item).data)
+        submitter_id = (item.metadata or {}).get("submitted_by")
+        if submitter_id:
+            SystemNotification.objects.create(tenant=item.tenant, recipient_id=submitter_id, category="workflow", title=f"Workflow completed: {item.reference or item.title}", message=f"{request.user.get_full_name() or request.user.username} completed this request.", route_path=item.route_path, source_type="workflow_inbox", source_id=item.id)
         return success_response("Workflow completed.", data=WorkflowInboxItemSerializer(item).data)
+
+
+class SystemNotificationAPIView(APIView):
+    permission_classes = (IsAuthenticated,)
+
+    def get(self, request):
+        tenant = _request_tenant_or_none(request.user)
+        qs = SystemNotification.objects.filter(recipient=request.user)
+        if tenant:
+            qs = qs.filter(tenant=tenant)
+        else:
+            qs = qs.none()
+        if request.query_params.get("unread") in {"1", "true"}:
+            qs = qs.filter(is_read=False)
+        limit = min(max(int(request.query_params.get("limit", 50)), 1), 200)
+        results = list(qs[:limit].values("id", "category", "title", "message", "route_path", "source_type", "source_id", "is_read", "read_at", "created_at", "metadata"))
+        return success_response("Notifications loaded successfully.", data={"results": results, "unread_count": qs.filter(is_read=False).count()})
+
+    def post(self, request):
+        tenant = _request_tenant_or_none(request.user)
+        if not tenant:
+            raise PermissionDenied("Your account is not linked to an organization.")
+        action = str(request.data.get("action") or "read").lower()
+        qs = SystemNotification.objects.filter(tenant=tenant, recipient=request.user, is_read=False)
+        if action == "read_all":
+            count = qs.update(is_read=True, read_at=timezone.now())
+        elif action == "read":
+            count = qs.filter(pk=request.data.get("id")).update(is_read=True, read_at=timezone.now())
+        else:
+            raise ValidationError({"action": "Use read or read_all."})
+        return success_response("Notification state updated.", data={"updated": count})
 
 
 class AuditEventLogListAPIView(APIView):
@@ -2412,6 +2744,111 @@ class AuditAccessLogListAPIView(APIView):
 
         serializer = AuditAccessLogSerializer(qs.order_by("-created_at", "-id")[:limit], many=True)
         return success_response("Access logs loaded successfully.", data=serializer.data)
+
+
+class AuditExportAPIView(APIView):
+    """Download the same tenant-scoped audit evidence shown in the audit workspace."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        dataset = str(request.query_params.get("dataset") or "events").lower()
+        export_format = str(request.query_params.get("format") or "csv").lower()
+        if dataset not in {"events", "access"}:
+            raise ValidationError({"dataset": "Use events or access."})
+        if export_format not in {"csv", "pdf"}:
+            raise ValidationError({"format": "Use csv or pdf."})
+
+        user = request.user
+        can_view = _can_view_tenant_audit_logs(user) if dataset == "events" else _can_view_tenant_access_logs(user)
+        if not can_view:
+            raise PermissionDenied("You do not have permission to export audit logs.")
+        if not _can_export_audit_logs(user):
+            raise PermissionDenied("Your role is not allowed to export audit logs.")
+
+        model = AuditEventLog if dataset == "events" else AuditAccessLog
+        qs = model.objects.select_related("tenant", "branch", "actor")
+        can_view_global = _can_view_global_audit_logs(user) if dataset == "events" else _can_view_global_access_logs(user)
+        if not can_view_global:
+            tenant = _request_tenant_or_none(user)
+            if tenant is None:
+                qs = qs.none()
+            else:
+                qs = qs.filter(tenant=tenant)
+
+        tenant_code = request.query_params.get("tenant_code")
+        if tenant_code:
+            qs = qs.filter(tenant__code=tenant_code)
+        search = (request.query_params.get("search") or "").strip()
+        if dataset == "events":
+            for key in ("event_group", "event_type", "status", "branch_id", "model_label", "object_pk"):
+                value = request.query_params.get(key)
+                if value:
+                    qs = qs.filter(**{key: value})
+            if search:
+                qs = qs.filter(
+                    Q(object_repr__icontains=search) | Q(model_label__icontains=search) | Q(note__icontains=search)
+                    | Q(actor__username__icontains=search) | Q(actor__first_name__icontains=search) | Q(actor__last_name__icontains=search)
+                )
+        else:
+            status_code = request.query_params.get("status_code")
+            if status_code and status_code.isdigit():
+                qs = qs.filter(status_code=int(status_code))
+            if search:
+                qs = qs.filter(
+                    Q(request_path__icontains=search) | Q(actor__username__icontains=search)
+                    | Q(actor__first_name__icontains=search) | Q(actor__last_name__icontains=search)
+                )
+
+        rows = list(qs.order_by("-created_at", "-id")[:1000])
+        exported_at = timezone.localtime().strftime("%Y-%m-%d %H:%M")
+        if dataset == "events":
+            headers = ["Timestamp", "Actor", "Tenant", "Branch", "Category", "Action", "Outcome", "Model", "Record", "Record ID", "Changed fields", "Notes", "Client IP"]
+            values = [[
+                timezone.localtime(row.created_at).strftime("%Y-%m-%d %H:%M:%S"),
+                (row.actor.get_full_name() or row.actor.username) if row.actor else "Automated / legacy event",
+                row.tenant.name if row.tenant_id else "Global", row.branch.name if row.branch_id else "",
+                row.get_event_group_display(), row.event_type.replace("_", " ").title(), row.status.title(),
+                row.model_label, row.object_repr, row.object_pk,
+                "; ".join(f"{key}: {value.get('before', '—')} -> {value.get('after', value.get('related_ids', value.get('action', '—')))}" for key, value in (row.changes or {}).items() if key not in {"id", "tenant", "tenant_id", "branch", "branch_id"}),
+                row.note, (row.metadata or {}).get("client_ip", ""),
+            ] for row in rows]
+        else:
+            headers = ["Timestamp", "Actor", "Tenant", "Category", "Action", "Method", "Path", "Response status", "Client IP", "Referrer"]
+            values = [[
+                timezone.localtime(row.created_at).strftime("%Y-%m-%d %H:%M:%S"),
+                (row.actor.get_full_name() or row.actor.username) if row.actor else "Guest / anonymous",
+                row.tenant.name if row.tenant_id else "Global", row.get_event_group_display(), row.event_type.replace("_", " ").title(),
+                row.request_method, row.request_path, row.status_code or "", row.remote_addr, (row.metadata or {}).get("referer", ""),
+            ] for row in rows]
+
+        filename = f"audit-{dataset}-{timezone.localdate().isoformat()}"
+        if export_format == "csv":
+            response = HttpResponse(content_type="text/csv; charset=utf-8")
+            response["Content-Disposition"] = f'attachment; filename="{filename}.csv"'
+            writer = csv.writer(response)
+            writer.writerow(headers)
+            writer.writerows(values)
+            return response
+
+        buffer = BytesIO()
+        document = SimpleDocTemplate(buffer, pagesize=landscape(A4), rightMargin=22, leftMargin=22, topMargin=28, bottomMargin=28)
+        styles = getSampleStyleSheet()
+        body = [Paragraph(f"Audit Log Export - {escape(dataset.title())}", styles["Title"]), Spacer(1, 6), Paragraph(f"Generated {escape(exported_at)} | {len(values)} record(s)", styles["Normal"]), Spacer(1, 12)]
+        table_data = [headers] + [[Paragraph(escape(str(cell or "—"))[:180], styles["BodyText"]) for cell in row] for row in values]
+        table = Table(table_data, repeatRows=1, colWidths=[(A4[1] - 44) / len(headers)] * len(headers))
+        table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1f2937")), ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"), ("FONTSIZE", (0, 0), (-1, -1), 6.5),
+            ("LEADING", (0, 0), (-1, -1), 8), ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#d1d5db")),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"), ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f8fafc")]),
+            ("LEFTPADDING", (0, 0), (-1, -1), 3), ("RIGHTPADDING", (0, 0), (-1, -1), 3), ("TOPPADDING", (0, 0), (-1, -1), 3), ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ]))
+        body.append(table)
+        document.build(body)
+        response = HttpResponse(buffer.getvalue(), content_type="application/pdf")
+        response["Content-Disposition"] = f'attachment; filename="{filename}.pdf"'
+        return response
 
 
 class RecordAuditTrailAPIView(APIView):
@@ -3222,11 +3659,32 @@ class TenantSettingsAPIView(APIView):
         tenant, settings_obj = self._get_settings(pk)
         if settings_obj is None:
             return error_response("Tenant not found.", status_code=status.HTTP_404_NOT_FOUND)
-        denied = _require_tenant_access(request, tenant)
-        if denied:
-            return denied
-        ensure_shared_document_template_library()
-        return success_response("Settings loaded.", data=TenantSettingsSerializer(settings_obj, context={"request": request}).data)
+        is_admin = _is_superadmin(request.user) or _user_has_tenant_access(
+            request.user, tenant, require_admin=True
+        )
+        if not is_admin and not _user_has_tenant_access(request.user, tenant):
+            return error_response(
+                "You do not have permission to access this organization's settings.",
+                status_code=status.HTTP_403_FORBIDDEN,
+            )
+        if is_admin:
+            ensure_shared_document_template_library()
+            return success_response(
+                "Settings loaded.",
+                data=TenantSettingsSerializer(settings_obj, context={"request": request}).data,
+            )
+
+        # Workspace members need their organization identity at login, but
+        # must never receive administrative configuration or SMTP details.
+        safe_fields = {
+            "id", "tenant", "logo_url", "primary_color", "workspace_name",
+            "support_email", "footer_text", "invoice_prefix",
+        }
+        serialized = TenantSettingsSerializer(settings_obj, context={"request": request}).data
+        return success_response(
+            "Workspace branding loaded.",
+            data={key: value for key, value in serialized.items() if key in safe_fields},
+        )
 
     def put(self, request, pk):
         tenant, settings_obj = self._get_settings(pk)

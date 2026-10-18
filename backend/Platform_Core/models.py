@@ -563,6 +563,38 @@ class WorkflowInboxItem(TimeStampedModel):
         return f"{self.title} [{self.status}]"
 
 
+class SystemNotification(TimeStampedModel):
+    """A tenant-scoped in-app notification with an optional link back to work."""
+
+    CATEGORY_CHOICES = [
+        ("workflow", "Workflow"),
+        ("system", "System"),
+        ("reminder", "Reminder"),
+    ]
+
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name="system_notifications")
+    recipient = models.ForeignKey(User, on_delete=models.CASCADE, related_name="system_notifications")
+    category = models.CharField(max_length=30, choices=CATEGORY_CHOICES, default="system")
+    title = models.CharField(max_length=200)
+    message = models.TextField(blank=True)
+    route_path = models.CharField(max_length=255, blank=True)
+    source_type = models.CharField(max_length=80, blank=True)
+    source_id = models.PositiveIntegerField(blank=True, null=True)
+    is_read = models.BooleanField(default=False)
+    read_at = models.DateTimeField(blank=True, null=True)
+    metadata = models.JSONField(blank=True, default=dict)
+
+    class Meta:
+        ordering = ["is_read", "-created_at"]
+        indexes = [
+            models.Index(fields=["tenant", "recipient", "is_read"]),
+            models.Index(fields=["source_type", "source_id"]),
+        ]
+
+    def __str__(self):
+        return f"{self.recipient} - {self.title}"
+
+
 class SubscriptionPlan(TimeStampedModel):
     BILLING_PERIOD_CHOICES = [
         ("monthly", "Monthly"),
@@ -912,6 +944,9 @@ class TenantSettings(TimeStampedModel):
     # When enabled, a transaction may bill a customer other than the vehicle's
     # registered owner.  The owner relationship itself is never changed.
     allow_shared_weighbridge_vehicles = models.BooleanField(default=False)
+    # Standard workflow state codes are stable across modules. Tenants may
+    # tailor their display labels without breaking reusable workflow adapters.
+    document_status_policy = models.JSONField(blank=True, default=dict)
 
     class Meta:
         ordering = ["tenant__name"]
@@ -1641,6 +1676,7 @@ class AuditEventLog(TimeStampedModel):
         permissions = [
             ("view_tenant_audit_logs", "Can view tenant-scoped audit logs"),
             ("view_global_audit_logs", "Can view global audit logs across tenants"),
+            ("export_audit_logs", "Can export audit logs"),
         ]
 
     def __str__(self):

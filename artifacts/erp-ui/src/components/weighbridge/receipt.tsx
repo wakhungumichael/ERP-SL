@@ -25,6 +25,7 @@ export interface ReceiptTransaction {
   destination?: string;
   payment_mode?: string;
   payment_status?: string;
+  payment_required?: boolean;
   status?: string;
   approval_status?: boolean;
   gross_weight_date?: string | null;
@@ -189,9 +190,10 @@ export function ReceiptDialog({ transaction: t, open, onOpenChange, token }: Rec
 
   if (!t) return null;
 
-  const canPrintReceipt = t.status === 'Completed';
-  const receiptStatusLabel = t.payment_status || 'Pending';
-  const receiptOperator = t.actor_display_name || t.actor_username || t.operator || '';
+  const canPrintReceipt = t.status === 'In Progress' || t.status === 'Completed';
+  const receiptCashier = (t.actor_display_name || t.actor_username || t.operator || '').trim().split(/\s+/)[0] || '';
+  const requiresPayment = t.payment_required !== false;
+  const receiptStatusLabel = requiresPayment ? (t.payment_status || 'Pending') : 'Weighment Recorded';
   const txNum = String(t.id).padStart(5, '0');
   const settings = settingsData?.data ?? settingsData ?? {};
   const tenantCompanyName = (user as any)?.tenant_name || 'SL-ERP';
@@ -237,7 +239,7 @@ export function ReceiptDialog({ transaction: t, open, onOpenChange, token }: Rec
 
       {!canPrintReceipt && (
         <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">
-          Receipt printing is available after the weighing is completed. Completed receipts may show paid or payment pending.
+          Receipt printing is available after this transaction is forwarded for approval. Receipts may show paid or payment pending.
         </div>
       )}
 
@@ -315,8 +317,7 @@ export function ReceiptDialog({ transaction: t, open, onOpenChange, token }: Rec
                 ['Vehicle Type', t.vehicle_type_name],
                 ['Customer', t.customer_name],
                 ['Item / Commodity', t.item_name],
-                ['Destination', t.destination],
-                ['Operator', receiptOperator],
+                ['Cashier', receiptCashier],
               ] as [string, string | undefined][]).map(([label, value]) => value ? (
                 <div key={label} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
                   <span style={{ color: '#444' }}>{label}</span>
@@ -354,7 +355,7 @@ export function ReceiptDialog({ transaction: t, open, onOpenChange, token }: Rec
             </div>
 
             {/* Payment */}
-            <div className="section" style={{ marginBottom: 10 }}>
+            {requiresPayment && <div className="section" style={{ marginBottom: 10 }}>
               <div className="section-title" style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: 2, borderBottom: '1px solid #000', marginBottom: 6, paddingBottom: 2 }}>Payment</div>
               {([
                 ['Payment Mode', t.payment_mode],
@@ -376,6 +377,7 @@ export function ReceiptDialog({ transaction: t, open, onOpenChange, token }: Rec
                 </div>
               )}
             </div>
+            }
 
             {/* Timestamps */}
             <div style={{ borderTop: '1px dashed #000', paddingTop: 8, marginTop: 8, fontSize: 10, color: '#555' }}>

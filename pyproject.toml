@@ -42,7 +42,7 @@ dependencies = [
     "python-dotenv>=1.2.2",
     "qrcode>=8.2",
     "redis>=8.0.1",
-    "reportlab>=5.0.0",
+    "reportlab>=4.2.2,<5",
     "requests>=2.34.2",
     "social-auth-app-django>=6.0.0",
     "svglib>=2.0.2",
@@ -51,5 +51,5 @@ dependencies = [
     "toml>=0.10.2",
     "tzlocal>=5.4.4",
     "whitenoise>=6.12.0",
-    "xhtml2pdf>=0.2.14",
+    "xhtml2pdf==0.2.16",
 ]

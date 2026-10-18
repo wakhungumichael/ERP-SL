@@ -171,7 +171,7 @@ export const STATIC_NAV: NavSection[] = [
     title: 'Workflows',
     roles: ERP_USERS,
     items: [
-      { key: 'workflow-approvals', title: 'Approvals & Notifications', path: '/workflows/approvals', roles: ERP_USERS },
+      { key: 'workflow-approvals', title: 'Workflow Approvals', path: '/workflows/approvals', roles: ERP_USERS },
     ],
   },
 

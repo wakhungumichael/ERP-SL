@@ -3,6 +3,7 @@ from django.urls import path
 from .views import (
     ActiveRoleAPIView,
     AuditAccessLogListAPIView,
+    AuditExportAPIView,
     AuditEventLogListAPIView,
     AuthStatusAPIView,
     BackupPolicyDetailAPIView,
@@ -81,6 +82,9 @@ from .views import (
     WorkflowForwardAPIView,
     WorkflowInboxActionAPIView,
     WorkflowInboxAPIView,
+    WorkflowInboxSubjectAPIView,
+    WorkflowRequirementAPIView,
+    SystemNotificationAPIView,
     WorkflowNodeDefinitionDetailAPIView,
     WorkflowNodeDefinitionListCreateAPIView,
     WorkflowStepDefinitionDetailAPIView,
@@ -140,8 +144,11 @@ urlpatterns = [
     path("workflows/transitions/", WorkflowTransitionDefinitionListCreateAPIView.as_view(), name="workflow-transition-list"),
     path("workflows/transitions/<int:pk>/", WorkflowTransitionDefinitionDetailAPIView.as_view(), name="workflow-transition-detail"),
     path("workflows/inbox/", WorkflowInboxAPIView.as_view(), name="workflow-inbox"),
+    path("workflows/inbox/<int:pk>/subject/", WorkflowInboxSubjectAPIView.as_view(), name="workflow-inbox-subject"),
+    path("workflows/requirement/", WorkflowRequirementAPIView.as_view(), name="workflow-requirement"),
     path("workflows/forward/", WorkflowForwardAPIView.as_view(), name="workflow-forward"),
     path("workflows/inbox/<int:pk>/action/", WorkflowInboxActionAPIView.as_view(), name="workflow-inbox-action"),
+    path("notifications/", SystemNotificationAPIView.as_view(), name="system-notifications"),
     # Users & roles
     path("users/", PlatformUserListAPIView.as_view(), name="platform-user-list"),
     path("users/<int:pk>/", PlatformUserDetailAPIView.as_view(), name="platform-user-detail"),
@@ -154,6 +161,7 @@ urlpatterns = [
     path("permissions/", PlatformPermissionListAPIView.as_view(), name="platform-permission-list"),
     path("audit/events/", AuditEventLogListAPIView.as_view(), name="platform-audit-event-list"),
     path("audit/access/", AuditAccessLogListAPIView.as_view(), name="platform-audit-access-list"),
+    path("audit/export/", AuditExportAPIView.as_view(), name="platform-audit-export"),
     path("audit/record-trail/", RecordAuditTrailAPIView.as_view(), name="platform-record-audit-trail"),
     path("settings/branding/", PlatformBrandingSettingsAPIView.as_view(), name="platform-branding-settings"),
     # Tenants

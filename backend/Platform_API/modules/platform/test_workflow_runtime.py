@@ -10,6 +10,8 @@ from Platform_Core.models import (
     WorkflowEntityBinding,
     WorkflowInboxItem,
     WorkflowNodeDefinition,
+    WorkflowTransitionDefinition,
+    SystemNotification,
 )
 
 
@@ -67,6 +69,14 @@ class WorkflowRuntimeTests(TestCase):
         self.assertEqual(item.assigned_group, self.approver_group)
         self.assertEqual(item.status, "pending")
 
+        requirement = self.client.get(
+            reverse("workflow-requirement"),
+            {"module_slug": "weighbridge", "entity_type": "weighbridge_transaction", "trigger_event": "submit", "entity_id": 91},
+        )
+        self.assertEqual(requirement.status_code, 200, requirement.data)
+        self.assertTrue(requirement.data["data"]["required"])
+        self.assertTrue(requirement.data["data"]["in_progress"])
+
         self.client.force_authenticate(self.approver)
         completed = self.client.post(
             reverse("workflow-inbox-action", kwargs={"pk": item.pk}),
@@ -101,3 +111,46 @@ class WorkflowRuntimeTests(TestCase):
         self.assertEqual(draft.version, "1.1")
         self.assertEqual(draft.nodes.count(), 1)
         self.assertEqual(draft.entity_bindings.count(), 1)
+
+    def test_inactive_workflow_is_not_required_or_forwarded(self):
+        self.workflow.status = "inactive"
+        self.workflow.is_active = False
+        self.workflow.save()
+        self.client.force_authenticate(self.submitter)
+
+        requirement = self.client.get(
+            reverse("workflow-requirement"),
+            {"module_slug": "weighbridge", "entity_type": "weighbridge_transaction", "trigger_event": "submit"},
+        )
+        self.assertEqual(requirement.status_code, 200)
+        self.assertFalse(requirement.data["data"]["required"])
+
+        forwarded = self.client.post(reverse("workflow-forward"), {"module_slug": "weighbridge", "entity_type": "weighbridge_transaction", "entity_id": 92}, format="json")
+        self.assertEqual(forwarded.status_code, 400)
+
+    def test_high_value_request_routes_to_second_step_and_notifies_assignee(self):
+        finance = Group.objects.create(name="Workflow Finance")
+        finance_user = User.objects.create_user("workflow_finance", password="pass")
+        TenantUserProfile.objects.create(user=finance_user, tenant=self.tenant)
+        finance_user.groups.add(finance)
+        final_node = WorkflowNodeDefinition.objects.create(
+            workflow=self.workflow, code="finance-review", name="Finance Review", node_type="approval", step_order=2, approval_group=finance,
+        )
+        WorkflowTransitionDefinition.objects.create(
+            workflow=self.workflow, from_node=self.workflow.nodes.get(code="operator-review"), to_node=final_node,
+            name="High value", decision="approve", condition_field="context.total_amount", condition_operator="gte", condition_value="50000",
+        )
+        self.client.force_authenticate(self.submitter)
+        forwarded = self.client.post(reverse("workflow-forward"), {
+            "module_slug": "weighbridge", "entity_type": "weighbridge_transaction", "entity_id": 93,
+            "metadata": {"context": {"total_amount": 60000}},
+        }, format="json")
+        self.assertEqual(forwarded.status_code, 201, forwarded.data)
+        first = WorkflowInboxItem.objects.get(entity_id=93)
+        self.assertTrue(SystemNotification.objects.filter(recipient=self.approver, source_id=first.id).exists())
+        self.client.force_authenticate(self.approver)
+        approved = self.client.post(reverse("workflow-inbox-action", kwargs={"pk": first.pk}), {"decision": "approve"}, format="json")
+        self.assertEqual(approved.status_code, 200, approved.data)
+        second = WorkflowInboxItem.objects.get(entity_id=93, status="pending")
+        self.assertEqual(second.assigned_group, finance)
+        self.assertTrue(SystemNotification.objects.filter(recipient=finance_user, source_id=second.id).exists())

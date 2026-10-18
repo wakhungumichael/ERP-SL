@@ -32,6 +32,21 @@ class AuditLoggingTests(TestCase):
         self.assertEqual(logs.last().event_type, "update")
         self.assertEqual(logs.first().actor, self.user)
         self.assertIn("name", logs.last().changes)
+        self.assertIn("changed_at", logs.last().changes["name"])
+        self.assertNotIn("id", logs.last().changes)
+
+    def test_token_authenticated_request_is_used_by_model_audit_signals(self):
+        token, _ = Token.objects.get_or_create(user=self.user)
+        request = self.factory.post("/api/platform/tenants/", HTTP_AUTHORIZATION=f"Token {token.key}")
+        request.user = type("AnonymousUser", (), {"is_authenticated": False})()
+        set_audit_request(request)
+
+        tenant = Tenant.objects.create(name="Token Audit Tenant", code="token-audit-tenant")
+        clear_audit_request()
+
+        log = AuditEventLog.objects.filter(model_label="Platform_Core.Tenant", object_pk=str(tenant.pk)).first()
+        self.assertIsNotNone(log)
+        self.assertEqual(log.actor, self.user)
 
     def test_access_logs_are_tenant_aware(self):
         request = self.factory.get("/api/sales/products/", {"page": "1"})
@@ -127,6 +142,7 @@ class AuditLoggingTests(TestCase):
         self.assertIn("permissions", log.changes)
         self.assertEqual(log.changes["permissions"]["related_model"], "auth.Permission")
         self.assertEqual(log.changes["permissions"]["related_ids"], [permission.pk])
+        self.assertIn("changed_at", log.changes["permissions"])
 
     def test_tenant_admin_with_permission_can_fetch_only_own_tenant_audit_logs(self):
         self.user.user_permissions.add(

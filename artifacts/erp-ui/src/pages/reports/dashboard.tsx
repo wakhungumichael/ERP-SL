@@ -594,7 +594,7 @@ function ReportsDashboardContent() {
       {
         id: 'ops_approvals',
         tab: 'operations',
-        title: 'Pending Approvals',
+        title: 'Workflow Requests',
         description: '',
         metricLabel: 'Pending Reviews',
         metricValue: fmtInt(approvalQueue.length),

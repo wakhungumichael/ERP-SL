@@ -134,6 +134,33 @@ function OrganisationChargesPanel() {
   </CardContent></Card>;
 }
 
+function WorkflowLifecyclePanel({ value, onChange, onSave, saving }: {
+  value: any;
+  onChange: (value: any) => void;
+  onSave: () => void;
+  saving: boolean;
+}) {
+  const policy = { ...DEFAULT_DOCUMENT_STATUS_POLICY, ...(value ?? {}) };
+  return <Card>
+    <CardHeader className="border-b bg-muted/20 py-3 px-4">
+      <CardTitle className="text-xs font-bold uppercase tracking-widest">Document Lifecycle</CardTitle>
+    </CardHeader>
+    <CardContent className="space-y-5 p-6">
+      <p className="text-sm text-muted-foreground">Set tenant-facing labels for the reusable approval lifecycle. The stable engine states stay Draft, In Progress, Completed, and Rejected, so current and future modules use one reliable approval contract.</p>
+      <div className="grid gap-4 md:grid-cols-2">
+        {Object.entries(policy).map(([code, documentStatus]: [string, any]) => (
+          <div key={code} className="rounded-lg border p-4">
+            <Label className="capitalize">{code.replace('_', ' ')}</Label>
+            <Input className="mt-2" value={documentStatus?.label ?? ''} onChange={(event) => onChange({ ...policy, [code]: { ...documentStatus, label: event.target.value } })} />
+            <p className="mt-2 text-xs text-muted-foreground">{documentStatus?.description}</p>
+          </div>
+        ))}
+      </div>
+      <div className="flex justify-end"><Button onClick={onSave} disabled={saving}>{saving ? 'Saving...' : 'Save Lifecycle Settings'}</Button></div>
+    </CardContent>
+  </Card>;
+}
+
 const DEFAULT_SUPPORT_FORM_FIELDS = [
   { key: 'requester_name', label: 'Full name', type: 'text', placeholder: 'Your full name', required: false, enabled: true, options: [] },
   { key: 'requester_email', label: 'Email address', type: 'email', placeholder: 'you@example.com', required: true, enabled: true, options: [] },
@@ -181,6 +208,13 @@ const INVOICE_SETTINGS_FIELDS = [
   'default_tax_rate', 'invoice_template_id', 'estimate_template_id', 'receipt_template_id',
   'statement_template_id', 'purchase_order_template_id',
 ] as const;
+const WORKFLOW_LIFECYCLE_SETTINGS_FIELDS = ['document_status_policy'] as const;
+const DEFAULT_DOCUMENT_STATUS_POLICY = {
+  draft: { label: 'Draft', description: 'Created and still editable.' },
+  in_progress: { label: 'In Progress', description: 'Forwarded and awaiting workflow action.' },
+  completed: { label: 'Completed', description: 'Final approval completed.' },
+  rejected: { label: 'Rejected', description: 'Returned as not approved.' },
+};
 
 function buildSettingsPayload(source: any, fields: readonly string[]) {
   const payload = Object.fromEntries(fields.map((field) => [field, source?.[field]]));
@@ -1914,6 +1948,10 @@ export default function OrganizationSettings() {
       ...(source?.login_page_config ?? {}),
     },
     footer_menu: Array.isArray(source?.footer_menu) ? source.footer_menu : [],
+    document_status_policy: {
+      ...DEFAULT_DOCUMENT_STATUS_POLICY,
+      ...(source?.document_status_policy ?? {}),
+    },
     landing_page_config: {
       ...DEFAULT_LANDING_PAGE_CONFIG,
       ...(source?.landing_page_config ?? {}),
@@ -2388,6 +2426,7 @@ export default function OrganizationSettings() {
           <TabsTrigger value="email" className="gap-1.5"><Mail className="h-3.5 w-3.5" /> Email</TabsTrigger>
           <TabsTrigger value="invoicing" className="gap-1.5"><FileText className="h-3.5 w-3.5" /> Invoicing</TabsTrigger>
           <TabsTrigger value="taxes-charges" className="gap-1.5"><FileText className="h-3.5 w-3.5" /> Taxes & Charges</TabsTrigger>
+          <TabsTrigger value="workflow-lifecycle" className="gap-1.5"><FileText className="h-3.5 w-3.5" /> Workflow Lifecycle</TabsTrigger>
           <TabsTrigger value="templates" className="gap-1.5"><LayoutTemplate className="h-3.5 w-3.5" /> Templates</TabsTrigger>
           <TabsTrigger value="users" className="gap-1.5"><Users className="h-3.5 w-3.5" /> Users</TabsTrigger>
           <TabsTrigger value="branches" className="gap-1.5"><GitBranch className="h-3.5 w-3.5" /> Branches</TabsTrigger>
@@ -3146,6 +3185,17 @@ export default function OrganizationSettings() {
 
         <TabsContent value="taxes-charges" className="mt-6">
           <OrganisationChargesPanel />
+        </TabsContent>
+
+        <TabsContent value="workflow-lifecycle" className="mt-6">
+          {settingsForm && (
+            <WorkflowLifecyclePanel
+              value={settingsForm.document_status_policy}
+              onChange={(document_status_policy) => setSettingsForm((current: any) => ({ ...current, document_status_policy }))}
+              onSave={() => saveSettings.mutate(WORKFLOW_LIFECYCLE_SETTINGS_FIELDS)}
+              saving={saveSettings.isPending}
+            />
+          )}
         </TabsContent>
 
         <TabsContent value="templates" className="mt-6">

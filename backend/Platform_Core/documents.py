@@ -308,6 +308,14 @@ def _receipt_brand_color(primary_color):
     return brand_color
 
 
+def _receipt_footer_text(settings_obj):
+    """Exclude the SaaS bootstrap slogan from customer-facing weighbridge tickets."""
+    footer_text = str(getattr(settings_obj, "footer_text", "") or "").strip()
+    if footer_text.casefold() == "minimal erp and subscription billing for growing saas operators.".casefold():
+        return ""
+    return footer_text
+
+
 def _receipt_stylesheet(primary_color):
     # xhtml2pdf cannot resolve CSS custom properties, so compact receipts must
     # receive concrete colors even though browsers can handle CSS variables.
@@ -319,11 +327,11 @@ def _receipt_stylesheet(primary_color):
       @page {{ size: A5 landscape; margin: 4mm; }}
       body {{ margin: 0; background: #f3f4f6; color: #111827; font-family: Arial, Helvetica, sans-serif; }}
       .wb-receipt {{ width: 202mm; margin: 12px auto; padding: 4mm; background: #fff; border: 1px solid {brand_color}; font-size: 8.5pt; line-height: 1.18; page-break-inside: avoid; break-inside: avoid; }}
-      .wb-receipt__header {{ display: grid; grid-template-columns: 38mm 1fr; align-items: center; gap: 3mm; padding-bottom: 1.5mm; border-bottom: 2px solid {brand_color}; }}
-      .wb-receipt__logo {{ display: block; width: 36mm; max-height: 13mm; object-fit: contain; object-position: left center; }}
+      .wb-receipt__header {{ display: block; padding-bottom: 1.5mm; border-bottom: 2px solid {brand_color}; text-align: center; }}
+      .wb-receipt__logo {{ display: block; width: 36mm; max-height: 13mm; margin: 0 auto; object-fit: contain; object-position: center; }}
       .wb-receipt__company {{ font-size: 13pt; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }}
       .wb-receipt__branch {{ margin-top: .5mm; font-size: 8.5pt; font-weight: 700; }}
-      .wb-receipt__contact {{ grid-column: 1 / -1; color: #4b5563; font-size: 8pt; }}
+      .wb-receipt__contact {{ margin-top: 1mm; color: #4b5563; font-size: 8pt; }}
       .wb-receipt__title-row {{ display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 3mm; padding: 1.75mm 0; border-bottom: 1px dashed {brand_color}; }}
       .wb-receipt__kicker {{ font-size: 8.5pt; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; color: {brand_color}; }}
       .wb-receipt__title-row strong {{ font-size: 12pt; }}
@@ -436,8 +444,7 @@ def _default_body(document_type):
                   <th>Vehicle Type</th><td>{{ weighing.vehicle_type_name|default:"-" }}</td>
                 </tr>
                 <tr>
-                  <th>Destination</th><td>{{ weighing.destination|default:"-" }}</td>
-                  <th>Operator</th><td>{{ weighing.operator|default:"-" }}</td>
+                  <th>Cashier</th><td colspan="3">{{ weighing.cashier|default:"-" }}</td>
                 </tr>
               </tbody>
             </table>
@@ -459,11 +466,13 @@ def _default_body(document_type):
               {% endif %}
             </table>
 
+            {% if receipt_meta.requires_payment %}
             <section class="wb-receipt__payment">
               <div><span>Payment Mode</span><strong>{{ receipt_meta.payment_mode|default:"-" }}</strong></div>
               <div><span>Payment Status</span><strong>{{ receipt_meta.payment_status }}</strong></div>
               <div class="wb-receipt__charge"><span>Charge</span><strong>{{ totals.total_display }}</strong></div>
             </section>
+            {% endif %}
 
             {% if branding.footer_text %}
               <footer class="wb-receipt__footer">{{ branding.footer_text }}</footer>
@@ -844,11 +853,16 @@ def _receipt_context(transaction, settings_obj, request=None):
     company_name = getattr(tenant, "legal_name", "") or getattr(tenant, "name", "") or "SL-ERP"
     payment_status = getattr(transaction, "payment_status", "") or "Pending"
     payment_mode = getattr(transaction, "payment_mode", "") or ""
-    receipt_label = "PAID" if payment_status == "Paid" else "PAYMENT PENDING"
     cashier = getattr(transaction, "created_by", None) or getattr(transaction, "last_modified_by", None)
     cashier_name = ""
     if cashier is not None:
         cashier_name = (cashier.get_full_name() or "").strip() or str(getattr(cashier, "username", "") or "").strip()
+    cashier_name = cashier_name.split()[0] if cashier_name else ""
+    operation_type = getattr(transaction, "operation_type", None)
+    requires_payment = bool(getattr(operation_type, "requires_payment", False)) if operation_type is not None else getattr(transaction, "weight_type", "") != "Second Weight"
+    receipt_label = "PAID" if payment_status == "Paid" else "PAYMENT PENDING"
+    if not requires_payment:
+        receipt_label = "WEIGHMENT RECORDED"
     has_second_weight = bool(
         getattr(transaction, "tare_weight_date", None)
         or (getattr(transaction, "tare_weight", None) not in (None, 0))
@@ -886,7 +900,7 @@ def _receipt_context(transaction, settings_obj, request=None):
         "branding": {
             "logo_url": _safe_logo_url(settings_obj, request),
             "primary_color": getattr(settings_obj, "primary_color", "") or "#E85D26",
-            "footer_text": getattr(settings_obj, "footer_text", ""),
+            "footer_text": _receipt_footer_text(settings_obj),
         },
         "company": {
             "name": company_name,
@@ -913,9 +927,7 @@ def _receipt_context(transaction, settings_obj, request=None):
                     f"Vehicle: {getattr(vehicle, 'number_plate', '') or '—'}",
                     f"Vehicle Type: {getattr(vehicle_type, 'name', '') or '—'}",
                     f"Item: {getattr(item, 'name', '') or '—'}",
-                    f"Destination: {transaction.destination or '—'}",
-                    f"Payment Mode: {payment_mode or '—'}",
-                    f"Payment Status: {payment_status}",
+                    *([f"Payment Mode: {payment_mode or '—'}", f"Payment Status: {payment_status}"] if requires_payment else []),
                     f"Receipt Status: {receipt_label}",
                 ] if part
             ),
@@ -936,6 +948,7 @@ def _receipt_context(transaction, settings_obj, request=None):
             "payment_status": payment_status,
             "payment_mode": payment_mode,
             "receipt_label": receipt_label,
+            "requires_payment": requires_payment,
             "has_second_weight": has_second_weight,
             "show_pending_banner": payment_status != "Paid",
             "allow_release": payment_status == "Paid" or payment_mode == "Debt",
@@ -945,7 +958,7 @@ def _receipt_context(transaction, settings_obj, request=None):
             "vehicle_type_name": getattr(vehicle_type, "name", "") or "",
             "item_name": getattr(item, "name", "") or "",
             "destination": transaction.destination or "",
-            "operator": cashier_name or transaction.operator or "",
+            "cashier": cashier_name or (transaction.operator or "").split()[0],
             "gross_weight_display": f"{int(transaction.gross_weight or 0):,} kg" if transaction.gross_weight is not None else "-",
             "tare_weight_display": f"{int(transaction.tare_weight or 0):,} kg" if transaction.tare_weight is not None else "-",
             "net_weight_display": f"{int(transaction.net_weight or 0):,} kg" if transaction.net_weight is not None else "-",

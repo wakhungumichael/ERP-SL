@@ -699,13 +699,13 @@ export function Shell({ children }: { children: React.ReactNode }) {
     enabled: !!token,
     refetchInterval: 60_000,
     queryFn: async () => {
-      const response = await fetch('/api/platform/workflows/inbox/?status=pending&limit=99', { headers: { Authorization: `Token ${token}` } });
-      if (!response.ok) return { count: 0 };
+      const response = await fetch('/api/platform/notifications/?unread=1&limit=99', { headers: { Authorization: `Token ${token}` } });
+      if (!response.ok) return { unread_count: 0 };
       const body = await response.json();
       return body?.data ?? body;
     },
   });
-  const approvalCount = Number(workflowNotifications.data?.count ?? 0);
+  const approvalCount = Number(workflowNotifications.data?.unread_count ?? 0);
   const openRoute = (path: string) => {
     setLocation(path);
     setGlobalSearch('');

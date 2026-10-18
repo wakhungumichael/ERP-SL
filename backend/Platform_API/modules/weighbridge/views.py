@@ -18,6 +18,7 @@ from django.core.files.base import ContentFile
 from django.db import transaction as db_transaction
 from django.http import HttpResponse
 from django.db.models import Q
+from django.utils.dateparse import parse_datetime
 from django.utils import timezone
 from rest_framework import generics, serializers, status
 from rest_framework.exceptions import PermissionDenied
@@ -226,6 +227,7 @@ class TransactionSerializer(serializers.ModelSerializer):
     vehicle_type_name = serializers.SerializerMethodField()
     operation_type_name = serializers.CharField(source="operation_type.name", read_only=True)
     operation_type_flow_kind = serializers.CharField(source="operation_type.flow_kind", read_only=True)
+    payment_required = serializers.SerializerMethodField()
     auto_invoice_id = serializers.SerializerMethodField()
     actor_user_id = serializers.SerializerMethodField()
     actor_display_name = serializers.SerializerMethodField()
@@ -308,6 +310,9 @@ class TransactionSerializer(serializers.ModelSerializer):
         actor = self._get_actor(obj)
         return actor.username if actor else ""
 
+    def get_payment_required(self, obj):
+        return _transaction_requires_payment(obj)
+
     def validate_status(self, value):
         normalized = (value or "").strip()
         if normalized == "Pending":
@@ -350,7 +355,7 @@ class TransactionSerializer(serializers.ModelSerializer):
             "customer", "customer_name", "customer_email",
             "vehicle", "vehicle_plate",
             "vehicle_type", "vehicle_type_name",
-            "operation_type", "operation_type_name", "operation_type_flow_kind",
+            "operation_type", "operation_type_name", "operation_type_flow_kind", "payment_required",
             "actor_user_id", "actor_display_name", "actor_username",
             "operator", "driver_name", "driver_phone", "item", "item_name",
             "gross_weight", "tare_weight", "net_weight",
@@ -372,7 +377,7 @@ class WeighingOperationTypeSerializer(serializers.ModelSerializer):
     class Meta:
         model = WeighingOperationType
         fields = [
-            "id", "code", "name", "description", "flow_kind",
+            "id", "code", "name", "description", "flow_kind", "requires_payment",
             "is_active", "display_order", "is_default", "legacy_weight_type",
         ]
 
@@ -575,6 +580,7 @@ DEFAULT_WEIGHING_OPERATION_TYPES = [
         "name": "First Weight",
         "description": "Capture gross weight and open a new weighbridge transaction.",
         "flow_kind": "first",
+        "requires_payment": True,
         "display_order": 10,
         "is_default": True,
     },
@@ -583,6 +589,7 @@ DEFAULT_WEIGHING_OPERATION_TYPES = [
         "name": "Second Weight",
         "description": "Capture tare weight and complete a pending first-weight transaction.",
         "flow_kind": "second",
+        "requires_payment": False,
         "display_order": 20,
         "is_default": True,
     },
@@ -591,6 +598,7 @@ DEFAULT_WEIGHING_OPERATION_TYPES = [
         "name": "Single Weight",
         "description": "Capture a one-step weighing transaction without pairing.",
         "flow_kind": "single",
+        "requires_payment": True,
         "display_order": 30,
         "is_default": False,
     },
@@ -599,6 +607,7 @@ DEFAULT_WEIGHING_OPERATION_TYPES = [
         "name": "Axle Weight",
         "description": "Capture axle-based weighing as a configurable operational mode.",
         "flow_kind": "axle",
+        "requires_payment": True,
         "display_order": 40,
         "is_default": False,
     },
@@ -637,6 +646,14 @@ def _resolve_transaction_flow(transaction):
     if transaction.weight_type == "Second Weight":
         return "second"
     return "first"
+
+
+def _transaction_requires_payment(transaction):
+    """Respect a configured operation type and keep legacy second weights free."""
+    operation_type = getattr(transaction, "operation_type", None)
+    if operation_type is not None:
+        return bool(operation_type.requires_payment)
+    return _resolve_transaction_flow(transaction) != "second"
 
 
 def _resolve_payload_flow_kind(*, operation_type=None, weight_type=""):
@@ -860,9 +877,11 @@ def _approve_transaction(transaction):
 
 
 def _receipt_allowed(transaction):
-    # A receipt is evidence of a completed weighing. It may legitimately show
-    # either PAID or PAYMENT PENDING. Approval is a separate workflow control.
-    return transaction.status == "Completed"
+    # A receipt is never available for a record that is still being prepared.
+    # The workflow engine sets a forwarded transaction to In Progress and moves
+    # it to Completed after final approval. Payment remains independent, so an
+    # allowed receipt may still correctly show Payment Pending.
+    return transaction.status in {"In Progress", "Completed"}
 
 
 def _get_tenant_scoped_transaction(user, pk, select_related=None):
@@ -1879,7 +1898,7 @@ class TransactionEmailReceiptView(APIView):
 
         if not _receipt_allowed(tx):
             return Response(
-                {"error": "Receipt is available only after the weighing is completed."},
+                {"error": "Receipt is available only after this transaction has been forwarded for approval."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -1936,19 +1955,23 @@ class TransactionEmailReceiptView(APIView):
             f"Vehicle Type:   {vtype}",
             f"Customer:       {customer_name}",
             f"Item:           {item_name}",
-            f"Destination:    {tx.destination or '—'}",
-            f"Operator:       {operator_name}",
+            f"Cashier:        {operator_name}",
             "",
             "--- WEIGHTS ---",
             f"Gross Weight:   {_kg(tx.gross_weight)}",
             f"Tare Weight:    {_kg(tx.tare_weight)}",
             f"Net Weight:     {_kg(tx.net_weight)}",
             "",
-            "--- PAYMENT ---",
-            f"Mode:           {tx.payment_mode or '—'}",
-            f"Payment Status: {tx.payment_status or '—'}",
-            f"CHARGE:         {_kes(tx.charge)}",
-            "",
+            *(
+                [
+                    "--- PAYMENT ---",
+                    f"Mode:           {tx.payment_mode or '—'}",
+                    f"Payment Status: {tx.payment_status or '—'}",
+                    f"CHARGE:         {_kes(tx.charge)}",
+                    "",
+                ]
+                if _transaction_requires_payment(tx) else []
+            ),
             "--- TIMESTAMPS ---",
             f"First Weight:   {_dt(tx.gross_weight_date or tx.created_at)}",
             f"Second Weight:  {_dt(tx.tare_weight_date)}",
@@ -1977,8 +2000,7 @@ class TransactionEmailReceiptView(APIView):
     <tr><td style="color:#555;padding:3px 0;">Vehicle Type</td><td style="font-weight:bold;text-align:right;">{vtype}</td></tr>
     <tr><td style="color:#555;padding:3px 0;">Customer</td><td style="font-weight:bold;text-align:right;">{customer_name}</td></tr>
     <tr><td style="color:#555;padding:3px 0;">Item / Commodity</td><td style="font-weight:bold;text-align:right;">{item_name}</td></tr>
-    <tr><td style="color:#555;padding:3px 0;">Destination</td><td style="font-weight:bold;text-align:right;">{tx.destination or '—'}</td></tr>
-    <tr><td style="color:#555;padding:3px 0;">Operator</td><td style="font-weight:bold;text-align:right;">{operator_name}</td></tr>
+    <tr><td style="color:#555;padding:3px 0;">Cashier</td><td style="font-weight:bold;text-align:right;">{operator_name}</td></tr>
   </table>
   <div style="background:#f5f5f5;border:1px solid #000;padding:12px;margin:12px 0;text-align:center;">
     <div style="display:flex;justify-content:space-around;margin-bottom:10px;">
@@ -1991,12 +2013,12 @@ class TransactionEmailReceiptView(APIView):
       <div style="font-size:26px;font-weight:bold;">{_kg(tx.net_weight)}</div>
     </div>
   </div>
-  <div style="border-top:2px solid #000;padding-top:10px;margin-top:10px;font-size:15px;font-weight:bold;display:flex;justify-content:space-between;">
+  {f'''<div style="border-top:2px solid #000;padding-top:10px;margin-top:10px;font-size:15px;font-weight:bold;display:flex;justify-content:space-between;">
     <span>CHARGE</span><span>{_kes(tx.charge)}</span>
   </div>
   <div style="font-size:12px;color:#555;margin-top:4px;display:flex;justify-content:space-between;">
     <span>Mode</span><span>{tx.payment_mode or '—'}</span>
-  </div>
+  </div>''' if _transaction_requires_payment(tx) else ''}
   <div style="text-align:center;font-size:10px;margin-top:16px;color:#666;border-top:1px dashed #000;padding-top:10px;">
     <div>Thank you for using our weighbridge</div>
     <div style="font-weight:bold;letter-spacing:1px;margin-top:4px;">SL-ERP OPERATIONS PLATFORM</div>
@@ -2048,7 +2070,7 @@ class TransactionReceiptDocumentView(APIView):
 
         if not _receipt_allowed(tx):
             return Response(
-                {"error": "Receipt is available only after the weighing is completed."},
+                {"error": "Receipt is available only after this transaction has been forwarded for approval."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -2900,7 +2922,7 @@ class LiveWeightView(APIView):
 class TransactionReceivePaymentView(APIView):
     """
     POST /api/commercial-weighbridge/transactions/<pk>/receive-payment/
-    Body: { method: str, reference: str }
+    Body: { method: str, reference: str, payment_received_at?: ISO datetime }
     Records a payment decision against a transaction and keeps any linked
     auto-generated invoice in sync. Debt remains outstanding until settled
     through invoice payment or consolidation.
@@ -2911,7 +2933,7 @@ class TransactionReceivePaymentView(APIView):
         try:
             tx = _get_tenant_scoped_transaction(
                 request.user, pk,
-                select_related=["customer", "vehicle", "vehicle_type", "auto_invoice"],
+                select_related=["customer", "vehicle", "vehicle_type", "operation_type", "auto_invoice"],
             )
         except Transaction.DoesNotExist:
             return Response({"error": f"Transaction {pk} not found."}, status=status.HTTP_404_NOT_FOUND)
@@ -2923,6 +2945,12 @@ class TransactionReceivePaymentView(APIView):
                     "transaction_id": tx.id,
                     "payment_status": tx.payment_status,
                 },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not _transaction_requires_payment(tx):
+            return Response(
+                {"error": "Payment is not enabled for this weighment operation type."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -2948,8 +2976,22 @@ class TransactionReceivePaymentView(APIView):
                 return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
         # Debt should stay outstanding; only settled methods mark the
-        # transaction paid immediately.
-        payment_received_at = timezone.now() if not is_debt else None
+        # transaction paid immediately. A cashier may backdate a received
+        # payment, but an invalid value never replaces the current timestamp.
+        payment_received_at = None
+        if not is_debt:
+            supplied_received_at = (request.data.get("payment_received_at") or "").strip()
+            if supplied_received_at:
+                payment_received_at = parse_datetime(supplied_received_at)
+                if payment_received_at is None:
+                    return Response(
+                        {"error": "Payment received date and time is invalid."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                if timezone.is_naive(payment_received_at):
+                    payment_received_at = timezone.make_aware(payment_received_at, timezone.get_current_timezone())
+            else:
+                payment_received_at = timezone.now()
 
         tx.payment_mode = method
         tx.payment_status = next_payment_status
@@ -3179,11 +3221,13 @@ def _apply_transaction_visibility_scope(queryset, user):
 
 
 def _transaction_operator_display(transaction):
-    """Use the captured cashier account name instead of a legacy email string."""
+    """Use the cashier's first name instead of a legacy email address."""
     actor = getattr(transaction, "created_by", None) or getattr(transaction, "last_modified_by", None)
     if actor is not None:
-        return (actor.get_full_name() or "").strip() or str(getattr(actor, "username", "") or "").strip()
-    return str(getattr(transaction, "operator", "") or "")
+        name = (actor.get_full_name() or "").strip() or str(getattr(actor, "username", "") or "").strip()
+    else:
+        name = str(getattr(transaction, "operator", "") or "").strip()
+    return name.split()[0] if name else ""
 
 
 def _require_reference_write_access(user, model, action):

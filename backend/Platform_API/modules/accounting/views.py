@@ -1110,7 +1110,14 @@ class AccountingDashboardView(APIView):
         _, denied = _accounting_enabled_or_response(request.user)
         if denied is not None:
             return denied
-        _ensure_accounting_seeded(request.user)
+        # A dashboard must remain available for legacy tenants even when an
+        # optional default-ledger repair cannot be completed on this request.
+        # Finance setup screens can still surface and correct the underlying
+        # configuration without blocking a user immediately after login.
+        try:
+            _ensure_accounting_seeded(request.user)
+        except Exception:
+            logger.exception("Automatic accounting setup failed while loading the dashboard.")
         today = timezone.now().date()
         month_start = today.replace(day=1)
         year_start  = today.replace(month=1, day=1)

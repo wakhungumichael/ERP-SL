@@ -20,13 +20,20 @@ export type FormValidationErrors = {
 
 export class ApiFormError extends Error {
   validationErrors: FormValidationErrors;
+  status?: number;
 
-  constructor(message: string, validationErrors: FormValidationErrors) {
+  constructor(message: string, validationErrors: FormValidationErrors, status?: number) {
     super(message);
     this.name = 'ApiFormError';
     this.validationErrors = validationErrors;
+    this.status = status;
   }
 }
+
+export type UserFacingError = {
+  title: string;
+  description: string;
+};
 
 const FIELD_LABELS: Record<string, string> = {
   phone_number: 'Phone number',
@@ -159,6 +166,50 @@ export function formatApiError(value: unknown, fallback = 'The request could not
   return messages.length > 0 ? messages.join(' ') : toUserFriendlyError(value, fallback);
 }
 
+/**
+ * Provides one consistent, non-technical notification for failed page loads
+ * and actions. Field-level validation remains available through parseFormErrors.
+ */
+export function getUserFacingError(
+  value: unknown,
+  fallback = 'Please refresh the page and try again.',
+): UserFacingError {
+  const rawMessage = value instanceof Error ? value.message : String(value ?? '');
+  const status = value instanceof ApiFormError
+    ? value.status
+    : Number(/(?:^|\s)([1-5]\d\d)(?:\s|$)/.exec(rawMessage)?.[1]) || undefined;
+  if (status === 400 || status === 422) {
+    return { title: 'Please check the information entered', description: formatApiError(value, fallback) };
+  }
+  if (status === 401) {
+    return { title: 'Sign-in required', description: 'Your session has ended. Please sign in again and continue.' };
+  }
+  if (status === 403) {
+    return { title: 'Access restricted', description: 'Your role does not allow this action. Contact an administrator if you need access.' };
+  }
+  if (status === 404) {
+    return { title: 'Record not available', description: 'This record may have been removed or you may no longer have access to it.' };
+  }
+  if (status === 409) {
+    return { title: 'Record changed', description: 'Another user updated this record. Refresh the page before trying again.' };
+  }
+  if (status === 429) {
+    return { title: 'Please wait a moment', description: 'Too many requests were sent. Try again shortly.' };
+  }
+  if (status != null && status >= 500) {
+    return {
+      title: 'This page is temporarily unavailable',
+      description: 'Your data is safe. Refresh the page and try again. If the problem continues, contact your administrator.',
+    };
+  }
+
+  const description = formatApiError(value, fallback);
+  if (/could not reach the server|connection/i.test(description)) {
+    return { title: 'Connection unavailable', description };
+  }
+  return { title: 'We could not complete that request', description };
+}
+
 export async function apiErrorFromResponse(response: Response, fallback?: string) {
   const raw = await response.text().catch(() => '');
   const validationErrors = parseFormErrors(raw);
@@ -166,5 +217,5 @@ export async function apiErrorFromResponse(response: Response, fallback?: string
   if (Object.keys(validationErrors.fields).length === 0 && validationErrors.form.length === 0) {
     validationErrors.form = [message];
   }
-  return new ApiFormError(message, validationErrors);
+  return new ApiFormError(message, validationErrors, response.status);
 }

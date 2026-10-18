@@ -28,6 +28,7 @@ import {
 
 const STATUS_STYLE: Record<string, string> = {
   Draft:     'bg-slate-100 text-slate-800 border-slate-300 dark:bg-slate-900/30 dark:text-slate-300',
+  'In Progress': 'bg-blue-100 text-blue-800 border-blue-300 dark:bg-blue-900/30 dark:text-blue-300',
   Recalled:  'bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-900/30 dark:text-amber-400',
   Rejected:  'bg-rose-100 text-rose-800 border-rose-300 dark:bg-rose-900/30 dark:text-rose-400',
   Completed: 'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-900/30 dark:text-emerald-400',
@@ -231,7 +232,12 @@ function ReceivePaymentDialog({ open, onOpenChange, transactionId, token, onSucc
   const { toast } = useToast();
   const [method, setMethod] = useState('Cash');
   const [reference, setReference] = useState('');
+  const [receivedAt, setReceivedAt] = useState('');
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (open) setReceivedAt(new Date(Date.now() - new Date().getTimezoneOffset() * 60_000).toISOString().slice(0, 16));
+  }, [open]);
 
   const handleConfirm = async () => {
     setLoading(true);
@@ -239,7 +245,7 @@ function ReceivePaymentDialog({ open, onOpenChange, transactionId, token, onSucc
       const res = await fetch(`/api/commercial-weighbridge/transactions/${transactionId}/receive-payment/`, {
         method: 'POST',
         headers: { Authorization: `Token ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ method, reference }),
+        body: JSON.stringify({ method, reference, payment_received_at: receivedAt ? new Date(receivedAt).toISOString() : undefined }),
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body?.error ?? res.statusText);
@@ -273,6 +279,10 @@ function ReceivePaymentDialog({ open, onOpenChange, transactionId, token, onSucc
               </SelectContent>
             </Select>
           </div>
+          {method !== 'Debt' && <div className="space-y-1.5">
+            <Label>Payment Received At</Label>
+            <Input type="datetime-local" value={receivedAt} max={new Date(Date.now() - new Date().getTimezoneOffset() * 60_000).toISOString().slice(0, 16)} onChange={e => setReceivedAt(e.target.value)} />
+          </div>}
           <div className="space-y-1.5">
             <Label>Reference / Receipt #</Label>
             <Input
@@ -337,8 +347,8 @@ export default function TransactionDetail({ id }: { id: string }) {
   const canReject        = CAN_APPROVE.includes(role) && tx.status !== 'Completed';
   const canExport        = CAN_EXPORT.includes(role);
   const canEdit          = tx.status !== 'Completed';
-  const canReceivePayment = tx.payment_status !== 'Paid' && tx.status !== 'Rejected';
-  const canPrintReceipt  = tx.status === 'Completed';
+  const canReceivePayment = tx.payment_required !== false && tx.payment_status !== 'Paid' && tx.status !== 'Rejected';
+  const canPrintReceipt  = tx.status === 'In Progress' || tx.status === 'Completed';
   // auto_invoice_id from API, or an invoice returned after receive-payment
   const linkedInvoiceId  = invoiceId ?? tx.auto_invoice_id ?? null;
 
@@ -421,6 +431,26 @@ export default function TransactionDetail({ id }: { id: string }) {
               reference={tx.transaction_number || `TX-${tx.id}`}
               title={`Approval required: ${tx.transaction_number || `TX-${tx.id}`}`}
               detail={`Weighbridge transaction for ${tx.customer_name || tx.customer_display || 'the selected customer'} is ready for review.`}
+              context={{
+                total_amount: Number(tx.charge || 0),
+                charge: Number(tx.charge || 0),
+                status: tx.status,
+                branch_id: tx.branch ?? null,
+                is_urgent: false,
+                record_snapshot: {
+                  transaction_number: tx.transaction_number || `TX-${tx.id}`,
+                  branch: tx.branch_name ?? '',
+                  customer: tx.customer_name || tx.customer_display || '',
+                  vehicle: tx.vehicle_plate ?? '',
+                  commodity: tx.item_name ?? tx.item_display ?? '',
+                  destination: tx.destination ?? '',
+                  gross_weight: tx.gross_weight ?? 0,
+                  tare_weight: tx.tare_weight ?? 0,
+                  net_weight: tx.net_weight ?? 0,
+                  payment_status: tx.payment_status ?? '',
+                  charge: Number(tx.charge || 0),
+                },
+              }}
               onForwarded={() => queryClient.invalidateQueries({ queryKey: getGetTransactionQueryKey(numericId) })}
             />
           ) : null}
@@ -487,6 +517,7 @@ export default function TransactionDetail({ id }: { id: string }) {
           >
             <Printer className="h-3.5 w-3.5" /> Receipt
           </Button>
+          <RecordAuditTrail modelLabel="SL_Weighbridge.Transaction" objectPk={numericId} />
           {canExport && (
             <Button
               size="sm"
@@ -571,7 +602,7 @@ export default function TransactionDetail({ id }: { id: string }) {
           </Card>
 
           {/* Payment & charge */}
-          <Card>
+          {tx.payment_required !== false && <Card>
             <CardHeader className="bg-muted/20 border-b">
               <CardTitle className="text-xs font-bold uppercase tracking-widest">Payment & Charge</CardTitle>
             </CardHeader>
@@ -603,7 +634,7 @@ export default function TransactionDetail({ id }: { id: string }) {
                 />
               )}
             </CardContent>
-          </Card>
+          </Card>}
         </div>
       </div>
 
@@ -641,8 +672,6 @@ export default function TransactionDetail({ id }: { id: string }) {
           </div>
         </CardContent>
       </Card>
-
-      <RecordAuditTrail modelLabel="SL_Weighbridge.Transaction" objectPk={numericId} />
 
       <EditTransactionDialog
         open={editOpen}

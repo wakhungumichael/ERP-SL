@@ -811,6 +811,7 @@ type OperationType = {
   name: string;
   description?: string;
   flow_kind: 'first' | 'second' | 'single' | 'axle';
+  requires_payment: boolean;
   is_active: boolean;
   display_order: number | string;
   is_default: boolean;
@@ -822,6 +823,7 @@ const emptyOperationType = (): OperationType => ({
   name: '',
   description: '',
   flow_kind: 'first',
+  requires_payment: true,
   is_active: true,
   display_order: 10,
   is_default: false,
@@ -867,6 +869,11 @@ function OperationTypesTab() {
       label: 'Flow',
       cellClassName: 'uppercase text-xs',
       render: (row) => row.flow_kind,
+    },
+    {
+      key: 'requires_payment',
+      label: 'Payment',
+      render: (row) => <Badge variant={row.requires_payment ? 'secondary' : 'outline'}>{row.requires_payment ? 'Required' : 'Not required'}</Badge>,
     },
     {
       key: 'code',
@@ -968,6 +975,13 @@ function OperationTypesTab() {
                 <div className="text-xs text-muted-foreground">Inactive types are hidden from operators.</div>
               </div>
               <Switch checked={form.is_active} onCheckedChange={v => setForm(p => ({ ...p, is_active: v }))} />
+            </div>
+            <div className="flex items-center justify-between rounded-md border p-3">
+              <div>
+                <div className="text-sm font-medium">Require payment</div>
+                <div className="text-xs text-muted-foreground">Show payment and charge details on receipts for this operation type.</div>
+              </div>
+              <Switch checked={form.requires_payment} onCheckedChange={v => setForm(p => ({ ...p, requires_payment: v }))} />
             </div>
           </div>
           <DialogFooter>

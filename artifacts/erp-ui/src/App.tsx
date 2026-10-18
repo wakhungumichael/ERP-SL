@@ -1,7 +1,7 @@
 import { QueryCache, QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Toaster } from '@/components/ui/toaster';
 import { toast } from '@/hooks/use-toast';
-import { formatApiError } from '@/lib/api-errors';
+import { getUserFacingError } from '@/lib/api-errors';
 import { ERPErrorBoundary } from '@/components/erp/error-boundary';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Route, Switch, Router as WouterRouter } from 'wouter';
@@ -106,9 +106,10 @@ const queryClient = new QueryClient({
       // Loading errors rarely have a page-level handler. Give users a clear
       // notification without duplicating mutation toasts managed by forms.
       if (query.state.data !== undefined) return;
+      const message = getUserFacingError(error, 'Refresh the page and try again.');
       toast({
-        title: 'Unable to load this information',
-        description: formatApiError(error, 'Refresh the page and try again.'),
+        title: message.title,
+        description: message.description,
         variant: 'destructive',
       });
     },

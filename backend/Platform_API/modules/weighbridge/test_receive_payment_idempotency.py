@@ -151,3 +151,20 @@ class ReceivePaymentIdempotencyTests(TestCase):
         self.assertEqual(invoice.status, "issued")
         self.assertEqual(response.data["payment_status"], "Pending")
         self.assertEqual(response.data["invoice_status"], "issued")
+
+    def test_no_payment_operation_rejects_payment_collection(self):
+        from SL_Weighbridge.models import WeighingOperationType
+
+        self.tx.operation_type = WeighingOperationType.objects.create(
+            tenant=self.tenant,
+            code="SECOND_WEIGHT_TEST",
+            name="Second Weight Test",
+            flow_kind="second",
+            requires_payment=False,
+        )
+        self.tx.save(update_fields=["operation_type"])
+
+        response = self._post_receive_payment()
+
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertIn("not enabled", response.data["error"])

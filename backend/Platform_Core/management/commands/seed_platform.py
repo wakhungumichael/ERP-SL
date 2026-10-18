@@ -433,7 +433,7 @@ class Command(BaseCommand):
 
         tenant_audit_permissions = list(
             Permission.objects.filter(
-                codename__in=["view_tenant_audit_logs", "view_tenant_access_logs"]
+                codename__in=["view_tenant_audit_logs", "view_tenant_access_logs", "export_audit_logs"]
             )
         )
         global_audit_permissions = list(
@@ -443,6 +443,7 @@ class Command(BaseCommand):
                     "view_tenant_access_logs",
                     "view_global_audit_logs",
                     "view_global_access_logs",
+                    "export_audit_logs",
                 ]
             )
         )

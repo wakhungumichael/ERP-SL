@@ -318,6 +318,9 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
   const [driverDetailsPrefilled, setDriverDetailsPrefilled] = useState(false);
   const [plateInput, setPlateInput] = useState('');
   const [selectedVehicle, setSelectedVehicle] = useState<any>(null);
+  // Keeps a vehicle selected after a plate lookup, including when it is not in
+  // the current dropdown page or the cashier bills a different (renter) customer.
+  const [selectedFirstVehicle, setSelectedFirstVehicle] = useState<any>(null);
   const [showVehicleResults, setShowVehicleResults] = useState(false);
   const [snapshotVersion, setSnapshotVersion] = useState(0);
   const [capturedCameraImage, setCapturedCameraImage] = useState<string | null>(null);
@@ -361,8 +364,13 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
   const allowSharedVehicles = Boolean(vehicleUseSettings?.allow_shared_weighbridge_vehicles);
   const { data: vehicles } = useQuery({
     queryKey: ['wb-vehicles-entry', customerId, allowSharedVehicles],
-    queryFn: async () => fetch(`/api/commercial-weighbridge/vehicles/?${allowSharedVehicles ? '' : `customer_id=${customerId}`}`, { headers: authHeaders() }).then((res) => res.json()),
-    enabled: !!customerId,
+    queryFn: async () => {
+      const query = allowSharedVehicles
+        ? 'page_size=200'
+        : `customer_id=${encodeURIComponent(customerId)}&page_size=200`;
+      return fetch(`/api/commercial-weighbridge/vehicles/?${query}`, { headers: authHeaders() }).then((res) => res.json());
+    },
+    enabled: allowSharedVehicles || !!customerId,
   });
   const { data: vehicleSearchResults, isFetching: searchingVehicles } = useQuery({
     queryKey: ['wb-vehicle-search-entry', plateInput],
@@ -527,16 +535,23 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
     [customerList],
   );
 
+  const entryVehicleList = useMemo(() => {
+    if (!selectedFirstVehicle || vehicleList.some((vehicle: any) => String(vehicle.id) === String(selectedFirstVehicle.id))) {
+      return vehicleList;
+    }
+    return [selectedFirstVehicle, ...vehicleList];
+  }, [selectedFirstVehicle, vehicleList]);
+
   const vehicleOptions = useMemo(
-    () => vehicleList.map((vehicle: any) => ({
+    () => entryVehicleList.map((vehicle: any) => ({
       value: String(vehicle.id),
       label: vehicle.number_plate,
       meta: [vehicle.customer_name ? `Owner: ${vehicle.customer_name}` : '', vehicle.vehicle_type_name].filter(Boolean).join(' · '),
     })),
-    [vehicleList],
+    [entryVehicleList],
   );
 
-  const selectedEntryVehicle = vehicleList.find((vehicle: any) => String(vehicle.id) === vehicleId);
+  const selectedEntryVehicle = entryVehicleList.find((vehicle: any) => String(vehicle.id) === vehicleId);
   const selectedCustomer = customerList.find((customer: any) => String(customer.id) === customerId);
   const isSharedVehicleUse = Boolean(
     allowSharedVehicles
@@ -573,13 +588,18 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
     await queryClient.invalidateQueries({ queryKey: ['wb-customers-entry'] });
     await queryClient.refetchQueries({ queryKey: ['wb-customers-entry'], type: 'active' });
     setCustomerId(String(customer.id));
-    setVehicleId('');
-    setItemId('');
-    setDestination('');
-    setDriverName('');
-    setDriverPhone('');
-    setDriverDetailsPrefilled(false);
-    setPrefillVehicleKey('');
+    const retainSharedVehicle = allowSharedVehicles && Boolean(selectedEntryVehicle);
+    if (!retainSharedVehicle) {
+      setVehicleId('');
+      setVehicleTypeId('');
+      setSelectedFirstVehicle(null);
+      setItemId('');
+      setDestination('');
+      setDriverName('');
+      setDriverPhone('');
+      setDriverDetailsPrefilled(false);
+      setPrefillVehicleKey('');
+    }
     setCustomerOpen(false);
     setCustomerForm({ name: '', phone_number: '', email: '', address: '' });
     customerErrors.clear();
@@ -596,9 +616,11 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
       }),
     });
     if (!res.ok) throw await apiErrorFromResponse(res, 'The vehicle could not be added.');
-    const json = await res.json();
-    setVehicleId(String(json.id));
-    if (json.vehicle_type) setVehicleTypeId(String(json.vehicle_type));
+    const response = await res.json();
+    const vehicle = response?.data ?? response;
+    setVehicleId(String(vehicle.id));
+    setSelectedFirstVehicle(vehicle);
+    if (vehicle.vehicle_type) setVehicleTypeId(String(vehicle.vehicle_type));
     setVehicleOpen(false);
     setVehicleForm({ number_plate: '', vehicle_type: '' });
     vehicleErrors.clear();
@@ -667,8 +689,29 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
     // was selected yet, use the registered owner as the initial choice.
     if (!allowSharedVehicles || !customerId) setCustomerId(String(vehicle.customer));
     setVehicleId(String(vehicle.id));
+    setSelectedFirstVehicle(vehicle);
     setVehicleTypeId(vehicle.vehicle_type ? String(vehicle.vehicle_type) : '');
     void populateVehicleHistoryDefaults(vehicle.id);
+  }
+
+  function selectBillingCustomer(nextCustomerId: string) {
+    const retainSharedVehicle = allowSharedVehicles && Boolean(selectedEntryVehicle);
+    setCustomerId(nextCustomerId);
+    if (!retainSharedVehicle) {
+      setVehicleId('');
+      setVehicleTypeId('');
+      setSelectedFirstVehicle(null);
+      setItemId('');
+      setDestination('');
+      setDriverName('');
+      setDriverPhone('');
+      setDriverDetailsPrefilled(false);
+      setPrefillVehicleKey('');
+      setPlateRecognition(null);
+    }
+    transactionErrors.clearField('customer');
+    transactionErrors.clearField('vehicle');
+    transactionErrors.clearField('vehicle_type');
   }
 
   async function recognizePlate(image: string) {
@@ -1136,7 +1179,12 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
                             const plate = event.target.value.toUpperCase();
                             setPlateInput(plate);
                             setVehicleForm((current) => ({ ...current, number_plate: plate }));
+                            setVehicleId('');
+                            setVehicleTypeId('');
+                            setSelectedFirstVehicle(null);
                             setPlateRecognition(null);
+                            transactionErrors.clearField('vehicle');
+                            transactionErrors.clearField('vehicle_type');
                           }}
                           placeholder="Enter vehicle plate"
                         />
@@ -1154,7 +1202,7 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
                           <Label required>Customer</Label>
                           {canAddCustomer ? <Button type="button" variant="outline" size="sm" className="h-8 gap-1 border-primary/25 text-primary hover:bg-primary/10 hover:text-primary" onClick={() => setCustomerOpen(true)}><Plus className="h-3.5 w-3.5" /> Add Customer</Button> : null}
                         </div>
-                        <SearchSelect value={customerId} onChange={(value) => { setCustomerId(value); setVehicleId(''); setVehicleTypeId(''); setItemId(''); setDestination(''); setDriverName(''); setDriverPhone(''); setDriverDetailsPrefilled(false); setPrefillVehicleKey(''); setPlateRecognition(null); transactionErrors.clearField('customer'); transactionErrors.clearField('vehicle'); transactionErrors.clearField('vehicle_type'); }} placeholder="Search customer" searchPlaceholder="Search customer" emptyLabel="No customers found" options={customerOptions} />
+                        <SearchSelect value={customerId} onChange={selectBillingCustomer} placeholder="Search customer" searchPlaceholder="Search customer" emptyLabel="No customers found" options={customerOptions} />
                         <InlineFormError messages={transactionErrors.errors.fields.customer} />
                       </div>
                       <div className="space-y-1.5">
@@ -1162,7 +1210,7 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
                           <Label required>Vehicle</Label>
                           {canAddVehicle ? <Button type="button" variant="outline" size="sm" className="h-8 gap-1 border-primary/25 text-primary hover:bg-primary/10 hover:text-primary" onClick={() => { setVehicleForm((current) => ({ ...current, number_plate: plateInput.trim().toUpperCase() })); setVehicleOpen(true); }} disabled={!customerId}><Plus className="h-3.5 w-3.5" /> Add Vehicle</Button> : null}
                         </div>
-                        <SearchSelect value={vehicleId} onChange={(value) => { setPrefillVehicleKey(''); setDriverName(''); setDriverPhone(''); setDriverDetailsPrefilled(false); setVehicleId(value); const selected = vehicleList.find((vehicle: any) => String(vehicle.id) === value); setVehicleTypeId(selected?.vehicle_type ? String(selected.vehicle_type) : ''); setPlateInput(selected?.number_plate ?? ''); setPlateRecognition(null); transactionErrors.clearField('vehicle'); transactionErrors.clearField('vehicle_type'); }} placeholder={customerId ? 'Search vehicle' : 'Select customer first'} searchPlaceholder="Search vehicle" emptyLabel="No vehicles found" disabled={!customerId} options={vehicleOptions} />
+                        <SearchSelect value={vehicleId} onChange={(value) => { setPrefillVehicleKey(''); setDriverName(''); setDriverPhone(''); setDriverDetailsPrefilled(false); setVehicleId(value); const selected = entryVehicleList.find((vehicle: any) => String(vehicle.id) === value); setSelectedFirstVehicle(selected ?? null); setVehicleTypeId(selected?.vehicle_type ? String(selected.vehicle_type) : ''); setPlateInput(selected?.number_plate ?? ''); setPlateRecognition(null); transactionErrors.clearField('vehicle'); transactionErrors.clearField('vehicle_type'); }} placeholder={customerId || allowSharedVehicles ? 'Search vehicle' : 'Select customer first'} searchPlaceholder="Search vehicle" emptyLabel="No vehicles found" disabled={!customerId && !allowSharedVehicles} options={vehicleOptions} />
                         <InlineFormError messages={transactionErrors.errors.fields.vehicle} />
                         <InlineFormError messages={transactionErrors.errors.fields.vehicle_type} />
                       </div>

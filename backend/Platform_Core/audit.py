@@ -9,6 +9,7 @@ from django.core.serializers.json import DjangoJSONEncoder
 from django.db.models.signals import m2m_changed, post_delete, post_save, pre_delete, pre_save
 from django.db.utils import OperationalError, ProgrammingError
 from django.http import HttpRequest
+from django.utils import timezone
 
 
 _state = local()
@@ -49,6 +50,25 @@ def get_current_user():
     user = getattr(_state, "user", None)
     if getattr(user, "is_authenticated", False):
         return user
+
+    # DRF token authentication happens after Django middleware has captured the
+    # request. Resolve a token lazily so model signals still retain the person
+    # who performed an API action rather than incorrectly recording System.
+    request = get_current_request()
+    authorization = (getattr(request, "META", {}) or {}).get("HTTP_AUTHORIZATION", "")
+    scheme, _, token_key = authorization.partition(" ")
+    if request is not None and scheme.lower() in {"token", "bearer"} and token_key.strip():
+        try:
+            Token = apps.get_model("authtoken", "Token")
+            token = Token.objects.select_related("user").filter(key=token_key.strip()).first()
+            if token is not None and getattr(token.user, "is_active", False):
+                _state.user = token.user
+                _state.tenant = _resolve_request_tenant_for_user(request, token.user)
+                return token.user
+        except (LookupError, OperationalError, ProgrammingError):
+            # Authentication itself remains DRF's responsibility. Auditing must
+            # never cause a request to fail if a token cannot be resolved here.
+            pass
     return None
 
 
@@ -64,9 +84,12 @@ def get_current_tenant():
 
 
 def _resolve_request_tenant(request):
+    return _resolve_request_tenant_for_user(request, getattr(request, "user", None))
+
+
+def _resolve_request_tenant_for_user(request, user):
     if request is None:
         return None
-    user = getattr(request, "user", None)
     if getattr(user, "is_authenticated", False) and getattr(user, "is_superuser", False):
         tenant_id = request.GET.get("tenant_id") or request.POST.get("tenant_id")
         if tenant_id:
@@ -115,12 +138,14 @@ def _json_ready(data):
 
 def _diff_snapshots(before, after):
     changed = {}
+    changed_at = timezone.now().isoformat()
     keys = set(before.keys()) | set(after.keys())
     for key in sorted(keys):
         if before.get(key) != after.get(key):
             changed[key] = {
                 "before": before.get(key),
                 "after": after.get(key),
+                "changed_at": changed_at,
             }
     return changed
 
@@ -196,6 +221,16 @@ def _request_metadata(request=None, response=None):
     }
 
 
+def _actor_metadata(actor):
+    if not getattr(actor, "is_authenticated", False):
+        return {}
+    return {
+        "actor_id": actor.pk,
+        "actor_name": (actor.get_full_name() or actor.username).strip(),
+        "actor_username": actor.username,
+    }
+
+
 def log_model_event(*, instance, action, changes=None, previous=None, current=None, note="", metadata=None):
     AuditEventLog = apps.get_model("Platform_Core", "AuditEventLog")
     tenant = _resolve_instance_tenant(instance)
@@ -217,7 +252,7 @@ def log_model_event(*, instance, action, changes=None, previous=None, current=No
             current_values=_json_ready(current or {}),
             status="success",
             note=note,
-            metadata=_json_ready({**_request_metadata(), **(metadata or {})}),
+            metadata=_json_ready({**_request_metadata(), **_actor_metadata(actor), **(metadata or {})}),
         )
     except (OperationalError, ProgrammingError):
         return None
@@ -244,7 +279,7 @@ def log_business_event(*, event_group, event_type, tenant=None, actor=None, obj=
             object_pk=str(obj.pk) if obj is not None and obj.pk is not None else "",
             status=status,
             note=note,
-            metadata=_json_ready({**_request_metadata(), **(metadata or {})}),
+            metadata=_json_ready({**_request_metadata(), **_actor_metadata(actor), **(metadata or {})}),
         )
         if obj is not None:
             payload["content_object"] = obj
@@ -280,7 +315,7 @@ def log_access_event(*, request, response=None, tenant=None, user=None, event_ty
             status_code=status_code,
             remote_addr=_extract_client_ip(request),
             user_agent=(getattr(request, "META", {}) or {}).get("HTTP_USER_AGENT", "")[:500],
-            metadata=_json_ready(_request_metadata(request=request, response=response)),
+            metadata=_json_ready({**_request_metadata(request=request, response=response), **_actor_metadata(actor)}),
         )
     except (OperationalError, ProgrammingError):
         return None
@@ -326,8 +361,12 @@ def get_record_audit_summary(*, model_label, object_pk, tenant=None):
 def _capture_previous_state(sender, instance, **kwargs):
     if not _should_track_model(sender) or not instance.pk:
         return
-    previous = sender.objects.filter(pk=instance.pk).values().first()
-    instance._audit_previous_state = previous or {}
+    # ``QuerySet.values()`` uses foreign-key attnames (for example
+    # ``tenant_id``), whereas snapshots use model field names (``tenant``).
+    # Comparing the two created false Id-only updates. Snapshot a model
+    # instance so before/after values have identical, business-friendly keys.
+    previous = sender.objects.filter(pk=instance.pk).first()
+    instance._audit_previous_state = _instance_snapshot(previous) if previous else {}
 
 
 def _capture_deleted_state(sender, instance, **kwargs):
@@ -341,10 +380,11 @@ def _log_saved_state(sender, instance, created, **kwargs):
         return
     current = _instance_snapshot(instance)
     if created:
+        changed_at = timezone.now().isoformat()
         log_model_event(
             instance=instance,
             action="create",
-            changes={key: {"before": None, "after": value} for key, value in current.items()},
+            changes={key: {"before": None, "after": value, "changed_at": changed_at} for key, value in current.items()},
             previous={},
             current=current,
         )
@@ -369,7 +409,7 @@ def _log_deleted_state(sender, instance, **kwargs):
     log_model_event(
         instance=instance,
         action="delete",
-        changes={key: {"before": value, "after": None} for key, value in previous.items()},
+        changes={key: {"before": value, "after": None, "changed_at": timezone.now().isoformat()} for key, value in previous.items()},
         previous=previous,
         current={},
     )
@@ -408,6 +448,7 @@ def _make_m2m_handler(field_name):
                 "action": relation_action,
                 "related_model": model._meta.label,
                 "related_ids": related_ids,
+                "changed_at": timezone.now().isoformat(),
             }
         }
         try:

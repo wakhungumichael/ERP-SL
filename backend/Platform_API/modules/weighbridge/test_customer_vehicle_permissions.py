@@ -493,3 +493,13 @@ class TellerReceiptWindowTests(TestCase):
         )
         self.assertEqual(pdf.status_code, 200)
         self.assertEqual(pdf["Content-Type"], "application/pdf")
+
+    def test_draft_transaction_receipt_is_blocked_until_forwarded_for_approval(self):
+        transaction = self.create_transaction(1)
+        transaction.status = "Draft"
+        transaction.save(update_fields=["status"])
+
+        response = self.client.get(reverse("wb-transaction-receipt", kwargs={"pk": transaction.id}))
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("forwarded for approval", response.data["error"])

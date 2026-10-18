@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { useToast } from '@/hooks/use-toast';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
@@ -20,7 +20,7 @@ import {
 } from '@/components/ui/select';
 import {
   ShieldCheck, Plus, Trash2, RefreshCw, UserMinus, Save, ChevronRight,
-  Shield, Users, Pencil, Check,
+  Shield, Users, Pencil, Check, KeyRound,
 } from 'lucide-react';
 import { ERPPageHeader } from '@/components/erp/workspace/workspace-ui';
 
@@ -64,7 +64,7 @@ const MODULE_LABELS: Record<string, string> = {
   SL_Inventory: 'Inventory',
   SL_Budgeting: 'Budgeting & Commitments',
   SL_Ticketing: 'Ticketing',
-  Platform_Core: 'Accounting & Workflows',
+  Platform_Core: 'Core',
   auth: 'User Management',
 };
 const MODULE_ORDER = [
@@ -111,6 +111,20 @@ const ACTION_CODENAMES: Record<string, string> = {
   can_export_transaction: 'Export',
   can_reprint_recent_weighbridge_receipts: 'Receipt Reprint',
   can_view_customer_statements: 'Customer Statements',
+  publish_workflowdefinition: 'Publish Workflow',
+  archive_workflowdefinition: 'Archive Workflow',
+  duplicate_workflowdefinition: 'Create Workflow Revision',
+  manage_workflow_nodes: 'Manage Approval Steps',
+  manage_workflow_transitions: 'Manage Workflow Routes',
+  manage_workflow_conditions: 'Manage Workflow Conditions',
+  manage_workflow_assignments: 'Manage Workflow Assignments',
+  forward_workflow: 'Forward for Approval',
+  approve_workflow: 'Review & Approve Workflows',
+  view_tenant_audit_logs: 'View Organization Audit Logs',
+  view_global_audit_logs: 'View Global Audit Logs',
+  export_audit_logs: 'Export Audit Logs',
+  view_tenant_access_logs: 'View Organization Access Logs',
+  view_global_access_logs: 'View Global Access Logs',
 };
 
 const CRUD_ACTIONS = ['view', 'add', 'change', 'delete'] as const;
@@ -187,8 +201,9 @@ function buildSections(allPerms: Perm[]): ModuleSection[] {
         modelMap[model].perms[action] = p;
         // Fix display from the first CRUD perm encountered
         modelMap[model].display = modelDisplayFromPerm(p);
-      } else if (ACTION_CODENAMES[p.codename]) {
-        // Attach to the related model group if possible
+      } else {
+        // Keep every custom permission visible. Core workflow and audit rights
+        // must not disappear simply because they are outside CRUD naming.
         const model = p.content_type.model;
         if (modelMap[model]) {
           modelMap[model].actions.push(p);
@@ -335,7 +350,7 @@ function PermissionMatrix({
   // Track selected permission IDs as a Set (local state, save on demand)
   const [selected, setSelected] = useState<Set<number>>(new Set(role.permissions.map(p => p.id)));
   const [dirty, setDirty] = useState(false);
-  const [activeSection, setActiveSection] = useState('');
+  const [permissionSearch, setPermissionSearch] = useState('');
 
   // Reset when role changes
   useEffect(() => {
@@ -345,12 +360,6 @@ function PermissionMatrix({
     setSelected(new Set(role.permissions.filter((permission) => allowedIds.has(permission.id)).map((permission) => permission.id)));
     setDirty(false);
   }, [role.id, allPerms]);
-
-  useEffect(() => {
-    if (!sections.some((section) => section.appLabel === activeSection)) {
-      setActiveSection(sections[0]?.appLabel ?? '');
-    }
-  }, [activeSection, sections]);
 
   const toggle = (id: number) => {
     setSelected(prev => {
@@ -395,6 +404,15 @@ function PermissionMatrix({
     setDirty(true);
   };
 
+  const enablePermissionCodes = (section: ModuleSection, codes: string[]) => {
+    const enabledIds = [
+      ...section.models.flatMap(group => [...Object.values(group.perms), ...group.actions]),
+      ...section.standaloneActions,
+    ].filter(permission => codes.includes(permission.codename)).map(permission => permission.id);
+    setSelected(prev => new Set([...prev, ...enabledIds]));
+    setDirty(true);
+  };
+
   const saveMutation = useMutation({
     mutationFn: () => api(token!, `/roles/${role.id}/`, 'PATCH', {
       permission_ids: Array.from(selected),
@@ -414,19 +432,13 @@ function PermissionMatrix({
           This shared role can be assigned inside the tenant, but only a super admin can change its permissions.
         </div>
       )}
-      <Tabs value={activeSection} onValueChange={setActiveSection}>
-        <TabsList className="h-auto w-full justify-start gap-5 overflow-x-auto rounded-none border-b bg-transparent p-0">
-          {sections.map((section) => (
-            <TabsTrigger
-              key={section.appLabel}
-              value={section.appLabel}
-              className="shrink-0 rounded-none border-b-2 border-transparent px-1 pb-2 pt-0 text-xs data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:text-primary data-[state=active]:shadow-none"
-            >
-              {section.label}
-            </TabsTrigger>
-          ))}
-        </TabsList>
-        {sections.filter((section) => section.appLabel === activeSection).map(section => {
+      <div className="rounded-xl border bg-muted/10 p-4">
+        <p className="font-semibold text-sm">Search permissions</p>
+        <p className="mt-0.5 text-xs text-muted-foreground">Open a module to manage its record and workflow permissions.</p>
+        <Input value={permissionSearch} onChange={event => setPermissionSearch(event.target.value)} className="mt-3 max-w-xl" placeholder="Search all permissions..." />
+      </div>
+      <Accordion type="multiple" defaultValue={sections.length ? [sections[0].appLabel] : []} className="rounded-xl border bg-card px-4">
+        {sections.map(section => {
         const sectionIds: number[] = [];
         section.models.forEach(g => {
           Object.values(g.perms).forEach(p => sectionIds.push(p.id));
@@ -434,151 +446,90 @@ function PermissionMatrix({
         });
         section.standaloneActions.forEach(p => sectionIds.push(p.id));
         const sectionAllOn = sectionIds.length > 0 && sectionIds.every(id => selected.has(id));
-        const sectionSomeOn = !sectionAllOn && sectionIds.some(id => selected.has(id));
-
-        // Collect action columns for this section (approve/recall/export etc.)
-        const actionCols = Array.from(
-          new Set(
-            [
-              ...section.models.flatMap(g => g.actions.map(p => p.codename)),
-              ...section.standaloneActions.map(p => p.codename),
-            ]
-          )
-        );
+        const searchTerm = permissionSearch.trim().toLowerCase();
+        const matchesSearch = (group: ModelGroup) => !searchTerm || [
+          group.display,
+          ...Object.values(group.perms).map(permission => permission.name),
+          ...group.actions.map(permission => ACTION_CODENAMES[permission.codename] ?? permission.name),
+        ].join(' ').toLowerCase().includes(searchTerm);
+        const visibleModels = section.models.filter(matchesSearch);
+        const visibleStandalone = section.standaloneActions.filter(permission => !searchTerm || `${ACTION_CODENAMES[permission.codename] ?? permission.name} ${permission.codename}`.toLowerCase().includes(searchTerm));
 
         return (
-          <TabsContent key={section.appLabel} value={section.appLabel} className="mt-4">
-            <div className="mb-2 flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => editable && toggleModule(section)}
-                className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-widest text-muted-foreground hover:text-foreground transition-colors"
-              >
-                <Checkbox
-                  checked={sectionAllOn}
-                  // indeterminate via data attribute
-                  data-state={sectionSomeOn ? 'indeterminate' : sectionAllOn ? 'checked' : 'unchecked'}
-                  className="h-3.5 w-3.5 pointer-events-none"
-                  onCheckedChange={() => {}}
-                />
-                {section.label}
-              </button>
-              <div className="flex-1 border-t border-dashed" />
-              <span className="text-[10px] text-muted-foreground">
-                {sectionIds.filter(id => selected.has(id)).length}/{sectionIds.length}
-              </span>
+            <AccordionItem key={section.appLabel} value={section.appLabel} className="border-border">
+              <AccordionTrigger className="py-4 hover:no-underline">
+                <span className="flex items-center gap-3">
+                  <span className="font-semibold">{section.label}</span>
+                  <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+                    {sectionIds.filter(id => selected.has(id)).length}/{sectionIds.length} enabled
+                  </span>
+                </span>
+              </AccordionTrigger>
+              <AccordionContent className="pb-5">
+                <div className="rounded-xl border bg-muted/10 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="font-semibold text-sm">{section.label} access</p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">Choose what this role can do. Select a whole record type for full access, then refine individual capabilities.</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-muted-foreground">{sectionIds.filter(id => selected.has(id)).length}/{sectionIds.length} enabled</span>
+                  <Button size="sm" variant="outline" disabled={!editable} onClick={() => toggleModule(section)}>
+                    {sectionAllOn ? 'Clear module' : 'Enable module'}
+                  </Button>
+                </div>
+              </div>
             </div>
 
-            <div className="rounded-md border overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="bg-muted/40 border-b">
-                    <th className="text-left px-3 py-2 font-medium text-xs text-muted-foreground w-48 min-w-[160px]">Object</th>
-                    {CRUD_ACTIONS.map(a => (
-                      <th key={a} className="text-center px-2 py-2 font-medium text-xs text-muted-foreground w-16">
-                        {CRUD_LABELS[a]}
-                      </th>
-                    ))}
-                    {actionCols.map(code => (
-                      <th key={code} className="text-center px-2 py-2 font-medium text-xs text-amber-600 w-20">
-                        {ACTION_CODENAMES[code] ?? code}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
-                  {section.standaloneActions.length > 0 && (
-                    <tr className="hover:bg-muted/20">
-                      <td className="px-3 py-2 text-xs font-medium">Workspace access</td>
-                      {CRUD_ACTIONS.map(a => <td key={a} />)}
-                      {actionCols.map(code => {
-                        const permission = section.standaloneActions.find(p => p.codename === code);
-                        return (
-                          <td key={code} className="text-center px-2 py-2">
-                            {permission ? (
-                              <Checkbox
-                                checked={selected.has(permission.id)}
-                                onCheckedChange={() => editable && toggle(permission.id)}
-                                className="h-4 w-4"
-                                disabled={!editable}
-                              />
-                            ) : <span className="text-muted-foreground/30 text-xs">—</span>}
-                          </td>
-                        );
-                      })}
-                    </tr>
-                  )}
-                  {section.models.map(group => {
-                    const rowIds = [
-                      ...Object.values(group.perms).map(p => p.id),
-                      ...group.actions.map(p => p.id),
-                    ];
-                    const rowAllOn = rowIds.length > 0 && rowIds.every(id => selected.has(id));
-                    return (
-                      <tr key={group.model} className="hover:bg-muted/20">
-                        <td className="px-3 py-2">
-                          <button
-                            type="button"
-                            onClick={() => editable && toggleModel(group)}
-                            className="flex items-center gap-1.5 text-left hover:text-primary transition-colors"
-                          >
-                            <Checkbox
-                              checked={rowAllOn}
-                              data-state={
-                                rowIds.some(id => selected.has(id)) && !rowAllOn
-                                  ? 'indeterminate'
-                                  : rowAllOn ? 'checked' : 'unchecked'
-                              }
-                              className="h-3.5 w-3.5 pointer-events-none"
-                              onCheckedChange={() => {}}
-                            />
-                            <span className="text-xs font-medium">{group.display}</span>
-                          </button>
-                        </td>
-                        {CRUD_ACTIONS.map(a => {
-                          const perm = group.perms[a];
-                          return (
-                            <td key={a} className="text-center px-2 py-2">
-                              {perm ? (
-                                <Checkbox
-                                  checked={selected.has(perm.id)}
-                                  onCheckedChange={() => editable && toggle(perm.id)}
-                                  className="h-4 w-4"
-                                  disabled={!editable}
-                                />
-                              ) : (
-                                <span className="text-muted-foreground/30 text-xs">—</span>
-                              )}
-                            </td>
-                          );
-                        })}
-                        {actionCols.map(code => {
-                          const perm = group.actions.find(p => p.codename === code);
-                          return (
-                            <td key={code} className="text-center px-2 py-2">
-                              {perm ? (
-                                <Checkbox
-                                  checked={selected.has(perm.id)}
-                                  onCheckedChange={() => editable && toggle(perm.id)}
-                                  className="h-4 w-4 border-amber-400 data-[state=checked]:bg-amber-500 data-[state=checked]:border-amber-500"
-                                  disabled={!editable}
-                                />
-                              ) : (
-                                <span className="text-muted-foreground/30 text-xs">—</span>
-                              )}
-                            </td>
-                          );
-                        })}
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+                {section.appLabel === 'Platform_Core' && <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50/40 p-4">
+              <p className="text-sm font-semibold">Core access shortcuts</p>
+              <p className="mt-0.5 text-xs text-muted-foreground">These add the common governance rights. You can still refine any individual permission below.</p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Button size="sm" variant="outline" disabled={!editable} onClick={() => enablePermissionCodes(section, ['approve_workflow', 'view_workflowinboxitem', 'view_workflowentitybinding'])}>Enable workflow reviewer</Button>
+                <Button size="sm" variant="outline" disabled={!editable} onClick={() => enablePermissionCodes(section, ['view_workflowdefinition', 'add_workflowdefinition', 'change_workflowdefinition', 'publish_workflowdefinition', 'manage_workflow_nodes', 'manage_workflow_transitions', 'manage_workflow_conditions', 'manage_workflow_assignments', 'manage_workflow_steps', 'manage_workflow_routes'])}>Enable workflow designer</Button>
+                <Button size="sm" variant="outline" disabled={!editable} onClick={() => enablePermissionCodes(section, ['view_tenant_audit_logs', 'view_tenant_access_logs', 'export_audit_logs'])}>Enable audit reviewer</Button>
+              </div>
+            </div>}
+
+                {visibleStandalone.length > 0 && <section className="mt-3 rounded-xl border bg-card p-4">
+              <h3 className="text-sm font-semibold">Workspace & special access</h3>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {visibleStandalone.map(permission => <label key={permission.id} className="flex cursor-pointer items-center gap-2 rounded-md border px-3 py-2 text-sm hover:bg-muted/30">
+                  <Checkbox checked={selected.has(permission.id)} onCheckedChange={() => editable && toggle(permission.id)} disabled={!editable} className="border-amber-400 data-[state=checked]:bg-amber-500 data-[state=checked]:border-amber-500" />
+                  {ACTION_CODENAMES[permission.codename] ?? permission.name}
+                </label>)}
+              </div>
+            </section>}
+
+                <div className="mt-3 grid gap-3 md:grid-cols-2 2xl:grid-cols-3">
+              {visibleModels.map(group => {
+                const permissions = [...Object.values(group.perms), ...group.actions];
+                const rowIds = permissions.map(permission => permission.id);
+                const rowAllOn = rowIds.length > 0 && rowIds.every(id => selected.has(id));
+                const rowSomeOn = rowIds.some(id => selected.has(id));
+                return <section key={group.model} className="rounded-xl border bg-card p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <button type="button" onClick={() => editable && toggleModel(group)} disabled={!editable} className="flex min-w-0 items-center gap-2 text-left disabled:cursor-not-allowed">
+                      <Checkbox checked={rowAllOn} data-state={rowSomeOn && !rowAllOn ? 'indeterminate' : rowAllOn ? 'checked' : 'unchecked'} className="pointer-events-none" onCheckedChange={() => {}} />
+                      <span className="font-semibold text-sm leading-tight">{group.display}</span>
+                    </button>
+                    <span className="shrink-0 text-[10px] text-muted-foreground">{rowIds.filter(id => selected.has(id)).length}/{rowIds.length}</span>
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-x-4 gap-y-2 border-t pt-3">
+                    {permissions.map(permission => <label key={permission.id} className="flex cursor-pointer items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground">
+                      <Checkbox checked={selected.has(permission.id)} onCheckedChange={() => editable && toggle(permission.id)} disabled={!editable} className={group.actions.includes(permission) ? 'border-amber-400 data-[state=checked]:bg-amber-500 data-[state=checked]:border-amber-500' : ''} />
+                      {CRUD_LABELS[extractCrudAction(permission.codename) as keyof typeof CRUD_LABELS] ?? ACTION_CODENAMES[permission.codename] ?? permission.name}
+                    </label>)}
+                  </div>
+                </section>;
+              })}
             </div>
-          </TabsContent>
-        );
-      })}
-      </Tabs>
+                {visibleModels.length === 0 && visibleStandalone.length === 0 && <div className="rounded-xl border border-dashed p-8 text-center text-sm text-muted-foreground">No permissions match this search.</div>}
+              </AccordionContent>
+            </AccordionItem>
+          );
+        })}
+      </Accordion>
 
       {/* Sticky save bar */}
       <div className={`sticky bottom-0 bg-background border-t pt-3 pb-1 flex items-center justify-between gap-3 transition-opacity ${dirty ? 'opacity-100' : 'opacity-40 pointer-events-none'}`}>
@@ -686,7 +637,7 @@ export default function Roles() {
   const [deleteTarget, setDeleteTarget] = useState<Role | null>(null);
   const [renaming, setRenaming] = useState<number | null>(null);
   const [renameValue, setRenameValue] = useState('');
-  const [editorTab, setEditorTab] = useState<'permissions' | 'members'>('permissions');
+  const [editorTab, setEditorTab] = useState<'overview' | 'permissions' | 'members'>('overview');
 
   const { data: rolesRaw, isLoading: rolesLoading, refetch } = useQuery({
     queryKey: ['roles'],
@@ -753,7 +704,7 @@ export default function Roles() {
       />
       <div className="flex min-h-[calc(100vh-15rem)] overflow-hidden rounded-xl border border-border/80 bg-card shadow-sm">
       {/* ── Left sidebar: role list ─────────────────────────────────────── */}
-      <div className="w-64 shrink-0 border-r flex flex-col bg-card">
+      <div className="w-72 shrink-0 border-r flex flex-col bg-card">
         <div className="px-4 py-3 border-b bg-muted/15">
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
@@ -766,80 +717,49 @@ export default function Roles() {
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto overscroll-contain py-2">
-          {rolesLoading ? (
-            <p className="text-xs text-muted-foreground text-center py-6 animate-pulse">Loading…</p>
+        <div className="flex-1 space-y-4 p-4">
+          <div className="space-y-1.5">
+            <Label className="text-xs">Select role</Label>
+            <Select value={selectedId ? String(selectedId) : ''} onValueChange={(value) => { setSelectedId(Number(value)); setEditorTab('overview'); }} disabled={rolesLoading || roles.length === 0}>
+              <SelectTrigger><SelectValue placeholder={rolesLoading ? 'Loading roles...' : 'Choose a role...'} /></SelectTrigger>
+              <SelectContent className="max-h-80">
+                {roles.map(role => (
+                  <SelectItem key={role.id} value={String(role.id)}>
+                    {roleLabel(role)} ({memberCount(role)} {memberCount(role) === 1 ? 'member' : 'members'})
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {selectedRole ? (
+            <div className="rounded-xl border bg-muted/10 p-4">
+              {renaming === selectedRole.id ? (
+                <form className="flex items-center gap-2" onSubmit={event => {
+                  event.preventDefault();
+                  if (renameValue.trim()) renameRole.mutate({ id: selectedRole.id, name: renameValue.trim() });
+                }}>
+                  <Input autoFocus value={renameValue} onChange={event => setRenameValue(event.target.value)} onKeyDown={event => event.key === 'Escape' && setRenaming(null)} />
+                  <Button size="sm" type="submit" disabled={!renameValue.trim() || renameRole.isPending}><Check className="h-3.5 w-3.5" /></Button>
+                </form>
+              ) : (
+                <>
+                  <div className="flex items-start gap-2">
+                    <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold">{roleLabel(selectedRole)}</p>
+                      <p className="mt-1 text-xs text-muted-foreground">{memberCount(selectedRole)} assigned {memberCount(selectedRole) === 1 ? 'user' : 'users'}</p>
+                    </div>
+                  </div>
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <Button size="sm" variant="outline" className="h-8 gap-1.5 text-xs" disabled={selectedRole.is_editable === false} onClick={() => { setRenaming(selectedRole.id); setRenameValue(roleLabel(selectedRole)); }}><Pencil className="h-3.5 w-3.5" /> Rename</Button>
+                    <Button size="sm" variant="outline" className="h-8 gap-1.5 text-xs text-destructive hover:text-destructive" disabled={selectedRole.is_editable === false} onClick={() => setDeleteTarget(selectedRole)}><Trash2 className="h-3.5 w-3.5" /> Delete</Button>
+                  </div>
+                </>
+              )}
+            </div>
           ) : (
-            roles.map(role => {
-              const count = memberCount(role);
-              const isSelected = role.id === selectedId;
-              return (
-                <div
-                  key={role.id}
-                  className={`group flex items-center justify-between px-3 py-2.5 cursor-pointer transition-colors ${
-                    isSelected
-                      ? 'border-l-2 border-primary bg-primary/10'
-                      : 'hover:bg-muted/40'
-                  }`}
-                  onClick={() => setSelectedId(role.id)}
-                >
-                  {renaming === role.id ? (
-                    <form
-                      className="flex items-center gap-1 flex-1"
-                      onSubmit={e => {
-                        e.preventDefault();
-                        if (renameValue.trim()) renameRole.mutate({ id: role.id, name: renameValue.trim() });
-                      }}
-                      onClick={e => e.stopPropagation()}
-                    >
-                      <Input
-                        autoFocus
-                        value={renameValue}
-                        onChange={e => setRenameValue(e.target.value)}
-                        className="h-6 text-xs px-1.5 flex-1"
-                        onBlur={() => setRenaming(null)}
-                        onKeyDown={e => e.key === 'Escape' && setRenaming(null)}
-                      />
-                      <button type="submit" className="text-primary hover:text-primary/80">
-                        <Check className="h-3.5 w-3.5" />
-                      </button>
-                    </form>
-                  ) : (
-                    <>
-                      <div className="flex items-center gap-2 min-w-0">
-                        <ShieldCheck className={`h-3.5 w-3.5 shrink-0 ${isSelected ? 'text-primary' : 'text-muted-foreground'}`} />
-                        <div className="min-w-0">
-                          <p className="text-xs font-medium truncate">{roleLabel(role)}</p>
-                          <p className="text-[10px] text-muted-foreground">{count} member{count !== 1 ? 's' : ''}</p>
-                        </div>
-                      </div>
-                      <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
-                        <button
-                          title="Rename"
-                          className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground disabled:opacity-40"
-                          onClick={e => {
-                            e.stopPropagation();
-                            setRenaming(role.id);
-                            setRenameValue(roleLabel(role));
-                          }}
-                          disabled={role.is_editable === false}
-                        >
-                          <Pencil className="h-3 w-3" />
-                        </button>
-                        <button
-                          title="Delete"
-                          className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive disabled:opacity-40"
-                          onClick={e => { e.stopPropagation(); setDeleteTarget(role); }}
-                          disabled={role.is_editable === false}
-                        >
-                          <Trash2 className="h-3 w-3" />
-                        </button>
-                      </div>
-                    </>
-                  )}
-                </div>
-              );
-            })
+            <p className="rounded-xl border border-dashed p-4 text-xs text-muted-foreground">Create a role or select one from the list to manage it.</p>
           )}
         </div>
 
@@ -873,32 +793,63 @@ export default function Roles() {
                   {selectedRole.scope === 'tenant' ? 'Organization role' : 'Shared system role'} · {memberCount(selectedRole)} user{memberCount(selectedRole) !== 1 ? 's' : ''}
                 </p>
               </div>
-              <Button
-                size="sm"
-                variant="outline"
-                className="h-7 text-xs"
-                onClick={() => setEditorTab('members')}
-              >
-                View Users
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button size="sm" variant="outline" className="h-7 gap-1.5 text-xs" onClick={() => setEditorTab('permissions')}>
+                  <KeyRound className="h-3.5 w-3.5" /> Permissions
+                </Button>
+                <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setEditorTab('members')}>
+                  View Users
+                </Button>
+              </div>
             </div>
 
-            {editorTab === 'members' ? (
+            {editorTab === 'overview' ? (
+              <div className="rounded-xl border bg-muted/10 p-6">
+                <ShieldCheck className="h-8 w-8 text-primary" />
+                <h3 className="mt-4 text-lg font-semibold">Manage {roleLabel(selectedRole)}</h3>
+                <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
+                  Open permissions to configure module access, workflow rights, and record actions. Users assigned to this role inherit those permissions immediately after they sign in again.
+                </p>
+                <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                  <div className="rounded-lg border bg-background p-4">
+                    <p className="text-2xl font-semibold">{selectedRole.permissions.length}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">Permissions currently assigned</p>
+                  </div>
+                  <div className="rounded-lg border bg-background p-4">
+                    <p className="text-2xl font-semibold">{memberCount(selectedRole)}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">Users assigned to this role</p>
+                  </div>
+                </div>
+                <div className="mt-5 flex flex-wrap gap-2">
+                  <Button className="gap-1.5" onClick={() => setEditorTab('permissions')}>
+                    <KeyRound className="h-4 w-4" /> Manage Permissions
+                  </Button>
+                  <Button variant="outline" className="gap-1.5" onClick={() => setEditorTab('members')}>
+                    <Users className="h-4 w-4" /> Manage Users
+                  </Button>
+                </div>
+              </div>
+            ) : editorTab === 'members' ? (
               <div className="space-y-4">
-                <Button size="sm" variant="ghost" className="px-0 text-xs text-primary hover:bg-transparent hover:text-primary" onClick={() => setEditorTab('permissions')}>
-                  ← Back to permissions
+                <Button size="sm" variant="ghost" className="px-0 text-xs text-primary hover:bg-transparent hover:text-primary" onClick={() => setEditorTab('overview')}>
+                  ← Back to role overview
                 </Button>
                 <MembersPanel role={selectedRole} allUsers={allUsers} />
               </div>
             ) : permsLoading ? (
               <p className="py-12 text-center text-sm text-muted-foreground animate-pulse">Loading permissions…</p>
             ) : (
-              <PermissionMatrix
-                key={selectedRole.id}
-                role={selectedRole}
-                allPerms={allPerms}
-                onSaved={() => qc.invalidateQueries({ queryKey: ['roles'] })}
-              />
+              <div className="space-y-4">
+                <Button size="sm" variant="ghost" className="px-0 text-xs text-primary hover:bg-transparent hover:text-primary" onClick={() => setEditorTab('overview')}>
+                  ← Back to role overview
+                </Button>
+                <PermissionMatrix
+                  key={selectedRole.id}
+                  role={selectedRole}
+                  allPerms={allPerms}
+                  onSaved={() => qc.invalidateQueries({ queryKey: ['roles'] })}
+                />
+              </div>
             )}
           </div>
         )}

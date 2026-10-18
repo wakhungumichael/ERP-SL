@@ -140,7 +140,7 @@ function canRecallTransaction(t: any) {
 }
 
 function canReceivePaymentTransaction(t: any) {
-  return t.payment_status !== 'Paid' && t.status !== 'Rejected';
+  return t.payment_required !== false && t.payment_status !== 'Paid' && t.status !== 'Rejected';
 }
 
 function loadColumns(): string[] {
@@ -509,7 +509,12 @@ export default function TransactionsList() {
       const res = await fetch(`/api/commercial-weighbridge/transactions/?${qs}`, {
         headers: { Authorization: `Token ${token}` },
       });
-      if (!res.ok) throw new Error(`${res.status}`);
+      if (!res.ok) {
+        throw await apiErrorFromResponse(
+          res,
+          'We could not load the transaction log. Refresh the page and try again.',
+        );
+      }
       return res.json();
     },
     enabled: !!token,
@@ -941,7 +946,7 @@ export default function TransactionsList() {
                     {/* Receipt */}
                     <TableCell className="px-2 py-2.5 text-center align-middle">
                       {(() => {
-                        const canPrintReceipt = t.status === 'Completed';
+                        const canPrintReceipt = t.status === 'In Progress' || t.status === 'Completed';
                         return (
                       <button
                         onClick={() => { setReceiptTx(t); setReceiptOpen(true); }}
