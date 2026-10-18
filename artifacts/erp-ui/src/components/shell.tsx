@@ -562,6 +562,11 @@ export function Shell({ children }: { children: React.ReactNode }) {
   // While identity is loading, default to least privilege. Cached or fetched
   // organization-admin flags will promote the user when they are authoritative.
   const effectiveRole = role;
+  // Keep the access-family role for authorization, but show the selected
+  // organization role name to the signed-in user (for example, "Supervisor").
+  const activeRoleDisplayName = activeRoleEntry?.display_name
+    || activeRoleEntry?.name
+    || String((user as any)?.active_role || activeRoleGroupName || ROLE_LABELS[effectiveRole]);
   const usesPermissionDrivenNavigation = effectiveRole !== 'superadmin' && effectiveRole !== 'tenant_admin';
   const userPermissions = new Set<string>(
     Array.isArray((user as any)?.permissions) ? (user as any).permissions.map(String) : [],
@@ -810,7 +815,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
               <div className="min-w-0">
                 <div className="text-xs font-semibold text-sidebar-foreground truncate">{displayName}</div>
                 <span className={`inline-block mt-1 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-widest ${ROLE_COLORS[effectiveRole]}`}>
-                  {isLoading ? 'Loading' : ROLE_LABELS[effectiveRole]}
+                  {isLoading ? 'Loading' : activeRoleDisplayName}
                 </span>
               </div>
               <Button
@@ -925,7 +930,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
                     className={`hidden h-7 gap-1 rounded px-2.5 text-[11px] font-bold uppercase tracking-widest sm:inline-flex ${ROLE_COLORS[effectiveRole]}`}
                     title="Switch active role"
                   >
-                    {switchRoleMutation.isPending ? 'Switching' : (activeRoleEntry?.display_name || ROLE_LABELS[effectiveRole])}
+                    {switchRoleMutation.isPending ? 'Switching' : activeRoleDisplayName}
                     <ChevronDown className="h-3.5 w-3.5" />
                   </Button>
                 </DropdownMenuTrigger>
@@ -950,7 +955,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
               </DropdownMenu>
             ) : (
               <span className={`hidden sm:inline-block px-2.5 py-1 rounded text-[11px] font-bold uppercase tracking-widest ${ROLE_COLORS[effectiveRole]}`}>
-                {isLoading ? 'Loading' : ROLE_LABELS[effectiveRole]}
+                {isLoading ? 'Loading' : activeRoleDisplayName}
               </span>
             )}
             <div className="hidden md:block text-sm font-medium text-foreground truncate max-w-[12rem]">{displayName}</div>
@@ -1084,7 +1089,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
                 <div className="min-w-0">
                   <div className="truncate text-xs font-semibold text-sidebar-foreground">{displayName}</div>
                   <span className={`mt-1 inline-block rounded px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest ${ROLE_COLORS[effectiveRole]}`}>
-                    {isLoading ? 'Loading' : ROLE_LABELS[effectiveRole]}
+                    {isLoading ? 'Loading' : activeRoleDisplayName}
                   </span>
                 </div>
                 <Button
@@ -1213,7 +1218,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="rounded-xl border p-4">
                 <div className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">Role</div>
-                <div className="mt-2 text-sm font-semibold">{ROLE_LABELS[effectiveRole]}</div>
+                <div className="mt-2 text-sm font-semibold">{activeRoleDisplayName}</div>
               </div>
               <div className="rounded-xl border p-4">
                 <div className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">Username</div>
