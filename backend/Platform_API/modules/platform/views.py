@@ -2811,11 +2811,11 @@ class SystemNotificationAPIView(APIView):
         qs = SystemNotification.objects.filter(tenant=tenant, recipient=request.user, is_read=False)
         if action == "read_all":
             count = qs.update(is_read=True, read_at=timezone.now())
-        elif action == "read":
+        elif action in {"read", "acknowledge"}:
             count = qs.filter(pk=request.data.get("id")).update(is_read=True, read_at=timezone.now())
         else:
-            raise ValidationError({"action": "Use read or read_all."})
-        return success_response("Notification state updated.", data={"updated": count})
+            raise ValidationError({"action": "Use acknowledge, read, or read_all."})
+        return success_response("Notification acknowledged." if action == "acknowledge" else "Notification state updated.", data={"updated": count})
 
 
 class AuditEventLogListAPIView(APIView):

@@ -418,6 +418,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const [sidebarSearch, setSidebarSearch] = useState('');
   const [globalSearch, setGlobalSearch] = useState('');
   const [profileOpen, setProfileOpen] = useState(false);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [profileForm, setProfileForm] = useState({ first_name: '', last_name: '', email: '', username: '' });
   const [passwordForm, setPasswordForm] = useState({ current_password: '', new_password: '', new_password_confirmation: '' });
   const [profileMessage, setProfileMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -576,9 +577,6 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const userPermissions = new Set<string>(
     Array.isArray((user as any)?.permissions) ? (user as any).permissions.map(String) : [],
   );
-  const canReviewWorkflow = effectiveRole === 'superadmin'
-    || effectiveRole === 'tenant_admin'
-    || userPermissions.has('Platform_Core.approve_workflow');
   const roleCanSeeItem = (item: NavSection['items'][number]) => {
     if (!usesPermissionDrivenNavigation) return true;
     if (item.requiredPermission) return userPermissions.has(item.requiredPermission);
@@ -711,8 +709,8 @@ export function Shell({ children }: { children: React.ReactNode }) {
       ? `${(user as any).first_name} ${(user as any).last_name ?? ''}`.trim()
       : (user as any)?.username ?? 'User';
   const email = (user as any)?.email ?? 'No email available';
-  const workflowNotifications = useQuery({
-    queryKey: ['workflow-notifications', token],
+  const systemNotifications = useQuery({
+    queryKey: ['system-notifications', token],
     enabled: !!token,
     refetchInterval: 60_000,
     queryFn: async () => {
@@ -722,7 +720,45 @@ export function Shell({ children }: { children: React.ReactNode }) {
       return body?.data ?? body;
     },
   });
-  const approvalCount = Number(workflowNotifications.data?.unread_count ?? 0);
+  const notificationItems = Array.isArray(systemNotifications.data?.results) ? systemNotifications.data.results : [];
+  const notificationCount = Number(systemNotifications.data?.unread_count ?? 0);
+  const acknowledgeNotification = useMutation({
+    mutationFn: async (id: number) => {
+      const response = await fetch('/api/platform/notifications/', {
+        method: 'POST',
+        headers: { Authorization: `Token ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'acknowledge', id }),
+      });
+      if (!response.ok) throw new Error('Unable to acknowledge this notification.');
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['system-notifications'] });
+      queryClient.invalidateQueries({ queryKey: ['workflow-notifications'] });
+    },
+  });
+  const acknowledgeAllNotifications = useMutation({
+    mutationFn: async () => {
+      const response = await fetch('/api/platform/notifications/', {
+        method: 'POST',
+        headers: { Authorization: `Token ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'read_all' }),
+      });
+      if (!response.ok) throw new Error('Unable to acknowledge notifications.');
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['system-notifications'] });
+      queryClient.invalidateQueries({ queryKey: ['workflow-notifications'] });
+    },
+  });
+  const openNotificationRecord = async (notice: any) => {
+    if (!notice.is_read) await acknowledgeNotification.mutateAsync(notice.id);
+    if (notice.route_path) {
+      setNotificationsOpen(false);
+      setLocation(notice.route_path);
+    }
+  };
   const openRoute = (path: string) => {
     setLocation(path);
     setGlobalSearch('');
@@ -919,12 +955,41 @@ export function Shell({ children }: { children: React.ReactNode }) {
           </div>
 
           <div className="flex items-center gap-3">
-            {canReviewWorkflow ? (
-              <Button variant="ghost" size="icon" onClick={() => setLocation('/workflows/approvals')} className="relative text-muted-foreground hover:text-foreground" title="Workflow approvals and notifications">
+            <Sheet open={notificationsOpen} onOpenChange={setNotificationsOpen}>
+              <Button variant="ghost" size="icon" onClick={() => setNotificationsOpen(true)} className="relative text-muted-foreground hover:text-foreground" title="System notifications">
                 <Bell className="h-5 w-5" />
-                {approvalCount > 0 ? <span className="absolute right-0 top-0 min-w-4 rounded-full bg-destructive px-1 text-center text-[10px] font-bold leading-4 text-destructive-foreground">{approvalCount > 99 ? '99+' : approvalCount}</span> : null}
+                {notificationCount > 0 ? <span className="absolute right-0 top-0 min-w-4 rounded-full bg-destructive px-1 text-center text-[10px] font-bold leading-4 text-destructive-foreground">{notificationCount > 99 ? '99+' : notificationCount}</span> : null}
               </Button>
-            ) : null}
+              <SheetContent className="flex w-full flex-col p-0 sm:max-w-md">
+                <SheetHeader className="border-b px-5 py-4 text-left">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <SheetTitle>Notifications</SheetTitle>
+                      <SheetDescription>System alerts, workflow updates, and reminders for your workspace.</SheetDescription>
+                    </div>
+                    {notificationCount > 0 ? <Button size="sm" variant="outline" onClick={() => acknowledgeAllNotifications.mutate()} disabled={acknowledgeAllNotifications.isPending}>Acknowledge all</Button> : null}
+                  </div>
+                </SheetHeader>
+                <div className="min-h-0 flex-1 overflow-y-auto">
+                  {systemNotifications.isLoading ? <p className="p-5 text-sm text-muted-foreground">Loading notifications...</p> : null}
+                  {!systemNotifications.isLoading && !notificationItems.length ? <p className="p-5 text-sm text-muted-foreground">You have no unread notifications.</p> : null}
+                  <div className="divide-y">
+                    {notificationItems.map((notice: any) => (
+                      <article key={notice.id} className="space-y-3 p-5">
+                        <div className="flex items-start gap-3">
+                          <Bell className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+                          <div className="min-w-0 flex-1"><p className="text-sm font-semibold">{notice.title}</p><p className="mt-1 text-sm text-muted-foreground">{notice.message}</p><p className="mt-2 text-xs text-muted-foreground">{new Date(notice.created_at).toLocaleString()}</p></div>
+                        </div>
+                        <div className="flex justify-end gap-2">
+                          <Button size="sm" variant="outline" onClick={() => acknowledgeNotification.mutate(notice.id)} disabled={acknowledgeNotification.isPending}>Acknowledge</Button>
+                          {notice.route_path ? <Button size="sm" onClick={() => openNotificationRecord(notice)} disabled={acknowledgeNotification.isPending}>Open record</Button> : null}
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                </div>
+              </SheetContent>
+            </Sheet>
             {availableRoles.length > 1 ? (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
