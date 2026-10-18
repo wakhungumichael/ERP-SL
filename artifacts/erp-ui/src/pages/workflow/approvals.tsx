@@ -1,6 +1,6 @@
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { useState } from "react";
-import { Bell, Check, Clock3, Eye, RotateCcw, X } from "lucide-react";
+import { Bell, Check, Clock3, Eye, ExternalLink, Paperclip, RotateCcw, X } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { useAuth } from "@/context/use-auth";
@@ -211,6 +211,9 @@ export default function WorkflowApprovals() {
   const snapshotRows = Object.entries(snapshot).filter(
     ([, value]) => value !== "" && value !== null && value !== undefined,
   );
+  const subjectAttachments = Array.isArray(subject.data?.subject?.attachments)
+    ? subject.data.subject.attachments
+    : [];
   return (
     <div className="mx-auto w-full max-w-7xl space-y-6 p-4 md:p-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -469,6 +472,18 @@ export default function WorkflowApprovals() {
                     still review its workflow history and take a decision.
                   </div>
                 )}
+                {subjectAttachments.length ? (
+                  <div className="rounded-lg border border-primary/20 bg-primary/5 p-3">
+                    <div className="flex items-center gap-2 text-sm font-medium"><Paperclip className="h-4 w-4 text-primary" /> Evidence attachments</div>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {subjectAttachments.map((attachment: any, index: number) => (
+                        <a key={`${attachment.url}-${index}`} href={attachment.url} target="_blank" rel="noreferrer">
+                          <Button type="button" size="sm" variant="outline"><ExternalLink className="mr-1 h-3.5 w-3.5" />{attachment.name || attachment.label || 'View evidence'}</Button>
+                        </a>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
               </div>
             ) : null}
             {reviewTab === "history" ? (

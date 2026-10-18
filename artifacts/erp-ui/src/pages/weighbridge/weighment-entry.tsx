@@ -17,7 +17,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
 import LiveIndicator from '@/components/weighbridge/live-indicator';
-import { Camera, Check, ChevronsUpDown, Loader2, Package, Plus, RefreshCw, ScanLine, Scale, Search, Trash2, Truck, UserRound, WifiOff } from 'lucide-react';
+import { Camera, Check, ChevronsUpDown, Loader2, Package, Paperclip, Plus, RefreshCw, ScanLine, Scale, Search, Trash2, Truck, UserRound, WifiOff } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { ERPPageHeader } from '@/components/erp/workspace/workspace-ui';
 import { hasPermission } from '@/lib/permissions';
@@ -77,6 +77,26 @@ type WorkflowContextPayload = {
   latest_transaction_defaults?: WorkflowContextDefaults | null;
   open_transactions?: WorkflowContextOpenTransaction[];
 };
+
+const MANUAL_EVIDENCE_MAX_BYTES = 8 * 1024 * 1024;
+const MANUAL_EVIDENCE_TYPES = ['image/jpeg', 'image/png', 'application/pdf'];
+
+function readManualEvidence(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    if (!MANUAL_EVIDENCE_TYPES.includes(file.type)) {
+      reject(new Error('Choose a JPEG, PNG, or PDF evidence file.'));
+      return;
+    }
+    if (file.size > MANUAL_EVIDENCE_MAX_BYTES) {
+      reject(new Error('Evidence must be 8 MB or smaller.'));
+      return;
+    }
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('The evidence file could not be read.'));
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.readAsDataURL(file);
+  });
+}
 
 function authHeaders() {
   const token = localStorage.getItem('sl-erp-token');
@@ -313,6 +333,7 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
   const [capturedWeight, setCapturedWeight] = useState<number | null>(null);
   const [manualWeight, setManualWeight] = useState('');
   const [weightReason, setWeightReason] = useState('');
+  const [manualEvidence, setManualEvidence] = useState<{ name: string; dataUrl: string } | null>(null);
   const [driverName, setDriverName] = useState('');
   const [driverPhone, setDriverPhone] = useState('');
   const [prefillVehicleKey, setPrefillVehicleKey] = useState('');
@@ -502,6 +523,7 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
     setCapturedWeight(null);
     setManualWeight('');
     setWeightReason('');
+    setManualEvidence(null);
     setCapturedCameraImage(null);
     setPlateRecognition(null);
   }, [operationTypeId]);
@@ -860,6 +882,10 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
       };
       if (capturedCameraImage) payload.camera_snapshot = capturedCameraImage;
       if (manualMode && weightReason.trim()) payload.weight_reason = weightReason.trim();
+      if (manualMode && manualEvidence) {
+        payload.manual_evidence_upload = manualEvidence.dataUrl;
+        payload.manual_evidence_name = manualEvidence.name;
+      }
 
       create.mutate({ data: payload as any }, {
         onSuccess: (tx: any) => {
@@ -869,6 +895,7 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
           setCapturedWeight(null);
           setManualWeight('');
           setWeightReason('');
+          setManualEvidence(null);
           setCapturedCameraImage(null);
           resetSecondFlowState();
           setLocation('/weighbridge/transactions');
@@ -908,6 +935,10 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
     if (itemId) payload.item = parseInt(itemId, 10);
     if (vehicleTypeId) payload.vehicle_type = parseInt(vehicleTypeId, 10);
     if (manualMode && weightReason.trim()) payload.weight_reason = weightReason.trim();
+    if (manualMode && manualEvidence) {
+      payload.manual_evidence_upload = manualEvidence.dataUrl;
+      payload.manual_evidence_name = manualEvidence.name;
+    }
 
     create.mutate({ data: payload as any }, {
       onSuccess: (tx: any) => {
@@ -917,6 +948,7 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
         setCapturedWeight(null);
         setManualWeight('');
         setWeightReason('');
+        setManualEvidence(null);
         setCapturedCameraImage(null);
         setLocation('/weighbridge/transactions');
       },
@@ -951,6 +983,7 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
                     setManualWeight('');
                     transactionErrors.clearField('gross_weight');
                     transactionErrors.clearField('weight_reason');
+                    setManualEvidence(null);
                   }}
                   className={cn(
                     'flex h-8 items-center gap-1.5 rounded-full border px-2.5 py-0 text-[11px] font-bold uppercase tracking-wide',
@@ -972,6 +1005,28 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
                     <Label required>Reason</Label>
                     <Textarea name="weight_reason" required rows={2} aria-invalid={!!transactionErrors.errors.fields.weight_reason} aria-describedby={transactionErrors.errors.fields.weight_reason ? 'manual-reason-error' : undefined} value={weightReason} onChange={(event) => { setWeightReason(event.target.value); transactionErrors.clearField('weight_reason'); }} placeholder="Reason for manual capture" />
                     <InlineFormError id="manual-reason-error" messages={transactionErrors.errors.fields.weight_reason} />
+                  </div>
+                  <div className="space-y-1.5 md:col-span-2">
+                    <Label htmlFor="manual-evidence">Evidence attachment <span className="font-normal text-muted-foreground">(optional)</span></Label>
+                    <Input
+                      id="manual-evidence"
+                      type="file"
+                      accept="image/jpeg,image/png,application/pdf"
+                      onChange={async (event) => {
+                        const file = event.target.files?.[0];
+                        if (!file) return;
+                        try {
+                          const dataUrl = await readManualEvidence(file);
+                          setManualEvidence({ name: file.name, dataUrl });
+                          transactionErrors.clearField('manual_evidence_upload');
+                        } catch (error) {
+                          setManualEvidence(null);
+                          transactionErrors.apply({ manual_evidence_upload: [error instanceof Error ? error.message : 'The evidence file could not be attached.'] });
+                        }
+                      }}
+                    />
+                    <p className="flex items-center gap-1.5 text-xs text-muted-foreground"><Paperclip className="h-3.5 w-3.5" />{manualEvidence ? `${manualEvidence.name} will be available to the approver.` : 'JPEG, PNG, or PDF up to 8 MB. This will be shown in the workflow review.'}</p>
+                    <InlineFormError messages={transactionErrors.errors.fields.manual_evidence_upload} />
                   </div>
                 </div>
               ) : (

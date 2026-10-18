@@ -2229,6 +2229,14 @@ def _workflow_subject_summary(item):
             "branch", "customer", "vehicle", "item", "vehicle_type"
         ).first()
         if transaction_record:
+            evidence_url = ""
+            evidence_name = ""
+            if getattr(transaction_record, "manual_receipt", None):
+                try:
+                    evidence_url = transaction_record.manual_receipt.url
+                    evidence_name = transaction_record.manual_receipt.name.rsplit("/", 1)[-1]
+                except (ValueError, OSError):
+                    pass
             return {
                 "reference": getattr(transaction_record, "transaction_number", "") or item.reference,
                 "fields": {
@@ -2244,7 +2252,14 @@ def _workflow_subject_summary(item):
                     "Payment status": transaction_record.payment_status,
                     "Document status": transaction_record.status,
                     "Approval status": "Approved" if transaction_record.approval_status else "Awaiting workflow approval",
+                    "Manual capture": "Yes" if transaction_record.manual_weight_capture else "No",
+                    "Manual capture reason": transaction_record.weight_reason or "",
                 },
+                "attachments": ([{
+                    "label": "Manual capture evidence",
+                    "url": evidence_url,
+                    "name": evidence_name or "View attachment",
+                }] if evidence_url else []),
             }
     return {"reference": item.reference, "fields": saved_snapshot or {}}
 

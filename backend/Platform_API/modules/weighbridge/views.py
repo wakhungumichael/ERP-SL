@@ -16,6 +16,7 @@ from urllib.parse import urlparse
 
 from django.conf import settings
 from django.core.files.base import ContentFile
+from django.utils.text import get_valid_filename
 from django.db import transaction as db_transaction
 from django.http import HttpResponse
 from django.db.models import Q
@@ -219,6 +220,10 @@ class VehicleSerializer(serializers.ModelSerializer):
 class TransactionSerializer(serializers.ModelSerializer):
     camera_snapshot = serializers.CharField(write_only=True, required=False, allow_blank=True)
     camera_image_url = serializers.SerializerMethodField()
+    manual_evidence_upload = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    manual_evidence_name = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    manual_evidence_url = serializers.SerializerMethodField()
+    manual_evidence_filename = serializers.SerializerMethodField()
     status = serializers.CharField(required=False, allow_blank=False)
     branch_name = serializers.CharField(source="branch.name", read_only=True)
     customer_name = serializers.CharField(source="customer.name", read_only=True)
@@ -250,6 +255,19 @@ class TransactionSerializer(serializers.ModelSerializer):
         except (ValueError, OSError):
             return None
 
+    def get_manual_evidence_url(self, obj):
+        if not getattr(obj, "manual_receipt", None):
+            return None
+        try:
+            return obj.manual_receipt.url
+        except (ValueError, OSError):
+            return None
+
+    def get_manual_evidence_filename(self, obj):
+        if not getattr(obj, "manual_receipt", None):
+            return ""
+        return Path(obj.manual_receipt.name).name
+
     def validate_camera_snapshot(self, value):
         if not value:
             return None
@@ -273,22 +291,56 @@ class TransactionSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Camera snapshot is not a valid JPEG image.")
         return image_bytes
 
+    def validate_manual_evidence_upload(self, value):
+        if not value:
+            return None
+        match = re.match(r"^data:(image/jpeg|image/png|application/pdf);base64,(.+)$", value, re.DOTALL)
+        if not match:
+            raise serializers.ValidationError("Attach a JPEG, PNG, or PDF file as manual-capture evidence.")
+        try:
+            evidence_bytes = base64.b64decode(match.group(2), validate=True)
+        except (binascii.Error, ValueError):
+            raise serializers.ValidationError("The manual-capture evidence file could not be read.")
+        if not evidence_bytes:
+            raise serializers.ValidationError("The manual-capture evidence file is empty.")
+        if len(evidence_bytes) > 8 * 1024 * 1024:
+            raise serializers.ValidationError("Manual-capture evidence must be 8 MB or smaller.")
+        return {"content_type": match.group(1), "bytes": evidence_bytes}
+
     def _save_camera_snapshot(self, transaction, image_bytes):
         if not image_bytes:
             return
         filename = f"transaction_{transaction.pk}_{timezone.now():%Y%m%d%H%M%S}.jpg"
         transaction.image.save(filename, ContentFile(image_bytes), save=True)
 
+    def _save_manual_evidence(self, transaction, evidence, original_name):
+        if not evidence:
+            return
+        extension = {
+            "image/jpeg": "jpg",
+            "image/png": "png",
+            "application/pdf": "pdf",
+        }[evidence["content_type"]]
+        safe_name = get_valid_filename(Path(original_name or "manual-evidence").stem)[:80] or "manual-evidence"
+        filename = f"tx_{transaction.pk}_{timezone.now():%Y%m%d%H%M%S}_{safe_name}.{extension}"
+        transaction.manual_receipt.save(filename, ContentFile(evidence["bytes"]), save=True)
+
     def create(self, validated_data):
         image_bytes = validated_data.pop("camera_snapshot", None)
+        manual_evidence = validated_data.pop("manual_evidence_upload", None)
+        manual_evidence_name = validated_data.pop("manual_evidence_name", "")
         transaction = super().create(validated_data)
         self._save_camera_snapshot(transaction, image_bytes)
+        self._save_manual_evidence(transaction, manual_evidence, manual_evidence_name)
         return transaction
 
     def update(self, instance, validated_data):
         image_bytes = validated_data.pop("camera_snapshot", None)
+        manual_evidence = validated_data.pop("manual_evidence_upload", None)
+        manual_evidence_name = validated_data.pop("manual_evidence_name", "")
         transaction = super().update(instance, validated_data)
         self._save_camera_snapshot(transaction, image_bytes)
+        self._save_manual_evidence(transaction, manual_evidence, manual_evidence_name)
         return transaction
 
     def get_auto_invoice_id(self, obj):
@@ -365,6 +417,7 @@ class TransactionSerializer(serializers.ModelSerializer):
             "charge", "destination", "invoiced", "approval_status",
             "manual_weight_capture", "weight_reason",
             "camera_snapshot", "camera_image_url",
+            "manual_evidence_upload", "manual_evidence_name", "manual_evidence_url", "manual_evidence_filename",
             "paired", "paired_first_transaction",
             "auto_invoice_id",
             "created_at", "updated_at",
