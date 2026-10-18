@@ -7,6 +7,8 @@ import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useAuth } from '@/context/use-auth';
 import { ERPMetricCard, ERPPageHeader } from '@/components/erp/workspace/workspace-ui';
+import { useToast } from '@/hooks/use-toast';
+import { apiErrorFromResponse, getUserFacingError } from '@/lib/api-errors';
 
 type FieldChange = { before?: unknown; after?: unknown; related_ids?: unknown[]; action?: string; changed_at?: string };
 type AuditEvent = { id: number; tenant_name?: string | null; branch_name?: string | null; actor_name?: string | null; event_group?: string; event_type?: string; status?: string; model_label?: string; object_pk?: string; object_repr?: string; note?: string; changes?: Record<string, unknown>; metadata?: Record<string, unknown>; created_at?: string };
@@ -39,6 +41,7 @@ function Pager({ page, total, onChange }: { page: number; total: number; onChang
 
 export default function AuditLogsPage() {
   const { token, role, user } = useAuth();
+  const { toast } = useToast();
   const [search, setSearch] = useState('');
   const [eventGroup, setEventGroup] = useState('');
   const [eventStatus, setEventStatus] = useState('');
@@ -75,10 +78,7 @@ export default function AuditLogsPage() {
         if (eventStatus) params.set('status', eventStatus);
       }
       const response = await fetch(`/api/platform/audit/export/?${params}`, { headers: { Authorization: `Token ${token}` } });
-      if (!response.ok) {
-        const payload = await response.json().catch(() => null);
-        throw new Error(payload?.message ?? payload?.error ?? 'Audit export could not be generated.');
-      }
+      if (!response.ok) throw await apiErrorFromResponse(response, 'We could not generate this audit export. Please try again.');
       const url = URL.createObjectURL(await response.blob());
       const anchor = document.createElement('a');
       anchor.href = url;
@@ -88,7 +88,8 @@ export default function AuditLogsPage() {
       anchor.remove();
       window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
     } catch (error) {
-      window.alert(error instanceof Error ? error.message : 'Audit export could not be generated.');
+      const message = getUserFacingError(error, 'We could not generate this audit export. Please try again.');
+      toast({ title: message.title, description: message.description, variant: 'destructive' });
     } finally {
       setExporting(null);
     }

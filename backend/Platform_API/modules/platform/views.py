@@ -2845,24 +2845,43 @@ class AuditExportAPIView(APIView):
             writer.writerows(values)
             return response
 
-        buffer = BytesIO()
-        document = SimpleDocTemplate(buffer, pagesize=landscape(A4), rightMargin=22, leftMargin=22, topMargin=28, bottomMargin=28)
-        styles = getSampleStyleSheet()
-        body = [Paragraph(f"Audit Log Export - {escape(dataset.title())}", styles["Title"]), Spacer(1, 6), Paragraph(f"Generated {escape(exported_at)} | {len(values)} record(s)", styles["Normal"]), Spacer(1, 12)]
-        table_data = [headers] + [[Paragraph(escape(str(cell or "—"))[:180], styles["BodyText"]) for cell in row] for row in values]
-        table = Table(table_data, repeatRows=1, colWidths=[(A4[1] - 44) / len(headers)] * len(headers))
-        table.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1f2937")), ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"), ("FONTSIZE", (0, 0), (-1, -1), 6.5),
-            ("LEADING", (0, 0), (-1, -1), 8), ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#d1d5db")),
-            ("VALIGN", (0, 0), (-1, -1), "TOP"), ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f8fafc")]),
-            ("LEFTPADDING", (0, 0), (-1, -1), 3), ("RIGHTPADDING", (0, 0), (-1, -1), 3), ("TOPPADDING", (0, 0), (-1, -1), 3), ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
-        ]))
-        body.append(table)
-        document.build(body)
-        response = HttpResponse(buffer.getvalue(), content_type="application/pdf")
-        response["Content-Disposition"] = f'attachment; filename="{filename}.pdf"'
-        return response
+        try:
+            buffer = BytesIO()
+            page_size = landscape(A4)
+            document = SimpleDocTemplate(buffer, pagesize=page_size, rightMargin=22, leftMargin=22, topMargin=28, bottomMargin=28)
+            styles = getSampleStyleSheet()
+            cell_style = styles["BodyText"].clone("AuditExportCell", fontSize=5.5, leading=6.5, spaceAfter=0, splitLongWords=1)
+
+            # Audit values may contain snapshots or JSON. Keeping each cell concise
+            # prevents one oversized row from making an otherwise valid PDF fail.
+            def pdf_cell(cell):
+                text = " ".join(str(cell or "—").split())
+                if len(text) > 96:
+                    text = f"{text[:93]}..."
+                return Paragraph(escape(text), cell_style)
+
+            body = [Paragraph(f"Audit Log Export - {escape(dataset.title())}", styles["Title"]), Spacer(1, 6), Paragraph(f"Generated {escape(exported_at)} | {len(values)} record(s)", styles["Normal"]), Spacer(1, 12)]
+            table_data = [headers] + [[pdf_cell(cell) for cell in row] for row in values]
+            usable_width = page_size[0] - document.leftMargin - document.rightMargin
+            table = Table(table_data, repeatRows=1, splitByRow=1, colWidths=[usable_width / len(headers)] * len(headers))
+            table.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1f2937")), ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"), ("FONTSIZE", (0, 0), (-1, -1), 6.5),
+                ("LEADING", (0, 0), (-1, -1), 8), ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#d1d5db")),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"), ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f8fafc")]),
+                ("LEFTPADDING", (0, 0), (-1, -1), 3), ("RIGHTPADDING", (0, 0), (-1, -1), 3), ("TOPPADDING", (0, 0), (-1, -1), 3), ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+            ]))
+            body.append(table)
+            document.build(body)
+            response = HttpResponse(buffer.getvalue(), content_type="application/pdf")
+            response["Content-Disposition"] = f'attachment; filename="{filename}.pdf"'
+            return response
+        except Exception:
+            logger.exception("audit_pdf_export_failed", extra={"dataset": dataset, "user_id": user.id})
+            return error_response(
+                "We could not generate this audit PDF. Try the CSV export, or contact your administrator if the problem continues.",
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
 
 class RecordAuditTrailAPIView(APIView):

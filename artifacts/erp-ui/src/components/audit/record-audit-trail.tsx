@@ -5,6 +5,8 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useAuth } from '@/context/use-auth';
+import { useToast } from '@/hooks/use-toast';
+import { apiErrorFromResponse, getUserFacingError } from '@/lib/api-errors';
 
 type AuditSummary = { created_by_name?: string | null; created_on?: string | null; updated_by_name?: string | null; updated_on?: string | null; deleted_by_name?: string | null; deleted_on?: string | null };
 type AuditEvent = { id: number; actor_name?: string | null; event_group?: string; event_type?: string; status?: string; note?: string; object_repr?: string; changes?: Record<string, unknown>; metadata?: Record<string, unknown>; created_at?: string };
@@ -27,6 +29,7 @@ function EventRow({ event, showChanges }: { event: AuditEvent; showChanges: bool
 
 export function RecordAuditTrail({ modelLabel, objectPk }: { modelLabel: string; objectPk: string | number }) {
   const { token, user } = useAuth();
+  const { toast } = useToast();
   const [open, setOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
   const permissions = new Set(Array.isArray((user as any)?.permissions) ? (user as any).permissions.map(String) : []);
@@ -48,9 +51,12 @@ export function RecordAuditTrail({ modelLabel, objectPk }: { modelLabel: string;
     try {
       const params = new URLSearchParams({ dataset: 'events', format, model_label: modelLabel, object_pk: String(objectPk) });
       const response = await fetch(`/api/platform/audit/export/?${params}`, { headers: { Authorization: `Token ${token}` } });
-      if (!response.ok) { const body = await response.json().catch(() => null); throw new Error(body?.message ?? body?.error ?? 'Audit export could not be generated.'); }
+      if (!response.ok) throw await apiErrorFromResponse(response, 'We could not generate this audit export. Please try again.');
       const url = URL.createObjectURL(await response.blob()); const link = document.createElement('a'); link.href = url; link.download = `audit-record-${objectPk}.${format}`; document.body.appendChild(link); link.click(); link.remove(); window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
-    } catch (reason) { window.alert(reason instanceof Error ? reason.message : 'Audit export could not be generated.'); } finally { setExporting(false); }
+    } catch (reason) {
+      const message = getUserFacingError(reason, 'We could not generate this audit export. Please try again.');
+      toast({ title: message.title, description: message.description, variant: 'destructive' });
+    } finally { setExporting(false); }
   };
   return <><Button size="sm" variant="outline" className="gap-1.5 text-xs font-bold uppercase tracking-wide" onClick={() => setOpen(true)}><History className="h-3.5 w-3.5" /> Audit Trail</Button><Dialog open={open} onOpenChange={setOpen}><DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-4xl"><DialogHeader><div className="flex flex-wrap items-center justify-between gap-3 pr-8"><DialogTitle className="flex items-center gap-2"><History className="h-5 w-5" /> Audit Trail</DialogTitle>{canExport ? <div className="flex gap-2"><Button size="sm" variant="outline" disabled={exporting} onClick={() => exportTrail('csv')}><Download /> CSV</Button><Button size="sm" variant="outline" disabled={exporting} onClick={() => exportTrail('pdf')}><Download /> PDF</Button></div> : null}</div></DialogHeader>{isLoading ? <div className="p-6 text-sm text-muted-foreground animate-pulse">Loading audit trail…</div> : error ? <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800"><ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />{(error as Error).message}</div> : <Tabs defaultValue="summary" className="mt-2"><TabsList className="w-full justify-start"><TabsTrigger value="summary">Summary</TabsTrigger><TabsTrigger value="activity">Activity ({events.length})</TabsTrigger><TabsTrigger value="changes">Field Changes</TabsTrigger></TabsList><TabsContent value="summary" className="space-y-4 pt-3"><div className="grid gap-3 md:grid-cols-3"><SummaryField name="Created">{summary.created_by_name ? `${summary.created_by_name} · ${date(summary.created_on)}` : date(summary.created_on)}</SummaryField><SummaryField name="Last updated">{summary.updated_by_name ? `${summary.updated_by_name} · ${date(summary.updated_on)}` : date(summary.updated_on)}</SummaryField><SummaryField name="Deleted">{summary.deleted_on ? `${summary.deleted_by_name ?? 'Unknown'} · ${date(summary.deleted_on)}` : 'Not deleted'}</SummaryField></div><div className="rounded-lg border bg-muted/20 p-4 text-sm text-muted-foreground">Select <strong>Activity</strong> to review every event or <strong>Field Changes</strong> to compare stored values. Each entry expands independently.</div></TabsContent><TabsContent value="activity" className="space-y-2 pt-3">{events.length ? events.map(event => <EventRow key={event.id} event={event} showChanges={false} />) : <div className="rounded-lg border border-dashed p-5 text-sm text-muted-foreground">No audit events have been recorded for this record yet.</div>}</TabsContent><TabsContent value="changes" className="space-y-2 pt-3">{events.length ? events.map(event => <EventRow key={event.id} event={event} showChanges />) : <div className="rounded-lg border border-dashed p-5 text-sm text-muted-foreground">No field changes have been recorded for this record yet.</div>}</TabsContent></Tabs>}</DialogContent></Dialog></>;
 }
