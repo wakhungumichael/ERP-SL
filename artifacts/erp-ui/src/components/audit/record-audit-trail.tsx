@@ -18,6 +18,40 @@ const date = (value?: string | null) => value ? new Date(value).toLocaleString('
 const value = (item: unknown) => item === null || item === undefined || item === '' ? '—' : item === true ? 'Yes' : item === false ? 'No' : Array.isArray(item) ? item.join(', ') || 'None' : typeof item === 'object' ? JSON.stringify(item) : String(item);
 const actor = (event: AuditEvent) => event.actor_name || String(event.metadata?.actor_name || event.metadata?.actor_username || 'System process');
 const fields = (event: AuditEvent) => Object.entries(event.changes ?? {}).filter(([field]) => !HIDDEN_FIELDS.has(field) && !field.endsWith('_at')).map(([field, change]) => ({ field, change: (change ?? {}) as FieldChange }));
+const csvCell = (item: unknown) => `"${String(item ?? '').replaceAll('"', '""')}"`;
+const html = (item: unknown) => String(item ?? '—').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
+
+function download(content: BlobPart, filename: string, type: string) {
+  const url = URL.createObjectURL(new Blob([content], { type }));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
+function exportLoadedTrail(events: AuditEvent[], objectPk: string | number, format: 'csv' | 'pdf') {
+  const rows = events.map((event) => [date(event.created_at), actor(event), label(event.event_group), label(event.event_type), label(event.status), event.object_repr || 'Record event', fields(event).map(({ field, change }) => `${label(field)}: ${value(change.before)} -> ${value(change.after ?? change.related_ids ?? change.action)}`).join('; '), event.note || '']);
+  const headers = ['Timestamp', 'Actor', 'Category', 'Action', 'Outcome', 'Record', 'Field changes', 'Notes'];
+  if (format === 'csv') {
+    download([headers, ...rows].map((row) => row.map(csvCell).join(',')).join('\n'), `audit-record-${objectPk}.csv`, 'text/csv;charset=utf-8');
+    return;
+  }
+  const tableRows = rows.map((row) => `<tr>${row.map((cell) => `<td>${html(cell)}</td>`).join('')}</tr>`).join('');
+  const report = `<!doctype html><html><head><title>Audit record ${html(objectPk)}</title><style>@page { size: A4 landscape; margin: 14mm; } body { font-family: Arial, sans-serif; color: #172033; } h1 { font-size: 18px; margin: 0 0 6px; } p { color: #556070; margin: 0 0 16px; } table { width: 100%; border-collapse: collapse; font-size: 9px; } th { background: #1f2937; color: white; text-align: left; } th, td { border: 1px solid #d1d5db; padding: 5px; vertical-align: top; word-break: break-word; }</style></head><body><h1>Audit Trail: Record ${html(objectPk)}</h1><p>Generated ${html(date(new Date().toISOString()))}. Save this print dialog as PDF.</p><table><thead><tr>${headers.map((header) => `<th>${html(header)}</th>`).join('')}</tr></thead><tbody>${tableRows || `<tr><td colspan="${headers.length}">No audit events recorded.</td></tr>`}</tbody></table></body></html>`;
+  const frame = document.createElement('iframe');
+  frame.style.cssText = 'position:fixed;width:0;height:0;border:0;visibility:hidden';
+  const url = URL.createObjectURL(new Blob([report], { type: 'text/html' }));
+  frame.onload = () => {
+    frame.contentWindow?.focus();
+    frame.contentWindow?.print();
+    window.setTimeout(() => { URL.revokeObjectURL(url); frame.remove(); }, 60_000);
+  };
+  frame.src = url;
+  document.body.appendChild(frame);
+}
 
 function SummaryField({ name, children }: { name: string; children: React.ReactNode }) {
   return <div className="rounded-lg border bg-muted/20 p-3"><p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">{name}</p><p className="mt-1 text-sm font-medium">{children}</p></div>;
@@ -55,8 +89,13 @@ export function RecordAuditTrail({ modelLabel, objectPk }: { modelLabel: string;
       if (!response.ok) throw await apiErrorFromResponse(response, 'We could not generate this audit export. Please try again.');
       const url = URL.createObjectURL(await response.blob()); const link = document.createElement('a'); link.href = url; link.download = `audit-record-${objectPk}.${format}`; document.body.appendChild(link); link.click(); link.remove(); window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
     } catch (reason) {
-      const message = getUserFacingError(reason, 'We could not generate this audit export. Please try again.');
-      toast({ title: message.title, description: message.description, variant: 'destructive' });
+      try {
+        exportLoadedTrail(events, objectPk, format);
+        toast({ title: format === 'csv' ? 'Audit CSV downloaded' : 'Audit report ready to save', description: format === 'csv' ? 'The server export was unavailable, so the loaded audit trail was exported locally.' : 'The server export was unavailable. Choose “Save as PDF” in the print dialog.' });
+      } catch (fallbackError) {
+        const message = getUserFacingError(fallbackError ?? reason, 'We could not generate this audit export. Please try again.');
+        toast({ title: message.title, description: message.description, variant: 'destructive' });
+      }
     } finally { setExporting(false); }
   };
   return <><Button size="sm" variant="outline" className="gap-1.5 text-xs font-bold uppercase tracking-wide" onClick={() => setOpen(true)}><History className="h-3.5 w-3.5" /> Audit Trail</Button><Dialog open={open} onOpenChange={setOpen}><DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-4xl"><DialogHeader><div className="flex flex-wrap items-center justify-between gap-3 pr-8"><DialogTitle className="flex items-center gap-2"><History className="h-5 w-5" /> Audit Trail</DialogTitle>{canExport ? <div className="flex gap-2"><Button size="sm" variant="outline" disabled={exporting} onClick={() => exportTrail('csv')}><Download /> CSV</Button><Button size="sm" variant="outline" disabled={exporting} onClick={() => exportTrail('pdf')}><Download /> PDF</Button></div> : null}</div></DialogHeader>{isLoading ? <div className="p-6 text-sm text-muted-foreground animate-pulse">Loading audit trail…</div> : error ? <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800"><ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />{(error as Error).message}</div> : <Tabs defaultValue="summary" className="mt-2"><TabsList className="w-full justify-start"><TabsTrigger value="summary">Summary</TabsTrigger><TabsTrigger value="activity">Activity ({events.length})</TabsTrigger><TabsTrigger value="changes">Field Changes</TabsTrigger></TabsList><TabsContent value="summary" className="space-y-4 pt-3"><div className="grid gap-3 md:grid-cols-3"><SummaryField name="Created">{summary.created_by_name ? `${summary.created_by_name} · ${date(summary.created_on)}` : date(summary.created_on)}</SummaryField><SummaryField name="Last updated">{summary.updated_by_name ? `${summary.updated_by_name} · ${date(summary.updated_on)}` : date(summary.updated_on)}</SummaryField><SummaryField name="Deleted">{summary.deleted_on ? `${summary.deleted_by_name ?? 'Unknown'} · ${date(summary.deleted_on)}` : 'Not deleted'}</SummaryField></div><div className="rounded-lg border bg-muted/20 p-4 text-sm text-muted-foreground">Select <strong>Activity</strong> to review every event or <strong>Field Changes</strong> to compare stored values. Each entry expands independently.</div></TabsContent><TabsContent value="activity" className="space-y-2 pt-3">{events.length ? events.map(event => <EventRow key={event.id} event={event} showChanges={false} />) : <div className="rounded-lg border border-dashed p-5 text-sm text-muted-foreground">No audit events have been recorded for this record yet.</div>}</TabsContent><TabsContent value="changes" className="space-y-2 pt-3">{events.length ? events.map(event => <EventRow key={event.id} event={event} showChanges />) : <div className="rounded-lg border border-dashed p-5 text-sm text-muted-foreground">No field changes have been recorded for this record yet.</div>}</TabsContent></Tabs>}</DialogContent></Dialog></>;
