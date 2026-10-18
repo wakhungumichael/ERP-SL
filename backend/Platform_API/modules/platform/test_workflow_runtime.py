@@ -1,11 +1,12 @@
 # Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu.
-from django.contrib.auth.models import Group, User
+from django.contrib.auth.models import Group, Permission, User
 from django.test import TestCase
 from django.urls import reverse
 from rest_framework.test import APIClient
 
 from Platform_Core.models import (
     Tenant,
+    OrganizationMembership,
     TenantUserProfile,
     WorkflowDefinition,
     WorkflowEntityBinding,
@@ -128,6 +129,46 @@ class WorkflowRuntimeTests(TestCase):
 
         forwarded = self.client.post(reverse("workflow-forward"), {"module_slug": "weighbridge", "entity_type": "weighbridge_transaction", "entity_id": 92}, format="json")
         self.assertEqual(forwarded.status_code, 400)
+
+    def test_forwarding_requires_the_active_role_permission(self):
+        submitter = User.objects.create_user("workflow_limited_submitter", password="pass")
+        TenantUserProfile.objects.create(user=submitter, tenant=self.tenant)
+        active_group = Group.objects.create(name="Workflow Cashier")
+        submitter_group = Group.objects.create(name="Workflow Submitters")
+        submitter.groups.add(active_group, submitter_group)
+        membership = OrganizationMembership.objects.create(
+            user=submitter,
+            tenant=self.tenant,
+            role="member",
+            active_role_group_name=active_group.name,
+            is_default=True,
+        )
+        self.client.force_authenticate(submitter)
+
+        denied = self.client.post(reverse("workflow-forward"), {
+            "module_slug": "weighbridge", "entity_type": "weighbridge_transaction", "entity_id": 94,
+        }, format="json")
+        self.assertEqual(denied.status_code, 403)
+
+        permission = Permission.objects.get(
+            content_type__app_label="Platform_Core", codename="forward_workflow"
+        )
+        submitter_group.permissions.add(permission)
+
+        # The user owns the permission through a second role, but it must not
+        # apply until they select that role for the active workspace session.
+        still_denied = self.client.post(reverse("workflow-forward"), {
+            "module_slug": "weighbridge", "entity_type": "weighbridge_transaction", "entity_id": 94,
+        }, format="json")
+        self.assertEqual(still_denied.status_code, 403)
+
+        membership.active_role_group_name = submitter_group.name
+        membership.save(update_fields=["active_role_group_name", "updated_at"])
+
+        allowed = self.client.post(reverse("workflow-forward"), {
+            "module_slug": "weighbridge", "entity_type": "weighbridge_transaction", "entity_id": 94,
+        }, format="json")
+        self.assertEqual(allowed.status_code, 201, allowed.data)
 
     def test_high_value_request_routes_to_second_step_and_notifies_assignee(self):
         finance = Group.objects.create(name="Workflow Finance")

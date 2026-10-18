@@ -66,7 +66,7 @@ export function WorkflowForwardButton({
     }
   };
 
-  if (requirement.isSuccess && !requirement.data?.required) return null;
+  if (requirement.isSuccess && (!requirement.data?.required || requirement.data?.can_forward === false)) return null;
 
   const inProgress = hasForwarded || requirement.data?.in_progress;
   const stage = requirement.data?.current_stage;

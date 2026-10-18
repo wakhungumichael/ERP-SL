@@ -1820,6 +1820,28 @@ def _workflow_admin_allowed(user, permission_codename):
     )
 
 
+def _active_role_has_workflow_permission(user, permission_codename):
+    """Resolve workflow rights from the active role, not every assigned role."""
+    if _is_superadmin(user) or _active_organization_membership(user, require_admin=True):
+        return True
+    membership = _active_organization_membership(user)
+    active_role_name = (getattr(membership, "active_role_group_name", "") or "").strip()
+    if active_role_name:
+        active_group = user.groups.filter(name=active_role_name).first()
+        if active_group is not None:
+            return active_group.permissions.filter(
+                content_type__app_label="Platform_Core",
+                codename=permission_codename,
+            ).exists()
+    # Legacy accounts without an active-role selection retain their existing
+    # Django permission behaviour until they choose a role at sign-in.
+    return user.has_perm(f"Platform_Core.{permission_codename}")
+
+
+def _workflow_forward_allowed(user):
+    return _active_role_has_workflow_permission(user, "forward_workflow")
+
+
 def _validate_workflow_definition(workflow):
     """Return publish blockers and warnings without executing document-specific logic."""
     errors, warnings = [], []
@@ -2167,6 +2189,7 @@ class WorkflowRequirementAPIView(APIView):
             "Workflow requirement resolved.",
             data={
                 "required": bool(binding),
+                "can_forward": _workflow_forward_allowed(request.user),
                 "in_progress": bool(active_item),
                 "current_stage": active_item.node_definition.name if active_item and active_item.node_definition_id else None,
                 "current_role": (
@@ -2407,6 +2430,8 @@ class WorkflowForwardAPIView(APIView):
         tenant = _request_tenant_or_none(request.user)
         if tenant is None:
             raise PermissionDenied("Your account is not linked to an organization.")
+        if not _workflow_forward_allowed(request.user):
+            raise PermissionDenied("Your active role is not allowed to forward records for approval.")
 
         module_slug = str(request.data.get("module_slug") or "").strip()
         entity_type = str(request.data.get("entity_type") or "").strip()
