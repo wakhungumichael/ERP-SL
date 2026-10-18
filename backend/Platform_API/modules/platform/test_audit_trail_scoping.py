@@ -98,3 +98,16 @@ class RecordAuditTrailTenantScopingTests(TestCase):
         events = response.data["data"]
         self.assertTrue(events)
         self.assertTrue(all(event["tenant"] == self.tenant_a.id for event in events))
+
+    def test_audit_feed_returns_paginated_tenant_scoped_results(self):
+        response = self.client.get(
+            reverse("platform-audit-event-list"),
+            {"page": 1, "page_size": 1},
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        payload = response.data["data"]
+        self.assertEqual(payload["pagination"]["total_count"], 1)
+        self.assertEqual(payload["pagination"]["page_size"], 1)
+        self.assertEqual(len(payload["results"]), 1)
+        self.assertEqual(payload["results"][0]["tenant"], self.tenant_a.id)

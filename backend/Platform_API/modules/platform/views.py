@@ -1775,6 +1775,7 @@ class WorkflowDefinitionListCreateAPIView(ModuleAPIViewMixin, generics.ListCreat
         "transitions__to_node",
     ).all()
     serializer_class = WorkflowDefinitionSerializer
+    pagination_class = PlatformPageNumberPagination
     filterset_fields = ("tenant", "module", "entity_type", "status", "is_active")
     search_fields = ("code", "name", "entity_type", "description")
     ordering_fields = ("name", "code", "created_at", "updated_at")
@@ -2855,9 +2856,29 @@ class AuditEventLogListAPIView(APIView):
                 | Q(actor__first_name__icontains=search)
                 | Q(actor__last_name__icontains=search)
             )
-        limit = min(int(request.query_params.get("limit", 100) or 100), 500)
+        ordered_qs = qs.order_by("-created_at", "-id")
+        page_value = request.query_params.get("page")
+        if page_value is not None:
+            try:
+                page = max(1, int(page_value))
+                page_size = min(max(1, int(request.query_params.get("page_size", 25) or 25)), 100)
+            except (TypeError, ValueError):
+                return error_response("Page and records per page must be valid numbers.", status_code=status.HTTP_400_BAD_REQUEST)
+            total_count = ordered_qs.count()
+            total_pages = max(1, (total_count + page_size - 1) // page_size)
+            page = min(page, total_pages)
+            records = ordered_qs[(page - 1) * page_size: page * page_size]
+            serializer = AuditEventLogSerializer(records, many=True)
+            return success_response(
+                "Audit logs loaded successfully.",
+                data={"results": serializer.data, "pagination": {"page": page, "page_size": page_size, "total_count": total_count, "total_pages": total_pages}},
+            )
 
-        serializer = AuditEventLogSerializer(qs.order_by("-created_at", "-id")[:limit], many=True)
+        try:
+            limit = min(max(1, int(request.query_params.get("limit", 100) or 100)), 500)
+        except (TypeError, ValueError):
+            return error_response("Limit must be a valid number.", status_code=status.HTTP_400_BAD_REQUEST)
+        serializer = AuditEventLogSerializer(ordered_qs[:limit], many=True)
         return success_response("Audit logs loaded successfully.", data=serializer.data)
 
 
@@ -2905,9 +2926,29 @@ class AuditAccessLogListAPIView(APIView):
                 | Q(actor__first_name__icontains=search)
                 | Q(actor__last_name__icontains=search)
             )
-        limit = min(int(request.query_params.get("limit", 100) or 100), 500)
+        ordered_qs = qs.order_by("-created_at", "-id")
+        page_value = request.query_params.get("page")
+        if page_value is not None:
+            try:
+                page = max(1, int(page_value))
+                page_size = min(max(1, int(request.query_params.get("page_size", 25) or 25)), 100)
+            except (TypeError, ValueError):
+                return error_response("Page and records per page must be valid numbers.", status_code=status.HTTP_400_BAD_REQUEST)
+            total_count = ordered_qs.count()
+            total_pages = max(1, (total_count + page_size - 1) // page_size)
+            page = min(page, total_pages)
+            records = ordered_qs[(page - 1) * page_size: page * page_size]
+            serializer = AuditAccessLogSerializer(records, many=True)
+            return success_response(
+                "Access logs loaded successfully.",
+                data={"results": serializer.data, "pagination": {"page": page, "page_size": page_size, "total_count": total_count, "total_pages": total_pages}},
+            )
 
-        serializer = AuditAccessLogSerializer(qs.order_by("-created_at", "-id")[:limit], many=True)
+        try:
+            limit = min(max(1, int(request.query_params.get("limit", 100) or 100)), 500)
+        except (TypeError, ValueError):
+            return error_response("Limit must be a valid number.", status_code=status.HTTP_400_BAD_REQUEST)
+        serializer = AuditAccessLogSerializer(ordered_qs[:limit], many=True)
         return success_response("Access logs loaded successfully.", data=serializer.data)
 
 
