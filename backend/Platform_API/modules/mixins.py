@@ -72,6 +72,25 @@ def tenant_or_403(user, message="No organization linked to this account."):
     return resolved
 
 
+def has_active_permission(user, permission):
+    """Check one permission against the selected branch-role workspace."""
+    if getattr(user, "is_superuser", False):
+        return True
+    membership = OrganizationMembership.objects.filter(user=user, is_active=True).order_by(
+        "-is_default", "tenant__name"
+    ).first()
+    if membership and membership.is_org_admin:
+        return True
+    if membership and membership.branch_role_assignments.filter(is_active=True).exists():
+        role_name = membership.effective_role_group_name()
+        group = user.groups.filter(name=role_name).first()
+        return bool(group and group.permissions.filter(
+            content_type__app_label=permission.split(".", 1)[0],
+            codename=permission.split(".", 1)[-1],
+        ).exists())
+    return user.has_perm(permission)
+
+
 def require_workspace_permission(user, codename):
     """Require a dashboard/overview permission while retaining administrator access."""
     if getattr(user, "is_superuser", False) or getattr(user, "is_staff", False):
@@ -84,7 +103,7 @@ def require_workspace_permission(user, codename):
             return
     except Exception:
         pass
-    if user.has_perm(f"Platform_Core.{codename}"):
+    if has_active_permission(user, f"Platform_Core.{codename}"):
         return
     raise PermissionDenied("You do not have permission to view this dashboard.")
 
@@ -162,9 +181,23 @@ class TenantScopedQuerysetMixin:
             except Exception:
                 pass
 
-        if branch_id:
+        active_branch_id = None
+        if not user.is_superuser:
+            membership = OrganizationMembership.objects.filter(
+                user=user, is_active=True
+            ).order_by("-is_default", "tenant__name").first()
+            if membership and membership.branch_role_assignments.filter(is_active=True).exists():
+                active_branch_id = membership.branch_id
+
+        if active_branch_id and branch_id and str(branch_id) != str(active_branch_id):
+            return qs.none()
+        effective_branch_id = branch_id or active_branch_id
+        if effective_branch_id:
+            # If a view has no branch field the harmless exception preserves
+            # tenant-level reference data while branch-aware records follow
+            # the user's selected branch-and-role workspace context.
             try:
-                qs = qs.filter(**{self.branch_filter_field: branch_id})
+                qs = qs.filter(**{self.branch_filter_field: effective_branch_id})
             except Exception:
                 pass
 

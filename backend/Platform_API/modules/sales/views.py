@@ -47,6 +47,7 @@ from Platform_Core.models import TenantSettings
 from Platform_Core.platform import get_active_tenant_module_slugs
 from Platform_API.modules.mixins import (
     apply_tenant_filter as _apply_tenant_filter,
+    has_active_permission,
     resolve_user_tenant as _resolve_user_tenant,
     tenant_or_403,
 )
@@ -82,13 +83,13 @@ def _is_customer_admin(user):
 
 
 def _require_sales_customer_permission(user, action):
-    if _is_customer_admin(user) or user.has_perm(f"SL_Sales.{action}_salescustomer"):
+    if _is_customer_admin(user) or has_active_permission(user, f"SL_Sales.{action}_salescustomer"):
         return
     raise PermissionDenied("You do not have permission to perform this Sales customer action.")
 
 
 def _can_view_customer_statements(user):
-    if _is_customer_admin(user) or user.has_perm("SL_Sales.can_view_customer_statements"):
+    if _is_customer_admin(user) or has_active_permission(user, "SL_Sales.can_view_customer_statements"):
         return True
     return False
 

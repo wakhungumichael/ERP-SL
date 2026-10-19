@@ -62,6 +62,7 @@ from Platform_Core.models import (
     IntegrationEndpoint,
     LicenseKey,
     ModuleDefinition,
+    OrganizationBranchRoleAssignment,
     OrganizationMembership,
     PlanModule,
     PlatformBrandingSettings,
@@ -153,6 +154,7 @@ from Platform_API.modules.mixins import (
     NO_TENANT_ACCESS,
     ModuleAPIViewMixin,
     TenantScopedQuerysetMixin,
+    has_active_permission,
     resolve_user_tenant,
 )
 
@@ -675,6 +677,56 @@ def _resolve_membership_role_group(role_group_name, *, tenant_id):
     return group
 
 
+def _replace_membership_branch_roles(membership, assignments):
+    """Validate and replace the roles a member may use at each branch."""
+    if not isinstance(assignments, list):
+        raise ValidationError({"branch_role_assignments": "Provide a list of branch and role assignments."})
+
+    resolved = []
+    seen = set()
+    for item in assignments:
+        if not isinstance(item, dict):
+            raise ValidationError({"branch_role_assignments": "Each assignment must include branch_id and role_group_name."})
+        branch = TenantBranch.objects.filter(
+            pk=item.get("branch_id"), tenant=membership.tenant, is_active=True
+        ).first()
+        role_name = str(item.get("role_group_name") or "").strip()
+        if branch is None:
+            raise ValidationError({"branch_role_assignments": "Each assigned branch must belong to this organization."})
+        group = _resolve_membership_role_group(role_name, tenant_id=membership.tenant_id)
+        if group is None:
+            raise ValidationError({"branch_role_assignments": "Choose a role for every assigned branch."})
+        key = (branch.id, group.id)
+        if key not in seen:
+            seen.add(key)
+            resolved.append((branch, group))
+
+    OrganizationBranchRoleAssignment.objects.filter(membership=membership).delete()
+    OrganizationBranchRoleAssignment.objects.bulk_create([
+        OrganizationBranchRoleAssignment(membership=membership, branch=branch, role_group=group)
+        for branch, group in resolved
+    ])
+    membership.branches.set([branch for branch, _group in resolved])
+    if resolved:
+        active_branch, active_group = resolved[0]
+        if membership.branch_id not in {branch.id for branch, _group in resolved}:
+            membership.branch = active_branch
+        if not membership.active_role_group_name or not any(
+            group.name == membership.active_role_group_name and branch.id == membership.branch_id
+            for branch, group in resolved
+        ):
+            membership.active_role_group_name = active_group.name
+        membership.role_group_name = active_group.name
+        membership.role = _resolve_membership_role(active_group.name, membership.is_org_admin)
+        membership.user.groups.add(*[group for _branch, group in resolved])
+    else:
+        membership.branch = None
+        membership.active_role_group_name = ""
+        membership.role_group_name = ""
+        membership.role = "member"
+    return resolved
+
+
 def _tenant_visible_roles_queryset(user):
     if _is_superadmin(user):
         return Group.objects.all()
@@ -762,26 +814,26 @@ def _validate_tenant_role_name(name, *, tenant_id, exclude_group_id=None):
 
 def _can_view_global_audit_logs(user):
     return _request_tenant_or_none(user) is None and (
-        user.is_superuser or user.has_perm("Platform_Core.view_global_audit_logs")
+        user.is_superuser or has_active_permission(user, "Platform_Core.view_global_audit_logs")
     )
 
 
 def _can_view_tenant_audit_logs(user):
-    return _can_view_global_audit_logs(user) or user.has_perm("Platform_Core.view_tenant_audit_logs")
+    return _can_view_global_audit_logs(user) or has_active_permission(user, "Platform_Core.view_tenant_audit_logs")
 
 
 def _can_export_audit_logs(user):
-    return bool(getattr(user, "is_superuser", False) or user.has_perm("Platform_Core.export_audit_logs"))
+    return bool(getattr(user, "is_superuser", False) or has_active_permission(user, "Platform_Core.export_audit_logs"))
 
 
 def _can_view_global_access_logs(user):
     return _request_tenant_or_none(user) is None and (
-        user.is_superuser or user.has_perm("Platform_Core.view_global_access_logs")
+        user.is_superuser or has_active_permission(user, "Platform_Core.view_global_access_logs")
     )
 
 
 def _can_view_tenant_access_logs(user):
-    return _can_view_global_access_logs(user) or user.has_perm("Platform_Core.view_tenant_access_logs")
+    return _can_view_global_access_logs(user) or has_active_permission(user, "Platform_Core.view_tenant_access_logs")
 
 
 @api_view(["GET"])
@@ -1324,11 +1376,30 @@ class TokenLogoutAPIView(APIView):
 
 
 class ActiveRoleAPIView(APIView):
-    """Switch the current user's active role within their active organization."""
+    """Switch the current user's branch-and-role workspace context."""
 
     permission_classes = (IsAuthenticated,)
 
     def post(self, request):
+        assignment_id = request.data.get("assignment_id")
+        if assignment_id:
+            membership = (
+                OrganizationMembership.objects.filter(user=request.user, is_active=True, is_default=True).first()
+                or OrganizationMembership.objects.filter(user=request.user, is_active=True).order_by("tenant__name").first()
+            )
+            if membership is None:
+                return error_response("No active organization membership was found.", status_code=status.HTTP_400_BAD_REQUEST)
+            assignment = OrganizationBranchRoleAssignment.objects.filter(
+                pk=assignment_id, membership=membership, is_active=True
+            ).select_related("branch", "role_group").first()
+            if assignment is None:
+                return error_response("Choose a branch role assigned to your account.", status_code=status.HTTP_403_FORBIDDEN)
+            membership.branch = assignment.branch
+            membership.active_role_group_name = assignment.role_group.name
+            membership.save(update_fields=["branch", "active_role_group_name", "updated_at"])
+            _sync_legacy_tenant_profile(request.user)
+            return success_response("Active branch and role switched.", data=UserProfileSerializer(request.user).data)
+
         try:
             role_id = int(request.data.get("role_id"))
         except (TypeError, ValueError):
@@ -1343,6 +1414,10 @@ class ActiveRoleAPIView(APIView):
         )
         if membership is None:
             return error_response("No active organization membership was found.", status_code=status.HTTP_400_BAD_REQUEST)
+        if membership.branch_role_assignments.filter(is_active=True).exists() and not membership.branch_role_assignments.filter(
+            is_active=True, branch_id=membership.branch_id, role_group=role
+        ).exists():
+            return error_response("This role is not assigned to your active branch.", status_code=status.HTTP_403_FORBIDDEN)
         membership.active_role_group_name = role.name
         membership.save(update_fields=["active_role_group_name", "updated_at"])
         return success_response("Active role switched.", data=UserProfileSerializer(request.user).data)
@@ -1873,7 +1948,7 @@ def _active_role_has_workflow_permission(user, permission_codename):
     ):
         return True
     membership = _active_organization_membership(user)
-    active_role_name = (getattr(membership, "active_role_group_name", "") or "").strip()
+    active_role_name = membership.effective_role_group_name() if membership else ""
     if active_role_name:
         active_group = user.groups.filter(name=active_role_name).first()
         if active_group is not None:
@@ -1883,7 +1958,7 @@ def _active_role_has_workflow_permission(user, permission_codename):
             ).exists()
     # Legacy accounts without an active-role selection retain their existing
     # Django permission behaviour until they choose a role at sign-in.
-    return user.has_perm(f"Platform_Core.{permission_codename}")
+    return has_active_permission(user, f"Platform_Core.{permission_codename}")
 
 
 def _workflow_forward_allowed(user):
@@ -1893,7 +1968,7 @@ def _workflow_forward_allowed(user):
 def _active_workflow_group_ids(user):
     """Limit workflow work to the role selected for the active organization."""
     membership = _active_organization_membership(user)
-    active_role_name = (getattr(membership, "active_role_group_name", "") or "").strip()
+    active_role_name = membership.effective_role_group_name() if membership else ""
     if active_role_name:
         return set(user.groups.filter(name=active_role_name).values_list("id", flat=True))
     # Preserve legacy behavior only until an account selects an active role.
@@ -1902,7 +1977,7 @@ def _active_workflow_group_ids(user):
 
 def _active_workflow_role_name(user):
     membership = _active_organization_membership(user)
-    return (getattr(membership, "active_role_group_name", "") or "").strip()
+    return membership.effective_role_group_name() if membership else ""
 
 
 def _validate_workflow_definition(workflow):
@@ -4282,6 +4357,7 @@ class PlatformUserMembershipListCreateAPIView(APIView):
 
         role_group_name = str(request.data.get("role_group_name") or request.data.get("role_group") or "").strip()
         role_group = _resolve_membership_role_group(role_group_name, tenant_id=tenant.id)
+        branch_role_assignments = request.data.get("branch_role_assignments")
         is_org_admin = bool(request.data.get("is_org_admin")) or role_group_name == "Tenant Admin"
         role = str(request.data.get("role") or _resolve_membership_role(role_group_name, is_org_admin)).strip() or "member"
         is_default = bool(request.data.get("is_default"))
@@ -4299,8 +4375,12 @@ class PlatformUserMembershipListCreateAPIView(APIView):
                     "job_title": str(request.data.get("job_title") or "").strip(),
                 },
             )
-            membership.branches.set(assigned_branches)
-            if role_group:
+            if branch_role_assignments is not None:
+                resolved_assignments = _replace_membership_branch_roles(membership, branch_role_assignments)
+                membership.save(update_fields=["branch", "role", "role_group_name", "active_role_group_name", "updated_at"])
+            else:
+                membership.branches.set(assigned_branches)
+            if role_group and branch_role_assignments is None:
                 target_user.groups.add(role_group)
             if is_default or not OrganizationMembership.objects.filter(user=target_user, is_default=True, is_active=True).exclude(pk=membership.pk).exists():
                 OrganizationMembership.objects.filter(user=target_user).exclude(pk=membership.pk).update(is_default=False)
@@ -4350,6 +4430,8 @@ class PlatformUserMembershipDetailAPIView(APIView):
             if membership.branch_id is None and assigned_branches:
                 membership.branch = assigned_branches[0]
 
+        branch_role_assignments = request.data.get("branch_role_assignments")
+
         role_group = None
         if "role_group_name" in request.data:
             membership.role_group_name = str(request.data.get("role_group_name") or "")
@@ -4372,9 +4454,12 @@ class PlatformUserMembershipDetailAPIView(APIView):
 
         with transaction.atomic():
             membership.save()
-            if assigned_branches is not None:
+            if branch_role_assignments is not None:
+                resolved_assignments = _replace_membership_branch_roles(membership, branch_role_assignments)
+                membership.save(update_fields=["branch", "role", "role_group_name", "active_role_group_name", "updated_at"])
+            elif assigned_branches is not None:
                 membership.branches.set(assigned_branches)
-            if role_group:
+            if role_group and branch_role_assignments is None:
                 membership.user.groups.add(role_group)
             if bool(request.data.get("is_default")):
                 OrganizationMembership.objects.filter(user=membership.user).exclude(pk=membership.pk).update(is_default=False)

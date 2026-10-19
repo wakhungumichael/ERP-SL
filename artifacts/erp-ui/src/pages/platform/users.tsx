@@ -353,12 +353,13 @@ function EditUserDialog({
 
   const [membershipForm, setMembershipForm] = useState({
     tenant_id: '',
-    role_group_name: '',
     is_default: false,
   });
+  const [branchRoleAssignments, setBranchRoleAssignments] = useState<Record<string, string>>({});
 
   useEffect(() => {
-    setMembershipForm({ tenant_id: '', role_group_name: '', is_default: false });
+    setMembershipForm({ tenant_id: '', is_default: false });
+    setBranchRoleAssignments({});
   }, [user?.id]);
 
   const { data: accessibleTenantsData } = useQuery({
@@ -384,9 +385,13 @@ function EditUserDialog({
     if (!selectedMembership) return;
     setMembershipForm({
       tenant_id: String(selectedMembership.tenant),
-      role_group_name: selectedMembership.role_group_name || '',
       is_default: Boolean(selectedMembership.is_default),
     });
+    setBranchRoleAssignments(Object.fromEntries(
+      (selectedMembership.branch_role_assignments ?? []).map((assignment: any) => [
+        String(assignment.branch_id), assignment.role_group_name,
+      ]),
+    ));
   }, [selectedMembership?.id]);
 
   const { data: membershipBranchesData } = useQuery({
@@ -400,11 +405,12 @@ function EditUserDialog({
     mutationFn: async () => {
       const payload: any = {
         tenant_id: Number(membershipForm.tenant_id),
-        role_group_name: membershipForm.role_group_name,
         is_org_admin: false,
         is_default: membershipForm.is_default,
         branch_id: form.branch_id || null,
-        branch_ids: form.branch_ids.map(Number),
+        branch_role_assignments: Object.entries(branchRoleAssignments)
+          .filter(([, roleGroupName]) => Boolean(roleGroupName))
+          .map(([branchId, role_group_name]) => ({ branch_id: Number(branchId), role_group_name })),
         job_title: form.job_title,
       };
       if (selectedMembership) {
@@ -428,7 +434,8 @@ function EditUserDialog({
       qc.invalidateQueries({ queryKey: ['platform-users'] });
       qc.invalidateQueries({ queryKey: ['platform-auth-me'] });
       toast({ title: 'Organization membership removed' });
-      setMembershipForm({ tenant_id: '', role_group_name: '', is_default: false });
+      setMembershipForm({ tenant_id: '', is_default: false });
+      setBranchRoleAssignments({});
     },
     onError: (e: any) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
   });
@@ -588,7 +595,6 @@ function EditUserDialog({
                       size="sm"
                       onClick={() => setMembershipForm({
                         tenant_id: String(membership.tenant),
-                        role_group_name: membership.role_group_name || '',
                         is_default: Boolean(membership.is_default),
                       })}
                     >
@@ -601,34 +607,23 @@ function EditUserDialog({
                 </div>
               ))}
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label>Organization</Label>
-                <Select value={membershipForm.tenant_id} onValueChange={value => setMembershipForm(p => ({ ...p, tenant_id: value, role_group_name: '' }))}>
-                  <SelectTrigger><SelectValue placeholder="Select organization" /></SelectTrigger>
-                  <SelectContent>
-                    {accessibleTenants.map((tenant: any) => (
-                      <SelectItem key={tenant.id} value={String(tenant.id)}>{tenant.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-1.5">
-                <Label>Primary Organization Role</Label>
-                <Select value={membershipForm.role_group_name || '__member__'} onValueChange={value => setMembershipForm(p => ({ ...p, role_group_name: value === '__member__' ? '' : value }))}>
-                  <SelectTrigger><SelectValue placeholder="Select role" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__member__">Member (no primary role)</SelectItem>
-                    {membershipRoles.map(option => (
-                      <SelectItem key={option.id} value={option.name}>{option.display_name || displayGroupName(option)}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+            <div className="space-y-1.5">
+              <Label>Organization</Label>
+              <Select value={membershipForm.tenant_id} onValueChange={value => {
+                setMembershipForm(p => ({ ...p, tenant_id: value }));
+                setBranchRoleAssignments({});
+              }}>
+                <SelectTrigger><SelectValue placeholder="Select organization" /></SelectTrigger>
+                <SelectContent>
+                  {accessibleTenants.map((tenant: any) => (
+                    <SelectItem key={tenant.id} value={String(tenant.id)}>{tenant.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             {membershipForm.tenant_id && membershipBranches.length > 0 && (
               <div className="space-y-1.5">
-                <Label>Organization Branch</Label>
+                <Label>Active branch on sign-in</Label>
                 <Select value={form.branch_id || '__none__'} onValueChange={v => setForm(p => ({ ...p, branch_id: v === '__none__' ? '' : v }))}>
                   <SelectTrigger><SelectValue placeholder="No branch" /></SelectTrigger>
                   <SelectContent>
@@ -642,29 +637,33 @@ function EditUserDialog({
             )}
             {membershipForm.tenant_id && membershipBranches.length > 0 && (
               <div className="space-y-1.5">
-                <Label>Branches this user can access</Label>
-                <div className="grid grid-cols-2 gap-2 rounded-md border p-3">
+                <Label>Branch roles</Label>
+                <div className="space-y-2 rounded-md border p-3">
                   {membershipBranches.map((branch: any) => {
                     const branchValue = String(branch.id);
-                    const checked = form.branch_ids.includes(branchValue);
                     return (
-                      <label key={branch.id} className="flex cursor-pointer items-center gap-2 text-sm">
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          onChange={(event) => setForm((current) => ({
+                      <div key={branch.id} className="grid grid-cols-2 items-center gap-3 text-sm">
+                        <span className="font-medium">{branch.name}</span>
+                        <Select
+                          value={branchRoleAssignments[branchValue] || '__none__'}
+                          onValueChange={(value) => setBranchRoleAssignments(current => ({
                             ...current,
-                            branch_ids: event.target.checked
-                              ? Array.from(new Set([...current.branch_ids, branchValue]))
-                              : current.branch_ids.filter((id) => id !== branchValue),
+                            [branchValue]: value === '__none__' ? '' : value,
                           }))}
-                        />
-                        {branch.name}
-                      </label>
+                        >
+                          <SelectTrigger><SelectValue placeholder="No access" /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="__none__">No access</SelectItem>
+                            {membershipRoles.map(option => (
+                              <SelectItem key={option.id} value={option.name}>{option.display_name || displayGroupName(option)}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
                     );
                   })}
                 </div>
-                <p className="text-xs text-muted-foreground">Choose one or more branches. The default branch is used automatically; users with more than one branch can select it when working.</p>
+                <p className="text-xs text-muted-foreground">Assign one role to each branch the user can work in. Their selected workspace branch controls the role, menus, permissions, and records they can access.</p>
               </div>
             )}
             <div className="flex items-center justify-between rounded border px-3 py-2 text-sm">

@@ -877,6 +877,63 @@ class OrganizationMembership(TimeStampedModel):
     def __str__(self):
         return f"{self.user.username} -> {self.tenant.name} ({self.role})"
 
+    def active_branch_role_assignment(self):
+        """Return the role assignment selected for this member's active branch."""
+        assignments = self.branch_role_assignments.filter(is_active=True).select_related("role_group", "branch")
+        if self.branch_id:
+            assignment = assignments.filter(branch_id=self.branch_id, role_group__name=self.active_role_group_name).first()
+            if assignment:
+                return assignment
+            assignment = assignments.filter(branch_id=self.branch_id).first()
+            if assignment:
+                return assignment
+        return assignments.filter(role_group__name=self.active_role_group_name).first() or assignments.first()
+
+    def effective_role_group_name(self):
+        assignment = self.active_branch_role_assignment()
+        return assignment.role_group.name if assignment else (self.active_role_group_name or "").strip()
+
+
+class OrganizationBranchRoleAssignment(TimeStampedModel):
+    """A role a member may use at one specific organization branch."""
+
+    membership = models.ForeignKey(
+        OrganizationMembership,
+        on_delete=models.CASCADE,
+        related_name="branch_role_assignments",
+    )
+    branch = models.ForeignKey(
+        TenantBranch,
+        on_delete=models.CASCADE,
+        related_name="member_role_assignments",
+    )
+    role_group = models.ForeignKey(
+        Group,
+        on_delete=models.CASCADE,
+        related_name="organization_branch_role_assignments",
+    )
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ["branch__name", "role_group__name"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=("membership", "branch", "role_group"),
+                name="unique_organization_branch_role_assignment",
+            ),
+        ]
+
+    def clean(self):
+        if self.branch_id and self.membership_id and self.branch.tenant_id != self.membership.tenant_id:
+            raise ValidationError({"branch": "Selected branch must belong to the membership organization."})
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.membership} @ {self.branch.name}: {self.role_group.name}"
+
 
 class TenantSettings(TimeStampedModel):
     """Per-tenant company configuration and SMTP settings."""

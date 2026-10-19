@@ -19,6 +19,7 @@ from Platform_Core.models import (
     IntegrationEndpoint,
     LicenseKey,
     ModuleDefinition,
+    OrganizationBranchRoleAssignment,
     OrganizationMembership,
     PlanModule,
     PlatformBrandingSettings,
@@ -973,6 +974,7 @@ class OrganizationMembershipSerializer(serializers.ModelSerializer):
     branch_ids = serializers.SerializerMethodField()
     branches = serializers.SerializerMethodField()
     role_display = serializers.SerializerMethodField()
+    branch_role_assignments = serializers.SerializerMethodField()
 
     def get_branch_ids(self, obj):
         branch_ids = list(obj.branches.values_list("id", flat=True))
@@ -991,6 +993,21 @@ class OrganizationMembershipSerializer(serializers.ModelSerializer):
             return display_role_name(obj.role_group_name, obj.tenant_id)
         return obj.get_role_display()
 
+    def get_branch_role_assignments(self, obj):
+        assignments = obj.branch_role_assignments.filter(is_active=True).select_related("branch", "role_group")
+        return [
+            {
+                "id": assignment.id,
+                "branch_id": assignment.branch_id,
+                "branch_name": assignment.branch.name,
+                "role_group_id": assignment.role_group_id,
+                "role_group_name": assignment.role_group.name,
+                "role_display": display_role_name(assignment.role_group.name, obj.tenant_id),
+                "is_active": assignment.is_active,
+            }
+            for assignment in assignments
+        ]
+
     class Meta:
         model = OrganizationMembership
         fields = (
@@ -1005,6 +1022,7 @@ class OrganizationMembershipSerializer(serializers.ModelSerializer):
             "role",
             "role_group_name",
             "role_display",
+            "branch_role_assignments",
             "active_role_group_name",
             "is_org_admin",
             "is_default",
@@ -1078,7 +1096,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
 
     def get_permissions(self, obj):
         membership = self._active_membership(obj)
-        active_role_name = (getattr(membership, "active_role_group_name", "") or "").strip()
+        active_role_name = membership.effective_role_group_name() if membership else ""
         if active_role_name and not obj.is_superuser:
             active_group = obj.groups.filter(name=active_role_name).first()
             if active_group is not None:
@@ -1189,7 +1207,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
     def get_active_role(self, obj):
         membership = self._active_membership(obj)
         if membership:
-            active_name = (membership.active_role_group_name or "").strip()
+            active_name = membership.effective_role_group_name()
             if active_name:
                 return active_name
             return membership.role
@@ -1197,10 +1215,25 @@ class UserProfileSerializer(serializers.ModelSerializer):
 
     def get_active_role_group_name(self, obj):
         membership = self._active_membership(obj)
-        return (membership.active_role_group_name or "").strip() if membership else ""
+        return membership.effective_role_group_name() if membership else ""
 
     def get_available_roles(self, obj):
+        membership = self._active_membership(obj)
         tenant_id = self.get_tenant_id(obj)
+        if membership:
+            assignments = membership.branch_role_assignments.filter(is_active=True).select_related("branch", "role_group")
+            if assignments.exists():
+                return [
+                    {
+                        "id": assignment.role_group_id,
+                        "assignment_id": assignment.id,
+                        "name": assignment.role_group.name,
+                        "display_name": display_role_name(assignment.role_group.name, tenant_id),
+                        "branch_id": assignment.branch_id,
+                        "branch_name": assignment.branch.name,
+                    }
+                    for assignment in assignments
+                ]
         return [
             {"id": group.id, "name": group.name, "display_name": display_role_name(group.name, tenant_id)}
             for group in obj.groups.order_by("name")

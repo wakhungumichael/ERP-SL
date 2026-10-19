@@ -37,6 +37,7 @@ from Platform_Core.models import OrganizationMembership, Tenant, TenantSettings,
 from Platform_API.modules.mixins import (
     NO_TENANT_ACCESS,
     apply_tenant_filter as _shared_apply_tenant_filter,
+    has_active_permission,
     require_workspace_permission,
     resolve_user_tenant as _shared_resolve_user_tenant,
 )
@@ -980,9 +981,9 @@ def _can_view_weighbridge_team_dashboard(user):
     if getattr(user, "is_superuser", False) or _is_weighbridge_tenant_admin(user):
         return True
     return any([
-        user.has_perm("SL_Weighbridge.can_export_transaction"),
-        user.has_perm("SL_Weighbridge.can_approve_pending_transactions"),
-        user.has_perm("SL_Weighbridge.can_recall_completed_transactions"),
+        has_active_permission(user, "SL_Weighbridge.can_export_transaction"),
+        has_active_permission(user, "SL_Weighbridge.can_approve_pending_transactions"),
+        has_active_permission(user, "SL_Weighbridge.can_recall_completed_transactions"),
     ])
 
 
@@ -992,8 +993,8 @@ def _has_unrestricted_weighbridge_history_access(user):
         getattr(user, "is_superuser", False)
         or getattr(user, "is_staff", False)
         or _is_weighbridge_tenant_admin(user)
-        or user.has_perm("SL_Weighbridge.can_manage_weighbridge_reports")
-        or user.has_perm("SL_Weighbridge.can_export_transaction")
+        or has_active_permission(user, "SL_Weighbridge.can_manage_weighbridge_reports")
+        or has_active_permission(user, "SL_Weighbridge.can_export_transaction")
     )
 
 
@@ -1031,7 +1032,7 @@ def _has_weighbridge_process_permission(user, codename):
         # permissions were introduced. Keep those unassigned users operational;
         # once a role is assigned, its explicit permissions take precedence.
         or not user.groups.exists()
-        or user.has_perm(f"SL_Weighbridge.{codename}")
+        or has_active_permission(user, f"SL_Weighbridge.{codename}")
     )
 
 
@@ -1040,7 +1041,7 @@ def _require_weighbridge_model_permission(user, codename):
     if (
         getattr(user, "is_superuser", False)
         or _is_weighbridge_tenant_admin(user)
-        or user.has_perm(f"SL_Weighbridge.{codename}")
+        or has_active_permission(user, f"SL_Weighbridge.{codename}")
     ):
         return
     raise PermissionDenied("You do not have permission to perform this action.")
@@ -1799,7 +1800,7 @@ class TransactionApproveView(APIView):
             request.user.is_superuser
             or request.user.is_staff
             or _is_weighbridge_tenant_admin(request.user)
-            or request.user.has_perm("SL_Weighbridge.can_approve_pending_transactions")
+            or has_active_permission(request.user, "SL_Weighbridge.can_approve_pending_transactions")
         ):
             return Response({"error": "Permission denied."}, status=status.HTTP_403_FORBIDDEN)
 
@@ -1838,7 +1839,7 @@ class TransactionRecallView(APIView):
             request.user.is_superuser
             or request.user.is_staff
             or _is_weighbridge_tenant_admin(request.user)
-            or request.user.has_perm("SL_Weighbridge.can_recall_completed_transactions")
+            or has_active_permission(request.user, "SL_Weighbridge.can_recall_completed_transactions")
         ):
             return Response({"error": "Permission denied."}, status=status.HTTP_403_FORBIDDEN)
 
@@ -1910,7 +1911,7 @@ class TransactionRejectView(APIView):
             request.user.is_superuser
             or request.user.is_staff
             or _is_weighbridge_tenant_admin(request.user)
-            or request.user.has_perm("SL_Weighbridge.can_approve_pending_transactions")
+            or has_active_permission(request.user, "SL_Weighbridge.can_approve_pending_transactions")
         ):
             return Response({"error": "Permission denied."}, status=status.HTTP_403_FORBIDDEN)
 
@@ -2175,7 +2176,7 @@ class TransactionExportCSVView(APIView):
     def get(self, request):
         if not (
             _has_weighbridge_process_permission(request.user, "can_manage_weighbridge_reports")
-            or request.user.has_perm("SL_Weighbridge.can_export_transaction")
+            or has_active_permission(request.user, "SL_Weighbridge.can_export_transaction")
         ):
             return Response({"error": "You do not have permission to export weighbridge reports."}, status=status.HTTP_403_FORBIDDEN)
         qs = Transaction.objects.select_related(
@@ -3248,6 +3249,10 @@ def _allowed_branch_ids(user):
     )
     assigned_names = []
     if membership:
+        # A configured branch-role workspace is deliberately limited to its
+        # active branch; switching context changes both role and branch scope.
+        if membership.branch_role_assignments.filter(is_active=True).exists() and membership.branch_id:
+            return branches.filter(pk=membership.branch_id).values_list("id", flat=True)
         assigned_names = list(membership.branches.values_list("name", flat=True))
         if membership.branch_id and membership.branch.name not in assigned_names:
             assigned_names.append(membership.branch.name)
@@ -3263,7 +3268,7 @@ def _can_view_all_transactions(user):
     return (
         getattr(user, "is_superuser", False)
         or _is_weighbridge_tenant_admin(user)
-        or user.has_perm("SL_Weighbridge.can_view_all_weighbridge_transactions")
+        or has_active_permission(user, "SL_Weighbridge.can_view_all_weighbridge_transactions")
     )
 
 
@@ -3290,7 +3295,7 @@ def _require_reference_write_access(user, model, action):
     if (
         getattr(user, "is_superuser", False)
         or _is_weighbridge_tenant_admin(user)
-        or user.has_perm(permission)
+        or has_active_permission(user, permission)
     ):
         return
     raise PermissionDenied(
