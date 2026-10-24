@@ -365,6 +365,30 @@ class Command(BaseCommand):
                 "is_active": True,
             },
         )
+
+        projects_module, _ = ModuleDefinition.objects.update_or_create(
+            slug="projects-tasks",
+            defaults={
+                "name": "Projects & Tasks", "category": "shared", "scope": "organization",
+                "description": "Branch-aware project delivery, tasks, milestones, and follow-ups.", "is_active": True,
+            },
+        )
+        projects_section, _ = WorkspaceMenuSection.objects.update_or_create(
+            key="projects-tasks",
+            defaults={"title": "Projects & Tasks", "icon": "kanban-square", "module": projects_module,
+                      "description": "Plan projects, assign work, and follow up on deadlines.", "sort_order": 58, "is_active": True},
+        )
+        for item_key, title, icon, route_path, api_path, sort_order in (
+            ("overview", "Overview", "layout-dashboard", "/projects/overview", "/api/projects/dashboard/", 1),
+            ("projects", "Projects", "folder-kanban", "/projects", "/api/projects/projects/", 2),
+            ("all-tasks", "All Tasks", "list-todo", "/projects/tasks", "/api/projects/tasks/", 3),
+            ("my-tasks", "My Tasks", "user-check", "/projects/my-tasks", "/api/projects/tasks/?scope=mine", 4),
+        ):
+            WorkspaceMenuItem.objects.update_or_create(
+                section=projects_section, key=item_key,
+                defaults={"title": title, "icon": icon, "route_path": route_path, "api_path": api_path,
+                          "required_module": projects_module, "sort_order": sort_order, "is_active": True},
+            )
         for item_key, item_defaults in (
             (
                 "overview",
