@@ -1,5 +1,8 @@
 # Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu.
 """Projects & Tasks APIs. All records are resolved from the active workspace."""
+import csv
+
+from django.http import HttpResponse
 from django.db import transaction
 from django.db.models import Count, Q
 from django.utils import timezone
@@ -244,6 +247,36 @@ class ProjectsReportsAPIView(APIView):
                 for row in tasks.exclude(status__in=["completed", "cancelled"]).values("primary_assignee__username", "primary_assignee__first_name").annotate(count=Count("id")).order_by("-count")[:10]
             ],
         })
+
+
+class ProjectExportAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        _tenant_and_activation(request)
+        _require(request.user, "export_project")
+        response = HttpResponse(content_type="text/csv")
+        response["Content-Disposition"] = 'attachment; filename="projects.csv"'
+        writer = csv.writer(response)
+        writer.writerow(["Code", "Project", "Branch", "Manager", "Status", "Priority", "Progress %", "Start date", "Target end date"])
+        for project in _project_scope(request.user):
+            writer.writerow([project.code, project.name, project.branch.name, project.manager.get_full_name() or project.manager.username if project.manager_id else "", project.status, project.priority, project.progress_percentage, project.start_date or "", project.target_end_date or ""])
+        return response
+
+
+class TaskExportAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        _tenant_and_activation(request)
+        _require(request.user, "export_projecttask")
+        response = HttpResponse(content_type="text/csv")
+        response["Content-Disposition"] = 'attachment; filename="project-tasks.csv"'
+        writer = csv.writer(response)
+        writer.writerow(["Number", "Task", "Project", "Branch", "Assignee", "Status", "Priority", "Progress %", "Due date", "Workflow stage"])
+        for task in _task_scope(request.user):
+            writer.writerow([task.number, task.title, task.project.name if task.project_id else "", task.branch.name, task.primary_assignee.get_full_name() or task.primary_assignee.username if task.primary_assignee_id else "", task.status, task.priority, task.progress_percentage, task.due_date or "", task.workflow_stage])
+        return response
 
 
 class TaskFollowUpWorkspaceAPIView(APIView):
