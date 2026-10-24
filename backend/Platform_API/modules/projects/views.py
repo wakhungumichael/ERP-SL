@@ -257,6 +257,47 @@ class TaskFollowUpWorkspaceAPIView(APIView):
         return Response(payload)
 
 
+class TaskAssigneeListAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+        _tenant_and_activation(request)
+        _require(request.user, "view_projecttask")
+        task = _task_scope(request.user).filter(pk=pk).first()
+        if not task:
+            return Response({"detail": "Task not found."}, status=status.HTTP_404_NOT_FOUND)
+        memberships = OrganizationMembership.objects.filter(
+            tenant=task.tenant, branch=task.branch, is_active=True
+        ).select_related("user").order_by("user__first_name", "user__username")
+        return Response([{"id": membership.user_id, "name": membership.user.get_full_name() or membership.user.username} for membership in memberships])
+
+
+class TaskAssignmentAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        _tenant_and_activation(request)
+        _require(request.user, "assign_projecttask")
+        task = _task_scope(request.user).filter(pk=pk).first()
+        if not task:
+            return Response({"detail": "Task not found."}, status=status.HTTP_404_NOT_FOUND)
+        assignee_id = request.data.get("primary_assignee")
+        if not assignee_id:
+            task.primary_assignee = None
+        else:
+            membership = OrganizationMembership.objects.filter(
+                tenant=task.tenant, branch=task.branch, user_id=assignee_id, is_active=True
+            ).select_related("user").first()
+            if not membership:
+                raise serializers.ValidationError({"primary_assignee": "Choose an active member of this task branch."})
+            task.primary_assignee = membership.user
+        task.assigned_by = request.user
+        task.updated_by = request.user
+        task.save(update_fields=["primary_assignee", "assigned_by", "updated_by", "updated_at"])
+        log_business_event(event_group="data_lifecycle", event_type="task_assigned", tenant=task.tenant, actor=request.user, obj=task, branch=task.branch, note=f"Task assigned to {task.primary_assignee.get_full_name() or task.primary_assignee.username if task.primary_assignee_id else 'Unassigned'}.")
+        return Response(TaskSerializer(task).data)
+
+
 class ProjectListCreateAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
