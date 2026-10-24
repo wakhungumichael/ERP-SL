@@ -20,7 +20,7 @@ from Platform_API.modules.mixins import (
 from Platform_Core.audit import log_business_event
 from Platform_Core.models import OrganizationMembership
 from Platform_Core.platform import get_active_tenant_module_slugs
-from SL_Projects.models import Project, ProjectMilestone, ProjectTask, TaskComment, TaskFollowUp, TaskUpdate
+from SL_Projects.models import Project, ProjectMilestone, ProjectTask, TaskAttachment, TaskComment, TaskFollowUp, TaskUpdate
 from SL_Ticketing.models import Ticket
 
 
@@ -153,6 +153,18 @@ class TaskCommentSerializer(serializers.ModelSerializer):
         if not value.strip():
             raise serializers.ValidationError("Enter a comment before saving.")
         return value.strip()
+
+
+class TaskAttachmentSerializer(serializers.ModelSerializer):
+    uploaded_by_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = TaskAttachment
+        fields = "__all__"
+        read_only_fields = ("task", "uploaded_by", "original_name", "content_type", "size_bytes", "created_at")
+
+    def get_uploaded_by_name(self, obj):
+        return obj.uploaded_by.get_full_name() or obj.uploaded_by.username if obj.uploaded_by else "System process"
 
 
 class ProjectsDashboardAPIView(APIView):
@@ -393,6 +405,42 @@ class TaskCommentListCreateAPIView(APIView):
         comment = serializer.save(task=task, author=request.user)
         log_business_event(event_group="data_lifecycle", event_type="comment_created", tenant=task.tenant, actor=request.user, obj=task, branch=task.branch, note="Task comment added.")
         return Response(TaskCommentSerializer(comment).data, status=status.HTTP_201_CREATED)
+
+
+class TaskAttachmentListCreateAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+    max_upload_bytes = 10 * 1024 * 1024
+
+    def get(self, request, pk):
+        _tenant_and_activation(request)
+        _require(request.user, "view_projecttask")
+        task = _task_scope(request.user).filter(pk=pk).first()
+        if not task:
+            return Response({"detail": "Task not found."}, status=status.HTTP_404_NOT_FOUND)
+        return Response(TaskAttachmentSerializer(task.attachments.select_related("uploaded_by"), many=True, context={"request": request}).data)
+
+    def post(self, request, pk):
+        _tenant_and_activation(request)
+        _require(request.user, "add_taskattachment")
+        task = _task_scope(request.user).filter(pk=pk).first()
+        if not task:
+            return Response({"detail": "Task not found."}, status=status.HTTP_404_NOT_FOUND)
+        upload = request.FILES.get("file")
+        if upload is None:
+            raise serializers.ValidationError({"file": "Choose a file to upload."})
+        if upload.size > self.max_upload_bytes:
+            raise serializers.ValidationError({"file": "Files must be 10 MB or smaller."})
+        attachment = TaskAttachment.objects.create(
+            task=task,
+            uploaded_by=request.user,
+            file=upload,
+            original_name=upload.name[:255],
+            content_type=getattr(upload, "content_type", "") or "",
+            size_bytes=upload.size,
+            is_evidence=str(request.data.get("is_evidence") or "").lower() in {"1", "true", "yes", "on"},
+        )
+        log_business_event(event_group="data_lifecycle", event_type="attachment_added", tenant=task.tenant, actor=request.user, obj=task, branch=task.branch, note=f"Task attachment added: {attachment.original_name}.")
+        return Response(TaskAttachmentSerializer(attachment, context={"request": request}).data, status=status.HTTP_201_CREATED)
 
 
 class TicketTaskListCreateAPIView(APIView):
