@@ -226,6 +226,30 @@ class ProjectsReportsAPIView(APIView):
         })
 
 
+class TaskFollowUpWorkspaceAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        _tenant_and_activation(request)
+        _require(request.user, "view_projecttask")
+        tasks = _task_scope(request.user)
+        follow_ups = TaskFollowUp.objects.filter(task__in=tasks).select_related("task", "owner").order_by("follow_up_date", "id")
+        if state := request.query_params.get("status"):
+            follow_ups = follow_ups.filter(status=state)
+        today = timezone.localdate()
+        payload = [{
+            "id": follow_up.id,
+            "task_id": follow_up.task_id,
+            "task_number": follow_up.task.number,
+            "task_title": follow_up.task.title,
+            "follow_up_date": follow_up.follow_up_date,
+            "notes": follow_up.notes,
+            "status": "overdue" if follow_up.status in {"scheduled", "pending"} and follow_up.follow_up_date < today else follow_up.status,
+            "owner": follow_up.owner.get_full_name() or follow_up.owner.username if follow_up.owner_id else "Unassigned",
+        } for follow_up in follow_ups]
+        return Response(payload)
+
+
 class ProjectListCreateAPIView(APIView):
     permission_classes = [IsAuthenticated]
 

@@ -386,6 +386,7 @@ class Command(BaseCommand):
             ("task-board", "Task Board", "columns-3", "/projects/board", "/api/projects/tasks/?page_size=100", 5),
             ("task-calendar", "Calendar", "calendar-days", "/projects/calendar", "/api/projects/tasks/?page_size=100", 6),
             ("reports", "Reports", "chart-no-axes-combined", "/projects/reports", "/api/projects/reports/", 7),
+            ("follow-ups", "Follow-ups", "calendar-check", "/projects/follow-ups", "/api/projects/follow-ups/", 8),
         ):
             WorkspaceMenuItem.objects.update_or_create(
                 section=projects_section, key=item_key,
