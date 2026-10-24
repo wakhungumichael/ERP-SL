@@ -1,0 +1,310 @@
+# Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu.
+"""Projects & Tasks APIs. All records are resolved from the active workspace."""
+from django.db import transaction
+from django.db.models import Q
+from django.utils import timezone
+from rest_framework import serializers, status
+from rest_framework.exceptions import PermissionDenied
+from rest_framework.pagination import PageNumberPagination
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+from rest_framework.views import APIView
+
+from Platform_API.modules.mixins import (
+    NO_TENANT_ACCESS,
+    apply_tenant_filter,
+    has_active_permission,
+    resolve_user_tenant,
+    tenant_or_403,
+)
+from Platform_Core.audit import log_business_event
+from Platform_Core.models import OrganizationMembership
+from Platform_Core.platform import get_active_tenant_module_slugs
+from SL_Projects.models import Project, ProjectMilestone, ProjectTask, TaskFollowUp, TaskUpdate
+
+
+MODULE_SLUG = "projects-tasks"
+
+
+class ProjectsPagination(PageNumberPagination):
+    page_size = 25
+    page_size_query_param = "page_size"
+    max_page_size = 100
+
+
+def _tenant_and_activation(request):
+    tenant = tenant_or_403(request.user)
+    if tenant is not None and not request.user.is_superuser:
+        active_modules = get_active_tenant_module_slugs(tenant)
+        if MODULE_SLUG not in active_modules:
+            raise PermissionDenied("Projects & Tasks is not enabled for this organization.")
+    return tenant
+
+
+def _active_branch_id(user):
+    if user.is_superuser:
+        return None
+    membership = OrganizationMembership.objects.filter(user=user, is_active=True).order_by(
+        "-is_default", "tenant__name"
+    ).first()
+    return membership.branch_id if membership else None
+
+
+def _require(user, codename):
+    if not has_active_permission(user, f"SL_Projects.{codename}"):
+        raise PermissionDenied("Your active role does not have permission for this action.")
+
+
+def _project_scope(user):
+    qs = apply_tenant_filter(Project.objects.select_related("branch", "manager", "owner"), user)
+    branch_id = _active_branch_id(user)
+    if branch_id:
+        qs = qs.filter(Q(branch_id=branch_id) | Q(participating_branches__branch_id=branch_id)).distinct()
+    return qs
+
+
+def _task_scope(user):
+    qs = apply_tenant_filter(
+        ProjectTask.objects.select_related("branch", "project", "milestone", "primary_assignee", "source_ticket"), user
+    )
+    branch_id = _active_branch_id(user)
+    return qs.filter(branch_id=branch_id) if branch_id else qs
+
+
+def _ensure_tenant_relation(tenant, obj, label):
+    if obj is not None and tenant is not None and getattr(obj, "tenant_id", None) != tenant.id:
+        raise serializers.ValidationError({label: f"{label.replace('_', ' ').title()} belongs to another organization."})
+
+
+class ProjectSerializer(serializers.ModelSerializer):
+    manager_name = serializers.SerializerMethodField()
+    owner_name = serializers.SerializerMethodField()
+    branch_name = serializers.CharField(source="branch.name", read_only=True)
+
+    class Meta:
+        model = Project
+        fields = "__all__"
+        read_only_fields = ("tenant", "created_by", "updated_by", "created_at", "updated_at")
+
+    def get_manager_name(self, obj):
+        return obj.manager.get_full_name() or obj.manager.username if obj.manager else ""
+
+    def get_owner_name(self, obj):
+        return obj.owner.get_full_name() or obj.owner.username if obj.owner else ""
+
+
+class TaskSerializer(serializers.ModelSerializer):
+    branch_name = serializers.CharField(source="branch.name", read_only=True)
+    project_name = serializers.CharField(source="project.name", read_only=True)
+    assignee_name = serializers.SerializerMethodField()
+    source_ticket_reference = serializers.CharField(source="source_ticket.public_id", read_only=True)
+
+    class Meta:
+        model = ProjectTask
+        fields = "__all__"
+        read_only_fields = ("tenant", "created_by", "updated_by", "assigned_by", "created_at", "updated_at")
+
+    def get_assignee_name(self, obj):
+        return obj.primary_assignee.get_full_name() or obj.primary_assignee.username if obj.primary_assignee else ""
+
+
+class TaskUpdateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = TaskUpdate
+        fields = "__all__"
+        read_only_fields = ("task", "updated_by", "created_at")
+
+
+class TaskFollowUpSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = TaskFollowUp
+        fields = "__all__"
+        read_only_fields = ("task", "created_at", "updated_at", "completed_at")
+
+
+class ProjectsDashboardAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        _tenant_and_activation(request)
+        _require(request.user, "view_project")
+        tasks = _task_scope(request.user)
+        projects = _project_scope(request.user)
+        today = timezone.localdate()
+        return Response({
+            "counts": {
+                "active_projects": projects.filter(status="active").count(),
+                "open_tasks": tasks.exclude(status__in=["completed", "cancelled"]).count(),
+                "my_tasks": tasks.filter(primary_assignee=request.user).exclude(status__in=["completed", "cancelled"]).count(),
+                "overdue_tasks": tasks.exclude(status__in=["completed", "cancelled"]).filter(due_date__lt=today).count(),
+                "blocked_tasks": tasks.filter(status="blocked").count(),
+                "awaiting_review": tasks.filter(status="in_review").count(),
+                "ticket_tasks": tasks.filter(source_ticket__isnull=False).count(),
+            }
+        })
+
+
+class ProjectListCreateAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        _tenant_and_activation(request)
+        _require(request.user, "view_project")
+        qs = _project_scope(request.user)
+        if value := request.query_params.get("status"):
+            qs = qs.filter(status=value)
+        if value := request.query_params.get("search"):
+            qs = qs.filter(Q(code__icontains=value) | Q(name__icontains=value) | Q(description__icontains=value))
+        ordering = request.query_params.get("ordering", "-created_at")
+        if ordering.lstrip("-") in {"code", "name", "start_date", "target_end_date", "progress_percentage", "status", "created_at"}:
+            qs = qs.order_by(ordering)
+        paginator = ProjectsPagination()
+        page = paginator.paginate_queryset(qs, request)
+        return paginator.get_paginated_response(ProjectSerializer(page, many=True).data)
+
+    @transaction.atomic
+    def post(self, request):
+        tenant = _tenant_and_activation(request)
+        _require(request.user, "add_project")
+        serializer = ProjectSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        branch = serializer.validated_data["branch"]
+        _ensure_tenant_relation(tenant, branch, "branch")
+        project = serializer.save(tenant=tenant, created_by=request.user, updated_by=request.user)
+        project.full_clean()
+        project.save()
+        log_business_event(event_group="data_lifecycle", event_type="create", tenant=tenant, actor=request.user, obj=project, branch=project.branch, note="Project created.")
+        return Response(ProjectSerializer(project).data, status=status.HTTP_201_CREATED)
+
+
+class ProjectDetailAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def _get(self, user, pk):
+        return _project_scope(user).filter(pk=pk).first()
+
+    def get(self, request, pk):
+        _tenant_and_activation(request)
+        _require(request.user, "view_project")
+        project = self._get(request.user, pk)
+        if not project:
+            return Response({"detail": "Project not found."}, status=status.HTTP_404_NOT_FOUND)
+        return Response(ProjectSerializer(project).data)
+
+    @transaction.atomic
+    def patch(self, request, pk):
+        _tenant_and_activation(request)
+        _require(request.user, "change_project")
+        project = self._get(request.user, pk)
+        if not project:
+            return Response({"detail": "Project not found."}, status=status.HTTP_404_NOT_FOUND)
+        serializer = ProjectSerializer(project, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        branch = serializer.validated_data.get("branch", project.branch)
+        _ensure_tenant_relation(project.tenant, branch, "branch")
+        project = serializer.save(updated_by=request.user)
+        project.full_clean()
+        project.save()
+        log_business_event(event_group="data_lifecycle", event_type="update", tenant=project.tenant, actor=request.user, obj=project, branch=project.branch, note="Project updated.")
+        return Response(ProjectSerializer(project).data)
+
+
+class TaskListCreateAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        _tenant_and_activation(request)
+        _require(request.user, "view_projecttask")
+        qs = _task_scope(request.user)
+        if value := request.query_params.get("status"):
+            qs = qs.filter(status=value)
+        if request.query_params.get("scope") == "mine":
+            qs = qs.filter(primary_assignee=request.user)
+        if value := request.query_params.get("project"):
+            qs = qs.filter(project_id=value)
+        if value := request.query_params.get("search"):
+            qs = qs.filter(Q(number__icontains=value) | Q(title__icontains=value) | Q(description__icontains=value))
+        paginator = ProjectsPagination()
+        page = paginator.paginate_queryset(qs, request)
+        return paginator.get_paginated_response(TaskSerializer(page, many=True).data)
+
+    @transaction.atomic
+    def post(self, request):
+        tenant = _tenant_and_activation(request)
+        _require(request.user, "add_projecttask")
+        serializer = TaskSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        branch = serializer.validated_data["branch"]
+        _ensure_tenant_relation(tenant, branch, "branch")
+        for field in ("project", "source_ticket", "parent_task"):
+            _ensure_tenant_relation(tenant, serializer.validated_data.get(field), field)
+        task = serializer.save(tenant=tenant, created_by=request.user, updated_by=request.user, assigned_by=request.user)
+        task.full_clean()
+        task.save()
+        log_business_event(event_group="data_lifecycle", event_type="create", tenant=tenant, actor=request.user, obj=task, branch=task.branch, note="Task created.")
+        return Response(TaskSerializer(task).data, status=status.HTTP_201_CREATED)
+
+
+class TaskDetailAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def _get(self, user, pk):
+        return _task_scope(user).filter(pk=pk).first()
+
+    def get(self, request, pk):
+        _tenant_and_activation(request)
+        _require(request.user, "view_projecttask")
+        task = self._get(request.user, pk)
+        if not task:
+            return Response({"detail": "Task not found."}, status=status.HTTP_404_NOT_FOUND)
+        return Response(TaskSerializer(task).data)
+
+    @transaction.atomic
+    def patch(self, request, pk):
+        _tenant_and_activation(request)
+        _require(request.user, "change_projecttask")
+        task = self._get(request.user, pk)
+        if not task:
+            return Response({"detail": "Task not found."}, status=status.HTTP_404_NOT_FOUND)
+        serializer = TaskSerializer(task, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        task = serializer.save(updated_by=request.user)
+        task.full_clean()
+        task.save()
+        log_business_event(event_group="data_lifecycle", event_type="update", tenant=task.tenant, actor=request.user, obj=task, branch=task.branch, note="Task updated.")
+        return Response(TaskSerializer(task).data)
+
+
+class TaskUpdateListCreateAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        _tenant_and_activation(request)
+        _require(request.user, "update_projecttask_progress")
+        task = _task_scope(request.user).filter(pk=pk).first()
+        if not task:
+            return Response({"detail": "Task not found."}, status=status.HTTP_404_NOT_FOUND)
+        serializer = TaskUpdateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        update = serializer.save(task=task, updated_by=request.user)
+        task.progress_percentage = update.progress_percentage
+        task.updated_by = request.user
+        task.save(update_fields=["progress_percentage", "updated_by", "updated_at"])
+        log_business_event(event_group="data_lifecycle", event_type="progress_update", tenant=task.tenant, actor=request.user, obj=task, branch=task.branch, note="Task progress updated.")
+        return Response(TaskUpdateSerializer(update).data, status=status.HTTP_201_CREATED)
+
+
+class TaskFollowUpListCreateAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        _tenant_and_activation(request)
+        _require(request.user, "add_taskfollowup")
+        task = _task_scope(request.user).filter(pk=pk).first()
+        if not task:
+            return Response({"detail": "Task not found."}, status=status.HTTP_404_NOT_FOUND)
+        serializer = TaskFollowUpSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        follow_up = serializer.save(task=task)
+        log_business_event(event_group="data_lifecycle", event_type="follow_up_created", tenant=task.tenant, actor=request.user, obj=task, branch=task.branch, note="Task follow-up created.")
+        return Response(TaskFollowUpSerializer(follow_up).data, status=status.HTTP_201_CREATED)

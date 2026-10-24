@@ -571,6 +571,7 @@ TENANT_PERMISSION_MODULE_SLUGS = {
     "SL_Sales": {"sales"},
     "SL_Inventory": {"inventory"},
     "SL_Ticketing": {"ticketing"},
+    "SL_Projects": {"projects-tasks"},
 }
 
 
