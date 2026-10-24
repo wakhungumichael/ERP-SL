@@ -455,6 +455,11 @@ class ProjectDetailAPIView(APIView):
         project = self._get(request.user, pk)
         if not project:
             return Response({"detail": "Project not found."}, status=status.HTTP_404_NOT_FOUND)
+        if request.data.get("status") in {"completed", "cancelled", "archived"}:
+            return Response(
+                {"detail": "Use the project lifecycle action to complete, cancel, or archive a project."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         serializer = ProjectSerializer(project, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         branch = serializer.validated_data.get("branch", project.branch)
@@ -463,6 +468,43 @@ class ProjectDetailAPIView(APIView):
         project.full_clean()
         project.save()
         log_business_event(event_group="data_lifecycle", event_type="update", tenant=project.tenant, actor=request.user, obj=project, branch=project.branch, note="Project updated.")
+        return Response(ProjectSerializer(project).data)
+
+
+class ProjectCloseAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @transaction.atomic
+    def post(self, request, pk):
+        _tenant_and_activation(request)
+        _require(request.user, "close_project")
+        project = _project_scope(request.user).filter(pk=pk).first()
+        if not project:
+            return Response({"detail": "Project not found."}, status=status.HTTP_404_NOT_FOUND)
+        target_status = request.data.get("status")
+        if target_status not in {"completed", "cancelled", "archived"}:
+            return Response({"detail": "Choose completed, cancelled, or archived."}, status=status.HTTP_400_BAD_REQUEST)
+        if target_status == "completed":
+            open_tasks = ProjectTask.objects.filter(project=project).exclude(status__in=["completed", "cancelled"]).count()
+            if open_tasks:
+                return Response(
+                    {"detail": f"Complete or cancel the remaining {open_tasks} open task(s) before closing this project."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            project.progress_percentage = 100
+            project.actual_end_date = timezone.localdate()
+        project.status = target_status
+        project.updated_by = request.user
+        project.save(update_fields=["status", "progress_percentage", "actual_end_date", "updated_by", "updated_at"])
+        log_business_event(
+            event_group="data_lifecycle",
+            event_type=f"project_{target_status}",
+            tenant=project.tenant,
+            actor=request.user,
+            obj=project,
+            branch=project.branch,
+            note=f"Project marked {target_status}.",
+        )
         return Response(ProjectSerializer(project).data)
 
 

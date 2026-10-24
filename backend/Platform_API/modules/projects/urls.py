@@ -12,6 +12,7 @@ urlpatterns = [
     path("follow-ups/", views.TaskFollowUpWorkspaceAPIView.as_view(), name="projects-followup-workspace"),
     path("projects/", views.ProjectListCreateAPIView.as_view(), name="project-list"),
     path("projects/<int:pk>/", views.ProjectDetailAPIView.as_view(), name="project-detail"),
+    path("projects/<int:pk>/close/", views.ProjectCloseAPIView.as_view(), name="project-close"),
     path("projects/<int:pk>/milestones/", views.ProjectMilestoneListCreateAPIView.as_view(), name="project-milestone-list"),
     path("projects/<int:pk>/members/", views.ProjectMemberListCreateAPIView.as_view(), name="project-member-list"),
     path("tasks/", views.TaskListCreateAPIView.as_view(), name="project-task-list"),
