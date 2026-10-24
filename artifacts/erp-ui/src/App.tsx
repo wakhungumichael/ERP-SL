@@ -60,6 +60,7 @@ import ProjectsWorkspace from '@/pages/projects/workspace';
 import TaskDetail from '@/pages/projects/task-detail';
 import ProjectKanban from '@/pages/projects/kanban';
 import ProjectCalendar from '@/pages/projects/calendar';
+import ProjectDetail from '@/pages/projects/project-detail';
 import Backups from '@/pages/platform/backups';
 import OrganizationSettings from '@/pages/platform/company-settings';
 import Users from '@/pages/platform/users';
@@ -231,6 +232,7 @@ function Router() {
       <Route path="/projects/tasks/:id">{params => <Shell><TaskDetail id={params.id} /></Shell>}</Route>
       <Route path="/projects/board"><Shell><ProjectKanban /></Shell></Route>
       <Route path="/projects/calendar"><Shell><ProjectCalendar /></Shell></Route>
+      <Route path="/projects/:id">{params => <Shell><ProjectDetail id={params.id} /></Shell>}</Route>
       <Route path="/projects/my-tasks"><Shell><ProjectsWorkspace mode="mine" /></Shell></Route>
       <Route path="/projects"><Shell><ProjectsWorkspace mode="projects" /></Shell></Route>
       <Route path="/workspace/operations/dashboard">

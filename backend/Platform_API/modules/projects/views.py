@@ -167,6 +167,18 @@ class TaskAttachmentSerializer(serializers.ModelSerializer):
         return obj.uploaded_by.get_full_name() or obj.uploaded_by.username if obj.uploaded_by else "System process"
 
 
+class ProjectMilestoneSerializer(serializers.ModelSerializer):
+    owner_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ProjectMilestone
+        fields = "__all__"
+        read_only_fields = ("project", "created_at", "updated_at")
+
+    def get_owner_name(self, obj):
+        return obj.owner.get_full_name() or obj.owner.username if obj.owner else "Unassigned"
+
+
 class ProjectsDashboardAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -258,6 +270,33 @@ class ProjectDetailAPIView(APIView):
         project.save()
         log_business_event(event_group="data_lifecycle", event_type="update", tenant=project.tenant, actor=request.user, obj=project, branch=project.branch, note="Project updated.")
         return Response(ProjectSerializer(project).data)
+
+
+class ProjectMilestoneListCreateAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def _project(self, user, pk):
+        return _project_scope(user).filter(pk=pk).first()
+
+    def get(self, request, pk):
+        _tenant_and_activation(request)
+        _require(request.user, "view_project")
+        project = self._project(request.user, pk)
+        if not project:
+            return Response({"detail": "Project not found."}, status=status.HTTP_404_NOT_FOUND)
+        return Response(ProjectMilestoneSerializer(project.milestones.select_related("owner"), many=True).data)
+
+    def post(self, request, pk):
+        _tenant_and_activation(request)
+        _require(request.user, "change_project")
+        project = self._project(request.user, pk)
+        if not project:
+            return Response({"detail": "Project not found."}, status=status.HTTP_404_NOT_FOUND)
+        serializer = ProjectMilestoneSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        milestone = serializer.save(project=project)
+        log_business_event(event_group="data_lifecycle", event_type="milestone_created", tenant=project.tenant, actor=request.user, obj=project, branch=project.branch, note=f"Milestone created: {milestone.name}.")
+        return Response(ProjectMilestoneSerializer(milestone).data, status=status.HTTP_201_CREATED)
 
 
 class TaskListCreateAPIView(APIView):
