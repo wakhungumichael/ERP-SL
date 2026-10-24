@@ -104,6 +104,11 @@ export default function Login() {
   const login = useAuthLogin();
   const { toast } = useToast();
   const { setToken, token, user: currentUser, role } = useAuth();
+  useEffect(() => {
+    if (window.localStorage.getItem('sl-erp-session-expired') !== 'true') return;
+    window.localStorage.removeItem('sl-erp-session-expired');
+    toast({ title: 'Signed out for inactivity', description: 'Your session ended because there was no activity. Please sign in again.' });
+  }, [toast]);
   const { data } = useQuery({
     queryKey: ['public-site-config', tenantCode ?? 'owner'],
     queryFn: () => fetchPublicSiteConfig(tenantCode),

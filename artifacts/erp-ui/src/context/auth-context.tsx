@@ -3,6 +3,10 @@ import { createContext, useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { type AppRole, detectRole } from '@/lib/roles';
 
+const LAST_ACTIVITY_KEY = 'sl-erp-last-activity';
+const SESSION_EXPIRED_KEY = 'sl-erp-session-expired';
+const DEFAULT_IDLE_TIMEOUT_MINUTES = 30;
+
 export interface AuthContextValue {
   token: string | null;
   user: Record<string, unknown> | null;
@@ -88,6 +92,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const setToken = (t: string, userPayload?: Record<string, unknown> | null) => {
     localStorage.setItem('sl-erp-token', t);
+    localStorage.setItem(LAST_ACTIVITY_KEY, String(Date.now()));
+    localStorage.removeItem(SESSION_EXPIRED_KEY);
     if (userPayload) {
       localStorage.setItem('sl-erp-user', JSON.stringify(userPayload));
       setCachedUser(userPayload);
@@ -99,17 +105,52 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const clearToken = () => {
     localStorage.removeItem('sl-erp-token');
     localStorage.removeItem('sl-erp-user');
+    localStorage.removeItem(LAST_ACTIVITY_KEY);
     setCachedUser(null);
     resetSessionCache();
     setTokenState(null);
   };
 
   useEffect(() => {
-    if (!token || isLoading || (unwrappedUser && Object.keys(unwrappedUser).length > 0)) return;
-    if (authErrorStatus === 401 || authErrorStatus === 403) {
+    if (!token || isLoading) return;
+    if (authErrorStatus === 401) {
       clearToken();
     }
   }, [authErrorStatus, isLoading, token, unwrappedUser]);
+
+  useEffect(() => {
+    if (!token) return;
+
+    const configuredMinutes = Number((unwrappedUser as any)?.session_timeout_minutes);
+    const timeoutMinutes = Number.isFinite(configuredMinutes) && configuredMinutes >= 5
+      ? configuredMinutes
+      : DEFAULT_IDLE_TIMEOUT_MINUTES;
+    const timeoutMs = timeoutMinutes * 60_000;
+
+    const recordActivity = () => localStorage.setItem(LAST_ACTIVITY_KEY, String(Date.now()));
+    const endInactiveSession = () => {
+      const lastActivity = Number(localStorage.getItem(LAST_ACTIVITY_KEY) || 0);
+      if (lastActivity && Date.now() - lastActivity < timeoutMs) return;
+      // Revoke the server token when possible, then immediately clear the
+      // browser workspace so stale API errors are never shown to the user.
+      void fetch('/api/platform/auth/logout/', {
+        method: 'POST',
+        headers: { Authorization: `Token ${token}` },
+        keepalive: true,
+      });
+      localStorage.setItem(SESSION_EXPIRED_KEY, 'true');
+      clearToken();
+    };
+
+    recordActivity();
+    const events: Array<keyof WindowEventMap> = ['pointerdown', 'keydown', 'touchstart', 'scroll'];
+    events.forEach((eventName) => window.addEventListener(eventName, recordActivity, { passive: true }));
+    const interval = window.setInterval(endInactiveSession, 15_000);
+    return () => {
+      events.forEach((eventName) => window.removeEventListener(eventName, recordActivity));
+      window.clearInterval(interval);
+    };
+  }, [token, unwrappedUser]);
 
   useEffect(() => {
     if (!queriedUser) return;

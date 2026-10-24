@@ -993,6 +993,9 @@ class TenantSettings(TimeStampedModel):
     smtp_use_tls = models.BooleanField(default=True)
     smtp_use_ssl = models.BooleanField(default=False)
     smtp_allow_insecure_ssl = models.BooleanField(default=False)
+    # Idle duration before the browser clears its authentication workspace.
+    # Tokens are also invalidated server-side when the user signs out.
+    session_timeout_minutes = models.PositiveIntegerField(default=30)
     # Invoicing
     default_payment_terms_days = models.PositiveIntegerField(default=30)
     # Weighbridge tellers can be limited to a small, recent receipt window.

@@ -210,6 +210,7 @@ const INVOICE_SETTINGS_FIELDS = [
   'statement_template_id', 'purchase_order_template_id',
 ] as const;
 const WORKFLOW_LIFECYCLE_SETTINGS_FIELDS = ['document_status_policy'] as const;
+const SESSION_SECURITY_SETTINGS_FIELDS = ['session_timeout_minutes'] as const;
 const DEFAULT_DOCUMENT_STATUS_POLICY = {
   draft: { label: 'Draft', description: 'Created and still editable.' },
   in_progress: { label: 'In Progress', description: 'Forwarded and awaiting workflow action.' },
@@ -1974,6 +1975,7 @@ export default function OrganizationSettings() {
     receipt_template_id: source?.receipt_template?.id ?? null,
     purchase_order_template_id: source?.purchase_order_template?.id ?? null,
     statement_template_id: source?.statement_template?.id ?? null,
+    session_timeout_minutes: source?.session_timeout_minutes ?? 30,
   });
   };
 
@@ -2052,13 +2054,14 @@ export default function OrganizationSettings() {
       // older SMTP values back into the form after a successful save.
       return api(token!, `/tenants/${organizationId}/settings/`);
     },
-    onSuccess: (response) => {
+    onSuccess: async (response, fields) => {
       const saved = response?.data ?? response;
       setSettingsForm(buildSettingsForm(saved));
       toast({ title: 'Settings saved' });
       qc.setQueryData(['my-tenant-settings', organizationId], response);
       qc.setQueryData(['dashboard-tenant-settings', organizationId, token], saved);
       void qc.invalidateQueries({ queryKey: ['public-site-config'] });
+      if (fields.includes('session_timeout_minutes')) await refreshUser();
     },
     onError: (e: any) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
   });
@@ -2428,6 +2431,7 @@ export default function OrganizationSettings() {
           <TabsTrigger value="invoicing" className="gap-1.5"><FileText className="h-3.5 w-3.5" /> Invoicing</TabsTrigger>
           <TabsTrigger value="taxes-charges" className="gap-1.5"><FileText className="h-3.5 w-3.5" /> Taxes & Charges</TabsTrigger>
           <TabsTrigger value="workflow-lifecycle" className="gap-1.5"><FileText className="h-3.5 w-3.5" /> Workflow Lifecycle</TabsTrigger>
+          <TabsTrigger value="security" className="gap-1.5"><UserCheck className="h-3.5 w-3.5" /> Security</TabsTrigger>
           <TabsTrigger value="templates" className="gap-1.5"><LayoutTemplate className="h-3.5 w-3.5" /> Templates</TabsTrigger>
           <TabsTrigger value="users" className="gap-1.5"><Users className="h-3.5 w-3.5" /> Users</TabsTrigger>
           <TabsTrigger value="branches" className="gap-1.5"><GitBranch className="h-3.5 w-3.5" /> Branches</TabsTrigger>
@@ -3197,6 +3201,34 @@ export default function OrganizationSettings() {
               saving={saveSettings.isPending}
             />
           )}
+        </TabsContent>
+
+        <TabsContent value="security" className="mt-6">
+          <Card>
+            <CardHeader className="bg-muted/20 border-b py-3 px-4">
+              <CardTitle className="text-xs font-bold uppercase tracking-widest">Session Security</CardTitle>
+            </CardHeader>
+            <CardContent className="p-6 space-y-4">
+              {settingsForm && (
+                <>
+                  <div className="max-w-md space-y-1.5">
+                    <Label>Automatic sign-out after inactivity (minutes)</Label>
+                    <Input
+                      value={settingsForm.session_timeout_minutes ?? 30}
+                      onChange={sf('session_timeout_minutes')}
+                      type="number"
+                      min="5"
+                      max="1440"
+                    />
+                    <p className="text-xs text-muted-foreground">Users are signed out after no keyboard, pointer, touch, or scroll activity. Choose between 5 minutes and 24 hours. The default is 30 minutes.</p>
+                  </div>
+                  <Button onClick={() => saveSettings.mutate(SESSION_SECURITY_SETTINGS_FIELDS)} disabled={saveSettings.isPending}>
+                    {saveSettings.isPending ? 'Saving…' : 'Save Session Security'}
+                  </Button>
+                </>
+              )}
+            </CardContent>
+          </Card>
         </TabsContent>
 
         <TabsContent value="templates" className="mt-6">

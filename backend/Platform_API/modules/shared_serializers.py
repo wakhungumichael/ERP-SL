@@ -859,6 +859,7 @@ class TenantSettingsSerializer(serializers.ModelSerializer):
     receipt_template = DocumentTemplateSerializer(read_only=True)
     statement_template = DocumentTemplateSerializer(read_only=True)
     purchase_order_template = DocumentTemplateSerializer(read_only=True)
+    session_timeout_minutes = serializers.IntegerField(min_value=5, max_value=1440, required=False)
 
     class Meta:
         model = TenantSettings
@@ -873,6 +874,7 @@ class TenantSettingsSerializer(serializers.ModelSerializer):
             "purchase_order_template", "purchase_order_template_id",
             "smtp_host", "smtp_port", "smtp_user", "smtp_password", "smtp_use_tls", "smtp_use_ssl",
             "smtp_allow_insecure_ssl", "smtp_password_configured",
+            "session_timeout_minutes",
             "default_payment_terms_days",
             "teller_receipt_latest_records", "teller_receipt_max_age_hours",
             "allow_shared_weighbridge_vehicles",
@@ -1059,6 +1061,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
     active_role = serializers.SerializerMethodField()
     active_role_group_name = serializers.SerializerMethodField()
     available_roles = serializers.SerializerMethodField()
+    session_timeout_minutes = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -1092,6 +1095,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
             "active_role",
             "active_role_group_name",
             "available_roles",
+            "session_timeout_minutes",
         )
 
     def get_permissions(self, obj):
@@ -1238,6 +1242,14 @@ class UserProfileSerializer(serializers.ModelSerializer):
             {"id": group.id, "name": group.name, "display_name": display_role_name(group.name, tenant_id)}
             for group in obj.groups.order_by("name")
         ]
+
+    def get_session_timeout_minutes(self, obj):
+        tenant_id = self.get_tenant_id(obj)
+        if not tenant_id:
+            return 30
+        return TenantSettings.objects.filter(tenant_id=tenant_id).values_list(
+            "session_timeout_minutes", flat=True
+        ).first() or 30
 
 
 class TokenLoginSerializer(serializers.Serializer):
