@@ -80,6 +80,11 @@ def _ensure_tenant_relation(tenant, obj, label):
         raise serializers.ValidationError({label: f"{label.replace('_', ' ').title()} belongs to another organization."})
 
 
+def _ensure_active_tenant_user(tenant, user, label):
+    if user is not None and not OrganizationMembership.objects.filter(tenant=tenant, user=user, is_active=True).exists():
+        raise serializers.ValidationError({label: f"Choose an active organization user for {label.replace('_', ' ')}."})
+
+
 def _next_reference(tenant, model, prefix):
     """Serialize reference allocation per tenant so concurrent drafts stay unique."""
     type(tenant).objects.select_for_update().get(pk=tenant.pk)
@@ -427,6 +432,8 @@ class ProjectListCreateAPIView(APIView):
         serializer.is_valid(raise_exception=True)
         branch = serializer.validated_data["branch"]
         _ensure_tenant_relation(tenant, branch, "branch")
+        _ensure_active_tenant_user(tenant, serializer.validated_data.get("manager"), "manager")
+        _ensure_active_tenant_user(tenant, serializer.validated_data.get("owner"), "owner")
         project = serializer.save(tenant=tenant, created_by=request.user, updated_by=request.user)
         project.full_clean()
         project.save()
@@ -464,6 +471,8 @@ class ProjectDetailAPIView(APIView):
         serializer.is_valid(raise_exception=True)
         branch = serializer.validated_data.get("branch", project.branch)
         _ensure_tenant_relation(project.tenant, branch, "branch")
+        _ensure_active_tenant_user(project.tenant, serializer.validated_data.get("manager"), "manager")
+        _ensure_active_tenant_user(project.tenant, serializer.validated_data.get("owner"), "owner")
         project = serializer.save(updated_by=request.user)
         project.full_clean()
         project.save()
@@ -598,10 +607,23 @@ class ProjectMemberListCreateAPIView(APIView):
         ).first()
         if not membership:
             raise serializers.ValidationError({"user": "Choose an active organization member in the selected branch."})
+        responsibility = request.data.get("responsibility") or "contributor"
+        if responsibility not in dict(ProjectMember.ROLE_CHOICES):
+            raise serializers.ValidationError({"responsibility": "Choose manager, owner, contributor, or viewer."})
+        if responsibility == "manager":
+            _require(request.user, "assign_project_manager")
         member, created = ProjectMember.objects.get_or_create(project=project, user_id=user_id, branch_id=branch_id, defaults={"responsibility": request.data.get("responsibility") or "contributor"})
         if not created:
-            member.responsibility = request.data.get("responsibility") or member.responsibility
+            member.responsibility = responsibility
             member.save(update_fields=["responsibility"])
+        if responsibility == "manager":
+            project.manager = member.user
+            project.updated_by = request.user
+            project.save(update_fields=["manager", "updated_by", "updated_at"])
+        elif responsibility == "owner":
+            project.owner = member.user
+            project.updated_by = request.user
+            project.save(update_fields=["owner", "updated_by", "updated_at"])
         log_business_event(event_group="data_lifecycle", event_type="project_member_added", tenant=project.tenant, actor=request.user, obj=project, branch=project.branch, note=f"Project member assigned: {member.user.get_full_name() or member.user.username}.")
         return Response(ProjectMemberSerializer(member).data, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
 
