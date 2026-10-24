@@ -7,6 +7,12 @@ const LAST_ACTIVITY_KEY = 'sl-erp-last-activity';
 const SESSION_EXPIRED_KEY = 'sl-erp-session-expired';
 const DEFAULT_IDLE_TIMEOUT_MINUTES = 30;
 
+function redirectToLogin(reason: 'idle' | 'expired') {
+  // A full navigation unmounts protected pages before their cached queries are
+  // cleared, avoiding a transient render with an invalid authentication state.
+  window.location.replace(`/login?reason=${reason}`);
+}
+
 export interface AuthContextValue {
   token: string | null;
   user: Record<string, unknown> | null;
@@ -115,8 +121,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (!token || isLoading) return;
     if (authErrorStatus === 401) {
       clearToken();
+      redirectToLogin('expired');
     }
-  }, [authErrorStatus, isLoading, token, unwrappedUser]);
+  }, [authErrorStatus, isLoading, token]);
 
   useEffect(() => {
     if (!token) return;
@@ -140,6 +147,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       });
       localStorage.setItem(SESSION_EXPIRED_KEY, 'true');
       clearToken();
+      redirectToLogin('idle');
     };
 
     recordActivity();
