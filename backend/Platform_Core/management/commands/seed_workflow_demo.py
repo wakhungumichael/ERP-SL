@@ -52,6 +52,16 @@ WORKFLOW_TEMPLATES = [
         "groups": ["Finance", "Tenant Admin"],
         "condition": ("context.total_amount", "gte", "250000"),
     },
+    {
+        "code": "project-task-delivery-review",
+        "name": "Project Task Delivery Review",
+        "module": "projects-tasks",
+        "entity": "project_task",
+        "label": "Project Task",
+        "route": "/projects/tasks",
+        "groups": ["Project Manager", "Tenant Admin"],
+        "condition": ("context.priority", "eq", "critical"),
+    },
 ]
 
 
