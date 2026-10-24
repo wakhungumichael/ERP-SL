@@ -77,6 +77,13 @@ def _ensure_tenant_relation(tenant, obj, label):
         raise serializers.ValidationError({label: f"{label.replace('_', ' ').title()} belongs to another organization."})
 
 
+def _next_reference(tenant, model, prefix):
+    """Serialize reference allocation per tenant so concurrent drafts stay unique."""
+    type(tenant).objects.select_for_update().get(pk=tenant.pk)
+    sequence = model.objects.filter(tenant=tenant).count() + 1
+    return f"{prefix}-{timezone.localdate():%Y}-{sequence:04d}"
+
+
 class ProjectSerializer(serializers.ModelSerializer):
     manager_name = serializers.SerializerMethodField()
     owner_name = serializers.SerializerMethodField()
@@ -277,7 +284,7 @@ class ProjectListCreateAPIView(APIView):
         if not branch_id:
             raise PermissionDenied("Select an active branch before creating a project.")
         payload.setdefault("branch", branch_id)
-        payload.setdefault("code", f"PRJ-{timezone.localdate():%Y}-{Project.objects.filter(tenant=tenant).count() + 1:04d}")
+        payload.setdefault("code", _next_reference(tenant, Project, "PRJ"))
         serializer = ProjectSerializer(data=payload)
         serializer.is_valid(raise_exception=True)
         branch = serializer.validated_data["branch"]
@@ -376,7 +383,7 @@ class TaskListCreateAPIView(APIView):
         if not branch_id:
             raise PermissionDenied("Select an active branch before creating a task.")
         payload.setdefault("branch", branch_id)
-        payload.setdefault("number", f"TSK-{timezone.localdate():%Y}-{ProjectTask.objects.filter(tenant=tenant).count() + 1:04d}")
+        payload.setdefault("number", _next_reference(tenant, ProjectTask, "TSK"))
         serializer = TaskSerializer(data=payload)
         serializer.is_valid(raise_exception=True)
         branch = serializer.validated_data["branch"]
@@ -563,7 +570,7 @@ class TicketTaskListCreateAPIView(APIView):
         task = ProjectTask(
             tenant=tenant,
             branch_id=branch_id,
-            number=f"TSK-{timezone.localdate():%Y}-{ProjectTask.objects.filter(tenant=tenant).count() + 1:04d}",
+            number=_next_reference(tenant, ProjectTask, "TSK"),
             title=request.data.get("title") or ticket.subject,
             description=request.data.get("description") or ticket.description,
             source_ticket=ticket,
