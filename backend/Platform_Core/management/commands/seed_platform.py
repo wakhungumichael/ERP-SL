@@ -383,6 +383,7 @@ class Command(BaseCommand):
             ("projects", "Projects", "folder-kanban", "/projects", "/api/projects/projects/", 2),
             ("all-tasks", "All Tasks", "list-todo", "/projects/tasks", "/api/projects/tasks/", 3),
             ("my-tasks", "My Tasks", "user-check", "/projects/my-tasks", "/api/projects/tasks/?scope=mine", 4),
+            ("task-board", "Task Board", "columns-3", "/projects/board", "/api/projects/tasks/?page_size=100", 5),
         ):
             WorkspaceMenuItem.objects.update_or_create(
                 section=projects_section, key=item_key,

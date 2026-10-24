@@ -58,6 +58,7 @@ import WorkflowCenter from '@/pages/platform/workflows';
 import WorkflowApprovals from '@/pages/workflow/approvals';
 import ProjectsWorkspace from '@/pages/projects/workspace';
 import TaskDetail from '@/pages/projects/task-detail';
+import ProjectKanban from '@/pages/projects/kanban';
 import Backups from '@/pages/platform/backups';
 import OrganizationSettings from '@/pages/platform/company-settings';
 import Users from '@/pages/platform/users';
@@ -227,6 +228,7 @@ function Router() {
       <Route path="/projects/overview"><Shell><ProjectsWorkspace mode="overview" /></Shell></Route>
       <Route path="/projects/tasks"><Shell><ProjectsWorkspace mode="tasks" /></Shell></Route>
       <Route path="/projects/tasks/:id">{params => <Shell><TaskDetail id={params.id} /></Shell>}</Route>
+      <Route path="/projects/board"><Shell><ProjectKanban /></Shell></Route>
       <Route path="/projects/my-tasks"><Shell><ProjectsWorkspace mode="mine" /></Shell></Route>
       <Route path="/projects"><Shell><ProjectsWorkspace mode="projects" /></Shell></Route>
       <Route path="/workspace/operations/dashboard">
