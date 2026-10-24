@@ -20,7 +20,7 @@ from Platform_API.modules.mixins import (
 from Platform_Core.audit import log_business_event
 from Platform_Core.models import OrganizationMembership
 from Platform_Core.platform import get_active_tenant_module_slugs
-from SL_Projects.models import Project, ProjectMilestone, ProjectTask, TaskAttachment, TaskComment, TaskFollowUp, TaskUpdate
+from SL_Projects.models import Project, ProjectMilestone, ProjectTask, TaskAttachment, TaskComment, TaskDependency, TaskFollowUp, TaskUpdate
 from SL_Ticketing.models import Ticket
 
 
@@ -296,6 +296,57 @@ class TaskAssignmentAPIView(APIView):
         task.save(update_fields=["primary_assignee", "assigned_by", "updated_by", "updated_at"])
         log_business_event(event_group="data_lifecycle", event_type="task_assigned", tenant=task.tenant, actor=request.user, obj=task, branch=task.branch, note=f"Task assigned to {task.primary_assignee.get_full_name() or task.primary_assignee.username if task.primary_assignee_id else 'Unassigned'}.")
         return Response(TaskSerializer(task).data)
+
+
+class TaskStructureAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def _task(self, user, pk):
+        return _task_scope(user).filter(pk=pk).first()
+
+    def get(self, request, pk):
+        _tenant_and_activation(request)
+        _require(request.user, "view_projecttask")
+        task = self._task(request.user, pk)
+        if not task:
+            return Response({"detail": "Task not found."}, status=status.HTTP_404_NOT_FOUND)
+        candidates = _task_scope(request.user).filter(project=task.project).exclude(pk=task.pk).exclude(parent_task=task) if task.project_id else _task_scope(request.user).filter(project__isnull=True).exclude(pk=task.pk).exclude(parent_task=task)
+        return Response({
+            "subtasks": TaskSerializer(task.subtasks.select_related("primary_assignee"), many=True).data,
+            "dependencies": TaskSerializer(ProjectTask.objects.filter(dependent_tasks__task=task).select_related("primary_assignee"), many=True).data,
+            "candidates": TaskSerializer(candidates[:100], many=True).data,
+        })
+
+    @transaction.atomic
+    def post(self, request, pk):
+        tenant = _tenant_and_activation(request)
+        _require(request.user, "change_projecttask")
+        task = self._task(request.user, pk)
+        if not task:
+            return Response({"detail": "Task not found."}, status=status.HTTP_404_NOT_FOUND)
+        action = str(request.data.get("action") or "").strip()
+        if action == "subtask":
+            title = str(request.data.get("title") or "").strip()
+            if not title:
+                raise serializers.ValidationError({"title": "Enter a subtask title."})
+            subtask = ProjectTask.objects.create(
+                tenant=tenant, branch=task.branch, number=_next_reference(tenant, ProjectTask, "TSK"),
+                title=title, description=str(request.data.get("description") or ""), project=task.project,
+                parent_task=task, priority=task.priority, created_by=request.user, updated_by=request.user, assigned_by=request.user,
+            )
+            log_business_event(event_group="data_lifecycle", event_type="subtask_created", tenant=tenant, actor=request.user, obj=subtask, branch=task.branch, note=f"Subtask created under {task.number}.")
+            return Response(TaskSerializer(subtask).data, status=status.HTTP_201_CREATED)
+        if action == "dependency":
+            depends_on = self._task(request.user, request.data.get("depends_on_id"))
+            if not depends_on:
+                raise serializers.ValidationError({"depends_on_id": "Choose a task in your active branch."})
+            if depends_on.id == task.id or depends_on.project_id != task.project_id:
+                raise serializers.ValidationError({"depends_on_id": "Dependencies must be another task in the same project."})
+            relation, created = TaskDependency.objects.get_or_create(task=task, depends_on=depends_on)
+            if created:
+                log_business_event(event_group="data_lifecycle", event_type="dependency_added", tenant=tenant, actor=request.user, obj=task, branch=task.branch, note=f"Dependency added: {depends_on.number}.")
+            return Response(TaskSerializer(depends_on).data, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+        raise serializers.ValidationError({"action": "Use subtask or dependency."})
 
 
 class ProjectListCreateAPIView(APIView):
