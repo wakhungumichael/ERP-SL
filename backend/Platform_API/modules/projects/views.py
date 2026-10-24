@@ -232,7 +232,13 @@ class TaskListCreateAPIView(APIView):
     def post(self, request):
         tenant = _tenant_and_activation(request)
         _require(request.user, "add_projecttask")
-        serializer = TaskSerializer(data=request.data)
+        payload = request.data.copy()
+        branch_id = _active_branch_id(request.user)
+        if not branch_id:
+            raise PermissionDenied("Select an active branch before creating a task.")
+        payload.setdefault("branch", branch_id)
+        payload.setdefault("number", f"TSK-{timezone.localdate():%Y}-{ProjectTask.objects.filter(tenant=tenant).count() + 1:04d}")
+        serializer = TaskSerializer(data=payload)
         serializer.is_valid(raise_exception=True)
         branch = serializer.validated_data["branch"]
         _ensure_tenant_relation(tenant, branch, "branch")
