@@ -690,6 +690,35 @@ class TaskFollowUpListCreateAPIView(APIView):
         return Response(TaskFollowUpSerializer(follow_up).data, status=status.HTTP_201_CREATED)
 
 
+class TaskFollowUpCompleteAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk, follow_up_id):
+        _tenant_and_activation(request)
+        _require(request.user, "change_taskfollowup")
+        task = _task_scope(request.user).filter(pk=pk).first()
+        if not task:
+            return Response({"detail": "Task not found."}, status=status.HTTP_404_NOT_FOUND)
+        follow_up = task.follow_ups.filter(pk=follow_up_id).first()
+        if not follow_up:
+            return Response({"detail": "Follow-up not found for this task."}, status=status.HTTP_404_NOT_FOUND)
+        if follow_up.status == "completed":
+            return Response(TaskFollowUpSerializer(follow_up).data)
+        follow_up.status = "completed"
+        follow_up.completed_at = timezone.now()
+        follow_up.save(update_fields=["status", "completed_at", "updated_at"])
+        log_business_event(
+            event_group="data_lifecycle",
+            event_type="follow_up_completed",
+            tenant=task.tenant,
+            actor=request.user,
+            obj=task,
+            branch=task.branch,
+            note=f"Follow-up {follow_up.id} completed.",
+        )
+        return Response(TaskFollowUpSerializer(follow_up).data)
+
+
 class TaskCommentListCreateAPIView(APIView):
     permission_classes = [IsAuthenticated]
 

@@ -18,6 +18,7 @@ urlpatterns = [
     path("tasks/<int:pk>/", views.TaskDetailAPIView.as_view(), name="project-task-detail"),
     path("tasks/<int:pk>/updates/", views.TaskUpdateListCreateAPIView.as_view(), name="project-task-update-list"),
     path("tasks/<int:pk>/follow-ups/", views.TaskFollowUpListCreateAPIView.as_view(), name="project-task-followup-list"),
+    path("tasks/<int:pk>/follow-ups/<int:follow_up_id>/complete/", views.TaskFollowUpCompleteAPIView.as_view(), name="project-task-followup-complete"),
     path("tasks/<int:pk>/comments/", views.TaskCommentListCreateAPIView.as_view(), name="project-task-comment-list"),
     path("tasks/<int:pk>/attachments/", views.TaskAttachmentListCreateAPIView.as_view(), name="project-task-attachment-list"),
     path("tasks/<int:pk>/assignees/", views.TaskAssigneeListAPIView.as_view(), name="project-task-assignee-list"),
