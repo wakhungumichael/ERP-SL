@@ -18,9 +18,9 @@ from Platform_API.modules.mixins import (
     tenant_or_403,
 )
 from Platform_Core.audit import log_business_event
-from Platform_Core.models import OrganizationMembership
+from Platform_Core.models import OrganizationMembership, TenantBranch
 from Platform_Core.platform import get_active_tenant_module_slugs
-from SL_Projects.models import Project, ProjectMilestone, ProjectTask, TaskAttachment, TaskComment, TaskDependency, TaskFollowUp, TaskUpdate
+from SL_Projects.models import Project, ProjectBranchAccess, ProjectMember, ProjectMilestone, ProjectTask, TaskAttachment, TaskComment, TaskDependency, TaskFollowUp, TaskUpdate
 from SL_Ticketing.models import Ticket
 
 
@@ -184,6 +184,19 @@ class ProjectMilestoneSerializer(serializers.ModelSerializer):
 
     def get_owner_name(self, obj):
         return obj.owner.get_full_name() or obj.owner.username if obj.owner else "Unassigned"
+
+
+class ProjectMemberSerializer(serializers.ModelSerializer):
+    user_name = serializers.SerializerMethodField()
+    branch_name = serializers.CharField(source="branch.name", read_only=True)
+
+    class Meta:
+        model = ProjectMember
+        fields = "__all__"
+        read_only_fields = ("project", "created_at")
+
+    def get_user_name(self, obj):
+        return obj.user.get_full_name() or obj.user.username
 
 
 class ProjectsDashboardAPIView(APIView):
@@ -445,6 +458,77 @@ class ProjectMilestoneListCreateAPIView(APIView):
         milestone = serializer.save(project=project)
         log_business_event(event_group="data_lifecycle", event_type="milestone_created", tenant=project.tenant, actor=request.user, obj=project, branch=project.branch, note=f"Milestone created: {milestone.name}.")
         return Response(ProjectMilestoneSerializer(milestone).data, status=status.HTTP_201_CREATED)
+
+
+class ProjectMemberListCreateAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def _project(self, user, pk):
+        return _project_scope(user).filter(pk=pk).first()
+
+    def get(self, request, pk):
+        _tenant_and_activation(request)
+        _require(request.user, "view_project")
+        project = self._project(request.user, pk)
+        if not project:
+            return Response({"detail": "Project not found."}, status=status.HTTP_404_NOT_FOUND)
+        branch_ids = [project.branch_id, *project.participating_branches.values_list("branch_id", flat=True)]
+        memberships = OrganizationMembership.objects.filter(tenant=project.tenant, is_active=True).filter(
+            Q(branch_id__in=branch_ids) | Q(branches__id__in=branch_ids)
+        ).select_related("user", "branch").distinct()
+        candidates = []
+        for membership in memberships:
+            available_branches = list(membership.branches.filter(id__in=branch_ids))
+            if membership.branch_id and membership.branch_id in branch_ids:
+                available_branches.append(membership.branch)
+            for branch in {branch.id: branch for branch in available_branches}.values():
+                candidates.append({
+                    "user_id": membership.user_id,
+                    "user_name": membership.user.get_full_name() or membership.user.username,
+                    "branch_id": branch.id,
+                    "branch_name": branch.name,
+                })
+        return Response({
+            "members": ProjectMemberSerializer(project.members.select_related("user", "branch"), many=True).data,
+            "candidates": candidates,
+            "branches": [{"id": branch.id, "name": branch.name} for branch in TenantBranch.objects.filter(tenant=project.tenant, is_active=True).order_by("name")],
+        })
+
+    @transaction.atomic
+    def post(self, request, pk):
+        _tenant_and_activation(request)
+        _require(request.user, "manage_project_members")
+        project = self._project(request.user, pk)
+        if not project:
+            return Response({"detail": "Project not found."}, status=status.HTTP_404_NOT_FOUND)
+        if request.data.get("action") == "branch":
+            branch = TenantBranch.objects.filter(pk=request.data.get("branch"), tenant=project.tenant, is_active=True).first()
+            if not branch:
+                raise serializers.ValidationError({"branch": "Choose an active branch in this organization."})
+            if branch.pk != project.branch_id:
+                ProjectBranchAccess.objects.get_or_create(project=project, branch=branch)
+            log_business_event(event_group="data_lifecycle", event_type="project_branch_added", tenant=project.tenant, actor=request.user, obj=project, branch=project.branch, note=f"Participating branch added: {branch.name}.")
+            return Response({"id": branch.id, "name": branch.name}, status=status.HTTP_201_CREATED)
+        user_id = request.data.get("user")
+        branch_id = request.data.get("branch") or project.branch_id
+        branch_ids = {project.branch_id, *project.participating_branches.values_list("branch_id", flat=True)}
+        try:
+            branch_id = int(branch_id)
+        except (TypeError, ValueError):
+            raise serializers.ValidationError({"branch": "Choose a valid project branch."})
+        if branch_id not in branch_ids:
+            raise serializers.ValidationError({"branch": "Add this branch to the project before assigning its members."})
+        membership = OrganizationMembership.objects.filter(tenant=project.tenant, user_id=user_id, is_active=True).filter(
+            Q(branch_id=branch_id) | Q(branches__id=branch_id)
+        ).first()
+        if not membership:
+            raise serializers.ValidationError({"user": "Choose an active organization member in the selected branch."})
+        member, created = ProjectMember.objects.get_or_create(project=project, user_id=user_id, branch_id=branch_id, defaults={"responsibility": request.data.get("responsibility") or "contributor"})
+        if not created:
+            member.responsibility = request.data.get("responsibility") or member.responsibility
+            member.save(update_fields=["responsibility"])
+        log_business_event(event_group="data_lifecycle", event_type="project_member_added", tenant=project.tenant, actor=request.user, obj=project, branch=project.branch, note=f"Project member assigned: {member.user.get_full_name() or member.user.username}.")
+        return Response(ProjectMemberSerializer(member).data, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
 
 
 class TaskListCreateAPIView(APIView):
