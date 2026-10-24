@@ -278,6 +278,14 @@ class TaskDetailAPIView(APIView):
 class TaskUpdateListCreateAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
+    def get(self, request, pk):
+        _tenant_and_activation(request)
+        _require(request.user, "view_projecttask")
+        task = _task_scope(request.user).filter(pk=pk).first()
+        if not task:
+            return Response({"detail": "Task not found."}, status=status.HTTP_404_NOT_FOUND)
+        return Response(TaskUpdateSerializer(task.updates.select_related("updated_by"), many=True).data)
+
     def post(self, request, pk):
         _tenant_and_activation(request)
         _require(request.user, "update_projecttask_progress")
@@ -296,6 +304,14 @@ class TaskUpdateListCreateAPIView(APIView):
 
 class TaskFollowUpListCreateAPIView(APIView):
     permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+        _tenant_and_activation(request)
+        _require(request.user, "view_projecttask")
+        task = _task_scope(request.user).filter(pk=pk).first()
+        if not task:
+            return Response({"detail": "Task not found."}, status=status.HTTP_404_NOT_FOUND)
+        return Response(TaskFollowUpSerializer(task.follow_ups.select_related("owner"), many=True).data)
 
     def post(self, request, pk):
         _tenant_and_activation(request)
