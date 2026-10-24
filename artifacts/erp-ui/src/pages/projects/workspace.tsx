@@ -13,6 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { ListingPagination } from '@/components/erp/listing/pagination';
 import { ERPWorkspacePage } from '@/components/erp/workspace/workspace-page';
 import { apiErrorFromResponse } from '@/lib/api-errors';
+import { useToast } from '@/hooks/use-toast';
 
 type PageMode = 'overview' | 'projects' | 'tasks' | 'mine';
 type PageResult<T> = { count: number; results: T[] };
@@ -45,6 +46,7 @@ function Metric({ label: title, value, icon: Icon }: { label: string; value: num
 
 export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
   const { token } = useAuth();
+  const { toast } = useToast();
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
   const [search, setSearch] = useState('');
@@ -53,7 +55,7 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
   const [taskTitle, setTaskTitle] = useState('');
   const [taskDescription, setTaskDescription] = useState('');
   const queryClient = useQueryClient();
-  const createTask = useMutation({ mutationFn: async () => { const response = await fetch('/api/projects/tasks/', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Token ${token}` }, body: JSON.stringify({ title: taskTitle, description: taskDescription, status: 'draft' }) }); if (!response.ok) throw await apiErrorFromResponse(response, 'Task could not be created.'); return response.json(); }, onSuccess: () => { setCreateOpen(false); setTaskTitle(''); setTaskDescription(''); void queryClient.invalidateQueries({ queryKey: ['projects'] }); } });
+  const createTask = useMutation({ mutationFn: async () => { const response = await fetch('/api/projects/tasks/', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Token ${token}` }, body: JSON.stringify({ title: taskTitle, description: taskDescription, status: 'draft' }) }); if (!response.ok) throw await apiErrorFromResponse(response, 'Task could not be created.'); return response.json(); }, onSuccess: () => { setCreateOpen(false); setTaskTitle(''); setTaskDescription(''); void queryClient.invalidateQueries({ queryKey: ['projects'] }); toast({ title: 'Draft task created' }); }, onError: (error: Error) => toast({ title: 'Could not create task', description: error.message, variant: 'destructive' }) });
   const metrics = useApi<{ counts: Record<string, number> }>('/api/projects/dashboard/', token);
   const isProjects = mode === 'projects';
   const endpoint = isProjects ? '/api/projects/projects/' : '/api/projects/tasks/';

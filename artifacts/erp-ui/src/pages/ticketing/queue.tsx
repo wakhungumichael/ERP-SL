@@ -13,6 +13,7 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { useAuth } from '@/context/use-auth';
+import { useToast } from '@/hooks/use-toast';
 
 type TicketRow = {
   id: number;
@@ -52,6 +53,7 @@ function authFetch(token: string, path: string, init?: RequestInit) {
 
 export default function TicketingQueue() {
   const { token } = useAuth();
+  const { toast } = useToast();
   const qc = useQueryClient();
   const [search, setSearch] = useState('');
   const [selectedId, setSelectedId] = useState<number | null>(null);
@@ -171,6 +173,20 @@ export default function TicketingQueue() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['ticketing-queue'] }),
   });
 
+  const createTaskMutation = useMutation({
+    mutationFn: async () => {
+      if (!selectedTicket) return null;
+      const response = await authFetch(token!, `/api/projects/tickets/${selectedTicket.id}/tasks/`, { method: 'POST', body: JSON.stringify({}) });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.detail || 'Task could not be created from this ticket.');
+      }
+      return response.json() as Promise<{ number: string }>;
+    },
+    onSuccess: (task) => task && toast({ title: 'Draft task created', description: `${task.number} is linked to this ticket.` }),
+    onError: (error: Error) => toast({ title: 'Could not create task', description: error.message, variant: 'destructive' }),
+  });
+
   return (
     <div className="space-y-6 p-6">
       <div className="flex items-center justify-between gap-4">
@@ -266,6 +282,9 @@ export default function TicketingQueue() {
               </Button>
               <Button variant="outline" size="sm" onClick={() => statusMutation.mutate('closed')} disabled={statusMutation.isPending || selectedTicket.status === 'closed'}>
                 Close
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => createTaskMutation.mutate()} disabled={createTaskMutation.isPending}>
+                {createTaskMutation.isPending ? 'Creating task...' : 'Create Task'}
               </Button>
             </div>
             <div className="flex gap-3">

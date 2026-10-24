@@ -20,7 +20,8 @@ from Platform_API.modules.mixins import (
 from Platform_Core.audit import log_business_event
 from Platform_Core.models import OrganizationMembership
 from Platform_Core.platform import get_active_tenant_module_slugs
-from SL_Projects.models import Project, ProjectMilestone, ProjectTask, TaskFollowUp, TaskUpdate
+from SL_Projects.models import Project, ProjectMilestone, ProjectTask, TaskComment, TaskFollowUp, TaskUpdate
+from SL_Ticketing.models import Ticket
 
 
 MODULE_SLUG = "projects-tasks"
@@ -114,12 +115,44 @@ class TaskUpdateSerializer(serializers.ModelSerializer):
         fields = "__all__"
         read_only_fields = ("task", "updated_by", "created_at")
 
+    def validate_progress_percentage(self, value):
+        if not 0 <= value <= 100:
+            raise serializers.ValidationError("Progress must be between 0 and 100.")
+        return value
+
+    def validate_update_description(self, value):
+        if not value.strip():
+            raise serializers.ValidationError("Describe the work completed or the current blocker.")
+        return value.strip()
+
 
 class TaskFollowUpSerializer(serializers.ModelSerializer):
+    owner_name = serializers.SerializerMethodField()
+
     class Meta:
         model = TaskFollowUp
         fields = "__all__"
         read_only_fields = ("task", "created_at", "updated_at", "completed_at")
+
+    def get_owner_name(self, obj):
+        return obj.owner.get_full_name() or obj.owner.username if obj.owner else "Unassigned"
+
+
+class TaskCommentSerializer(serializers.ModelSerializer):
+    author_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = TaskComment
+        fields = "__all__"
+        read_only_fields = ("task", "author", "mentions", "created_at", "updated_at")
+
+    def get_author_name(self, obj):
+        return obj.author.get_full_name() or obj.author.username if obj.author else "System process"
+
+    def validate_body(self, value):
+        if not value.strip():
+            raise serializers.ValidationError("Enter a comment before saving.")
+        return value.strip()
 
 
 class ProjectsDashboardAPIView(APIView):
@@ -327,6 +360,77 @@ class TaskFollowUpListCreateAPIView(APIView):
             return Response({"detail": "Task not found."}, status=status.HTTP_404_NOT_FOUND)
         serializer = TaskFollowUpSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        follow_up = serializer.save(task=task)
+        follow_up = serializer.save(task=task, owner=serializer.validated_data.get("owner") or request.user)
         log_business_event(event_group="data_lifecycle", event_type="follow_up_created", tenant=task.tenant, actor=request.user, obj=task, branch=task.branch, note="Task follow-up created.")
         return Response(TaskFollowUpSerializer(follow_up).data, status=status.HTTP_201_CREATED)
+
+
+class TaskCommentListCreateAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+        _tenant_and_activation(request)
+        _require(request.user, "view_projecttask")
+        task = _task_scope(request.user).filter(pk=pk).first()
+        if not task:
+            return Response({"detail": "Task not found."}, status=status.HTTP_404_NOT_FOUND)
+        return Response(TaskCommentSerializer(task.comments.select_related("author"), many=True).data)
+
+    def post(self, request, pk):
+        _tenant_and_activation(request)
+        _require(request.user, "add_taskcomment")
+        task = _task_scope(request.user).filter(pk=pk).first()
+        if not task:
+            return Response({"detail": "Task not found."}, status=status.HTTP_404_NOT_FOUND)
+        serializer = TaskCommentSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        comment = serializer.save(task=task, author=request.user)
+        log_business_event(event_group="data_lifecycle", event_type="comment_created", tenant=task.tenant, actor=request.user, obj=task, branch=task.branch, note="Task comment added.")
+        return Response(TaskCommentSerializer(comment).data, status=status.HTTP_201_CREATED)
+
+
+class TicketTaskListCreateAPIView(APIView):
+    """Expose real ticket-linked tasks without duplicating ticket workflow state."""
+
+    permission_classes = [IsAuthenticated]
+
+    def _ticket(self, user, ticket_id):
+        tenant = tenant_or_403(user)
+        if tenant is not None and not user.is_superuser and MODULE_SLUG not in get_active_tenant_module_slugs(tenant):
+            raise PermissionDenied("Projects & Tasks is not enabled for this organization.")
+        return tenant, Ticket.objects.filter(tenant=tenant, pk=ticket_id).first()
+
+    def get(self, request, ticket_id):
+        tenant, ticket = self._ticket(request.user, ticket_id)
+        _require(request.user, "view_projecttask")
+        if not ticket:
+            return Response({"detail": "Ticket not found."}, status=status.HTTP_404_NOT_FOUND)
+        tasks = _task_scope(request.user).filter(source_ticket=ticket)
+        return Response(TaskSerializer(tasks, many=True).data)
+
+    @transaction.atomic
+    def post(self, request, ticket_id):
+        tenant, ticket = self._ticket(request.user, ticket_id)
+        _require(request.user, "create_projecttask_from_ticket")
+        if not ticket:
+            return Response({"detail": "Ticket not found."}, status=status.HTTP_404_NOT_FOUND)
+        branch_id = _active_branch_id(request.user)
+        if not branch_id:
+            raise PermissionDenied("Select an active branch before creating a task.")
+        priority_map = {"low": "low", "normal": "medium", "high": "high", "urgent": "critical"}
+        task = ProjectTask(
+            tenant=tenant,
+            branch_id=branch_id,
+            number=f"TSK-{timezone.localdate():%Y}-{ProjectTask.objects.filter(tenant=tenant).count() + 1:04d}",
+            title=request.data.get("title") or ticket.subject,
+            description=request.data.get("description") or ticket.description,
+            source_ticket=ticket,
+            priority=priority_map.get(ticket.priority, "medium"),
+            created_by=request.user,
+            updated_by=request.user,
+            assigned_by=request.user,
+        )
+        task.full_clean()
+        task.save()
+        log_business_event(event_group="data_lifecycle", event_type="ticket_task_created", tenant=tenant, actor=request.user, obj=task, branch=task.branch, note=f"Task created from ticket {ticket.public_id}.")
+        return Response(TaskSerializer(task).data, status=status.HTTP_201_CREATED)
