@@ -56,6 +56,7 @@ import Integrations from '@/pages/platform/integrations';
 import Workspace from '@/pages/platform/workspace';
 import WorkflowCenter from '@/pages/platform/workflows';
 import WorkflowApprovals from '@/pages/workflow/approvals';
+import ProjectsWorkspace from '@/pages/projects/workspace';
 import Backups from '@/pages/platform/backups';
 import OrganizationSettings from '@/pages/platform/company-settings';
 import Users from '@/pages/platform/users';
@@ -222,6 +223,10 @@ function Router() {
         </Shell>
       </Route>
       <Route path="/workflows/approvals"><Shell><WorkflowApprovals /></Shell></Route>
+      <Route path="/projects/overview"><Shell><ProjectsWorkspace mode="overview" /></Shell></Route>
+      <Route path="/projects/tasks"><Shell><ProjectsWorkspace mode="tasks" /></Shell></Route>
+      <Route path="/projects/my-tasks"><Shell><ProjectsWorkspace mode="mine" /></Shell></Route>
+      <Route path="/projects"><Shell><ProjectsWorkspace mode="projects" /></Shell></Route>
       <Route path="/workspace/operations/dashboard">
         <Shell>
           <RoleGuard allowedRoles={['superadmin', 'tenant_admin', 'finance', 'operator']}>

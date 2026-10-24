@@ -1,0 +1,76 @@
+/* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
+import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { Link } from 'wouter';
+import { BriefcaseBusiness, ClipboardList, Plus, Search, UserCheck } from 'lucide-react';
+import { useAuth } from '@/context/use-auth';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { ListingPagination } from '@/components/erp/listing/pagination';
+import { ERPWorkspacePage } from '@/components/erp/workspace/workspace-page';
+import { apiErrorFromResponse } from '@/lib/api-errors';
+
+type PageMode = 'overview' | 'projects' | 'tasks' | 'mine';
+type PageResult<T> = { count: number; results: T[] };
+type Project = { id: number; code: string; name: string; manager_name: string; branch_name: string; target_end_date: string | null; progress_percentage: number; status: string };
+type Task = { id: number; number: string; title: string; project_name: string; assignee_name: string; priority: string; due_date: string | null; progress_percentage: number; status: string };
+
+const statusTone: Record<string, string> = {
+  active: 'border-emerald-200 bg-emerald-50 text-emerald-700', completed: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+  draft: 'border-slate-200 bg-slate-50 text-slate-700', planned: 'border-blue-200 bg-blue-50 text-blue-700',
+  on_hold: 'border-amber-200 bg-amber-50 text-amber-700', blocked: 'border-red-200 bg-red-50 text-red-700',
+  in_progress: 'border-blue-200 bg-blue-50 text-blue-700', in_review: 'border-violet-200 bg-violet-50 text-violet-700', todo: 'border-slate-200 bg-slate-50 text-slate-700',
+};
+
+function label(value: string) { return value.replaceAll('_', ' '); }
+
+function useApi<T>(path: string, token: string | null) {
+  return useQuery<T>({
+    queryKey: ['projects', path], enabled: Boolean(token),
+    queryFn: async () => {
+      const response = await fetch(path, { headers: { Authorization: `Token ${token}` } });
+      if (!response.ok) throw await apiErrorFromResponse(response, 'Projects & Tasks could not be loaded.');
+      return response.json() as Promise<T>;
+    },
+  });
+}
+
+function Metric({ label: title, value, icon: Icon }: { label: string; value: number | undefined; icon: typeof BriefcaseBusiness }) {
+  return <div className="rounded-lg border bg-card p-5 shadow-sm"><div className="flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-muted-foreground"><span>{title}</span><Icon className="h-4 w-4 text-[#C4B13B]" /></div><div className="mt-3 text-3xl font-bold tabular-nums">{value ?? 0}</div></div>;
+}
+
+export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
+  const { token } = useAuth();
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
+  const [search, setSearch] = useState('');
+  const [status, setStatus] = useState('all');
+  const metrics = useApi<{ counts: Record<string, number> }>('/api/projects/dashboard/', token);
+  const isProjects = mode === 'projects';
+  const endpoint = isProjects ? '/api/projects/projects/' : '/api/projects/tasks/';
+  const query = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
+  if (search) query.set('search', search);
+  if (status !== 'all') query.set('status', status);
+  if (mode === 'mine') query.set('scope', 'mine');
+  const records = useApi<PageResult<Project | Task>>(`${endpoint}?${query}`, token);
+  const title = mode === 'overview' ? 'Projects & Tasks' : isProjects ? 'Projects' : mode === 'mine' ? 'My Tasks' : 'All Tasks';
+
+  if (mode === 'overview') {
+    const counts = metrics.data?.counts;
+    return <ERPWorkspacePage title={title} description="Plan work, track delivery, and follow up across your active branch.">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <Metric label="Active projects" value={counts?.active_projects} icon={BriefcaseBusiness} /><Metric label="Open tasks" value={counts?.open_tasks} icon={ClipboardList} />
+        <Metric label="My tasks" value={counts?.my_tasks} icon={UserCheck} /><Metric label="Overdue tasks" value={counts?.overdue_tasks} icon={ClipboardList} />
+      </div>
+      <div className="mt-6 grid gap-4 lg:grid-cols-2"><div className="rounded-lg border bg-card p-6"><h2 className="font-semibold">Start work</h2><p className="mt-1 text-sm text-muted-foreground">Create a project or assign a standalone task in your active branch.</p><div className="mt-4 flex gap-2"><Link href="/projects"><Button variant="outline">View projects</Button></Link><Link href="/projects/tasks"><Button>View tasks</Button></Link></div></div><div className="rounded-lg border bg-card p-6"><h2 className="font-semibold">Workflow ready</h2><p className="mt-1 text-sm text-muted-foreground">Tasks begin in Draft and can use the central approval engine when a tenant workflow is configured.</p></div></div>
+    </ERPWorkspacePage>;
+  }
+
+  const items = records.data?.results ?? [];
+  return <ERPWorkspacePage title={title} description={mode === 'mine' ? 'Tasks assigned to you in your active branch and role.' : 'Tenant and branch scoped work records.'}>
+    <div className="mb-4 flex flex-wrap items-center justify-between gap-3"><div className="flex min-w-0 flex-1 gap-2"><div className="relative max-w-md flex-1"><Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" /><Input className="pl-9" value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder={isProjects ? 'Search projects...' : 'Search tasks...'} /></div><Select value={status} onValueChange={(value) => { setStatus(value); setPage(1); }}><SelectTrigger className="w-36"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">All statuses</SelectItem><SelectItem value="draft">Draft</SelectItem><SelectItem value="active">Active</SelectItem><SelectItem value="todo">To do</SelectItem><SelectItem value="in_progress">In progress</SelectItem><SelectItem value="in_review">In review</SelectItem><SelectItem value="completed">Completed</SelectItem></SelectContent></Select></div><Button disabled title="Create forms are included in the next implementation slice"><Plus className="mr-2 h-4 w-4" />New {isProjects ? 'Project' : 'Task'}</Button></div>
+    <div className="overflow-hidden rounded-lg border bg-card"><table className="w-full text-sm"><thead className="border-b bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground"><tr>{(isProjects ? ['Code', 'Project', 'Manager', 'Branch', 'Due date', 'Progress', 'Status'] : ['Number', 'Task', 'Project', 'Assigned to', 'Due date', 'Progress', 'Status']).map((column) => <th className="px-4 py-3 font-semibold" key={column}>{column}</th>)}</tr></thead><tbody>{items.map((item) => { const project = item as Project; const task = item as Task; const reference = isProjects ? project.code : task.number; const name = isProjects ? project.name : task.title; const assignee = isProjects ? project.manager_name : task.assignee_name; const due = isProjects ? project.target_end_date : task.due_date; const progress = isProjects ? project.progress_percentage : task.progress_percentage; const currentStatus = isProjects ? project.status : task.status; return <tr className="border-b last:border-0 hover:bg-muted/25" key={item.id}><td className="px-4 py-3 font-mono text-xs">{reference}</td><td className="px-4 py-3 font-medium">{name}</td><td className="px-4 py-3 text-muted-foreground">{isProjects ? assignee || 'Unassigned' : task.project_name || 'Standalone'}</td><td className="px-4 py-3 text-muted-foreground">{isProjects ? project.branch_name : assignee || 'Unassigned'}</td><td className="px-4 py-3 text-muted-foreground">{due || '—'}</td><td className="px-4 py-3"><div className="flex items-center gap-2"><div className="h-1.5 w-16 overflow-hidden rounded bg-muted"><div className="h-full bg-[#C4B13B]" style={{ width: `${progress}%` }} /></div><span className="text-xs">{progress}%</span></div></td><td className="px-4 py-3"><Badge variant="outline" className={statusTone[currentStatus] ?? ''}>{label(currentStatus)}</Badge></td></tr>; })}</tbody></table>{!records.isLoading && !items.length && <div className="p-10 text-center text-sm text-muted-foreground">No records match the selected filters.</div>}<ListingPagination page={page} pageSize={pageSize} totalCount={records.data?.count ?? 0} onPage={setPage} onPageSize={setPageSize} /></div>
+  </ERPWorkspacePage>;
+}
