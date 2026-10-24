@@ -1,7 +1,7 @@
 # Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu.
 """Projects & Tasks APIs. All records are resolved from the active workspace."""
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import Count, Q
 from django.utils import timezone
 from rest_framework import serializers, status
 from rest_framework.exceptions import PermissionDenied
@@ -198,6 +198,31 @@ class ProjectsDashboardAPIView(APIView):
                 "awaiting_review": tasks.filter(status="in_review").count(),
                 "ticket_tasks": tasks.filter(source_ticket__isnull=False).count(),
             }
+        })
+
+
+class ProjectsReportsAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        _tenant_and_activation(request)
+        _require(request.user, "view_project")
+        tasks = _task_scope(request.user)
+        projects = _project_scope(request.user)
+        today = timezone.localdate()
+        return Response({
+            "summary": {
+                "projects": projects.count(),
+                "active_projects": projects.filter(status="active").count(),
+                "open_tasks": tasks.exclude(status__in=["completed", "cancelled"]).count(),
+                "overdue_tasks": tasks.exclude(status__in=["completed", "cancelled"]).filter(due_date__lt=today).count(),
+            },
+            "tasks_by_status": list(tasks.values("status").annotate(count=Count("id")).order_by("status")),
+            "tasks_by_priority": list(tasks.values("priority").annotate(count=Count("id")).order_by("priority")),
+            "workload": [
+                {"assignee": row["primary_assignee__username"], "name": row["primary_assignee__first_name"] or row["primary_assignee__username"], "count": row["count"]}
+                for row in tasks.exclude(status__in=["completed", "cancelled"]).values("primary_assignee__username", "primary_assignee__first_name").annotate(count=Count("id")).order_by("-count")[:10]
+            ],
         })
 
 

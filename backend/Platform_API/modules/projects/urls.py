@@ -6,6 +6,7 @@ from . import views
 
 urlpatterns = [
     path("dashboard/", views.ProjectsDashboardAPIView.as_view(), name="projects-dashboard"),
+    path("reports/", views.ProjectsReportsAPIView.as_view(), name="projects-reports"),
     path("projects/", views.ProjectListCreateAPIView.as_view(), name="project-list"),
     path("projects/<int:pk>/", views.ProjectDetailAPIView.as_view(), name="project-detail"),
     path("projects/<int:pk>/milestones/", views.ProjectMilestoneListCreateAPIView.as_view(), name="project-milestone-list"),
