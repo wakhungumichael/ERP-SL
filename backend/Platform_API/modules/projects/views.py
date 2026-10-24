@@ -510,6 +510,9 @@ class TaskDetailAPIView(APIView):
         task = self._get(request.user, pk)
         if not task:
             return Response({"detail": "Task not found."}, status=status.HTTP_404_NOT_FOUND)
+        requested_status = request.data.get("status")
+        if requested_status in {"in_review", "completed", "cancelled"}:
+            raise serializers.ValidationError({"status": "Use the workflow approval process to submit, complete, or cancel a task."})
         serializer = TaskSerializer(task, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         task = serializer.save(updated_by=request.user)
