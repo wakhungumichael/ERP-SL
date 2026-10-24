@@ -2433,6 +2433,36 @@ def _workflow_subject_summary(item):
                     "name": evidence_name or "View attachment",
                 }] if evidence_url else []),
             }
+    if item.module_slug == "projects-tasks" and item.entity_type in {"project", "project_task"}:
+        from SL_Projects.models import Project, ProjectTask
+
+        model = Project if item.entity_type == "project" else ProjectTask
+        related = ("branch", "manager", "owner") if item.entity_type == "project" else (
+            "branch", "project", "primary_assignee", "source_ticket"
+        )
+        record = model.objects.filter(pk=item.entity_id, tenant=item.tenant).select_related(*related).first()
+        if record:
+            fields = {
+                "Branch": record.branch.name if record.branch_id else "",
+                "Status": record.get_status_display(),
+                "Progress": f"{record.progress_percentage}%",
+                "Description": record.description or "",
+            }
+            if item.entity_type == "project":
+                fields.update({
+                    "Project code": record.code,
+                    "Project manager": record.manager.get_full_name() or record.manager.username if record.manager_id else "Unassigned",
+                    "Target end date": record.target_end_date.isoformat() if record.target_end_date else "",
+                })
+            else:
+                fields.update({
+                    "Task number": record.number,
+                    "Project": record.project.name if record.project_id else "Standalone task",
+                    "Assigned to": record.primary_assignee.get_full_name() or record.primary_assignee.username if record.primary_assignee_id else "Unassigned",
+                    "Due date": record.due_date.isoformat() if record.due_date else "",
+                    "Source ticket": record.source_ticket.public_id if record.source_ticket_id else "",
+                })
+            return {"reference": record.code if item.entity_type == "project" else record.number, "fields": fields, "attachments": []}
     return {"reference": item.reference, "fields": saved_snapshot or {}}
 
 
@@ -2440,11 +2470,42 @@ def _workflow_entity_route(binding, entity_id):
     """Return the most useful record route for inbox users, not just a module list."""
     if binding.module_slug == "weighbridge" and binding.entity_type == "weighbridge_transaction":
         return f"/weighbridge/transactions/{entity_id}"
+    if binding.module_slug == "projects-tasks":
+        if binding.entity_type == "project_task":
+            return f"/projects/tasks/{entity_id}"
+        if binding.entity_type == "project":
+            return f"/projects/{entity_id}"
     return binding.route_path
 
 
 def _sync_workflow_entity_state(item, decision, actor):
     """Apply final generic workflow decisions to ERP records with supported lifecycle hooks."""
+    if item.module_slug == "projects-tasks" and item.entity_type in {"project", "project_task"}:
+        from SL_Projects.models import Project, ProjectTask
+
+        model = Project if item.entity_type == "project" else ProjectTask
+        record = model.objects.filter(pk=item.entity_id, tenant=item.tenant).first()
+        if record is None:
+            return
+        record.updated_by = actor
+        if decision == "in_progress":
+            record.workflow_status = "in_progress"
+            record.workflow_stage = item.node_definition.name if item.node_definition_id else "Workflow review"
+            if item.entity_type == "project_task" and record.status == "draft":
+                record.status = "in_review"
+        elif decision == "reject":
+            record.workflow_status = "rejected"
+            record.workflow_stage = "Rejected"
+            record.status = "draft"
+        elif decision == "complete":
+            record.workflow_status = "approved"
+            record.workflow_stage = "Approved"
+            record.status = "completed" if item.entity_type == "project_task" else "active"
+            if item.entity_type == "project_task":
+                record.progress_percentage = 100
+                record.completion_date = timezone.localdate()
+        record.save()
+        return
     if item.module_slug != "weighbridge" or item.entity_type != "weighbridge_transaction":
         return
 
@@ -2829,6 +2890,7 @@ class WorkflowInboxActionAPIView(APIView):
                 quick_actions=["approve", "reject"],
                 metadata={**(item.metadata or {}), "previous_inbox_item_id": item.id},
             )
+            _sync_workflow_entity_state(next_item, "in_progress", request.user)
             _notify_workflow_recipients(next_item, next_node, f"{item.reference or item.title} is awaiting {next_node.name}.")
             return success_response("Approval recorded and forwarded to the next step.", data=WorkflowInboxItemSerializer(next_item).data)
         submitter_id = (item.metadata or {}).get("submitted_by")
