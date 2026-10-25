@@ -544,6 +544,36 @@ class ProjectMilestoneListCreateAPIView(APIView):
         return Response(ProjectMilestoneSerializer(milestone).data, status=status.HTTP_201_CREATED)
 
 
+class ProjectMilestoneCompleteAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @transaction.atomic
+    def post(self, request, pk, milestone_id):
+        _tenant_and_activation(request)
+        _require(request.user, "change_project")
+        project = _project_scope(request.user).filter(pk=pk).first()
+        if not project:
+            return Response({"detail": "Project not found."}, status=status.HTTP_404_NOT_FOUND)
+        milestone = project.milestones.filter(pk=milestone_id).first()
+        if not milestone:
+            return Response({"detail": "Milestone not found for this project."}, status=status.HTTP_404_NOT_FOUND)
+        if milestone.status != "completed":
+            milestone.status = "completed"
+            milestone.progress_percentage = 100
+            milestone.completion_date = timezone.localdate()
+            milestone.save(update_fields=["status", "progress_percentage", "completion_date", "updated_at"])
+            log_business_event(
+                event_group="data_lifecycle",
+                event_type="milestone_completed",
+                tenant=project.tenant,
+                actor=request.user,
+                obj=project,
+                branch=project.branch,
+                note=f"Milestone completed: {milestone.name}.",
+            )
+        return Response(ProjectMilestoneSerializer(milestone).data)
+
+
 class ProjectMemberListCreateAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
