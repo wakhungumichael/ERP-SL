@@ -210,6 +210,17 @@ export default function TaskDetail({ id }: { id: string }) {
   const [editEstimatedHours, setEditEstimatedHours] = useState("");
   const [editPriority, setEditPriority] = useState("");
   const [editStatus, setEditStatus] = useState("");
+  useEffect(() => {
+    if (!task.data) return;
+    setEditTitle(task.data.title);
+    setEditDescription(task.data.description || "");
+    setEditTaskType(task.data.task_type || "");
+    setEditStartDate(task.data.start_date || "");
+    setEditDueDate(task.data.due_date || "");
+    setEditEstimatedHours(task.data.estimated_hours || "");
+    setEditPriority(task.data.priority);
+    setEditStatus(task.data.status);
+  }, [task.data?.number]);
   const refresh = (paths: string[]) =>
     paths.forEach(
       (path) =>
@@ -496,6 +507,17 @@ export default function TaskDetail({ id }: { id: string }) {
   });
   const saveTask = useMutation({
     mutationFn: async () => {
+      if (!editTitle.trim()) throw new Error("Enter a task title.");
+      if (editStartDate && editDueDate && editDueDate < editStartDate) {
+        throw new Error("Due date cannot be before the task start date.");
+      }
+      if (
+        editEstimatedHours &&
+        (!Number.isFinite(Number(editEstimatedHours)) ||
+          Number(editEstimatedHours) < 0)
+      ) {
+        throw new Error("Estimated hours must be zero or more.");
+      }
       const response = await fetch(taskPath, {
         method: "PATCH",
         headers: {
@@ -503,15 +525,14 @@ export default function TaskDetail({ id }: { id: string }) {
           Authorization: `Token ${token}`,
         },
         body: JSON.stringify({
-          title: editTitle || record?.title,
-          description: editDescription || record?.description,
-          task_type: editTaskType || record?.task_type || "",
-          start_date: editStartDate || record?.start_date || null,
-          due_date: editDueDate || record?.due_date || null,
-          estimated_hours:
-            editEstimatedHours || record?.estimated_hours || null,
-          priority: editPriority || record?.priority,
-          status: editStatus || record?.status,
+          title: editTitle.trim(),
+          description: editDescription,
+          task_type: editTaskType,
+          start_date: editStartDate || null,
+          due_date: editDueDate || null,
+          estimated_hours: editEstimatedHours || null,
+          priority: editPriority,
+          status: editStatus,
         }),
       });
       if (!response.ok)
@@ -779,12 +800,12 @@ export default function TaskDetail({ id }: { id: string }) {
                   </summary>
                   <div className="mt-3 grid gap-3">
                     <Input
-                      defaultValue={record.title}
+                      value={editTitle}
                       onChange={(event) => setEditTitle(event.target.value)}
                       placeholder="Task title"
                     />
                     <Textarea
-                      defaultValue={record.description}
+                      value={editDescription}
                       onChange={(event) =>
                         setEditDescription(event.target.value)
                       }
@@ -792,14 +813,14 @@ export default function TaskDetail({ id }: { id: string }) {
                     />
                     <div className="grid gap-2 sm:grid-cols-2">
                       <Input
-                        defaultValue={record.task_type}
+                        value={editTaskType}
                         onChange={(event) =>
                           setEditTaskType(event.target.value)
                         }
                         placeholder="Task type"
                       />
                       <Input
-                        defaultValue={record.estimated_hours || ""}
+                        value={editEstimatedHours}
                         min="0"
                         step="0.25"
                         type="number"
@@ -809,19 +830,20 @@ export default function TaskDetail({ id }: { id: string }) {
                         placeholder="Estimated hours"
                       />
                       <Input
-                        defaultValue={record.start_date || ""}
+                        value={editStartDate}
                         type="date"
                         onChange={(event) =>
                           setEditStartDate(event.target.value)
                         }
                       />
                       <Input
-                        defaultValue={record.due_date || ""}
+                        value={editDueDate}
+                        min={editStartDate || undefined}
                         type="date"
                         onChange={(event) => setEditDueDate(event.target.value)}
                       />
                       <Select
-                        defaultValue={record.priority}
+                        value={editPriority}
                         onValueChange={setEditPriority}
                       >
                         <SelectTrigger>
@@ -834,10 +856,7 @@ export default function TaskDetail({ id }: { id: string }) {
                           <SelectItem value="critical">Critical</SelectItem>
                         </SelectContent>
                       </Select>
-                      <Select
-                        defaultValue={record.status}
-                        onValueChange={setEditStatus}
-                      >
+                      <Select value={editStatus} onValueChange={setEditStatus}>
                         <SelectTrigger>
                           <SelectValue />
                         </SelectTrigger>
