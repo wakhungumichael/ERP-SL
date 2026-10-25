@@ -39,6 +39,7 @@ type TicketRow = {
     metadata?: Record<string, unknown>;
   }>;
 };
+type LinkedTask = { id: number; number: string; title: string; status: string; priority: string; due_date: string | null; primary_assignee: number | null };
 
 function authFetch(token: string, path: string, init?: RequestInit) {
   return fetch(path, {
@@ -95,6 +96,15 @@ export default function TicketingQueue() {
     () => tickets.find((ticket) => ticket.id === selectedId) ?? null,
     [selectedId, tickets],
   );
+  const linkedTasks = useQuery<LinkedTask[]>({
+    queryKey: ['ticket-project-tasks', selectedTicket?.id],
+    enabled: !!token && !!selectedTicket,
+    queryFn: async () => {
+      const response = await authFetch(token!, `/api/projects/tickets/${selectedTicket!.id}/tasks/`);
+      if (!response.ok) throw new Error('Linked tasks could not be loaded.');
+      return response.json();
+    },
+  });
 
   const availableReplyChannels = useMemo(() => {
     if (!selectedTicket) return ['portal'] as Array<'portal' | 'email' | 'whatsapp'>;
@@ -189,7 +199,7 @@ export default function TicketingQueue() {
       }
       return response.json() as Promise<{ number: string }>;
     },
-    onSuccess: (task) => { if (task) { setTaskDialogOpen(false); setTaskTitle(''); setTaskDescription(''); setTaskDueDate(''); setTaskType(''); toast({ title: 'Draft task created', description: `${task.number} is linked to this ticket.` }); } },
+    onSuccess: (task) => { if (task) { setTaskDialogOpen(false); setTaskTitle(''); setTaskDescription(''); setTaskDueDate(''); setTaskType(''); void qc.invalidateQueries({ queryKey: ['ticket-project-tasks', selectedTicket?.id] }); toast({ title: 'Draft task created', description: `${task.number} is linked to this ticket.` }); } },
     onError: (error: Error) => toast({ title: 'Could not create task', description: error.message, variant: 'destructive' }),
   });
 
@@ -316,6 +326,7 @@ export default function TicketingQueue() {
               <div className="font-medium">{selectedTicket.requester_name || selectedTicket.requester_email}</div>
               <div className="mt-1 text-muted-foreground">{selectedTicket.description || 'No description supplied.'}</div>
             </div>
+            <div className="rounded-lg border p-4 text-sm"><div className="flex items-center justify-between gap-3"><div className="font-medium">Linked Tasks</div><Badge variant="outline">{linkedTasks.data?.length ?? 0}</Badge></div><div className="mt-3 space-y-2">{(linkedTasks.data ?? []).map((task) => <div className="flex flex-wrap items-center justify-between gap-2 rounded border p-2" key={task.id}><div><span className="font-mono text-xs text-muted-foreground">{task.number}</span><div className="font-medium">{task.title}</div></div><div className="flex gap-2"><Badge variant="outline">{task.priority}</Badge><Badge variant="secondary">{task.status}</Badge></div></div>)}{!linkedTasks.data?.length && <p className="text-muted-foreground">No project tasks are linked to this ticket.</p>}</div></div>
             <div className="space-y-3">
               {(selectedTicket.timeline ?? []).map((item, index) => (
                 <div key={`${item.kind}-${index}`} className="rounded-lg border p-3 text-sm">
