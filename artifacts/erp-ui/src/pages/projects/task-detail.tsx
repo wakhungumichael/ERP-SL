@@ -36,6 +36,8 @@ type Task = {
   project_name: string;
   branch_name: string;
   assignee_name: string;
+  task_type: string;
+  start_date: string | null;
   due_date: string | null;
   workflow_stage: string;
   assigned_role: number | null;
@@ -197,7 +199,10 @@ export default function TaskDetail({ id }: { id: string }) {
   const [dependencyId, setDependencyId] = useState("");
   const [editTitle, setEditTitle] = useState("");
   const [editDescription, setEditDescription] = useState("");
+  const [editTaskType, setEditTaskType] = useState("");
+  const [editStartDate, setEditStartDate] = useState("");
   const [editDueDate, setEditDueDate] = useState("");
+  const [editEstimatedHours, setEditEstimatedHours] = useState("");
   const [editPriority, setEditPriority] = useState("");
   const [editStatus, setEditStatus] = useState("");
   const refresh = (paths: string[]) =>
@@ -468,7 +473,11 @@ export default function TaskDetail({ id }: { id: string }) {
         body: JSON.stringify({
           title: editTitle || record?.title,
           description: editDescription || record?.description,
+          task_type: editTaskType || record?.task_type || "",
+          start_date: editStartDate || record?.start_date || null,
           due_date: editDueDate || record?.due_date || null,
+          estimated_hours:
+            editEstimatedHours || record?.estimated_hours || null,
           priority: editPriority || record?.priority,
           status: editStatus || record?.status,
         }),
@@ -659,6 +668,12 @@ export default function TaskDetail({ id }: { id: string }) {
                     <dd className="font-medium">{record.branch_name}</dd>
                   </div>
                   <div>
+                    <dt className="text-muted-foreground">Start date</dt>
+                    <dd className="font-medium">
+                      {formatDate(record.start_date)}
+                    </dd>
+                  </div>
+                  <div>
                     <dt className="text-muted-foreground">Due date</dt>
                     <dd className="font-medium">
                       {formatDate(record.due_date)}
@@ -689,7 +704,31 @@ export default function TaskDetail({ id }: { id: string }) {
                       }
                       placeholder="Task description"
                     />
-                    <div className="grid gap-2 sm:grid-cols-3">
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <Input
+                        defaultValue={record.task_type}
+                        onChange={(event) =>
+                          setEditTaskType(event.target.value)
+                        }
+                        placeholder="Task type"
+                      />
+                      <Input
+                        defaultValue={record.estimated_hours || ""}
+                        min="0"
+                        step="0.25"
+                        type="number"
+                        onChange={(event) =>
+                          setEditEstimatedHours(event.target.value)
+                        }
+                        placeholder="Estimated hours"
+                      />
+                      <Input
+                        defaultValue={record.start_date || ""}
+                        type="date"
+                        onChange={(event) =>
+                          setEditStartDate(event.target.value)
+                        }
+                      />
                       <Input
                         defaultValue={record.due_date || ""}
                         type="date"
