@@ -1,6 +1,7 @@
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
+import { Link } from "wouter";
 import { useAuth } from "@/context/use-auth";
 import { ERPWorkspacePage } from "@/components/erp/workspace/workspace-page";
 import { Badge } from "@/components/ui/badge";
@@ -1002,10 +1003,6 @@ export default function TaskDetail({ id }: { id: string }) {
                   )}
                 </div>
               </section>
-            </div>
-          </TabsContent>
-          <TabsContent value="structure">
-            <div className="grid gap-5 lg:grid-cols-3">
               <section className="rounded-lg border bg-card p-5 lg:col-span-3">
                 <h2 className="font-semibold">Attachments & Evidence</h2>
                 <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -1062,7 +1059,7 @@ export default function TaskDetail({ id }: { id: string }) {
               </section>
             </div>
           </TabsContent>
-          <TabsContent value="workflow">
+          <TabsContent value="structure">
             <div className="grid gap-5 lg:grid-cols-3">
               <section className="rounded-lg border bg-card p-5 lg:col-span-3">
                 <h2 className="font-semibold">Subtasks & Dependencies</h2>
@@ -1092,15 +1089,17 @@ export default function TaskDetail({ id }: { id: string }) {
                     </div>
                     <div className="mt-3 space-y-2">
                       {(structure.data?.subtasks ?? []).map((subtask) => (
-                        <div
-                          className="rounded border p-3 text-sm"
+                        <Link
+                          href={`/projects/tasks/${subtask.id}`}
                           key={subtask.id}
                         >
-                          {subtask.number} - {subtask.title}{" "}
-                          <Badge className="ml-2" variant="outline">
-                            {subtask.status}
-                          </Badge>
-                        </div>
+                          <div className="cursor-pointer rounded border p-3 text-sm hover:bg-muted/40">
+                            {subtask.number} - {subtask.title}{" "}
+                            <Badge className="ml-2" variant="outline">
+                              {subtask.status}
+                            </Badge>
+                          </div>
+                        </Link>
                       ))}
                       {!structure.data?.subtasks.length && (
                         <p className="text-sm text-muted-foreground">
@@ -1146,15 +1145,17 @@ export default function TaskDetail({ id }: { id: string }) {
                     <div className="mt-3 space-y-2">
                       {(structure.data?.dependencies ?? []).map(
                         (dependency) => (
-                          <div
-                            className="rounded border p-3 text-sm"
+                          <Link
+                            href={`/projects/tasks/${dependency.id}`}
                             key={dependency.id}
                           >
-                            {dependency.number} - {dependency.title}{" "}
-                            <Badge className="ml-2" variant="outline">
-                              {dependency.status}
-                            </Badge>
-                          </div>
+                            <div className="cursor-pointer rounded border p-3 text-sm hover:bg-muted/40">
+                              {dependency.number} - {dependency.title}{" "}
+                              <Badge className="ml-2" variant="outline">
+                                {dependency.status}
+                              </Badge>
+                            </div>
+                          </Link>
                         ),
                       )}
                       {!structure.data?.dependencies.length && (
@@ -1166,6 +1167,10 @@ export default function TaskDetail({ id }: { id: string }) {
                   </div>
                 </div>
               </section>
+            </div>
+          </TabsContent>
+          <TabsContent value="workflow">
+            <div className="grid gap-5 lg:grid-cols-3">
               <section className="rounded-lg border bg-card p-5 lg:col-span-3">
                 <h2 className="font-semibold">Workflow History</h2>
                 <p className="mt-1 text-sm text-muted-foreground">
