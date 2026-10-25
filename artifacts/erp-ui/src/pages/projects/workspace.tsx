@@ -51,6 +51,7 @@ type Task = {
   number: string;
   title: string;
   project_name: string;
+  source_ticket_reference: string;
   assignee_name: string;
   priority: string;
   due_date: string | null;
@@ -591,6 +592,7 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
                     "Number",
                     "Task",
                     "Project",
+                    "Source ticket",
                     "Assigned to",
                     "Priority",
                     "Due date",
@@ -637,6 +639,11 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
                       ? assignee || "Unassigned"
                       : task.project_name || "Standalone"}
                   </td>
+                  {!isProjects && (
+                    <td className="px-4 py-3 font-mono text-xs text-muted-foreground">
+                      {task.source_ticket_reference || "—"}
+                    </td>
+                  )}
                   <td className="px-4 py-3 text-muted-foreground">
                     {isProjects
                       ? project.branch_name
