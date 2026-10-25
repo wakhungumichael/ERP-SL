@@ -21,7 +21,7 @@ from Platform_API.modules.mixins import (
     tenant_or_403,
 )
 from Platform_Core.audit import log_business_event
-from Platform_Core.models import OrganizationMembership, TenantBranch
+from Platform_Core.models import OrganizationMembership, TenantBranch, WorkflowEntityBinding
 from Platform_Core.platform import get_active_tenant_module_slugs
 from SL_Projects.models import Project, ProjectBranchAccess, ProjectMember, ProjectMilestone, ProjectTask, TaskAttachment, TaskComment, TaskDependency, TaskFollowUp, TaskUpdate
 from SL_Ticketing.models import Ticket
@@ -804,11 +804,24 @@ class TaskDetailAPIView(APIView):
         if not task:
             return Response({"detail": "Task not found."}, status=status.HTTP_404_NOT_FOUND)
         requested_status = request.data.get("status")
-        if requested_status in {"in_review", "completed", "cancelled"}:
-            raise serializers.ValidationError({"status": "Use the workflow approval process to submit, complete, or cancel a task."})
+        workflow_configured = WorkflowEntityBinding.objects.filter(
+            workflow__tenant=task.tenant,
+            workflow__is_active=True,
+            workflow__status="published",
+            module_slug=MODULE_SLUG,
+            entity_type="project_task",
+            is_active=True,
+        ).exists()
+        if requested_status == "in_review" or (requested_status in {"completed", "cancelled"} and workflow_configured):
+            raise serializers.ValidationError({"status": "Use the workflow approval process to submit, complete, or cancel this task."})
+        if requested_status == "completed":
+            _require(request.user, "complete_projecttask")
         serializer = TaskSerializer(task, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         task = serializer.save(updated_by=request.user)
+        if requested_status == "completed":
+            task.progress_percentage = 100
+            task.completion_date = timezone.localdate()
         task.full_clean()
         task.save()
         _sync_project_progress(task)
