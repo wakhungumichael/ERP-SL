@@ -312,6 +312,14 @@ class TaskFollowUpWorkspaceAPIView(APIView):
         if state := request.query_params.get("status"):
             follow_ups = follow_ups.filter(status=state)
         today = timezone.localdate()
+        summary = {
+            "total": follow_ups.count(),
+            "open": follow_ups.exclude(status__in=["completed", "cancelled"]).count(),
+            "completed": follow_ups.filter(status="completed").count(),
+            "overdue": follow_ups.filter(status__in=["scheduled", "pending"], follow_up_date__lt=today).count(),
+        }
+        paginator = ProjectsPagination()
+        page = paginator.paginate_queryset(follow_ups, request)
         payload = [{
             "id": follow_up.id,
             "task_id": follow_up.task_id,
@@ -321,8 +329,10 @@ class TaskFollowUpWorkspaceAPIView(APIView):
             "notes": follow_up.notes,
             "status": "overdue" if follow_up.status in {"scheduled", "pending"} and follow_up.follow_up_date < today else follow_up.status,
             "owner": follow_up.owner.get_full_name() or follow_up.owner.username if follow_up.owner_id else "Unassigned",
-        } for follow_up in follow_ups]
-        return Response(payload)
+        } for follow_up in page]
+        response = paginator.get_paginated_response(payload)
+        response.data["summary"] = summary
+        return response
 
 
 class TaskAssigneeListAPIView(APIView):
