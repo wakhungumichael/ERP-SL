@@ -432,9 +432,35 @@ class ProjectCalendarAPIView(APIView):
             raise serializers.ValidationError({"start": "Provide start and end dates in YYYY-MM-DD format."})
         if end < start:
             raise serializers.ValidationError({"end": "End date must be on or after start date."})
-        tasks = _task_scope(request.user).filter(due_date__range=(start, end))
-        milestones = ProjectMilestone.objects.filter(project__in=_project_scope(request.user), due_date__range=(start, end)).select_related("project")
-        follow_ups = TaskFollowUp.objects.filter(task__in=_task_scope(request.user), follow_up_date__range=(start, end)).select_related("task")
+        projects = _project_scope(request.user)
+        tasks = _task_scope(request.user)
+        if project_id := request.query_params.get("project"):
+            project = projects.filter(pk=project_id).first()
+            if not project:
+                raise serializers.ValidationError({"project": "Choose a project visible in your active branch."})
+            projects = projects.filter(pk=project.pk)
+            tasks = tasks.filter(project=project)
+        milestone_owner_id = None
+        if assignee_id := request.query_params.get("assignee"):
+            if assignee_id == "mine":
+                tasks = tasks.filter(primary_assignee=request.user)
+                milestone_owner_id = request.user.id
+            else:
+                try:
+                    milestone_owner_id = int(assignee_id)
+                    tasks = tasks.filter(primary_assignee_id=milestone_owner_id)
+                except (TypeError, ValueError):
+                    raise serializers.ValidationError({"assignee": "Choose a valid task assignee."})
+        event_tasks = tasks
+        tasks = event_tasks.filter(due_date__range=(start, end))
+        milestones = ProjectMilestone.objects.filter(
+            project__in=projects, due_date__range=(start, end)
+        ).select_related("project")
+        if milestone_owner_id is not None:
+            milestones = milestones.filter(owner_id=milestone_owner_id)
+        follow_ups = TaskFollowUp.objects.filter(
+            task__in=event_tasks, follow_up_date__range=(start, end)
+        ).select_related("task")
         events = [
             {"kind": "task", "id": task.id, "title": f"{task.number} · {task.title}", "date": task.due_date, "status": task.status, "priority": task.priority, "url": f"/projects/tasks/{task.id}"}
             for task in tasks

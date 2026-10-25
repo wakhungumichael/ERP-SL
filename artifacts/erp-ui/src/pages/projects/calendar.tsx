@@ -5,6 +5,13 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 import { Link } from "wouter";
 import { useAuth } from "@/context/use-auth";
 import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { ERPWorkspacePage } from "@/components/erp/workspace/workspace-page";
 import { apiErrorFromResponse } from "@/lib/api-errors";
 
@@ -17,6 +24,10 @@ type CalendarEvent = {
   status: string;
   url: string;
 };
+type ProjectPage = {
+  results: Array<{ id: number; code: string; name: string }>;
+};
+type Assignee = { id: number; name: string };
 const weekDays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 export default function ProjectCalendar() {
@@ -24,6 +35,8 @@ export default function ProjectCalendar() {
   const [cursor, setCursor] = useState(
     () => new Date(new Date().getFullYear(), new Date().getMonth(), 1),
   );
+  const [project, setProject] = useState("all");
+  const [assignee, setAssignee] = useState("all");
   const range = useMemo(() => {
     const start = new Date(cursor.getFullYear(), cursor.getMonth(), 1);
     const end = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0);
@@ -31,18 +44,51 @@ export default function ProjectCalendar() {
       `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
     return { start: iso(start), end: iso(end) };
   }, [cursor]);
+  const filters = new URLSearchParams({ start: range.start, end: range.end });
+  if (project !== "all") filters.set("project", project);
+  if (assignee !== "all") filters.set("assignee", assignee);
   const events = useQuery<CalendarEvent[]>({
-    queryKey: ["projects-calendar", range.start, range.end],
+    queryKey: ["projects-calendar", range.start, range.end, project, assignee],
     enabled: !!token,
     queryFn: async () => {
       const response = await fetch(
-        `/api/projects/calendar/?start=${range.start}&end=${range.end}`,
+        `/api/projects/calendar/?${filters.toString()}`,
         { headers: { Authorization: `Token ${token}` } },
       );
       if (!response.ok)
         throw await apiErrorFromResponse(
           response,
           "Project calendar could not be loaded.",
+        );
+      return response.json();
+    },
+  });
+  const projects = useQuery<ProjectPage>({
+    queryKey: ["projects-calendar-options"],
+    enabled: !!token,
+    queryFn: async () => {
+      const response = await fetch("/api/projects/projects/?page_size=100", {
+        headers: { Authorization: `Token ${token}` },
+      });
+      if (!response.ok)
+        throw await apiErrorFromResponse(
+          response,
+          "Projects could not be loaded.",
+        );
+      return response.json();
+    },
+  });
+  const assignees = useQuery<Assignee[]>({
+    queryKey: ["projects-calendar-assignee-options"],
+    enabled: !!token,
+    queryFn: async () => {
+      const response = await fetch("/api/projects/tasks/assignees/", {
+        headers: { Authorization: `Token ${token}` },
+      });
+      if (!response.ok)
+        throw await apiErrorFromResponse(
+          response,
+          "Task assignees could not be loaded.",
         );
       return response.json();
     },
@@ -128,6 +174,35 @@ export default function ProjectCalendar() {
           <i className="mr-1 inline-block h-2 w-2 rounded-full bg-violet-500" />
           Follow-up
         </span>
+      </div>
+      <div className="mb-4 flex flex-col gap-3 sm:flex-row">
+        <Select value={project} onValueChange={setProject}>
+          <SelectTrigger className="sm:w-64">
+            <SelectValue placeholder="All projects" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All projects</SelectItem>
+            {(projects.data?.results ?? []).map((item) => (
+              <SelectItem key={item.id} value={String(item.id)}>
+                {item.code} · {item.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select value={assignee} onValueChange={setAssignee}>
+          <SelectTrigger className="sm:w-56">
+            <SelectValue placeholder="All assignees" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All assignees</SelectItem>
+            <SelectItem value="mine">My tasks</SelectItem>
+            {(assignees.data ?? []).map((item) => (
+              <SelectItem key={item.id} value={String(item.id)}>
+                {item.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
       <div className="grid grid-cols-7 overflow-hidden rounded-lg border bg-card">
         {weekDays.map((day) => (
