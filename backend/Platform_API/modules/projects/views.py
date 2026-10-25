@@ -4,7 +4,7 @@ import csv
 
 from django.http import HttpResponse
 from django.db import transaction
-from django.db.models import Count, Q
+from django.db.models import Avg, Count, Q
 from django.utils import timezone
 from rest_framework import serializers, status
 from rest_framework.exceptions import PermissionDenied
@@ -107,6 +107,17 @@ def _would_create_dependency_cycle(task_id, depends_on_id):
             TaskDependency.objects.filter(task_id=current_id).values_list("depends_on_id", flat=True)
         )
     return False
+
+
+def _sync_project_progress(task):
+    """Keep a parent project's progress aligned with its active task register."""
+    if not task.project_id:
+        return
+    aggregate = ProjectTask.objects.filter(project_id=task.project_id).exclude(status="cancelled").aggregate(
+        progress=Avg("progress_percentage")
+    )
+    progress = round(aggregate["progress"] or 0)
+    Project.objects.filter(pk=task.project_id).exclude(progress_percentage=progress).update(progress_percentage=progress)
 
 
 class ProjectSerializer(serializers.ModelSerializer):
@@ -797,6 +808,7 @@ class TaskDetailAPIView(APIView):
         task = serializer.save(updated_by=request.user)
         task.full_clean()
         task.save()
+        _sync_project_progress(task)
         log_business_event(event_group="data_lifecycle", event_type="update", tenant=task.tenant, actor=request.user, obj=task, branch=task.branch, note="Task updated.")
         return Response(TaskSerializer(task).data)
 
@@ -824,6 +836,7 @@ class TaskUpdateListCreateAPIView(APIView):
         task.progress_percentage = update.progress_percentage
         task.updated_by = request.user
         task.save(update_fields=["progress_percentage", "updated_by", "updated_at"])
+        _sync_project_progress(task)
         log_business_event(event_group="data_lifecycle", event_type="progress_update", tenant=task.tenant, actor=request.user, obj=task, branch=task.branch, note="Task progress updated.")
         return Response(TaskUpdateSerializer(update).data, status=status.HTTP_201_CREATED)
 
