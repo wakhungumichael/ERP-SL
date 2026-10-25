@@ -15,7 +15,7 @@ from django.conf import settings
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.core.validators import validate_email
 from django.db import transaction
-from django.db.models import Prefetch, Q
+from django.db.models import Avg, Prefetch, Q
 from django.shortcuts import get_object_or_404
 from django.utils.decorators import method_decorator
 from django.utils import timezone
@@ -2505,6 +2505,11 @@ def _sync_workflow_entity_state(item, decision, actor):
                 record.progress_percentage = 100
                 record.completion_date = timezone.localdate()
         record.save()
+        if item.entity_type == "project_task" and record.project_id:
+            aggregate = ProjectTask.objects.filter(project_id=record.project_id).exclude(status="cancelled").aggregate(
+                progress=Avg("progress_percentage")
+            )
+            Project.objects.filter(pk=record.project_id).update(progress_percentage=round(aggregate["progress"] or 0))
         return
     if item.module_slug != "weighbridge" or item.entity_type != "weighbridge_transaction":
         return
