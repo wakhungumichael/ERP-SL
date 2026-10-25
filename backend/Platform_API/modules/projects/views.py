@@ -7,6 +7,7 @@ from django.http import HttpResponse
 from django.db import transaction
 from django.db.models import Avg, Count, Q
 from django.utils import timezone
+from django.utils.dateparse import parse_date
 from rest_framework import serializers, status
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.pagination import PageNumberPagination
@@ -109,6 +110,26 @@ def _next_reference(tenant, model, prefix):
     type(tenant).objects.select_for_update().get(pk=tenant.pk)
     sequence = model.objects.filter(tenant=tenant).count() + 1
     return f"{prefix}-{timezone.localdate():%Y}-{sequence:04d}"
+
+
+def _date_range(request, *, start_field, end_field):
+    """Return validated ISO date filters for a register query."""
+    start_value = request.query_params.get("date_from", "").strip()
+    end_value = request.query_params.get("date_to", "").strip()
+    start = parse_date(start_value) if start_value else None
+    end = parse_date(end_value) if end_value else None
+    if start_value and start is None:
+        raise serializers.ValidationError({"date_from": "Use a valid start date (YYYY-MM-DD)."})
+    if end_value and end is None:
+        raise serializers.ValidationError({"date_to": "Use a valid end date (YYYY-MM-DD)."})
+    if start and end and end < start:
+        raise serializers.ValidationError({"date_to": "End date cannot be before start date."})
+    filters = {}
+    if start:
+        filters[f"{start_field}__gte"] = start
+    if end:
+        filters[f"{end_field}__lte"] = end
+    return filters
 
 
 def _would_create_dependency_cycle(task_id, depends_on_id):
@@ -948,6 +969,7 @@ class ProjectListCreateAPIView(APIView):
             qs = qs.filter(status=value)
         if value := request.query_params.get("search"):
             qs = qs.filter(Q(code__icontains=value) | Q(name__icontains=value) | Q(description__icontains=value))
+        qs = qs.filter(**_date_range(request, start_field="start_date", end_field="target_end_date"))
         ordering = request.query_params.get("ordering", "-created_at")
         if ordering.lstrip("-") in {"code", "name", "start_date", "target_end_date", "progress_percentage", "status", "created_at"}:
             qs = qs.order_by(ordering)
@@ -1390,6 +1412,7 @@ class TaskListCreateAPIView(APIView):
             qs = qs.filter(project_id=value)
         if value := request.query_params.get("search"):
             qs = qs.filter(Q(number__icontains=value) | Q(title__icontains=value) | Q(description__icontains=value))
+        qs = qs.filter(**_date_range(request, start_field="due_date", end_field="due_date"))
         ordering = request.query_params.get("ordering", "due_date")
         if ordering.lstrip("-") in {
             "number",

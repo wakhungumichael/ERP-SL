@@ -162,6 +162,8 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("all");
   const [ordering, setOrdering] = useState("-created_at");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
   const [recordTitle, setRecordTitle] = useState("");
   const [recordDescription, setRecordDescription] = useState("");
@@ -310,6 +312,8 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
   useEffect(() => {
     setStatus("all");
     setOrdering(mode === "projects" ? "-created_at" : "due_date");
+    setDateFrom("");
+    setDateTo("");
     setPage(1);
   }, [mode]);
   useEffect(() => {
@@ -336,6 +340,8 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
   if (search) query.set("search", search);
   if (status !== "all") query.set("status", status);
   query.set("ordering", ordering);
+  if (dateFrom) query.set("date_from", dateFrom);
+  if (dateTo) query.set("date_to", dateTo);
   if (!isProjects && requestedProject) query.set("project", requestedProject);
   if (mode === "mine") query.set("scope", "mine");
   if (mode === "team") query.set("scope", "team");
@@ -609,6 +615,30 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
               )}
             </SelectContent>
           </Select>
+          <Input
+            aria-label={
+              isProjects ? "Project start date from" : "Task due date from"
+            }
+            className="w-40"
+            max={dateTo || undefined}
+            onChange={(event) => {
+              setDateFrom(event.target.value);
+              setPage(1);
+            }}
+            type="date"
+            value={dateFrom}
+          />
+          <Input
+            aria-label={isProjects ? "Project due date to" : "Task due date to"}
+            className="w-40"
+            min={dateFrom || undefined}
+            onChange={(event) => {
+              setDateTo(event.target.value);
+              setPage(1);
+            }}
+            type="date"
+            value={dateTo}
+          />
         </div>
         <div className="flex gap-2">
           <Button variant="outline" onClick={() => void exportRegister()}>
