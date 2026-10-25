@@ -1143,10 +1143,11 @@ class TaskUpdateListCreateAPIView(APIView):
         serializer.is_valid(raise_exception=True)
         update = serializer.save(task=task, updated_by=request.user)
         task.progress_percentage = update.progress_percentage
+        task.actual_hours = (task.actual_hours or 0) + update.time_spent_hours
         task.updated_by = request.user
-        task.save(update_fields=["progress_percentage", "updated_by", "updated_at"])
+        task.save(update_fields=["progress_percentage", "actual_hours", "updated_by", "updated_at"])
         _sync_project_progress(task)
-        log_business_event(event_group="data_lifecycle", event_type="progress_update", tenant=task.tenant, actor=request.user, obj=task, branch=task.branch, note="Task progress updated.")
+        log_business_event(event_group="data_lifecycle", event_type="progress_update", tenant=task.tenant, actor=request.user, obj=task, branch=task.branch, note=f"Task progress updated; {update.time_spent_hours} hour(s) recorded.")
         return Response(TaskUpdateSerializer(update).data, status=status.HTTP_201_CREATED)
 
 
