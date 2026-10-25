@@ -299,3 +299,17 @@ class TaskFollowUp(AuditMetadataMixin, models.Model):
         self.status = "completed"
         self.completed_at = timezone.now()
         self.save(update_fields=["status", "completed_at", "updated_at"])
+
+
+class TicketTaskStatusSyncPolicy(models.Model):
+    """Opt-in, tenant-local ticket update after every linked task completes."""
+    TARGET_STATUS_CHOICES = [("pending", "Pending"), ("resolved", "Resolved")]
+
+    tenant = models.OneToOneField(
+        "Platform_Core.Tenant", on_delete=models.CASCADE, related_name="project_ticket_sync_policy"
+    )
+    is_enabled = models.BooleanField(default=False)
+    target_ticket_status = models.CharField(
+        max_length=20, choices=TARGET_STATUS_CHOICES, default="resolved"
+    )
+    updated_at = models.DateTimeField(auto_now=True)

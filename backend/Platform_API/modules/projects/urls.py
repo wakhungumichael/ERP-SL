@@ -8,6 +8,7 @@ urlpatterns = [
     path("dashboard/", views.ProjectsDashboardAPIView.as_view(), name="projects-dashboard"),
     path("reports/", views.ProjectsReportsAPIView.as_view(), name="projects-reports"),
     path("calendar/", views.ProjectCalendarAPIView.as_view(), name="projects-calendar"),
+    path("settings/ticket-task-sync/", views.TicketTaskStatusSyncPolicyAPIView.as_view(), name="project-ticket-task-sync-policy"),
     path("projects/export/", views.ProjectExportAPIView.as_view(), name="project-export"),
     path("tasks/export/", views.TaskExportAPIView.as_view(), name="project-task-export"),
     path("follow-ups/", views.TaskFollowUpWorkspaceAPIView.as_view(), name="projects-followup-workspace"),

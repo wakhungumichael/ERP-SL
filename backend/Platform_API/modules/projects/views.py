@@ -25,7 +25,7 @@ from Platform_API.modules.mixins import (
 from Platform_Core.audit import log_business_event
 from Platform_Core.models import OrganizationBranchRoleAssignment, OrganizationMembership, SystemNotification, TenantBranch, WorkflowEntityBinding
 from Platform_Core.platform import get_active_tenant_module_slugs
-from SL_Projects.models import Project, ProjectBranchAccess, ProjectDocument, ProjectMember, ProjectMilestone, ProjectTask, TaskAttachment, TaskCollaborator, TaskComment, TaskDependency, TaskFollowUp, TaskUpdate
+from SL_Projects.models import Project, ProjectBranchAccess, ProjectDocument, ProjectMember, ProjectMilestone, ProjectTask, TaskAttachment, TaskCollaborator, TaskComment, TaskDependency, TaskFollowUp, TaskUpdate, TicketTaskStatusSyncPolicy
 from SL_Ticketing.models import Ticket
 
 
@@ -217,6 +217,22 @@ def _notify_task_participants(*, task, actor, title, message, source_type):
         )
 
 
+def _sync_source_ticket_when_complete(*, task, actor):
+    """Apply the optional one-way ticket policy; never automatically close tickets."""
+    if not task.source_ticket_id or task.status != "completed":
+        return
+    policy = TicketTaskStatusSyncPolicy.objects.filter(tenant=task.tenant, is_enabled=True).first()
+    if not policy or task.source_ticket.project_tasks.exclude(status="completed").exists():
+        return
+    ticket = task.source_ticket
+    if ticket.status == policy.target_ticket_status or ticket.status == "closed":
+        return
+    previous_status = ticket.status
+    ticket.status = policy.target_ticket_status
+    ticket.save(update_fields=["status", "resolved_at", "updated_at"])
+    log_business_event(event_group="ticket_task_sync", event_type="ticket_status_synced", tenant=task.tenant, actor=actor, obj=ticket, branch=task.branch, note=f"Ticket moved from {previous_status} to {ticket.status} after all linked tasks completed.")
+
+
 class ProjectSerializer(serializers.ModelSerializer):
     manager_name = serializers.SerializerMethodField()
     owner_name = serializers.SerializerMethodField()
@@ -298,6 +314,13 @@ class TaskSerializer(serializers.ModelSerializer):
             if field in attrs and attrs[field] is not None and attrs[field] < 0:
                 raise serializers.ValidationError({field: "Hours cannot be negative."})
         return attrs
+
+
+class TicketTaskStatusSyncPolicySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = TicketTaskStatusSyncPolicy
+        fields = ("is_enabled", "target_ticket_status", "updated_at")
+        read_only_fields = ("updated_at",)
 
 
 class TaskCollaboratorSerializer(serializers.ModelSerializer):
@@ -1004,6 +1027,27 @@ class ProjectListCreateAPIView(APIView):
         return Response(ProjectSerializer(project).data, status=status.HTTP_201_CREATED)
 
 
+class TicketTaskStatusSyncPolicyAPIView(APIView):
+    """Tenant admin configuration for the opt-in, one-way ticket sync."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        tenant = _tenant_and_activation(request)
+        _require(request.user, "change_project")
+        policy, _ = TicketTaskStatusSyncPolicy.objects.get_or_create(tenant=tenant)
+        return Response(TicketTaskStatusSyncPolicySerializer(policy).data)
+
+    def put(self, request):
+        tenant = _tenant_and_activation(request)
+        _require(request.user, "change_project")
+        policy, _ = TicketTaskStatusSyncPolicy.objects.get_or_create(tenant=tenant)
+        serializer = TicketTaskStatusSyncPolicySerializer(policy, data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        log_business_event(event_group="configuration", event_type="ticket_task_sync_policy_updated", tenant=tenant, actor=request.user, obj=policy, note="Project ticket/task synchronization policy updated.")
+        return Response(serializer.data)
+
+
 class ProjectDetailAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -1530,6 +1574,7 @@ class TaskDetailAPIView(APIView):
             )
         _sync_parent_task_progress(task)
         _sync_project_progress(task)
+        _sync_source_ticket_when_complete(task=task, actor=request.user)
         log_business_event(event_group="data_lifecycle", event_type="update", tenant=task.tenant, actor=request.user, obj=task, branch=task.branch, note="Task updated.")
         return Response(TaskSerializer(task).data)
 
