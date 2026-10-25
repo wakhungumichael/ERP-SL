@@ -320,6 +320,11 @@ class ProjectMilestoneSerializer(serializers.ModelSerializer):
     def get_owner_name(self, obj):
         return obj.owner.get_full_name() or obj.owner.username if obj.owner else "Unassigned"
 
+    def validate_progress_percentage(self, value):
+        if not 0 <= value <= 100:
+            raise serializers.ValidationError("Progress must be between 0 and 100.")
+        return value
+
 
 class ProjectMemberSerializer(serializers.ModelSerializer):
     user_name = serializers.SerializerMethodField()
@@ -874,7 +879,13 @@ class ProjectMilestoneDetailAPIView(APIView):
             return Response({"detail": "Milestone not found for this project."}, status=status.HTTP_404_NOT_FOUND)
         serializer = ProjectMilestoneSerializer(milestone, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
-        milestone = serializer.save()
+        fields = serializer.validated_data
+        if fields.get("status") == "completed":
+            fields["progress_percentage"] = 100
+            fields["completion_date"] = timezone.localdate()
+        elif fields.get("status") and fields["status"] != "completed":
+            fields["completion_date"] = None
+        milestone = serializer.save(**fields)
         log_business_event(event_group="data_lifecycle", event_type="milestone_updated", tenant=project.tenant, actor=request.user, obj=project, branch=project.branch, note=f"Milestone updated: {milestone.name}.")
         return Response(ProjectMilestoneSerializer(milestone).data)
 

@@ -5,6 +5,13 @@ import { Link } from "wouter";
 import { useAuth } from "@/context/use-auth";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -42,6 +49,7 @@ type Milestone = {
   description: string;
   due_date: string | null;
   status: string;
+  progress_percentage: number;
 };
 type ProjectTask = {
   id: number;
@@ -176,6 +184,14 @@ export default function ProjectDetail({ id }: { id: string }) {
   const [editActualCost, setEditActualCost] = useState("");
   const [documentFile, setDocumentFile] = useState<File | null>(null);
   const [documentEvidence, setDocumentEvidence] = useState(false);
+  const [editingMilestone, setEditingMilestone] = useState<Milestone | null>(
+    null,
+  );
+  const [milestoneName, setMilestoneName] = useState("");
+  const [milestoneDescription, setMilestoneDescription] = useState("");
+  const [milestoneDueDate, setMilestoneDueDate] = useState("");
+  const [milestoneStatus, setMilestoneStatus] = useState("draft");
+  const [milestoneProgress, setMilestoneProgress] = useState("0");
   const refresh = (...paths: string[]) =>
     paths.forEach(
       (path) =>
@@ -254,6 +270,45 @@ export default function ProjectDetail({ id }: { id: string }) {
     onError: (error: Error) =>
       toast({
         title: "Could not remove milestone",
+        description: error.message,
+        variant: "destructive",
+      }),
+  });
+  const updateMilestone = useMutation({
+    mutationFn: async () => {
+      if (!editingMilestone) return;
+      const progress = Number(milestoneProgress);
+      if (!milestoneName.trim()) throw new Error("Enter a milestone name.");
+      if (!Number.isInteger(progress) || progress < 0 || progress > 100)
+        throw new Error("Progress must be a whole number from 0 to 100.");
+      const response = await fetch(`${milestonesPath}${editingMilestone.id}/`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Token ${token}`,
+        },
+        body: JSON.stringify({
+          name: milestoneName,
+          description: milestoneDescription,
+          due_date: milestoneDueDate || null,
+          status: milestoneStatus,
+          progress_percentage: progress,
+        }),
+      });
+      if (!response.ok)
+        throw await apiErrorFromResponse(
+          response,
+          "Milestone could not be updated.",
+        );
+    },
+    onSuccess: () => {
+      setEditingMilestone(null);
+      refresh(milestonesPath);
+      toast({ title: "Milestone updated" });
+    },
+    onError: (error: Error) =>
+      toast({
+        title: "Could not update milestone",
         description: error.message,
         variant: "destructive",
       }),
@@ -752,6 +807,22 @@ export default function ProjectDetail({ id }: { id: string }) {
                           Due {date(milestone.due_date)}
                         </span>
                         <Badge variant="outline">{milestone.status}</Badge>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            setEditingMilestone(milestone);
+                            setMilestoneName(milestone.name);
+                            setMilestoneDescription(milestone.description);
+                            setMilestoneDueDate(milestone.due_date ?? "");
+                            setMilestoneStatus(milestone.status);
+                            setMilestoneProgress(
+                              String(milestone.progress_percentage),
+                            );
+                          }}
+                        >
+                          Edit
+                        </Button>
                         {milestone.status !== "completed" && (
                           <Button
                             size="sm"
@@ -892,6 +963,79 @@ export default function ProjectDetail({ id }: { id: string }) {
                 </div>
               </section>
             </TabsContent>
+            <Dialog
+              open={Boolean(editingMilestone)}
+              onOpenChange={(open) => {
+                if (!open) setEditingMilestone(null);
+              }}
+            >
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Edit milestone</DialogTitle>
+                </DialogHeader>
+                <div className="grid gap-3">
+                  <Input
+                    value={milestoneName}
+                    onChange={(event) => setMilestoneName(event.target.value)}
+                    placeholder="Milestone name"
+                  />
+                  <Textarea
+                    value={milestoneDescription}
+                    onChange={(event) =>
+                      setMilestoneDescription(event.target.value)
+                    }
+                    placeholder="Outcome or dependency"
+                  />
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    <Input
+                      type="date"
+                      value={milestoneDueDate}
+                      onChange={(event) =>
+                        setMilestoneDueDate(event.target.value)
+                      }
+                    />
+                    <Select
+                      value={milestoneStatus}
+                      onValueChange={setMilestoneStatus}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="draft">Draft</SelectItem>
+                        <SelectItem value="open">Open</SelectItem>
+                        <SelectItem value="completed">Completed</SelectItem>
+                        <SelectItem value="cancelled">Cancelled</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Input
+                      type="number"
+                      min="0"
+                      max="100"
+                      value={milestoneProgress}
+                      onChange={(event) =>
+                        setMilestoneProgress(event.target.value)
+                      }
+                      placeholder="Progress %"
+                    />
+                  </div>
+                </div>
+                <DialogFooter>
+                  <Button
+                    variant="outline"
+                    onClick={() => setEditingMilestone(null)}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    disabled={updateMilestone.isPending}
+                    onClick={() => updateMilestone.mutate()}
+                  >
+                    {updateMilestone.isPending ? "Saving..." : "Save milestone"}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
             <TabsContent value="budget">
               <section className="rounded-lg border bg-card p-5">
                 <div className="flex flex-wrap items-center justify-between gap-3">
