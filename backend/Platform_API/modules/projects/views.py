@@ -1292,6 +1292,26 @@ class TaskAttachmentListCreateAPIView(APIView):
         return Response(TaskAttachmentSerializer(attachment, context={"request": request}).data, status=status.HTTP_201_CREATED)
 
 
+class TaskAttachmentDetailAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, pk, attachment_id):
+        _tenant_and_activation(request)
+        _require(request.user, "delete_taskattachment")
+        task = _task_scope(request.user).filter(pk=pk).first()
+        if not task:
+            return Response({"detail": "Task not found."}, status=status.HTTP_404_NOT_FOUND)
+        attachment = task.attachments.filter(pk=attachment_id).first()
+        if not attachment:
+            return Response({"detail": "Attachment not found for this task."}, status=status.HTTP_404_NOT_FOUND)
+        name = attachment.original_name
+        if attachment.file:
+            attachment.file.delete(save=False)
+        attachment.delete()
+        log_business_event(event_group="data_lifecycle", event_type="attachment_removed", tenant=task.tenant, actor=request.user, obj=task, branch=task.branch, note=f"Task attachment removed: {name}.")
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
 class TicketTaskListCreateAPIView(APIView):
     """Expose real ticket-linked tasks without duplicating ticket workflow state."""
 

@@ -369,6 +369,29 @@ export default function TaskDetail({ id }: { id: string }) {
         variant: "destructive",
       }),
   });
+  const removeAttachment = useMutation({
+    mutationFn: async (attachmentId: number) => {
+      const response = await fetch(`${attachmentsPath}${attachmentId}/`, {
+        method: "DELETE",
+        headers: { Authorization: `Token ${token}` },
+      });
+      if (!response.ok)
+        throw await apiErrorFromResponse(
+          response,
+          "Attachment could not be removed.",
+        );
+    },
+    onSuccess: () => {
+      refresh([attachmentsPath]);
+      toast({ title: "Attachment removed" });
+    },
+    onError: (error: Error) =>
+      toast({
+        title: "Could not remove attachment",
+        description: error.message,
+        variant: "destructive",
+      }),
+  });
   const assign = useMutation({
     mutationFn: async () => {
       const response = await fetch(`${taskPath}assign/`, {
@@ -1034,21 +1057,35 @@ export default function TaskDetail({ id }: { id: string }) {
                 </p>
                 <div className="mt-4 space-y-2">
                   {(attachments.data ?? []).map((file) => (
-                    <a
+                    <div
                       className="flex items-center justify-between rounded border p-3 text-sm hover:bg-muted/40"
-                      href={file.file}
                       key={file.id}
-                      rel="noreferrer"
-                      target="_blank"
                     >
-                      <span>
-                        {file.original_name}
-                        {file.is_evidence ? " (evidence)" : ""}
-                      </span>
-                      <span className="text-muted-foreground">
-                        {file.uploaded_by_name}
-                      </span>
-                    </a>
+                      <a href={file.file} rel="noreferrer" target="_blank">
+                        <span>
+                          {file.original_name}
+                          {file.is_evidence ? " (evidence)" : ""}
+                        </span>
+                      </a>
+                      <div className="flex items-center gap-3">
+                        <span className="text-muted-foreground">
+                          {file.uploaded_by_name}
+                        </span>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          disabled={removeAttachment.isPending}
+                          onClick={() => {
+                            if (
+                              window.confirm(`Remove “${file.original_name}”?`)
+                            )
+                              removeAttachment.mutate(file.id);
+                          }}
+                        >
+                          Remove
+                        </Button>
+                      </div>
+                    </div>
                   ))}
                   {!attachments.data?.length && (
                     <p className="text-sm text-muted-foreground">
