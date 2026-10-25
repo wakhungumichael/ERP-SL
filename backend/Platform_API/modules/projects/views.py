@@ -175,6 +175,27 @@ def _notify_project_user(*, recipient, actor, tenant, title, message, route_path
     )
 
 
+def _notify_task_participants(*, task, actor, title, message, source_type):
+    """Notify the accountable assignee and collaborators without duplicates."""
+    recipients = {
+        collaborator.user_id: collaborator.user
+        for collaborator in task.collaborators.select_related("user")
+    }
+    if task.primary_assignee_id:
+        recipients[task.primary_assignee_id] = task.primary_assignee
+    for recipient in recipients.values():
+        _notify_project_user(
+            recipient=recipient,
+            actor=actor,
+            tenant=task.tenant,
+            title=title,
+            message=message,
+            route_path=f"/projects/tasks/{task.pk}",
+            source_type=source_type,
+            source_id=task.pk,
+        )
+
+
 class ProjectSerializer(serializers.ModelSerializer):
     manager_name = serializers.SerializerMethodField()
     owner_name = serializers.SerializerMethodField()
@@ -1391,6 +1412,8 @@ class TaskDetailAPIView(APIView):
         task = self._get(request.user, pk)
         if not task:
             return Response({"detail": "Task not found."}, status=status.HTTP_404_NOT_FOUND)
+        previous_due_date = task.due_date
+        previous_status = task.status
         requested_status = request.data.get("status")
         workflow_configured = WorkflowEntityBinding.objects.filter(
             workflow__tenant=task.tenant,
@@ -1420,6 +1443,23 @@ class TaskDetailAPIView(APIView):
             task.completion_date = timezone.localdate()
         task.full_clean()
         task.save()
+        if task.due_date != previous_due_date:
+            due_label = task.due_date.strftime("%d %b %Y") if task.due_date else "not set"
+            _notify_task_participants(
+                task=task,
+                actor=request.user,
+                title=f"Due date updated: {task.number}",
+                message=f"The due date for {task.title} is now {due_label}.",
+                source_type="project_task_due_date",
+            )
+        if task.status == "blocked" and previous_status != "blocked":
+            _notify_task_participants(
+                task=task,
+                actor=request.user,
+                title=f"Task blocked: {task.number}",
+                message=f"{task.title} is blocked and needs attention.",
+                source_type="project_task_blocked",
+            )
         _sync_parent_task_progress(task)
         _sync_project_progress(task)
         log_business_event(event_group="data_lifecycle", event_type="update", tenant=task.tenant, actor=request.user, obj=task, branch=task.branch, note="Task updated.")
