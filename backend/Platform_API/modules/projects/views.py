@@ -1,6 +1,7 @@
 # Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu.
 """Projects & Tasks APIs. All records are resolved from the active workspace."""
 import csv
+from datetime import date
 
 from django.http import HttpResponse
 from django.db import transaction
@@ -289,6 +290,36 @@ class ProjectsReportsAPIView(APIView):
                 for row in tasks.exclude(status__in=["completed", "cancelled"]).values("primary_assignee__username", "primary_assignee__first_name").annotate(count=Count("id")).order_by("-count")[:10]
             ],
         })
+
+
+class ProjectCalendarAPIView(APIView):
+    """Return all dated delivery records visible in the active branch scope."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        _tenant_and_activation(request)
+        _require(request.user, "view_project")
+        try:
+            start = date.fromisoformat(str(request.query_params.get("start") or ""))
+            end = date.fromisoformat(str(request.query_params.get("end") or ""))
+        except ValueError:
+            raise serializers.ValidationError({"start": "Provide start and end dates in YYYY-MM-DD format."})
+        if end < start:
+            raise serializers.ValidationError({"end": "End date must be on or after start date."})
+        tasks = _task_scope(request.user).filter(due_date__range=(start, end))
+        milestones = ProjectMilestone.objects.filter(project__in=_project_scope(request.user), due_date__range=(start, end)).select_related("project")
+        follow_ups = TaskFollowUp.objects.filter(task__in=_task_scope(request.user), follow_up_date__range=(start, end)).select_related("task")
+        events = [
+            {"kind": "task", "id": task.id, "title": f"{task.number} · {task.title}", "date": task.due_date, "status": task.status, "priority": task.priority, "url": f"/projects/tasks/{task.id}"}
+            for task in tasks
+        ] + [
+            {"kind": "milestone", "id": milestone.id, "title": f"{milestone.project.code} · {milestone.name}", "date": milestone.due_date, "status": milestone.status, "priority": "medium", "url": f"/projects/{milestone.project_id}"}
+            for milestone in milestones
+        ] + [
+            {"kind": "follow_up", "id": follow_up.id, "title": f"{follow_up.task.number} · Follow-up", "date": follow_up.follow_up_date, "status": follow_up.status, "priority": follow_up.task.priority, "url": f"/projects/tasks/{follow_up.task_id}"}
+            for follow_up in follow_ups
+        ]
+        return Response(sorted(events, key=lambda event: (event["date"], event["kind"], event["title"])))
 
 
 class ProjectExportAPIView(APIView):
