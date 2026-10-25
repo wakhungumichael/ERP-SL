@@ -55,6 +55,8 @@ class Project(AuditMetadataMixin, models.Model):
             raise ValidationError({"branch": "The owning branch must belong to the project tenant."})
         if not 0 <= self.progress_percentage <= 100:
             raise ValidationError({"progress_percentage": "Progress must be between 0 and 100."})
+        if self.start_date and self.target_end_date and self.target_end_date < self.start_date:
+            raise ValidationError({"target_end_date": "Target end date cannot be before the start date."})
 
     def __str__(self):
         return f"{self.code} - {self.name}"
@@ -162,12 +164,20 @@ class ProjectTask(AuditMetadataMixin, models.Model):
             errors["project"] = "Project belongs to a different tenant."
         if self.milestone_id and self.milestone.project.tenant_id != self.tenant_id:
             errors["milestone"] = "Milestone belongs to a different tenant."
+        if self.project_id and self.milestone_id and self.milestone.project_id != self.project_id:
+            errors["milestone"] = "Milestone must belong to the selected project."
         if self.source_ticket_id and self.source_ticket.tenant_id != self.tenant_id:
             errors["source_ticket"] = "Ticket belongs to a different tenant."
         if self.parent_task_id and self.parent_task.tenant_id != self.tenant_id:
             errors["parent_task"] = "Parent task belongs to a different tenant."
         if not 0 <= self.progress_percentage <= 100:
             errors["progress_percentage"] = "Progress must be between 0 and 100."
+        if self.start_date and self.due_date and self.due_date < self.start_date:
+            errors["due_date"] = "Due date cannot be before the task start date."
+        if self.estimated_hours is not None and self.estimated_hours < 0:
+            errors["estimated_hours"] = "Estimated hours cannot be negative."
+        if self.actual_hours is not None and self.actual_hours < 0:
+            errors["actual_hours"] = "Actual hours cannot be negative."
         if errors:
             raise ValidationError(errors)
 

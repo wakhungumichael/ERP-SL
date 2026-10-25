@@ -144,6 +144,19 @@ class ProjectSerializer(serializers.ModelSerializer):
     def get_owner_name(self, obj):
         return obj.owner.get_full_name() or obj.owner.username if obj.owner else ""
 
+    def validate_name(self, value):
+        value = value.strip()
+        if not value:
+            raise serializers.ValidationError("Enter a project name.")
+        return value
+
+    def validate(self, attrs):
+        start = attrs.get("start_date", getattr(self.instance, "start_date", None))
+        target_end = attrs.get("target_end_date", getattr(self.instance, "target_end_date", None))
+        if start and target_end and target_end < start:
+            raise serializers.ValidationError({"target_end_date": "Target end date cannot be before the start date."})
+        return attrs
+
 
 class TaskSerializer(serializers.ModelSerializer):
     branch_name = serializers.CharField(source="branch.name", read_only=True)
@@ -158,6 +171,30 @@ class TaskSerializer(serializers.ModelSerializer):
 
     def get_assignee_name(self, obj):
         return obj.primary_assignee.get_full_name() or obj.primary_assignee.username if obj.primary_assignee else ""
+
+    def validate_title(self, value):
+        value = value.strip()
+        if not value:
+            raise serializers.ValidationError("Enter a task title.")
+        return value
+
+    def validate(self, attrs):
+        instance = self.instance
+        start = attrs.get("start_date", getattr(instance, "start_date", None))
+        due = attrs.get("due_date", getattr(instance, "due_date", None))
+        project = attrs.get("project", getattr(instance, "project", None))
+        milestone = attrs.get("milestone", getattr(instance, "milestone", None))
+        parent = attrs.get("parent_task", getattr(instance, "parent_task", None))
+        if start and due and due < start:
+            raise serializers.ValidationError({"due_date": "Due date cannot be before the task start date."})
+        if project and milestone and milestone.project_id != project.id:
+            raise serializers.ValidationError({"milestone": "Choose a milestone belonging to the selected project."})
+        if instance and parent and parent.id == instance.id:
+            raise serializers.ValidationError({"parent_task": "A task cannot be its own parent."})
+        for field in ("estimated_hours", "actual_hours"):
+            if field in attrs and attrs[field] is not None and attrs[field] < 0:
+                raise serializers.ValidationError({field: "Hours cannot be negative."})
+        return attrs
 
 
 class TaskUpdateSerializer(serializers.ModelSerializer):
@@ -176,6 +213,11 @@ class TaskUpdateSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Describe the work completed or the current blocker.")
         return value.strip()
 
+    def validate_time_spent_hours(self, value):
+        if value < 0:
+            raise serializers.ValidationError("Time spent cannot be negative.")
+        return value
+
 
 class TaskFollowUpSerializer(serializers.ModelSerializer):
     owner_name = serializers.SerializerMethodField()
@@ -187,6 +229,9 @@ class TaskFollowUpSerializer(serializers.ModelSerializer):
 
     def get_owner_name(self, obj):
         return obj.owner.get_full_name() or obj.owner.username if obj.owner else "Unassigned"
+
+    def validate_notes(self, value):
+        return value.strip()
 
 
 class TaskCommentSerializer(serializers.ModelSerializer):
@@ -833,8 +878,9 @@ class TaskListCreateAPIView(APIView):
         serializer.is_valid(raise_exception=True)
         branch = serializer.validated_data["branch"]
         _ensure_tenant_relation(tenant, branch, "branch")
-        for field in ("project", "source_ticket", "parent_task"):
+        for field in ("project", "milestone", "source_ticket", "parent_task"):
             _ensure_tenant_relation(tenant, serializer.validated_data.get(field), field)
+        _ensure_active_tenant_user(tenant, serializer.validated_data.get("primary_assignee"), "primary_assignee")
         task = serializer.save(tenant=tenant, created_by=request.user, updated_by=request.user, assigned_by=request.user)
         task.full_clean()
         task.save()
@@ -878,6 +924,9 @@ class TaskDetailAPIView(APIView):
             _require(request.user, "complete_projecttask")
         serializer = TaskSerializer(task, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
+        for field in ("project", "milestone", "source_ticket", "parent_task"):
+            _ensure_tenant_relation(task.tenant, serializer.validated_data.get(field), field)
+        _ensure_active_tenant_user(task.tenant, serializer.validated_data.get("primary_assignee"), "primary_assignee")
         task = serializer.save(updated_by=request.user)
         if requested_status == "completed":
             task.progress_percentage = 100
@@ -936,7 +985,9 @@ class TaskFollowUpListCreateAPIView(APIView):
             return Response({"detail": "Task not found."}, status=status.HTTP_404_NOT_FOUND)
         serializer = TaskFollowUpSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        follow_up = serializer.save(task=task, owner=serializer.validated_data.get("owner") or request.user)
+        owner = serializer.validated_data.get("owner") or request.user
+        _ensure_active_tenant_user(task.tenant, owner, "owner")
+        follow_up = serializer.save(task=task, owner=owner)
         log_business_event(event_group="data_lifecycle", event_type="follow_up_created", tenant=task.tenant, actor=request.user, obj=task, branch=task.branch, note="Task follow-up created.")
         return Response(TaskFollowUpSerializer(follow_up).data, status=status.HTTP_201_CREATED)
 

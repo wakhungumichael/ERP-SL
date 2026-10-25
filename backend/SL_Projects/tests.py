@@ -1,6 +1,6 @@
 # Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu.
 """Regression coverage for the branch-aware Projects & Tasks domain."""
-from datetime import date
+from datetime import date, timedelta
 
 from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
@@ -54,3 +54,13 @@ class ProjectDomainTests(TestCase):
         project = Project(tenant=self.tenant, branch=self.branch, code="PRJ-TEST-0002", name="Bad progress", progress_percentage=101)
         with self.assertRaises(ValidationError):
             project.full_clean()
+
+    def test_project_rejects_target_date_before_start_date(self):
+        project = Project(tenant=self.tenant, branch=self.branch, code="PRJ-TEST-0003", name="Invalid dates", start_date=date.today(), target_end_date=date.today() - timedelta(days=1))
+        with self.assertRaises(ValidationError):
+            project.full_clean()
+
+    def test_task_rejects_due_date_before_start_date(self):
+        task = ProjectTask(tenant=self.tenant, branch=self.branch, number="TSK-TEST-0002", title="Invalid dates", start_date=date.today(), due_date=date.today() - timedelta(days=1))
+        with self.assertRaises(ValidationError):
+            task.full_clean()
