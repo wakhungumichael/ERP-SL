@@ -88,9 +88,20 @@ def _ensure_tenant_relation(tenant, obj, label):
         raise serializers.ValidationError({label: f"{label.replace('_', ' ').title()} belongs to another organization."})
 
 
-def _ensure_active_tenant_user(tenant, user, label):
-    if user is not None and not OrganizationMembership.objects.filter(tenant=tenant, user=user, is_active=True).exists():
-        raise serializers.ValidationError({label: f"Choose an active organization user for {label.replace('_', ' ')}."})
+def _ensure_active_tenant_user(tenant, user, label, branch=None):
+    """Validate a tenant user, optionally requiring access to a working branch."""
+    if user is None:
+        return
+    memberships = OrganizationMembership.objects.filter(
+        tenant=tenant, user=user, is_active=True
+    )
+    if branch is not None:
+        memberships = memberships.filter(Q(branch=branch) | Q(branches=branch))
+    if not memberships.exists():
+        scope = " in this branch" if branch is not None else ""
+        raise serializers.ValidationError({
+            label: f"Choose an active organization user{scope} for {label.replace('_', ' ')}."
+        })
 
 
 def _next_reference(tenant, model, prefix):
@@ -748,8 +759,12 @@ class ProjectListCreateAPIView(APIView):
         serializer.is_valid(raise_exception=True)
         branch = serializer.validated_data["branch"]
         _ensure_tenant_relation(tenant, branch, "branch")
-        _ensure_active_tenant_user(tenant, serializer.validated_data.get("manager"), "manager")
-        _ensure_active_tenant_user(tenant, serializer.validated_data.get("owner"), "owner")
+        _ensure_active_tenant_user(
+            tenant, serializer.validated_data.get("manager"), "manager", branch
+        )
+        _ensure_active_tenant_user(
+            tenant, serializer.validated_data.get("owner"), "owner", branch
+        )
         project = serializer.save(tenant=tenant, created_by=request.user, updated_by=request.user)
         project.full_clean()
         project.save()
@@ -787,8 +802,12 @@ class ProjectDetailAPIView(APIView):
         serializer.is_valid(raise_exception=True)
         branch = serializer.validated_data.get("branch", project.branch)
         _ensure_tenant_relation(project.tenant, branch, "branch")
-        _ensure_active_tenant_user(project.tenant, serializer.validated_data.get("manager"), "manager")
-        _ensure_active_tenant_user(project.tenant, serializer.validated_data.get("owner"), "owner")
+        _ensure_active_tenant_user(
+            project.tenant, serializer.validated_data.get("manager"), "manager", branch
+        )
+        _ensure_active_tenant_user(
+            project.tenant, serializer.validated_data.get("owner"), "owner", branch
+        )
         project = serializer.save(updated_by=request.user)
         project.full_clean()
         project.save()
@@ -1158,7 +1177,12 @@ class TaskListCreateAPIView(APIView):
         _ensure_tenant_relation(tenant, branch, "branch")
         for field in ("project", "milestone", "source_ticket", "parent_task"):
             _ensure_tenant_relation(tenant, serializer.validated_data.get(field), field)
-        _ensure_active_tenant_user(tenant, serializer.validated_data.get("primary_assignee"), "primary_assignee")
+        _ensure_active_tenant_user(
+            tenant,
+            serializer.validated_data.get("primary_assignee"),
+            "primary_assignee",
+            branch,
+        )
         task = serializer.save(tenant=tenant, created_by=request.user, updated_by=request.user, assigned_by=request.user)
         task.full_clean()
         task.save()
@@ -1204,7 +1228,12 @@ class TaskDetailAPIView(APIView):
         serializer.is_valid(raise_exception=True)
         for field in ("project", "milestone", "source_ticket", "parent_task"):
             _ensure_tenant_relation(task.tenant, serializer.validated_data.get(field), field)
-        _ensure_active_tenant_user(task.tenant, serializer.validated_data.get("primary_assignee"), "primary_assignee")
+        _ensure_active_tenant_user(
+            task.tenant,
+            serializer.validated_data.get("primary_assignee"),
+            "primary_assignee",
+            task.branch,
+        )
         task = serializer.save(updated_by=request.user)
         if requested_status == "completed":
             task.progress_percentage = 100
@@ -1267,7 +1296,7 @@ class TaskFollowUpListCreateAPIView(APIView):
         serializer = TaskFollowUpSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         owner = serializer.validated_data.get("owner") or request.user
-        _ensure_active_tenant_user(task.tenant, owner, "owner")
+        _ensure_active_tenant_user(task.tenant, owner, "owner", task.branch)
         follow_up = serializer.save(task=task, owner=owner)
         log_business_event(event_group="data_lifecycle", event_type="follow_up_created", tenant=task.tenant, actor=request.user, obj=task, branch=task.branch, note="Task follow-up created.")
         _notify_project_user(
