@@ -513,6 +513,57 @@ class TaskFollowUpWorkspaceAPIView(APIView):
         return response
 
 
+class TaskFollowUpExportAPIView(APIView):
+    """Export the filtered follow-up register visible to the active branch."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        _tenant_and_activation(request)
+        _require(request.user, "export_projecttask")
+        follow_ups = TaskFollowUp.objects.filter(
+            task__in=_task_scope(request.user)
+        ).select_related("task", "owner")
+        today = timezone.localdate()
+        if state := request.query_params.get("status"):
+            if state == "overdue":
+                follow_ups = follow_ups.filter(
+                    status__in=["scheduled", "pending"], follow_up_date__lt=today
+                )
+            else:
+                follow_ups = follow_ups.filter(status=state)
+        if value := request.query_params.get("search"):
+            follow_ups = follow_ups.filter(
+                Q(task__number__icontains=value)
+                | Q(task__title__icontains=value)
+                | Q(notes__icontains=value)
+                | Q(owner__first_name__icontains=value)
+                | Q(owner__last_name__icontains=value)
+                | Q(owner__username__icontains=value)
+            )
+        response = HttpResponse(content_type="text/csv")
+        response["Content-Disposition"] = 'attachment; filename="project-follow-ups.csv"'
+        writer = csv.writer(response)
+        writer.writerow(["Due date", "Task number", "Task", "Owner", "Notes", "Status"])
+        for follow_up in follow_ups.order_by("follow_up_date", "id"):
+            current_status = (
+                "overdue"
+                if follow_up.status in {"scheduled", "pending"}
+                and follow_up.follow_up_date < today
+                else follow_up.status
+            )
+            writer.writerow([
+                follow_up.follow_up_date,
+                follow_up.task.number,
+                follow_up.task.title,
+                follow_up.owner.get_full_name() or follow_up.owner.username
+                if follow_up.owner_id
+                else "Unassigned",
+                follow_up.notes,
+                current_status,
+            ])
+        return response
+
+
 class TaskAssigneeListAPIView(APIView):
     permission_classes = [IsAuthenticated]
 

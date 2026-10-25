@@ -11,6 +11,7 @@ urlpatterns = [
     path("projects/export/", views.ProjectExportAPIView.as_view(), name="project-export"),
     path("tasks/export/", views.TaskExportAPIView.as_view(), name="project-task-export"),
     path("follow-ups/", views.TaskFollowUpWorkspaceAPIView.as_view(), name="projects-followup-workspace"),
+    path("follow-ups/export/", views.TaskFollowUpExportAPIView.as_view(), name="projects-followup-export"),
     path("projects/", views.ProjectListCreateAPIView.as_view(), name="project-list"),
     path("projects/<int:pk>/", views.ProjectDetailAPIView.as_view(), name="project-detail"),
     path("projects/<int:pk>/close/", views.ProjectCloseAPIView.as_view(), name="project-close"),

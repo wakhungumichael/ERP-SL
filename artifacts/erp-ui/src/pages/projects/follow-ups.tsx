@@ -1,6 +1,7 @@
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import { Download } from "lucide-react";
 import { Link } from "wouter";
 import { useAuth } from "@/context/use-auth";
 import { Badge } from "@/components/ui/badge";
@@ -48,6 +49,37 @@ export default function ProjectFollowUps() {
   const [pageSize, setPageSize] = useState(25);
   const [status, setStatus] = useState("all");
   const [search, setSearch] = useState("");
+  const exportRegister = async () => {
+    try {
+      const query = new URLSearchParams();
+      if (status !== "all") query.set("status", status);
+      if (search.trim()) query.set("search", search.trim());
+      const response = await fetch(
+        `/api/projects/follow-ups/export/?${query.toString()}`,
+        { headers: { Authorization: `Token ${token}` } },
+      );
+      if (!response.ok)
+        throw await apiErrorFromResponse(
+          response,
+          "Follow-up export could not be prepared.",
+        );
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "project-follow-ups.csv";
+      link.click();
+      URL.revokeObjectURL(url);
+      toast({ title: "Follow-up CSV downloaded" });
+    } catch (error) {
+      toast({
+        title: "Could not export follow-ups",
+        description:
+          error instanceof Error ? error.message : "Please try again.",
+        variant: "destructive",
+      });
+    }
+  };
   const followUps = useQuery<FollowUpPage>({
     queryKey: ["projects-follow-ups", page, pageSize, status, search],
     enabled: !!token,
@@ -120,25 +152,31 @@ export default function ProjectFollowUps() {
           placeholder="Search task, owner, or follow-up notes"
           className="sm:max-w-md"
         />
-        <Select
-          value={status}
-          onValueChange={(value) => {
-            setStatus(value);
-            setPage(1);
-          }}
-        >
-          <SelectTrigger className="w-44">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All statuses</SelectItem>
-            <SelectItem value="scheduled">Scheduled</SelectItem>
-            <SelectItem value="pending">Pending</SelectItem>
-            <SelectItem value="overdue">Overdue</SelectItem>
-            <SelectItem value="completed">Completed</SelectItem>
-            <SelectItem value="cancelled">Cancelled</SelectItem>
-          </SelectContent>
-        </Select>
+        <div className="flex gap-2">
+          <Select
+            value={status}
+            onValueChange={(value) => {
+              setStatus(value);
+              setPage(1);
+            }}
+          >
+            <SelectTrigger className="w-44">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All statuses</SelectItem>
+              <SelectItem value="scheduled">Scheduled</SelectItem>
+              <SelectItem value="pending">Pending</SelectItem>
+              <SelectItem value="overdue">Overdue</SelectItem>
+              <SelectItem value="completed">Completed</SelectItem>
+              <SelectItem value="cancelled">Cancelled</SelectItem>
+            </SelectContent>
+          </Select>
+          <Button variant="outline" onClick={exportRegister}>
+            <Download className="mr-2 h-4 w-4" />
+            Export CSV
+          </Button>
+        </div>
       </div>
       <div className="mt-3 overflow-x-auto rounded-lg border bg-card">
         <table className="w-full min-w-[760px] text-sm">
