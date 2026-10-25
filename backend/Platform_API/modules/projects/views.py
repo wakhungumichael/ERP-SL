@@ -479,6 +479,15 @@ class TaskFollowUpWorkspaceAPIView(APIView):
                 follow_ups = follow_ups.filter(status__in=["scheduled", "pending"], follow_up_date__lt=today)
             else:
                 follow_ups = follow_ups.filter(status=state)
+        if value := request.query_params.get("search"):
+            follow_ups = follow_ups.filter(
+                Q(task__number__icontains=value)
+                | Q(task__title__icontains=value)
+                | Q(notes__icontains=value)
+                | Q(owner__first_name__icontains=value)
+                | Q(owner__last_name__icontains=value)
+                | Q(owner__username__icontains=value)
+            )
         summary = {
             "total": follow_ups.count(),
             "open": follow_ups.exclude(status__in=["completed", "cancelled"]).count(),
