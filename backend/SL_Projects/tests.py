@@ -8,6 +8,7 @@ from django.core.exceptions import ValidationError
 from django.test import TestCase
 
 from Platform_Core.models import Tenant, TenantBranch
+from Platform_API.modules.projects.views import _sync_parent_task_progress
 from SL_Projects.models import Project, ProjectDocument, ProjectTask, TaskDependency, TaskFollowUp
 
 
@@ -84,3 +85,10 @@ class ProjectDomainTests(TestCase):
         self.assertEqual(document.project_id, self.project.id)
         self.assertEqual(document.original_name, "plan.txt")
         self.assertTrue(document.is_evidence)
+
+    def test_subtask_progress_rolls_up_to_parent_task(self):
+        parent = self.make_task("TSK-TEST-PARENT")
+        child = self.make_task("TSK-TEST-CHILD", parent_task=parent, progress_percentage=60)
+        _sync_parent_task_progress(child)
+        parent.refresh_from_db()
+        self.assertEqual(parent.progress_percentage, 60)

@@ -128,6 +128,22 @@ def _sync_project_progress(task):
     Project.objects.filter(pk=task.project_id).exclude(progress_percentage=progress).update(progress_percentage=progress)
 
 
+def _sync_parent_task_progress(task):
+    """Roll child progress up through a task hierarchy without changing lifecycle status."""
+    current = task
+    visited = set()
+    while current.parent_task_id and current.parent_task_id not in visited:
+        parent = current.parent_task
+        visited.add(parent.pk)
+        aggregate = ProjectTask.objects.filter(parent_task=parent).exclude(status="cancelled").aggregate(
+            progress=Avg("progress_percentage")
+        )
+        progress = round(aggregate["progress"] or 0)
+        ProjectTask.objects.filter(pk=parent.pk).exclude(progress_percentage=progress).update(progress_percentage=progress)
+        parent.progress_percentage = progress
+        current = parent
+
+
 def _notify_project_user(*, recipient, actor, tenant, title, message, route_path, source_type, source_id):
     """Create one actionable unread reminder per project event and recipient."""
     if not recipient or recipient.pk == actor.pk:
@@ -1117,6 +1133,7 @@ class TaskDetailAPIView(APIView):
             task.completion_date = timezone.localdate()
         task.full_clean()
         task.save()
+        _sync_parent_task_progress(task)
         _sync_project_progress(task)
         log_business_event(event_group="data_lifecycle", event_type="update", tenant=task.tenant, actor=request.user, obj=task, branch=task.branch, note="Task updated.")
         return Response(TaskSerializer(task).data)
@@ -1146,6 +1163,7 @@ class TaskUpdateListCreateAPIView(APIView):
         task.actual_hours = (task.actual_hours or 0) + update.time_spent_hours
         task.updated_by = request.user
         task.save(update_fields=["progress_percentage", "actual_hours", "updated_by", "updated_at"])
+        _sync_parent_task_progress(task)
         _sync_project_progress(task)
         log_business_event(event_group="data_lifecycle", event_type="progress_update", tenant=task.tenant, actor=request.user, obj=task, branch=task.branch, note=f"Task progress updated; {update.time_spent_hours} hour(s) recorded.")
         return Response(TaskUpdateSerializer(update).data, status=status.HTTP_201_CREATED)
