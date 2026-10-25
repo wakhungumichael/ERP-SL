@@ -244,6 +244,24 @@ class TaskAttachment(AuditMetadataMixin, models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
 
+class ProjectDocument(AuditMetadataMixin, models.Model):
+    """A document owned by the project itself, rather than a single task."""
+    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="documents")
+    uploaded_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="project_documents")
+    file = models.FileField(upload_to="projects/documents/%Y/%m/")
+    original_name = models.CharField(max_length=255)
+    content_type = models.CharField(max_length=120, blank=True)
+    size_bytes = models.PositiveBigIntegerField(default=0)
+    is_evidence = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return self.original_name
+
+
 class TaskFollowUp(AuditMetadataMixin, models.Model):
     STATUS_CHOICES = [("scheduled", "Scheduled"), ("pending", "Pending"), ("completed", "Completed"), ("overdue", "Overdue"), ("cancelled", "Cancelled")]
     task = models.ForeignKey(ProjectTask, on_delete=models.CASCADE, related_name="follow_ups")

@@ -24,7 +24,7 @@ from Platform_API.modules.mixins import (
 from Platform_Core.audit import log_business_event
 from Platform_Core.models import OrganizationBranchRoleAssignment, OrganizationMembership, TenantBranch, WorkflowEntityBinding
 from Platform_Core.platform import get_active_tenant_module_slugs
-from SL_Projects.models import Project, ProjectBranchAccess, ProjectMember, ProjectMilestone, ProjectTask, TaskAttachment, TaskComment, TaskDependency, TaskFollowUp, TaskUpdate
+from SL_Projects.models import Project, ProjectBranchAccess, ProjectDocument, ProjectMember, ProjectMilestone, ProjectTask, TaskAttachment, TaskComment, TaskDependency, TaskFollowUp, TaskUpdate
 from SL_Ticketing.models import Ticket
 
 
@@ -255,6 +255,7 @@ class TaskAttachmentSerializer(serializers.ModelSerializer):
     uploaded_by_name = serializers.SerializerMethodField()
     task_number = serializers.CharField(source="task.number", read_only=True)
     task_title = serializers.CharField(source="task.title", read_only=True)
+    source = serializers.SerializerMethodField()
 
     class Meta:
         model = TaskAttachment
@@ -263,6 +264,25 @@ class TaskAttachmentSerializer(serializers.ModelSerializer):
 
     def get_uploaded_by_name(self, obj):
         return obj.uploaded_by.get_full_name() or obj.uploaded_by.username if obj.uploaded_by else "System process"
+
+    def get_source(self, obj):
+        return "task"
+
+
+class ProjectDocumentSerializer(serializers.ModelSerializer):
+    uploaded_by_name = serializers.SerializerMethodField()
+    source = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ProjectDocument
+        fields = "__all__"
+        read_only_fields = ("project", "uploaded_by", "original_name", "content_type", "size_bytes", "created_at")
+
+    def get_uploaded_by_name(self, obj):
+        return obj.uploaded_by.get_full_name() or obj.uploaded_by.username if obj.uploaded_by else "System process"
+
+    def get_source(self, obj):
+        return "project"
 
 
 class ProjectMilestoneSerializer(serializers.ModelSerializer):
@@ -681,8 +701,9 @@ class ProjectCloseAPIView(APIView):
 
 
 class ProjectDocumentListAPIView(APIView):
-    """List task attachments and approval evidence belonging to one project."""
+    """Manage project-owned documents and show supporting task documents together."""
     permission_classes = [IsAuthenticated]
+    max_upload_bytes = 10 * 1024 * 1024
 
     def get(self, request, pk):
         _tenant_and_activation(request)
@@ -690,8 +711,37 @@ class ProjectDocumentListAPIView(APIView):
         project = _project_scope(request.user).filter(pk=pk).first()
         if not project:
             return Response({"detail": "Project not found."}, status=status.HTTP_404_NOT_FOUND)
-        attachments = TaskAttachment.objects.filter(task__project=project).select_related("task", "uploaded_by").order_by("-created_at")
-        return Response(TaskAttachmentSerializer(attachments, many=True, context={"request": request}).data)
+        project_documents = project.documents.select_related("uploaded_by").all()
+        task_attachments = TaskAttachment.objects.filter(task__project=project).select_related("task", "uploaded_by").order_by("-created_at")
+        documents = [
+            *ProjectDocumentSerializer(project_documents, many=True, context={"request": request}).data,
+            *TaskAttachmentSerializer(task_attachments, many=True, context={"request": request}).data,
+        ]
+        documents.sort(key=lambda item: item.get("created_at") or "", reverse=True)
+        return Response(documents)
+
+    def post(self, request, pk):
+        _tenant_and_activation(request)
+        _require(request.user, "add_projectdocument")
+        project = _project_scope(request.user).filter(pk=pk).first()
+        if not project:
+            return Response({"detail": "Project not found."}, status=status.HTTP_404_NOT_FOUND)
+        upload = request.FILES.get("file")
+        if upload is None:
+            raise serializers.ValidationError({"file": "Choose a file to upload."})
+        if upload.size > self.max_upload_bytes:
+            raise serializers.ValidationError({"file": "Files must be 10 MB or smaller."})
+        document = ProjectDocument.objects.create(
+            project=project,
+            uploaded_by=request.user,
+            file=upload,
+            original_name=upload.name[:255],
+            content_type=getattr(upload, "content_type", "") or "",
+            size_bytes=upload.size,
+            is_evidence=str(request.data.get("is_evidence") or "").lower() in {"1", "true", "yes", "on"},
+        )
+        log_business_event(event_group="data_lifecycle", event_type="project_document_added", tenant=project.tenant, actor=request.user, obj=project, branch=project.branch, note=f"Project document added: {document.original_name}.")
+        return Response(ProjectDocumentSerializer(document, context={"request": request}).data, status=status.HTTP_201_CREATED)
 
 
 class ProjectMilestoneListCreateAPIView(APIView):

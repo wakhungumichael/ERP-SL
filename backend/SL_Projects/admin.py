@@ -1,7 +1,7 @@
 # Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu.
 from django.contrib import admin
 
-from .models import Project, ProjectMilestone, ProjectTask, TaskFollowUp
+from .models import Project, ProjectDocument, ProjectMilestone, ProjectTask, TaskFollowUp
 
 
 @admin.register(Project)
@@ -21,6 +21,13 @@ class ProjectTaskAdmin(admin.ModelAdmin):
     list_display = ("number", "title", "tenant", "branch", "status", "primary_assignee", "due_date")
     list_filter = ("status", "priority", "tenant")
     search_fields = ("number", "title")
+
+
+@admin.register(ProjectDocument)
+class ProjectDocumentAdmin(admin.ModelAdmin):
+    list_display = ("original_name", "project", "uploaded_by", "is_evidence", "created_at")
+    list_filter = ("is_evidence", "project__tenant")
+    search_fields = ("original_name", "project__code", "project__name")
 
 
 @admin.register(TaskFollowUp)

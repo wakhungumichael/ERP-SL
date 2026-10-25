@@ -3,11 +3,12 @@
 from datetime import date, timedelta
 
 from django.contrib.auth.models import User
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.exceptions import ValidationError
 from django.test import TestCase
 
 from Platform_Core.models import Tenant, TenantBranch
-from SL_Projects.models import Project, ProjectTask, TaskDependency, TaskFollowUp
+from SL_Projects.models import Project, ProjectDocument, ProjectTask, TaskDependency, TaskFollowUp
 
 
 class ProjectDomainTests(TestCase):
@@ -64,3 +65,17 @@ class ProjectDomainTests(TestCase):
         task = ProjectTask(tenant=self.tenant, branch=self.branch, number="TSK-TEST-0002", title="Invalid dates", start_date=date.today(), due_date=date.today() - timedelta(days=1))
         with self.assertRaises(ValidationError):
             task.full_clean()
+
+    def test_project_document_belongs_to_the_project_and_retains_metadata(self):
+        document = ProjectDocument.objects.create(
+            project=self.project,
+            uploaded_by=self.user,
+            file=SimpleUploadedFile("plan.txt", b"delivery plan", content_type="text/plain"),
+            original_name="plan.txt",
+            content_type="text/plain",
+            size_bytes=13,
+            is_evidence=True,
+        )
+        self.assertEqual(document.project_id, self.project.id)
+        self.assertEqual(document.original_name, "plan.txt")
+        self.assertTrue(document.is_evidence)
