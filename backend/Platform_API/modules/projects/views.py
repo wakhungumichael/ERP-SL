@@ -234,12 +234,22 @@ class TaskSerializer(serializers.ModelSerializer):
         start = attrs.get("start_date", getattr(instance, "start_date", None))
         due = attrs.get("due_date", getattr(instance, "due_date", None))
         project = attrs.get("project", getattr(instance, "project", None))
+        branch = attrs.get("branch", getattr(instance, "branch", None))
         milestone = attrs.get("milestone", getattr(instance, "milestone", None))
         parent = attrs.get("parent_task", getattr(instance, "parent_task", None))
         if start and due and due < start:
             raise serializers.ValidationError({"due_date": "Due date cannot be before the task start date."})
         if project and milestone and milestone.project_id != project.id:
             raise serializers.ValidationError({"milestone": "Choose a milestone belonging to the selected project."})
+        if (
+            project
+            and branch
+            and branch.pk != project.branch_id
+            and not project.participating_branches.filter(branch=branch).exists()
+        ):
+            raise serializers.ValidationError({
+                "branch": "Add this branch to the project before creating or moving work there."
+            })
         if instance and parent and parent.id == instance.id:
             raise serializers.ValidationError({"parent_task": "A task cannot be its own parent."})
         for field in ("estimated_hours", "actual_hours"):

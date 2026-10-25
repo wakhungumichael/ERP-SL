@@ -169,6 +169,15 @@ class ProjectTask(AuditMetadataMixin, models.Model):
             errors["branch"] = "Task branch must belong to the task tenant."
         if self.project_id and self.project.tenant_id != self.tenant_id:
             errors["project"] = "Project belongs to a different tenant."
+        if (
+            self.project_id
+            and self.branch_id
+            and self.branch_id != self.project.branch_id
+            and not ProjectBranchAccess.objects.filter(
+                project_id=self.project_id, branch_id=self.branch_id
+            ).exists()
+        ):
+            errors["branch"] = "Add this branch to the project before assigning work to it."
         if self.milestone_id and self.milestone.project.tenant_id != self.tenant_id:
             errors["milestone"] = "Milestone belongs to a different tenant."
         if self.project_id and self.milestone_id and self.milestone.project_id != self.project_id:

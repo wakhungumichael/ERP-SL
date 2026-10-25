@@ -9,7 +9,7 @@ from django.test import TestCase
 
 from Platform_Core.models import Tenant, TenantBranch
 from Platform_API.modules.projects.views import _sync_parent_task_progress
-from SL_Projects.models import Project, ProjectDocument, ProjectTask, TaskDependency, TaskFollowUp
+from SL_Projects.models import Project, ProjectBranchAccess, ProjectDocument, ProjectTask, TaskDependency, TaskFollowUp
 
 
 class ProjectDomainTests(TestCase):
@@ -31,6 +31,22 @@ class ProjectDomainTests(TestCase):
         task = ProjectTask(tenant=self.tenant, branch=self.branch, number="TSK-TEST-0001", title="Wrong project", project=foreign_project)
         with self.assertRaises(ValidationError):
             task.full_clean()
+
+    def test_task_requires_project_branch_participation(self):
+        secondary_branch = TenantBranch.objects.create(
+            tenant=self.tenant, name="Secondary branch"
+        )
+        task = ProjectTask(
+            tenant=self.tenant,
+            branch=secondary_branch,
+            number="TSK-TEST-BRANCH-0001",
+            title="Wrong branch",
+            project=self.project,
+        )
+        with self.assertRaises(ValidationError):
+            task.full_clean()
+        ProjectBranchAccess.objects.create(project=self.project, branch=secondary_branch)
+        task.full_clean()
 
     def test_dependency_rejects_cross_tenant_tasks(self):
         local_task = self.make_task("TSK-TEST-0001")
