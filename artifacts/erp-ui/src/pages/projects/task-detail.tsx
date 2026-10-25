@@ -37,6 +37,7 @@ type Task = {
   project_name: string;
   branch_name: string;
   assignee_name: string;
+  primary_assignee: number | null;
   task_type: string;
   start_date: string | null;
   due_date: string | null;
@@ -75,6 +76,7 @@ type Attachment = {
   created_at: string;
 };
 type Assignee = { id: number; name: string };
+type Collaborator = { id: number; user: number; user_name: string };
 type Structure = {
   subtasks: Array<{
     id: number;
@@ -160,6 +162,7 @@ export default function TaskDetail({ id }: { id: string }) {
   const commentsPath = `${taskPath}comments/`;
   const attachmentsPath = `${taskPath}attachments/`;
   const assigneesPath = `${taskPath}assignees/`;
+  const collaboratorsPath = `${taskPath}collaborators/`;
   const rolesPath = `${taskPath}roles/`;
   const structurePath = `${taskPath}structure/`;
   const task = useProjectApi<Task>(taskPath, token);
@@ -168,6 +171,7 @@ export default function TaskDetail({ id }: { id: string }) {
   const comments = useProjectApi<Comment[]>(commentsPath, token);
   const attachments = useProjectApi<Attachment[]>(attachmentsPath, token);
   const assignees = useProjectApi<Assignee[]>(assigneesPath, token);
+  const collaborators = useProjectApi<Collaborator[]>(collaboratorsPath, token);
   const roles = useProjectApi<Assignee[]>(rolesPath, token);
   const structure = useProjectApi<Structure>(structurePath, token);
   const workflow = useProjectApi<WorkflowRequirement>(
@@ -188,6 +192,7 @@ export default function TaskDetail({ id }: { id: string }) {
   const [attachment, setAttachment] = useState<File | null>(null);
   const [isEvidence, setIsEvidence] = useState(false);
   const [assigneeId, setAssigneeId] = useState("");
+  const [collaboratorId, setCollaboratorId] = useState("");
   const [subtaskTitle, setSubtaskTitle] = useState("");
   const [subtaskDescription, setSubtaskDescription] = useState("");
   const [subtaskDueDate, setSubtaskDueDate] = useState("");
@@ -434,6 +439,59 @@ export default function TaskDetail({ id }: { id: string }) {
     onError: (error: Error) =>
       toast({
         title: "Could not update assignment",
+        description: error.message,
+        variant: "destructive",
+      }),
+  });
+  const addCollaborator = useMutation({
+    mutationFn: async () => {
+      if (!collaboratorId) throw new Error("Choose a supporting participant.");
+      const response = await fetch(collaboratorsPath, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Token ${token}`,
+        },
+        body: JSON.stringify({ user: Number(collaboratorId) }),
+      });
+      if (!response.ok)
+        throw await apiErrorFromResponse(
+          response,
+          "Supporting participant could not be added.",
+        );
+      return response.json();
+    },
+    onSuccess: () => {
+      setCollaboratorId("");
+      refresh([collaboratorsPath]);
+      toast({ title: "Supporting participant added" });
+    },
+    onError: (error: Error) =>
+      toast({
+        title: "Could not add supporting participant",
+        description: error.message,
+        variant: "destructive",
+      }),
+  });
+  const removeCollaborator = useMutation({
+    mutationFn: async (collaborator: Collaborator) => {
+      const response = await fetch(`${collaboratorsPath}${collaborator.id}/`, {
+        method: "DELETE",
+        headers: { Authorization: `Token ${token}` },
+      });
+      if (!response.ok)
+        throw await apiErrorFromResponse(
+          response,
+          "Supporting participant could not be removed.",
+        );
+    },
+    onSuccess: () => {
+      refresh([collaboratorsPath]);
+      toast({ title: "Supporting participant removed" });
+    },
+    onError: (error: Error) =>
+      toast({
+        title: "Could not remove supporting participant",
         description: error.message,
         variant: "destructive",
       }),
@@ -922,6 +980,74 @@ export default function TaskDetail({ id }: { id: string }) {
                   >
                     Save assignment
                   </Button>
+                </div>
+                <div className="mt-4 space-y-2 border-t pt-4">
+                  <p className="text-xs font-medium text-muted-foreground">
+                    Supporting participants
+                  </p>
+                  <div className="flex gap-2">
+                    <Select
+                      value={collaboratorId}
+                      onValueChange={setCollaboratorId}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Add participant" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {(assignees.data ?? [])
+                          .filter(
+                            (person) =>
+                              person.id !== record.primary_assignee &&
+                              !(collaborators.data ?? []).some(
+                                (collaborator) =>
+                                  collaborator.user === person.id,
+                              ),
+                          )
+                          .map((person) => (
+                            <SelectItem
+                              key={person.id}
+                              value={String(person.id)}
+                            >
+                              {person.name}
+                            </SelectItem>
+                          ))}
+                      </SelectContent>
+                    </Select>
+                    <Button
+                      variant="outline"
+                      disabled={!collaboratorId || addCollaborator.isPending}
+                      onClick={() => addCollaborator.mutate()}
+                    >
+                      Add
+                    </Button>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {(collaborators.data ?? []).map((collaborator) => (
+                      <Badge
+                        className="flex items-center gap-1"
+                        key={collaborator.id}
+                        variant="secondary"
+                      >
+                        {collaborator.user_name}
+                        <button
+                          aria-label={`Remove ${collaborator.user_name}`}
+                          className="ml-1 text-muted-foreground hover:text-foreground"
+                          disabled={removeCollaborator.isPending}
+                          onClick={() =>
+                            removeCollaborator.mutate(collaborator)
+                          }
+                          type="button"
+                        >
+                          ×
+                        </button>
+                      </Badge>
+                    ))}
+                    {!collaborators.data?.length && (
+                      <span className="text-xs text-muted-foreground">
+                        No supporting participants.
+                      </span>
+                    )}
+                  </div>
                 </div>
                 {workflow.data?.data.required &&
                 !workflow.data.data.in_progress &&

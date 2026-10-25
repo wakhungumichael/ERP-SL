@@ -24,7 +24,7 @@ from Platform_API.modules.mixins import (
 from Platform_Core.audit import log_business_event
 from Platform_Core.models import OrganizationBranchRoleAssignment, OrganizationMembership, SystemNotification, TenantBranch, WorkflowEntityBinding
 from Platform_Core.platform import get_active_tenant_module_slugs
-from SL_Projects.models import Project, ProjectBranchAccess, ProjectDocument, ProjectMember, ProjectMilestone, ProjectTask, TaskAttachment, TaskComment, TaskDependency, TaskFollowUp, TaskUpdate
+from SL_Projects.models import Project, ProjectBranchAccess, ProjectDocument, ProjectMember, ProjectMilestone, ProjectTask, TaskAttachment, TaskCollaborator, TaskComment, TaskDependency, TaskFollowUp, TaskUpdate
 from SL_Ticketing.models import Ticket
 
 
@@ -256,6 +256,18 @@ class TaskSerializer(serializers.ModelSerializer):
             if field in attrs and attrs[field] is not None and attrs[field] < 0:
                 raise serializers.ValidationError({field: "Hours cannot be negative."})
         return attrs
+
+
+class TaskCollaboratorSerializer(serializers.ModelSerializer):
+    user_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = TaskCollaborator
+        fields = "__all__"
+        read_only_fields = ("task", "created_at")
+
+    def get_user_name(self, obj):
+        return obj.user.get_full_name() or obj.user.username
 
 
 class TaskUpdateSerializer(serializers.ModelSerializer):
@@ -713,6 +725,99 @@ class TaskAssignmentAPIView(APIView):
             source_id=task.pk,
         )
         return Response(TaskSerializer(task).data)
+
+
+class TaskCollaboratorListCreateAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def _task(self, user, pk):
+        return _task_scope(user).filter(pk=pk).first()
+
+    def get(self, request, pk):
+        _tenant_and_activation(request)
+        _require(request.user, "view_projecttask")
+        task = self._task(request.user, pk)
+        if not task:
+            return Response({"detail": "Task not found."}, status=status.HTTP_404_NOT_FOUND)
+        collaborators = task.collaborators.select_related("user").order_by(
+            "user__first_name", "user__last_name", "user__username"
+        )
+        return Response(TaskCollaboratorSerializer(collaborators, many=True).data)
+
+    @transaction.atomic
+    def post(self, request, pk):
+        tenant = _tenant_and_activation(request)
+        _require(request.user, "assign_projecttask")
+        task = self._task(request.user, pk)
+        if not task:
+            return Response({"detail": "Task not found."}, status=status.HTTP_404_NOT_FOUND)
+        user_id = request.data.get("user")
+        if not user_id:
+            raise serializers.ValidationError({"user": "Choose a supporting participant."})
+        membership = OrganizationMembership.objects.filter(
+            tenant=tenant, user_id=user_id, is_active=True
+        ).filter(
+            Q(branch=task.branch) | Q(branches=task.branch)
+        ).select_related("user").first()
+        if not membership:
+            raise serializers.ValidationError({"user": "Choose an active organization user in this task branch."})
+        if task.primary_assignee_id == membership.user_id:
+            raise serializers.ValidationError({"user": "This user is already the primary assignee."})
+        collaborator, created = TaskCollaborator.objects.get_or_create(
+            task=task, user=membership.user
+        )
+        if created:
+            name = membership.user.get_full_name() or membership.user.username
+            log_business_event(
+                event_group="data_lifecycle",
+                event_type="task_collaborator_added",
+                tenant=tenant,
+                actor=request.user,
+                obj=task,
+                branch=task.branch,
+                note=f"Supporting participant added: {name}.",
+            )
+            _notify_project_user(
+                recipient=membership.user,
+                actor=request.user,
+                tenant=tenant,
+                title=f"Added to task: {task.number}",
+                message=f"You are supporting {task.title}.",
+                route_path=f"/projects/tasks/{task.pk}",
+                source_type="project_task_collaborator",
+                source_id=task.pk,
+            )
+        return Response(
+            TaskCollaboratorSerializer(collaborator).data,
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+        )
+
+
+class TaskCollaboratorDetailAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @transaction.atomic
+    def delete(self, request, pk, collaborator_id):
+        _tenant_and_activation(request)
+        _require(request.user, "assign_projecttask")
+        task = _task_scope(request.user).filter(pk=pk).first()
+        if not task:
+            return Response({"detail": "Task not found."}, status=status.HTTP_404_NOT_FOUND)
+        collaborator = task.collaborators.filter(pk=collaborator_id).select_related("user").first()
+        if not collaborator:
+            return Response({"detail": "Supporting participant not found."}, status=status.HTTP_404_NOT_FOUND)
+        name = collaborator.user.get_full_name() or collaborator.user.username
+        collaborator.delete()
+        log_business_event(
+            event_group="data_lifecycle",
+            event_type="task_collaborator_removed",
+            tenant=task.tenant,
+            actor=request.user,
+            obj=task,
+            branch=task.branch,
+            note=f"Supporting participant removed: {name}.",
+        )
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class TaskStructureAPIView(APIView):
