@@ -54,6 +54,13 @@ def _active_branch_id(user):
     return membership.branch_id if membership else None
 
 
+def _active_role_name(user, tenant):
+    if user.is_superuser:
+        return ""
+    membership = OrganizationMembership.objects.filter(user=user, tenant=tenant, is_active=True).order_by("-is_default").first()
+    return membership.effective_role_group_name() if membership else ""
+
+
 def _require(user, codename):
     if not has_active_permission(user, f"SL_Projects.{codename}"):
         raise PermissionDenied("Your active role does not have permission for this action.")
@@ -751,6 +758,9 @@ class TaskListCreateAPIView(APIView):
             qs = qs.filter(status=value)
         if request.query_params.get("scope") == "mine":
             qs = qs.filter(primary_assignee=request.user)
+        if request.query_params.get("scope") == "team":
+            role_name = _active_role_name(request.user, tenant_or_403(request.user))
+            qs = qs.filter(assigned_role__name=role_name) if role_name else qs.none()
         if value := request.query_params.get("project"):
             qs = qs.filter(project_id=value)
         if value := request.query_params.get("search"):
