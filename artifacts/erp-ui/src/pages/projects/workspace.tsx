@@ -112,6 +112,45 @@ function Metric({
   );
 }
 
+function Distribution({
+  title,
+  rows,
+}: {
+  title: string;
+  rows: Array<{ status?: string; priority?: string; count: number }>;
+}) {
+  const maximum = Math.max(...rows.map((row) => row.count), 1);
+  return (
+    <section className="rounded-lg border bg-card p-5">
+      <h2 className="font-semibold">{title}</h2>
+      <div className="mt-4 space-y-3">
+        {rows.map((row) => {
+          const value = row.status || row.priority || "Unspecified";
+          return (
+            <div key={value}>
+              <div className="flex justify-between text-sm">
+                <span className="capitalize">{label(value)}</span>
+                <span className="font-medium">{row.count}</span>
+              </div>
+              <div className="mt-1 h-2 overflow-hidden rounded bg-muted">
+                <div
+                  className="h-full bg-[#C4B13B]"
+                  style={{ width: `${(row.count / maximum) * 100}%` }}
+                />
+              </div>
+            </div>
+          );
+        })}
+        {!rows.length && (
+          <p className="text-sm text-muted-foreground">
+            No tasks recorded yet.
+          </p>
+        )}
+      </div>
+    </section>
+  );
+}
+
 export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
   const [location, navigate] = useLocation();
   const { token } = useAuth();
@@ -254,6 +293,8 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
     counts: Record<string, number>;
     recent_tasks: Task[];
     upcoming_deadlines: Task[];
+    tasks_by_status: Array<{ status: string; count: number }>;
+    tasks_by_priority: Array<{ priority: string; count: number }>;
   }>("/api/projects/dashboard/", token);
   const isProjects = mode === "projects";
   const routeQuery = new URLSearchParams(location.split("?")[1] || "");
@@ -340,6 +381,16 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
             label="Ticket-linked tasks"
             value={counts?.ticket_tasks}
             icon={BriefcaseBusiness}
+          />
+        </div>
+        <div className="mt-6 grid gap-4 lg:grid-cols-2">
+          <Distribution
+            title="Tasks by status"
+            rows={metrics.data?.tasks_by_status ?? []}
+          />
+          <Distribution
+            title="Tasks by priority"
+            rows={metrics.data?.tasks_by_priority ?? []}
           />
         </div>
         <div className="mt-6 grid gap-4 lg:grid-cols-2">

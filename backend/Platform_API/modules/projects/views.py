@@ -377,6 +377,8 @@ class ProjectsDashboardAPIView(APIView):
             },
             "recent_tasks": TaskSerializer(tasks.order_by("-updated_at")[:6], many=True).data,
             "upcoming_deadlines": TaskSerializer(open_tasks.filter(due_date__isnull=False).order_by("due_date", "priority")[:6], many=True).data,
+            "tasks_by_status": list(tasks.values("status").annotate(count=Count("id")).order_by("status")),
+            "tasks_by_priority": list(tasks.values("priority").annotate(count=Count("id")).order_by("priority")),
         })
 
 
