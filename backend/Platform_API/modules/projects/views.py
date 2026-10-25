@@ -1390,6 +1390,19 @@ class TaskListCreateAPIView(APIView):
             qs = qs.filter(project_id=value)
         if value := request.query_params.get("search"):
             qs = qs.filter(Q(number__icontains=value) | Q(title__icontains=value) | Q(description__icontains=value))
+        ordering = request.query_params.get("ordering", "due_date")
+        if ordering.lstrip("-") in {
+            "number",
+            "title",
+            "priority",
+            "status",
+            "due_date",
+            "start_date",
+            "progress_percentage",
+            "created_at",
+            "updated_at",
+        }:
+            qs = qs.order_by(ordering, "id")
         paginator = ProjectsPagination()
         page = paginator.paginate_queryset(qs, request)
         return paginator.get_paginated_response(TaskSerializer(page, many=True).data)

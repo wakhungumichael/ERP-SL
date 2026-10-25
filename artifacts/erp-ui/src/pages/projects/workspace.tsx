@@ -161,6 +161,7 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
   const [pageSize, setPageSize] = useState(25);
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("all");
+  const [ordering, setOrdering] = useState("-created_at");
   const [createOpen, setCreateOpen] = useState(false);
   const [recordTitle, setRecordTitle] = useState("");
   const [recordDescription, setRecordDescription] = useState("");
@@ -308,6 +309,7 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
   const shouldCreateTask = routeQuery.get("create") === "1";
   useEffect(() => {
     setStatus("all");
+    setOrdering(mode === "projects" ? "-created_at" : "due_date");
     setPage(1);
   }, [mode]);
   useEffect(() => {
@@ -333,6 +335,7 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
   });
   if (search) query.set("search", search);
   if (status !== "all") query.set("status", status);
+  query.set("ordering", ordering);
   if (!isProjects && requestedProject) query.set("project", requestedProject);
   if (mode === "mine") query.set("scope", "mine");
   if (mode === "team") query.set("scope", "team");
@@ -558,6 +561,50 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
                   <SelectItem value="in_review">In review</SelectItem>
                   <SelectItem value="completed">Completed</SelectItem>
                   <SelectItem value="cancelled">Cancelled</SelectItem>
+                </>
+              )}
+            </SelectContent>
+          </Select>
+          <Select
+            value={ordering}
+            onValueChange={(value) => {
+              setOrdering(value);
+              setPage(1);
+            }}
+          >
+            <SelectTrigger className="w-48">
+              <SelectValue placeholder="Sort records" />
+            </SelectTrigger>
+            <SelectContent>
+              {isProjects ? (
+                <>
+                  <SelectItem value="-created_at">Newest created</SelectItem>
+                  <SelectItem value="created_at">Oldest created</SelectItem>
+                  <SelectItem value="target_end_date">
+                    Due date: earliest
+                  </SelectItem>
+                  <SelectItem value="-target_end_date">
+                    Due date: latest
+                  </SelectItem>
+                  <SelectItem value="-progress_percentage">
+                    Progress: highest
+                  </SelectItem>
+                  <SelectItem value="progress_percentage">
+                    Progress: lowest
+                  </SelectItem>
+                  <SelectItem value="name">Project name: A–Z</SelectItem>
+                </>
+              ) : (
+                <>
+                  <SelectItem value="due_date">Due date: earliest</SelectItem>
+                  <SelectItem value="-due_date">Due date: latest</SelectItem>
+                  <SelectItem value="-created_at">Newest created</SelectItem>
+                  <SelectItem value="created_at">Oldest created</SelectItem>
+                  <SelectItem value="priority">Priority</SelectItem>
+                  <SelectItem value="-progress_percentage">
+                    Progress: highest
+                  </SelectItem>
+                  <SelectItem value="title">Task title: A–Z</SelectItem>
                 </>
               )}
             </SelectContent>
