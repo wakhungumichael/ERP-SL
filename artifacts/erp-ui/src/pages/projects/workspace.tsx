@@ -8,6 +8,8 @@ import {
   Download,
   Plus,
   Search,
+  SlidersHorizontal,
+  X,
   UserCheck,
 } from "lucide-react";
 import { useAuth } from "@/context/use-auth";
@@ -164,6 +166,7 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
   const [ordering, setOrdering] = useState("-created_at");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [recordTitle, setRecordTitle] = useState("");
   const [recordDescription, setRecordDescription] = useState("");
@@ -510,6 +513,18 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
   }
 
   const items = records.data?.results ?? [];
+  const filtersActive =
+    status !== "all" ||
+    dateFrom !== "" ||
+    dateTo !== "" ||
+    ordering !== (isProjects ? "-created_at" : "due_date");
+  const clearFilters = () => {
+    setStatus("all");
+    setOrdering(isProjects ? "-created_at" : "due_date");
+    setDateFrom("");
+    setDateTo("");
+    setPage(1);
+  };
   return (
     <ERPWorkspacePage
       title={title}
@@ -537,108 +552,13 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
               }
             />
           </div>
-          <Select
-            value={status}
-            onValueChange={(value) => {
-              setStatus(value);
-              setPage(1);
-            }}
+          <Button
+            onClick={() => setFiltersOpen((open) => !open)}
+            variant={filtersActive ? "default" : "outline"}
           >
-            <SelectTrigger className="w-36">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All statuses</SelectItem>
-              <SelectItem value="draft">Draft</SelectItem>
-              {isProjects ? (
-                <>
-                  <SelectItem value="planned">Planned</SelectItem>
-                  <SelectItem value="active">Active</SelectItem>
-                  <SelectItem value="on_hold">On hold</SelectItem>
-                  <SelectItem value="completed">Completed</SelectItem>
-                  <SelectItem value="cancelled">Cancelled</SelectItem>
-                  <SelectItem value="archived">Archived</SelectItem>
-                </>
-              ) : (
-                <>
-                  <SelectItem value="todo">To do</SelectItem>
-                  <SelectItem value="in_progress">In progress</SelectItem>
-                  <SelectItem value="blocked">Blocked</SelectItem>
-                  <SelectItem value="in_review">In review</SelectItem>
-                  <SelectItem value="completed">Completed</SelectItem>
-                  <SelectItem value="cancelled">Cancelled</SelectItem>
-                </>
-              )}
-            </SelectContent>
-          </Select>
-          <Select
-            value={ordering}
-            onValueChange={(value) => {
-              setOrdering(value);
-              setPage(1);
-            }}
-          >
-            <SelectTrigger className="w-48">
-              <SelectValue placeholder="Sort records" />
-            </SelectTrigger>
-            <SelectContent>
-              {isProjects ? (
-                <>
-                  <SelectItem value="-created_at">Newest created</SelectItem>
-                  <SelectItem value="created_at">Oldest created</SelectItem>
-                  <SelectItem value="target_end_date">
-                    Due date: earliest
-                  </SelectItem>
-                  <SelectItem value="-target_end_date">
-                    Due date: latest
-                  </SelectItem>
-                  <SelectItem value="-progress_percentage">
-                    Progress: highest
-                  </SelectItem>
-                  <SelectItem value="progress_percentage">
-                    Progress: lowest
-                  </SelectItem>
-                  <SelectItem value="name">Project name: A–Z</SelectItem>
-                </>
-              ) : (
-                <>
-                  <SelectItem value="due_date">Due date: earliest</SelectItem>
-                  <SelectItem value="-due_date">Due date: latest</SelectItem>
-                  <SelectItem value="-created_at">Newest created</SelectItem>
-                  <SelectItem value="created_at">Oldest created</SelectItem>
-                  <SelectItem value="priority">Priority</SelectItem>
-                  <SelectItem value="-progress_percentage">
-                    Progress: highest
-                  </SelectItem>
-                  <SelectItem value="title">Task title: A–Z</SelectItem>
-                </>
-              )}
-            </SelectContent>
-          </Select>
-          <Input
-            aria-label={
-              isProjects ? "Project start date from" : "Task due date from"
-            }
-            className="w-40"
-            max={dateTo || undefined}
-            onChange={(event) => {
-              setDateFrom(event.target.value);
-              setPage(1);
-            }}
-            type="date"
-            value={dateFrom}
-          />
-          <Input
-            aria-label={isProjects ? "Project due date to" : "Task due date to"}
-            className="w-40"
-            min={dateFrom || undefined}
-            onChange={(event) => {
-              setDateTo(event.target.value);
-              setPage(1);
-            }}
-            type="date"
-            value={dateTo}
-          />
+            <SlidersHorizontal className="mr-2 h-4 w-4" />
+            Filters{filtersActive ? " active" : ""}
+          </Button>
         </div>
         <div className="flex gap-2">
           <Button variant="outline" onClick={() => void exportRegister()}>
@@ -651,6 +571,123 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
           </Button>
         </div>
       </div>
+      {filtersOpen && (
+        <section className="mb-4 rounded-lg border bg-card p-4">
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="text-sm font-semibold">Filters and sorting</h2>
+            {filtersActive && (
+              <Button onClick={clearFilters} size="sm" variant="ghost">
+                <X className="mr-1 h-3.5 w-3.5" />
+                Clear
+              </Button>
+            )}
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <Select
+              value={status}
+              onValueChange={(value) => {
+                setStatus(value);
+                setPage(1);
+              }}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All statuses</SelectItem>
+                <SelectItem value="draft">Draft</SelectItem>
+                {isProjects ? (
+                  <>
+                    <SelectItem value="planned">Planned</SelectItem>
+                    <SelectItem value="active">Active</SelectItem>
+                    <SelectItem value="on_hold">On hold</SelectItem>
+                    <SelectItem value="completed">Completed</SelectItem>
+                    <SelectItem value="cancelled">Cancelled</SelectItem>
+                    <SelectItem value="archived">Archived</SelectItem>
+                  </>
+                ) : (
+                  <>
+                    <SelectItem value="todo">To do</SelectItem>
+                    <SelectItem value="in_progress">In progress</SelectItem>
+                    <SelectItem value="blocked">Blocked</SelectItem>
+                    <SelectItem value="in_review">In review</SelectItem>
+                    <SelectItem value="completed">Completed</SelectItem>
+                    <SelectItem value="cancelled">Cancelled</SelectItem>
+                  </>
+                )}
+              </SelectContent>
+            </Select>
+            <Select
+              value={ordering}
+              onValueChange={(value) => {
+                setOrdering(value);
+                setPage(1);
+              }}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Sort records" />
+              </SelectTrigger>
+              <SelectContent>
+                {isProjects ? (
+                  <>
+                    <SelectItem value="-created_at">Newest created</SelectItem>
+                    <SelectItem value="created_at">Oldest created</SelectItem>
+                    <SelectItem value="target_end_date">
+                      Due date: earliest
+                    </SelectItem>
+                    <SelectItem value="-target_end_date">
+                      Due date: latest
+                    </SelectItem>
+                    <SelectItem value="-progress_percentage">
+                      Progress: highest
+                    </SelectItem>
+                    <SelectItem value="progress_percentage">
+                      Progress: lowest
+                    </SelectItem>
+                    <SelectItem value="name">Project name: A–Z</SelectItem>
+                  </>
+                ) : (
+                  <>
+                    <SelectItem value="due_date">Due date: earliest</SelectItem>
+                    <SelectItem value="-due_date">Due date: latest</SelectItem>
+                    <SelectItem value="-created_at">Newest created</SelectItem>
+                    <SelectItem value="created_at">Oldest created</SelectItem>
+                    <SelectItem value="priority">Priority</SelectItem>
+                    <SelectItem value="-progress_percentage">
+                      Progress: highest
+                    </SelectItem>
+                    <SelectItem value="title">Task title: A–Z</SelectItem>
+                  </>
+                )}
+              </SelectContent>
+            </Select>
+            <Input
+              aria-label={
+                isProjects ? "Project start date from" : "Task due date from"
+              }
+              max={dateTo || undefined}
+              onChange={(event) => {
+                setDateFrom(event.target.value);
+                setPage(1);
+              }}
+              type="date"
+              value={dateFrom}
+            />
+            <Input
+              aria-label={
+                isProjects ? "Project due date to" : "Task due date to"
+              }
+              min={dateFrom || undefined}
+              onChange={(event) => {
+                setDateTo(event.target.value);
+                setPage(1);
+              }}
+              type="date"
+              value={dateTo}
+            />
+          </div>
+        </section>
+      )}
       <div className="overflow-hidden rounded-lg border bg-card">
         <table className="w-full text-sm">
           <thead className="border-b bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
