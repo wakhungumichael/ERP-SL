@@ -778,6 +778,26 @@ class ProjectDocumentListAPIView(APIView):
         return Response(ProjectDocumentSerializer(document, context={"request": request}).data, status=status.HTTP_201_CREATED)
 
 
+class ProjectDocumentDetailAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, pk, document_id):
+        _tenant_and_activation(request)
+        _require(request.user, "delete_projectdocument")
+        project = _project_scope(request.user).filter(pk=pk).first()
+        if not project:
+            return Response({"detail": "Project not found."}, status=status.HTTP_404_NOT_FOUND)
+        document = project.documents.filter(pk=document_id).first()
+        if not document:
+            return Response({"detail": "Project document not found."}, status=status.HTTP_404_NOT_FOUND)
+        name = document.original_name
+        if document.file:
+            document.file.delete(save=False)
+        document.delete()
+        log_business_event(event_group="data_lifecycle", event_type="project_document_removed", tenant=project.tenant, actor=request.user, obj=project, branch=project.branch, note=f"Project document removed: {name}.")
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
 class ProjectMilestoneListCreateAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -833,6 +853,45 @@ class ProjectMilestoneCompleteAPIView(APIView):
                 note=f"Milestone completed: {milestone.name}.",
             )
         return Response(ProjectMilestoneSerializer(milestone).data)
+
+
+class ProjectMilestoneDetailAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def _milestone(self, user, pk, milestone_id):
+        project = _project_scope(user).filter(pk=pk).first()
+        if not project:
+            return None, None
+        return project, project.milestones.filter(pk=milestone_id).first()
+
+    def patch(self, request, pk, milestone_id):
+        _tenant_and_activation(request)
+        _require(request.user, "change_projectmilestone")
+        project, milestone = self._milestone(request.user, pk, milestone_id)
+        if not project:
+            return Response({"detail": "Project not found."}, status=status.HTTP_404_NOT_FOUND)
+        if not milestone:
+            return Response({"detail": "Milestone not found for this project."}, status=status.HTTP_404_NOT_FOUND)
+        serializer = ProjectMilestoneSerializer(milestone, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        milestone = serializer.save()
+        log_business_event(event_group="data_lifecycle", event_type="milestone_updated", tenant=project.tenant, actor=request.user, obj=project, branch=project.branch, note=f"Milestone updated: {milestone.name}.")
+        return Response(ProjectMilestoneSerializer(milestone).data)
+
+    def delete(self, request, pk, milestone_id):
+        _tenant_and_activation(request)
+        _require(request.user, "delete_projectmilestone")
+        project, milestone = self._milestone(request.user, pk, milestone_id)
+        if not project:
+            return Response({"detail": "Project not found."}, status=status.HTTP_404_NOT_FOUND)
+        if not milestone:
+            return Response({"detail": "Milestone not found for this project."}, status=status.HTTP_404_NOT_FOUND)
+        if milestone.tasks.exists():
+            raise serializers.ValidationError({"milestone": "Move or remove its tasks before deleting this milestone."})
+        name = milestone.name
+        milestone.delete()
+        log_business_event(event_group="data_lifecycle", event_type="milestone_removed", tenant=project.tenant, actor=request.user, obj=project, branch=project.branch, note=f"Milestone removed: {name}.")
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class ProjectMemberListCreateAPIView(APIView):

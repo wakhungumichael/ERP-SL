@@ -235,6 +235,29 @@ export default function ProjectDetail({ id }: { id: string }) {
         variant: "destructive",
       }),
   });
+  const removeMilestone = useMutation({
+    mutationFn: async (milestoneId: number) => {
+      const response = await fetch(`${milestonesPath}${milestoneId}/`, {
+        method: "DELETE",
+        headers: { Authorization: `Token ${token}` },
+      });
+      if (!response.ok)
+        throw await apiErrorFromResponse(
+          response,
+          "Milestone could not be removed.",
+        );
+    },
+    onSuccess: () => {
+      refresh(milestonesPath);
+      toast({ title: "Milestone removed" });
+    },
+    onError: (error: Error) =>
+      toast({
+        title: "Could not remove milestone",
+        description: error.message,
+        variant: "destructive",
+      }),
+  });
   const updateMembers = useMutation({
     mutationFn: async (payload: Record<string, string>) => {
       const response = await fetch(membersPath, {
@@ -417,6 +440,29 @@ export default function ProjectDetail({ id }: { id: string }) {
     onError: (error: Error) =>
       toast({
         title: "Could not upload project document",
+        description: error.message,
+        variant: "destructive",
+      }),
+  });
+  const removeDocument = useMutation({
+    mutationFn: async (documentId: number) => {
+      const response = await fetch(`${documentsPath}${documentId}/`, {
+        method: "DELETE",
+        headers: { Authorization: `Token ${token}` },
+      });
+      if (!response.ok)
+        throw await apiErrorFromResponse(
+          response,
+          "Project document could not be removed.",
+        );
+    },
+    onSuccess: () => {
+      refresh(documentsPath);
+      toast({ title: "Project document removed" });
+    },
+    onError: (error: Error) =>
+      toast({
+        title: "Could not remove project document",
         description: error.message,
         variant: "destructive",
       }),
@@ -718,6 +764,21 @@ export default function ProjectDetail({ id }: { id: string }) {
                             Complete
                           </Button>
                         )}
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          disabled={removeMilestone.isPending}
+                          onClick={() => {
+                            if (
+                              window.confirm(
+                                `Remove milestone “${milestone.name}”?`,
+                              )
+                            )
+                              removeMilestone.mutate(milestone.id);
+                          }}
+                        >
+                          Remove
+                        </Button>
                       </div>
                     </div>
                   ))}
@@ -935,14 +996,11 @@ export default function ProjectDetail({ id }: { id: string }) {
                 </p>
                 <div className="mt-4 space-y-2">
                   {(documents.data ?? []).map((file) => (
-                    <a
+                    <div
                       className="flex flex-wrap items-center justify-between gap-3 rounded border p-3 text-sm hover:bg-muted/40"
-                      href={file.file}
                       key={`${file.source}-${file.id}`}
-                      rel="noreferrer"
-                      target="_blank"
                     >
-                      <div>
+                      <a href={file.file} rel="noreferrer" target="_blank">
                         <div className="font-medium">
                           {file.original_name}
                           {file.is_evidence ? " · Approval evidence" : ""}
@@ -953,11 +1011,30 @@ export default function ProjectDetail({ id }: { id: string }) {
                             : `${file.task_number} · ${file.task_title}`}{" "}
                           · {file.uploaded_by_name}
                         </p>
+                      </a>
+                      <div className="flex items-center gap-3">
+                        <span className="text-muted-foreground">
+                          {dateTime(file.created_at)}
+                        </span>
+                        {file.source === "project" && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            disabled={removeDocument.isPending}
+                            onClick={() => {
+                              if (
+                                window.confirm(
+                                  `Remove “${file.original_name}”?`,
+                                )
+                              )
+                                removeDocument.mutate(file.id);
+                            }}
+                          >
+                            Remove
+                          </Button>
+                        )}
                       </div>
-                      <span className="text-muted-foreground">
-                        {dateTime(file.created_at)}
-                      </span>
-                    </a>
+                    </div>
                   ))}
                   {!documents.data?.length && (
                     <p className="rounded border border-dashed py-8 text-center text-sm text-muted-foreground">
