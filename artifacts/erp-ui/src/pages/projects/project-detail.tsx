@@ -1,7 +1,7 @@
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 import { useAuth } from "@/context/use-auth";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -25,6 +25,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { ERPWorkspacePage } from "@/components/erp/workspace/workspace-page";
 import { useToast } from "@/hooks/use-toast";
 import { apiErrorFromResponse } from "@/lib/api-errors";
+import { hasPermission } from "@/lib/permissions";
 import { RecordAuditTrail } from "@/components/audit/record-audit-trail";
 
 type Project = {
@@ -148,7 +149,8 @@ function useApi<T>(path: string, token: string | null) {
 }
 
 export default function ProjectDetail({ id }: { id: string }) {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
+  const [, navigate] = useLocation();
   const { toast } = useToast();
   const client = useQueryClient();
   const projectPath = `/api/projects/projects/${id}/`;
@@ -522,6 +524,29 @@ export default function ProjectDetail({ id }: { id: string }) {
         variant: "destructive",
       }),
   });
+  const deleteProject = useMutation({
+    mutationFn: async () => {
+      const response = await fetch(projectPath, {
+        method: "DELETE",
+        headers: { Authorization: `Token ${token}` },
+      });
+      if (!response.ok)
+        throw await apiErrorFromResponse(
+          response,
+          "Draft project could not be deleted.",
+        );
+    },
+    onSuccess: () => {
+      toast({ title: "Draft project deleted" });
+      navigate("/projects");
+    },
+    onError: (error: Error) =>
+      toast({
+        title: "Could not delete draft project",
+        description: error.message,
+        variant: "destructive",
+      }),
+  });
   const record = project.data;
   const projectTasks = tasks.data?.results ?? [];
   const workflowItems = history.data?.data ?? [];
@@ -536,8 +561,25 @@ export default function ProjectDetail({ id }: { id: string }) {
         </div>
       ) : (
         <>
-          <div className="mb-3 flex justify-end">
+          <div className="mb-3 flex flex-wrap justify-end gap-2">
             <RecordAuditTrail modelLabel="SL_Projects.Project" objectPk={id} />
+            {record.status === "draft" &&
+              hasPermission(user, "SL_Projects.delete_project") && (
+                <Button
+                  variant="destructive"
+                  disabled={deleteProject.isPending}
+                  onClick={() => {
+                    if (
+                      window.confirm(
+                        "Delete this draft project? This cannot be undone.",
+                      )
+                    )
+                      deleteProject.mutate();
+                  }}
+                >
+                  {deleteProject.isPending ? "Deleting..." : "Delete draft"}
+                </Button>
+              )}
           </div>
           <section className="mb-5 grid gap-4 lg:grid-cols-[1fr_auto]">
             <div className="rounded-lg border bg-card p-5">

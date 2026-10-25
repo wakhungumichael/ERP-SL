@@ -1,7 +1,7 @@
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 import { useAuth } from "@/context/use-auth";
 import { ERPWorkspacePage } from "@/components/erp/workspace/workspace-page";
 import { Badge } from "@/components/ui/badge";
@@ -25,6 +25,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { apiErrorFromResponse } from "@/lib/api-errors";
+import { hasPermission } from "@/lib/permissions";
 import { RecordAuditTrail } from "@/components/audit/record-audit-trail";
 
 type Task = {
@@ -153,7 +154,8 @@ function formatDateTime(value?: string | null) {
 }
 
 export default function TaskDetail({ id }: { id: string }) {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
+  const [, navigate] = useLocation();
   const { toast } = useToast();
   const client = useQueryClient();
   const taskPath = `/api/projects/tasks/${id}/`;
@@ -652,6 +654,29 @@ export default function TaskDetail({ id }: { id: string }) {
         variant: "destructive",
       }),
   });
+  const deleteTask = useMutation({
+    mutationFn: async () => {
+      const response = await fetch(taskPath, {
+        method: "DELETE",
+        headers: { Authorization: `Token ${token}` },
+      });
+      if (!response.ok)
+        throw await apiErrorFromResponse(
+          response,
+          "Draft task could not be deleted.",
+        );
+    },
+    onSuccess: () => {
+      toast({ title: "Draft task deleted" });
+      navigate("/projects/tasks");
+    },
+    onError: (error: Error) =>
+      toast({
+        title: "Could not delete draft task",
+        description: error.message,
+        variant: "destructive",
+      }),
+  });
   const record = task.data;
   return (
     <ERPWorkspacePage
@@ -664,6 +689,23 @@ export default function TaskDetail({ id }: { id: string }) {
             modelLabel="SL_Projects.ProjectTask"
             objectPk={id}
           />
+          {record.status === "draft" &&
+            hasPermission(user, "SL_Projects.delete_projecttask") && (
+              <Button
+                variant="destructive"
+                disabled={deleteTask.isPending}
+                onClick={() => {
+                  if (
+                    window.confirm(
+                      "Delete this draft task? This cannot be undone.",
+                    )
+                  )
+                    deleteTask.mutate();
+                }}
+              >
+                {deleteTask.isPending ? "Deleting..." : "Delete draft"}
+              </Button>
+            )}
           <Button variant="outline" onClick={() => setRoleAssignmentOpen(true)}>
             Assign team role
           </Button>

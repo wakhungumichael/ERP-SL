@@ -1015,6 +1015,29 @@ class ProjectDetailAPIView(APIView):
         log_business_event(event_group="data_lifecycle", event_type="update", tenant=project.tenant, actor=request.user, obj=project, branch=project.branch, note="Project updated.")
         return Response(ProjectSerializer(project).data)
 
+    @transaction.atomic
+    def delete(self, request, pk):
+        _tenant_and_activation(request)
+        _require(request.user, "delete_project")
+        project = self._get(request.user, pk)
+        if not project:
+            return Response({"detail": "Project not found."}, status=status.HTTP_404_NOT_FOUND)
+        if project.status != "draft":
+            raise serializers.ValidationError({"status": "Only draft projects can be deleted."})
+        if project.tasks.exists():
+            raise serializers.ValidationError({"detail": "Delete or move the project's tasks before deleting this draft project."})
+        log_business_event(
+            event_group="data_lifecycle",
+            event_type="delete",
+            tenant=project.tenant,
+            actor=request.user,
+            obj=project,
+            branch=project.branch,
+            note="Draft project deleted.",
+        )
+        project.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
 
 class ProjectCloseAPIView(APIView):
     permission_classes = [IsAuthenticated]
@@ -1464,6 +1487,29 @@ class TaskDetailAPIView(APIView):
         _sync_project_progress(task)
         log_business_event(event_group="data_lifecycle", event_type="update", tenant=task.tenant, actor=request.user, obj=task, branch=task.branch, note="Task updated.")
         return Response(TaskSerializer(task).data)
+
+    @transaction.atomic
+    def delete(self, request, pk):
+        _tenant_and_activation(request)
+        _require(request.user, "delete_projecttask")
+        task = self._get(request.user, pk)
+        if not task:
+            return Response({"detail": "Task not found."}, status=status.HTTP_404_NOT_FOUND)
+        if task.status != "draft":
+            raise serializers.ValidationError({"status": "Only draft tasks can be deleted."})
+        if task.subtasks.exists():
+            raise serializers.ValidationError({"detail": "Delete or re-parent the task's subtasks before deleting this draft task."})
+        log_business_event(
+            event_group="data_lifecycle",
+            event_type="delete",
+            tenant=task.tenant,
+            actor=request.user,
+            obj=task,
+            branch=task.branch,
+            note="Draft task deleted.",
+        )
+        task.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class TaskUpdateListCreateAPIView(APIView):
