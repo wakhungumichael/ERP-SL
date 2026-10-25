@@ -330,6 +330,12 @@ class TaskFollowUpSerializer(serializers.ModelSerializer):
 
 class TaskCommentSerializer(serializers.ModelSerializer):
     author_name = serializers.SerializerMethodField()
+    mention_names = serializers.SerializerMethodField()
+    mention_user_ids = serializers.ListField(
+        child=serializers.IntegerField(min_value=1),
+        write_only=True,
+        required=False,
+    )
 
     class Meta:
         model = TaskComment
@@ -338,6 +344,9 @@ class TaskCommentSerializer(serializers.ModelSerializer):
 
     def get_author_name(self, obj):
         return obj.author.get_full_name() or obj.author.username if obj.author else "System process"
+
+    def get_mention_names(self, obj):
+        return [user.get_full_name() or user.username for user in obj.mentions.all()]
 
     def validate_body(self, value):
         if not value.strip():
@@ -1614,7 +1623,12 @@ class TaskCommentListCreateAPIView(APIView):
         task = _task_scope(request.user).filter(pk=pk).first()
         if not task:
             return Response({"detail": "Task not found."}, status=status.HTTP_404_NOT_FOUND)
-        return Response(TaskCommentSerializer(task.comments.select_related("author"), many=True).data)
+        return Response(
+            TaskCommentSerializer(
+                task.comments.select_related("author").prefetch_related("mentions"),
+                many=True,
+            ).data
+        )
 
     def post(self, request, pk):
         _tenant_and_activation(request)
@@ -1624,7 +1638,32 @@ class TaskCommentListCreateAPIView(APIView):
             return Response({"detail": "Task not found."}, status=status.HTTP_404_NOT_FOUND)
         serializer = TaskCommentSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        mention_user_ids = set(serializer.validated_data.pop("mention_user_ids", []))
+        eligible_user_ids = set(
+            OrganizationMembership.objects.filter(tenant=task.tenant, is_active=True)
+            .filter(Q(branch=task.branch) | Q(branches=task.branch))
+            .values_list("user_id", flat=True)
+            .distinct()
+        )
+        invalid_mentions = mention_user_ids - eligible_user_ids
+        if invalid_mentions:
+            raise serializers.ValidationError({
+                "mention_user_ids": "Mention only active organization users who can access this task branch."
+            })
         comment = serializer.save(task=task, author=request.user)
+        if mention_user_ids:
+            comment.mentions.set(mention_user_ids)
+            for recipient in comment.mentions.all():
+                _notify_project_user(
+                    recipient=recipient,
+                    actor=request.user,
+                    tenant=task.tenant,
+                    title=f"You were mentioned on {task.number}",
+                    message=f"{request.user.get_full_name() or request.user.username} mentioned you in a task comment.",
+                    route_path=f"/projects/tasks/{task.pk}",
+                    source_type="project_task_comment_mention",
+                    source_id=comment.pk,
+                )
         log_business_event(event_group="data_lifecycle", event_type="comment_created", tenant=task.tenant, actor=request.user, obj=task, branch=task.branch, note="Task comment added.")
         return Response(TaskCommentSerializer(comment).data, status=status.HTTP_201_CREATED)
 

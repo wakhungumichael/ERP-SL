@@ -65,6 +65,7 @@ type Comment = {
   id: number;
   body: string;
   author_name: string;
+  mention_names: string[];
   created_at: string;
 };
 type Attachment = {
@@ -191,6 +192,7 @@ export default function TaskDetail({ id }: { id: string }) {
   const [followUpDate, setFollowUpDate] = useState("");
   const [followUpNotes, setFollowUpNotes] = useState("");
   const [comment, setComment] = useState("");
+  const [mentionedUserIds, setMentionedUserIds] = useState<number[]>([]);
   const [attachment, setAttachment] = useState<File | null>(null);
   const [isEvidence, setIsEvidence] = useState(false);
   const [assigneeId, setAssigneeId] = useState("");
@@ -339,7 +341,10 @@ export default function TaskDetail({ id }: { id: string }) {
           "Content-Type": "application/json",
           Authorization: `Token ${token}`,
         },
-        body: JSON.stringify({ body: comment }),
+        body: JSON.stringify({
+          body: comment,
+          mention_user_ids: mentionedUserIds,
+        }),
       });
       if (!response.ok)
         throw await apiErrorFromResponse(
@@ -350,6 +355,7 @@ export default function TaskDetail({ id }: { id: string }) {
     },
     onSuccess: () => {
       setComment("");
+      setMentionedUserIds([]);
       refresh([commentsPath]);
       toast({ title: "Comment added" });
     },
@@ -1254,6 +1260,35 @@ export default function TaskDetail({ id }: { id: string }) {
                     Comment
                   </Button>
                 </div>
+                {(assignees.data ?? []).length > 0 && (
+                  <div className="mt-3 flex flex-wrap items-center gap-2 text-sm">
+                    <span className="text-muted-foreground">
+                      Notify people:
+                    </span>
+                    {(assignees.data ?? []).map((candidate) => {
+                      const selected = mentionedUserIds.includes(candidate.id);
+                      return (
+                        <Button
+                          key={candidate.id}
+                          type="button"
+                          size="sm"
+                          variant={selected ? "default" : "outline"}
+                          onClick={() =>
+                            setMentionedUserIds((current) =>
+                              selected
+                                ? current.filter(
+                                    (userId) => userId !== candidate.id,
+                                  )
+                                : [...current, candidate.id],
+                            )
+                          }
+                        >
+                          @{candidate.name}
+                        </Button>
+                      );
+                    })}
+                  </div>
+                )}
                 <div className="mt-4 space-y-3">
                   {(comments.data ?? []).map((entry) => (
                     <div className="rounded border p-3 text-sm" key={entry.id}>
@@ -1266,6 +1301,11 @@ export default function TaskDetail({ id }: { id: string }) {
                       <p className="mt-1 whitespace-pre-wrap text-muted-foreground">
                         {entry.body}
                       </p>
+                      {entry.mention_names.length > 0 && (
+                        <p className="mt-2 text-xs text-muted-foreground">
+                          Notified: {entry.mention_names.join(", ")}
+                        </p>
+                      )}
                     </div>
                   ))}
                   {!comments.data?.length && (
