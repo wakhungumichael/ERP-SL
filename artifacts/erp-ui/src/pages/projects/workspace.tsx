@@ -126,7 +126,9 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
   const [taskProject, setTaskProject] = useState("none");
   const [taskType, setTaskType] = useState("");
   const [taskPriority, setTaskPriority] = useState("medium");
+  const [taskStartDate, setTaskStartDate] = useState("");
   const [taskDueDate, setTaskDueDate] = useState("");
+  const [taskEstimatedHours, setTaskEstimatedHours] = useState("");
   const [projectPriority, setProjectPriority] = useState("medium");
   const [projectStartDate, setProjectStartDate] = useState("");
   const [projectTargetEndDate, setProjectTargetEndDate] = useState("");
@@ -163,6 +165,31 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
   };
   const createRecord = useMutation({
     mutationFn: async () => {
+      if (
+        !isProjects &&
+        taskStartDate &&
+        taskDueDate &&
+        taskDueDate < taskStartDate
+      ) {
+        throw new Error("Due date cannot be before the task start date.");
+      }
+      if (
+        isProjects &&
+        projectStartDate &&
+        projectTargetEndDate &&
+        projectTargetEndDate < projectStartDate
+      ) {
+        throw new Error(
+          "Target end date cannot be before the project start date.",
+        );
+      }
+      if (
+        taskEstimatedHours &&
+        (!Number.isFinite(Number(taskEstimatedHours)) ||
+          Number(taskEstimatedHours) < 0)
+      ) {
+        throw new Error("Estimated hours must be zero or more.");
+      }
       const taskPayload = {
         title: recordTitle,
         description: recordDescription,
@@ -170,7 +197,9 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
         project: taskProject === "none" ? null : Number(taskProject),
         task_type: taskType,
         priority: taskPriority,
+        start_date: taskStartDate || null,
         due_date: taskDueDate || null,
+        estimated_hours: taskEstimatedHours || null,
       };
       const projectPayload = {
         name: recordTitle,
@@ -205,7 +234,9 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
       setTaskProject("none");
       setTaskType("");
       setTaskPriority("medium");
+      setTaskStartDate("");
       setTaskDueDate("");
+      setTaskEstimatedHours("");
       setProjectPriority("medium");
       setProjectStartDate("");
       setProjectTargetEndDate("");
@@ -596,7 +627,13 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
           onPageSize={setPageSize}
         />
       </div>
-      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+      <Dialog
+        open={createOpen}
+        onOpenChange={(open) => {
+          setCreateOpen(open);
+          if (open && requestedProject) setTaskProject(requestedProject);
+        }}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>New {isProjects ? "Project" : "Task"}</DialogTitle>
@@ -661,7 +698,7 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
                     ))}
                   </SelectContent>
                 </Select>
-                <div className="grid gap-3 sm:grid-cols-3">
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                   <Input
                     value={taskType}
                     onChange={(event) => setTaskType(event.target.value)}
@@ -680,8 +717,27 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
                   </Select>
                   <Input
                     type="date"
+                    value={taskStartDate}
+                    aria-label="Task start date"
+                    onChange={(event) => setTaskStartDate(event.target.value)}
+                  />
+                  <Input
+                    type="date"
                     value={taskDueDate}
+                    min={taskStartDate || undefined}
+                    aria-label="Task due date"
                     onChange={(event) => setTaskDueDate(event.target.value)}
+                  />
+                  <Input
+                    type="number"
+                    min="0"
+                    step="0.25"
+                    value={taskEstimatedHours}
+                    aria-label="Estimated hours"
+                    placeholder="Estimated hours"
+                    onChange={(event) =>
+                      setTaskEstimatedHours(event.target.value)
+                    }
                   />
                 </div>
               </>
