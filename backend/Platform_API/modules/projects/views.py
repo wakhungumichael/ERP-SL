@@ -334,9 +334,9 @@ class TaskAssigneeListAPIView(APIView):
         task = _task_scope(request.user).filter(pk=pk).first()
         if not task:
             return Response({"detail": "Task not found."}, status=status.HTTP_404_NOT_FOUND)
-        memberships = OrganizationMembership.objects.filter(
-            tenant=task.tenant, branch=task.branch, is_active=True
-        ).select_related("user").order_by("user__first_name", "user__username")
+        memberships = OrganizationMembership.objects.filter(tenant=task.tenant, is_active=True).filter(
+            Q(branch=task.branch) | Q(branches=task.branch)
+        ).select_related("user").distinct().order_by("user__first_name", "user__username")
         return Response([{"id": membership.user_id, "name": membership.user.get_full_name() or membership.user.username} for membership in memberships])
 
 
@@ -354,8 +354,10 @@ class TaskAssignmentAPIView(APIView):
             task.primary_assignee = None
         else:
             membership = OrganizationMembership.objects.filter(
-                tenant=task.tenant, branch=task.branch, user_id=assignee_id, is_active=True
-            ).select_related("user").first()
+                tenant=task.tenant, user_id=assignee_id, is_active=True
+            ).filter(
+                Q(branch=task.branch) | Q(branches=task.branch)
+            ).select_related("user").distinct().first()
             if not membership:
                 raise serializers.ValidationError({"primary_assignee": "Choose an active member of this task branch."})
             task.primary_assignee = membership.user
