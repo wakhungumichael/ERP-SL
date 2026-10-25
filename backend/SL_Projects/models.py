@@ -251,5 +251,7 @@ class TaskFollowUp(AuditMetadataMixin, models.Model):
         ordering = ["follow_up_date", "id"]
 
     def mark_completed(self):
+        """Persist a completed follow-up with its exact completion time."""
         self.status = "completed"
         self.completed_at = timezone.now()
+        self.save(update_fields=["status", "completed_at", "updated_at"])

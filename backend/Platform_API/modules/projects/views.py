@@ -905,9 +905,7 @@ class TaskFollowUpCompleteAPIView(APIView):
             return Response({"detail": "Follow-up not found for this task."}, status=status.HTTP_404_NOT_FOUND)
         if follow_up.status == "completed":
             return Response(TaskFollowUpSerializer(follow_up).data)
-        follow_up.status = "completed"
-        follow_up.completed_at = timezone.now()
-        follow_up.save(update_fields=["status", "completed_at", "updated_at"])
+        follow_up.mark_completed()
         log_business_event(
             event_group="data_lifecycle",
             event_type="follow_up_completed",
