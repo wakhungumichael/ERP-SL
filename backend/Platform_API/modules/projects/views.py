@@ -254,16 +254,19 @@ class ProjectsDashboardAPIView(APIView):
         tasks = _task_scope(request.user)
         projects = _project_scope(request.user)
         today = timezone.localdate()
+        open_tasks = tasks.exclude(status__in=["completed", "cancelled"])
         return Response({
             "counts": {
                 "active_projects": projects.filter(status="active").count(),
-                "open_tasks": tasks.exclude(status__in=["completed", "cancelled"]).count(),
-                "my_tasks": tasks.filter(primary_assignee=request.user).exclude(status__in=["completed", "cancelled"]).count(),
-                "overdue_tasks": tasks.exclude(status__in=["completed", "cancelled"]).filter(due_date__lt=today).count(),
+                "open_tasks": open_tasks.count(),
+                "my_tasks": open_tasks.filter(primary_assignee=request.user).count(),
+                "overdue_tasks": open_tasks.filter(due_date__lt=today).count(),
                 "blocked_tasks": tasks.filter(status="blocked").count(),
                 "awaiting_review": tasks.filter(status="in_review").count(),
                 "ticket_tasks": tasks.filter(source_ticket__isnull=False).count(),
-            }
+            },
+            "recent_tasks": TaskSerializer(tasks.order_by("-updated_at")[:6], many=True).data,
+            "upcoming_deadlines": TaskSerializer(open_tasks.filter(due_date__isnull=False).order_by("due_date", "priority")[:6], many=True).data,
         })
 
 
