@@ -22,7 +22,7 @@ from Platform_API.modules.mixins import (
     tenant_or_403,
 )
 from Platform_Core.audit import log_business_event
-from Platform_Core.models import OrganizationMembership, TenantBranch, WorkflowEntityBinding
+from Platform_Core.models import OrganizationBranchRoleAssignment, OrganizationMembership, TenantBranch, WorkflowEntityBinding
 from Platform_Core.platform import get_active_tenant_module_slugs
 from SL_Projects.models import Project, ProjectBranchAccess, ProjectMember, ProjectMilestone, ProjectTask, TaskAttachment, TaskComment, TaskDependency, TaskFollowUp, TaskUpdate
 from SL_Ticketing.models import Ticket
@@ -452,6 +452,22 @@ class TaskAssigneeListAPIView(APIView):
         return Response([{"id": membership.user_id, "name": membership.user.get_full_name() or membership.user.username} for membership in memberships])
 
 
+class TaskRoleListAPIView(APIView):
+    """Expose only branch-valid organization roles for assigning team work."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+        _tenant_and_activation(request)
+        _require(request.user, "view_projecttask")
+        task = _task_scope(request.user).filter(pk=pk).first()
+        if not task:
+            return Response({"detail": "Task not found."}, status=status.HTTP_404_NOT_FOUND)
+        roles = OrganizationBranchRoleAssignment.objects.filter(
+            membership__tenant=task.tenant, membership__is_active=True, branch=task.branch, is_active=True,
+        ).select_related("role_group").values("role_group_id", "role_group__name").distinct().order_by("role_group__name")
+        return Response([{"id": role["role_group_id"], "name": role["role_group__name"].split(":")[-1]} for role in roles])
+
+
 class TaskAssignmentAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -462,9 +478,9 @@ class TaskAssignmentAPIView(APIView):
         if not task:
             return Response({"detail": "Task not found."}, status=status.HTTP_404_NOT_FOUND)
         assignee_id = request.data.get("primary_assignee")
-        if not assignee_id:
+        if "primary_assignee" in request.data and not assignee_id:
             task.primary_assignee = None
-        else:
+        elif "primary_assignee" in request.data:
             membership = OrganizationMembership.objects.filter(
                 tenant=task.tenant, user_id=assignee_id, is_active=True
             ).filter(
@@ -473,10 +489,24 @@ class TaskAssignmentAPIView(APIView):
             if not membership:
                 raise serializers.ValidationError({"primary_assignee": "Choose an active member of this task branch."})
             task.primary_assignee = membership.user
+        if "assigned_role" in request.data:
+            role_id = request.data.get("assigned_role")
+            if not role_id:
+                task.assigned_role = None
+            else:
+                assignment = OrganizationBranchRoleAssignment.objects.filter(
+                    membership__tenant=task.tenant, membership__is_active=True, branch=task.branch,
+                    is_active=True, role_group_id=role_id,
+                ).select_related("role_group").first()
+                if not assignment:
+                    raise serializers.ValidationError({"assigned_role": "Choose an active role for this task branch."})
+                task.assigned_role = assignment.role_group
         task.assigned_by = request.user
         task.updated_by = request.user
-        task.save(update_fields=["primary_assignee", "assigned_by", "updated_by", "updated_at"])
-        log_business_event(event_group="data_lifecycle", event_type="task_assigned", tenant=task.tenant, actor=request.user, obj=task, branch=task.branch, note=f"Task assigned to {task.primary_assignee.get_full_name() or task.primary_assignee.username if task.primary_assignee_id else 'Unassigned'}.")
+        task.save(update_fields=["primary_assignee", "assigned_role", "assigned_by", "updated_by", "updated_at"])
+        assignee_name = task.primary_assignee.get_full_name() or task.primary_assignee.username if task.primary_assignee_id else "Unassigned"
+        role_name = task.assigned_role.name.split(":")[-1] if task.assigned_role_id else "No role"
+        log_business_event(event_group="data_lifecycle", event_type="task_assigned", tenant=task.tenant, actor=request.user, obj=task, branch=task.branch, note=f"Task assigned to {assignee_name}; team role: {role_name}.")
         return Response(TaskSerializer(task).data)
 
 
