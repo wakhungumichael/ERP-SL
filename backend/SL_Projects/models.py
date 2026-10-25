@@ -51,12 +51,19 @@ class Project(AuditMetadataMixin, models.Model):
         ]
 
     def clean(self):
+        errors = {}
         if self.branch_id and self.tenant_id and self.branch.tenant_id != self.tenant_id:
-            raise ValidationError({"branch": "The owning branch must belong to the project tenant."})
+            errors["branch"] = "The owning branch must belong to the project tenant."
         if not 0 <= self.progress_percentage <= 100:
-            raise ValidationError({"progress_percentage": "Progress must be between 0 and 100."})
+            errors["progress_percentage"] = "Progress must be between 0 and 100."
         if self.start_date and self.target_end_date and self.target_end_date < self.start_date:
-            raise ValidationError({"target_end_date": "Target end date cannot be before the start date."})
+            errors["target_end_date"] = "Target end date cannot be before the start date."
+        if self.estimated_budget is not None and self.estimated_budget < 0:
+            errors["estimated_budget"] = "Estimated budget cannot be negative."
+        if self.actual_cost is not None and self.actual_cost < 0:
+            errors["actual_cost"] = "Actual cost cannot be negative."
+        if errors:
+            raise ValidationError(errors)
 
     def __str__(self):
         return f"{self.code} - {self.name}"

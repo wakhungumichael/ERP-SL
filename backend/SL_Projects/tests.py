@@ -61,6 +61,11 @@ class ProjectDomainTests(TestCase):
         with self.assertRaises(ValidationError):
             project.full_clean()
 
+    def test_project_rejects_negative_budget_values(self):
+        project = Project(tenant=self.tenant, branch=self.branch, code="PRJ-TEST-0004", name="Invalid budget", estimated_budget=-1)
+        with self.assertRaises(ValidationError):
+            project.full_clean()
+
     def test_task_rejects_due_date_before_start_date(self):
         task = ProjectTask(tenant=self.tenant, branch=self.branch, number="TSK-TEST-0002", title="Invalid dates", start_date=date.today(), due_date=date.today() - timedelta(days=1))
         with self.assertRaises(ValidationError):

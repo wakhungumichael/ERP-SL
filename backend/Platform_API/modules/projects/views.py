@@ -175,6 +175,10 @@ class ProjectSerializer(serializers.ModelSerializer):
         target_end = attrs.get("target_end_date", getattr(self.instance, "target_end_date", None))
         if start and target_end and target_end < start:
             raise serializers.ValidationError({"target_end_date": "Target end date cannot be before the start date."})
+        for field in ("estimated_budget", "actual_cost"):
+            value = attrs.get(field, getattr(self.instance, field, None))
+            if value is not None and value < 0:
+                raise serializers.ValidationError({field: "Enter an amount of zero or more."})
         return attrs
 
 
