@@ -22,7 +22,7 @@ from Platform_API.modules.mixins import (
     tenant_or_403,
 )
 from Platform_Core.audit import log_business_event
-from Platform_Core.models import OrganizationBranchRoleAssignment, OrganizationMembership, TenantBranch, WorkflowEntityBinding
+from Platform_Core.models import OrganizationBranchRoleAssignment, OrganizationMembership, SystemNotification, TenantBranch, WorkflowEntityBinding
 from Platform_Core.platform import get_active_tenant_module_slugs
 from SL_Projects.models import Project, ProjectBranchAccess, ProjectDocument, ProjectMember, ProjectMilestone, ProjectTask, TaskAttachment, TaskComment, TaskDependency, TaskFollowUp, TaskUpdate
 from SL_Ticketing.models import Ticket
@@ -126,6 +126,26 @@ def _sync_project_progress(task):
     )
     progress = round(aggregate["progress"] or 0)
     Project.objects.filter(pk=task.project_id).exclude(progress_percentage=progress).update(progress_percentage=progress)
+
+
+def _notify_project_user(*, recipient, actor, tenant, title, message, route_path, source_type, source_id):
+    """Create one actionable unread reminder per project event and recipient."""
+    if not recipient or recipient.pk == actor.pk:
+        return
+    if SystemNotification.objects.filter(
+        tenant=tenant, recipient=recipient, source_type=source_type, source_id=source_id, is_read=False,
+    ).exists():
+        return
+    SystemNotification.objects.create(
+        tenant=tenant,
+        recipient=recipient,
+        category="reminder",
+        title=title[:200],
+        message=message,
+        route_path=route_path,
+        source_type=source_type,
+        source_id=source_id,
+    )
 
 
 class ProjectSerializer(serializers.ModelSerializer):
@@ -527,6 +547,16 @@ class TaskAssignmentAPIView(APIView):
         assignee_name = task.primary_assignee.get_full_name() or task.primary_assignee.username if task.primary_assignee_id else "Unassigned"
         role_name = task.assigned_role.name.split(":")[-1] if task.assigned_role_id else "No role"
         log_business_event(event_group="data_lifecycle", event_type="task_assigned", tenant=task.tenant, actor=request.user, obj=task, branch=task.branch, note=f"Task assigned to {assignee_name}; team role: {role_name}.")
+        _notify_project_user(
+            recipient=task.primary_assignee,
+            actor=request.user,
+            tenant=task.tenant,
+            title=f"Task assigned: {task.number}",
+            message=f"{request.user.get_full_name() or request.user.username} assigned you to {task.title}.",
+            route_path=f"/projects/tasks/{task.pk}",
+            source_type="project_task_assignment",
+            source_id=task.pk,
+        )
         return Response(TaskSerializer(task).data)
 
 
@@ -1069,6 +1099,16 @@ class TaskFollowUpListCreateAPIView(APIView):
         _ensure_active_tenant_user(task.tenant, owner, "owner")
         follow_up = serializer.save(task=task, owner=owner)
         log_business_event(event_group="data_lifecycle", event_type="follow_up_created", tenant=task.tenant, actor=request.user, obj=task, branch=task.branch, note="Task follow-up created.")
+        _notify_project_user(
+            recipient=owner,
+            actor=request.user,
+            tenant=task.tenant,
+            title=f"Follow-up scheduled: {task.number}",
+            message=f"A follow-up for {task.title} is due on {follow_up.follow_up_date:%d %b %Y}.",
+            route_path=f"/projects/tasks/{task.pk}",
+            source_type="project_task_follow_up",
+            source_id=follow_up.pk,
+        )
         return Response(TaskFollowUpSerializer(follow_up).data, status=status.HTTP_201_CREATED)
 
 
