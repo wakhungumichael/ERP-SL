@@ -424,15 +424,33 @@ class ProjectsReportsAPIView(APIView):
         tasks = _task_scope(request.user)
         projects = _project_scope(request.user)
         today = timezone.localdate()
+        follow_ups = TaskFollowUp.objects.filter(task__in=tasks)
+        milestones = ProjectMilestone.objects.filter(project__in=projects)
         return Response({
             "summary": {
                 "projects": projects.count(),
                 "active_projects": projects.filter(status="active").count(),
                 "open_tasks": tasks.exclude(status__in=["completed", "cancelled"]).count(),
                 "overdue_tasks": tasks.exclude(status__in=["completed", "cancelled"]).filter(due_date__lt=today).count(),
+                "ticket_tasks": tasks.filter(source_ticket__isnull=False).count(),
+                "open_follow_ups": follow_ups.exclude(status__in=["completed", "cancelled"]).count(),
+                "overdue_follow_ups": follow_ups.filter(
+                    status__in=["scheduled", "pending"], follow_up_date__lt=today
+                ).count(),
             },
             "tasks_by_status": list(tasks.values("status").annotate(count=Count("id")).order_by("status")),
             "tasks_by_priority": list(tasks.values("priority").annotate(count=Count("id")).order_by("priority")),
+            "project_progress": list(
+                projects.values("code", "name", "progress_percentage", "status")
+                .order_by("progress_percentage", "target_end_date", "name")[:10]
+            ),
+            "upcoming_milestones": list(
+                milestones.filter(
+                    due_date__isnull=False, status__in=["draft", "open"]
+                )
+                .order_by("due_date", "id")
+                .values("id", "project__code", "project__name", "name", "due_date", "status")[:10]
+            ),
             "workload": [
                 {"assignee": row["primary_assignee__username"], "name": row["primary_assignee__first_name"] or row["primary_assignee__username"], "count": row["count"]}
                 for row in tasks.exclude(status__in=["completed", "cancelled"]).values("primary_assignee__username", "primary_assignee__first_name").annotate(count=Count("id")).order_by("-count")[:10]
