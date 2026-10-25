@@ -57,6 +57,7 @@ type Task = {
   progress_percentage: number;
   status: string;
 };
+type Assignee = { id: number; name: string };
 
 const statusTone: Record<string, string> = {
   active: "border-emerald-200 bg-emerald-50 text-emerald-700",
@@ -163,6 +164,7 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
   const [recordTitle, setRecordTitle] = useState("");
   const [recordDescription, setRecordDescription] = useState("");
   const [taskProject, setTaskProject] = useState("none");
+  const [taskAssignee, setTaskAssignee] = useState("unassigned");
   const [taskType, setTaskType] = useState("");
   const [taskPriority, setTaskPriority] = useState("medium");
   const [taskStartDate, setTaskStartDate] = useState("");
@@ -234,6 +236,8 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
         description: recordDescription,
         status: "draft",
         project: taskProject === "none" ? null : Number(taskProject),
+        primary_assignee:
+          taskAssignee === "unassigned" ? null : Number(taskAssignee),
         task_type: taskType,
         priority: taskPriority,
         start_date: taskStartDate || null,
@@ -271,6 +275,7 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
       setRecordTitle("");
       setRecordDescription("");
       setTaskProject("none");
+      setTaskAssignee("unassigned");
       setTaskType("");
       setTaskPriority("medium");
       setTaskStartDate("");
@@ -315,6 +320,10 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
     : "/api/projects/tasks/";
   const projectChoices = useApi<PageResult<Project>>(
     "/api/projects/projects/?page_size=100",
+    token,
+  );
+  const assigneeChoices = useApi<Assignee[]>(
+    "/api/projects/tasks/assignees/",
     token,
   );
   const query = new URLSearchParams({
@@ -745,6 +754,19 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
                     {(projectChoices.data?.results ?? []).map((project) => (
                       <SelectItem key={project.id} value={String(project.id)}>
                         {project.code} · {project.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select value={taskAssignee} onValueChange={setTaskAssignee}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Assign to (optional)" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="unassigned">Leave unassigned</SelectItem>
+                    {(assigneeChoices.data ?? []).map((assignee) => (
+                      <SelectItem key={assignee.id} value={String(assignee.id)}>
+                        {assignee.name}
                       </SelectItem>
                     ))}
                   </SelectContent>

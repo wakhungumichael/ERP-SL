@@ -30,6 +30,7 @@ urlpatterns = [
     path("tasks/<int:pk>/comments/", views.TaskCommentListCreateAPIView.as_view(), name="project-task-comment-list"),
     path("tasks/<int:pk>/attachments/", views.TaskAttachmentListCreateAPIView.as_view(), name="project-task-attachment-list"),
     path("tasks/<int:pk>/attachments/<int:attachment_id>/", views.TaskAttachmentDetailAPIView.as_view(), name="project-task-attachment-detail"),
+    path("tasks/assignees/", views.ActiveBranchTaskAssigneeListAPIView.as_view(), name="project-task-active-branch-assignees"),
     path("tasks/<int:pk>/assignees/", views.TaskAssigneeListAPIView.as_view(), name="project-task-assignee-list"),
     path("tasks/<int:pk>/roles/", views.TaskRoleListAPIView.as_view(), name="project-task-role-list"),
     path("tasks/<int:pk>/assign/", views.TaskAssignmentAPIView.as_view(), name="project-task-assign"),

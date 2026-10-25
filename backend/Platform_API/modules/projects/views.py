@@ -590,6 +590,27 @@ class TaskAssigneeListAPIView(APIView):
         return Response([{"id": membership.user_id, "name": membership.user.get_full_name() or membership.user.username} for membership in memberships])
 
 
+class ActiveBranchTaskAssigneeListAPIView(APIView):
+    """Return users eligible for a new task in the currently active branch."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        tenant = _tenant_and_activation(request)
+        _require(request.user, "view_projecttask")
+        branch_id = _active_branch_id(request.user)
+        if not branch_id:
+            raise PermissionDenied("Select an active branch before creating a task.")
+        memberships = OrganizationMembership.objects.filter(
+            tenant=tenant, is_active=True
+        ).filter(
+            Q(branch_id=branch_id) | Q(branches__id=branch_id)
+        ).select_related("user").distinct().order_by("user__first_name", "user__last_name", "user__username")
+        return Response([
+            {"id": membership.user_id, "name": membership.user.get_full_name() or membership.user.username}
+            for membership in memberships
+        ])
+
+
 class TaskRoleListAPIView(APIView):
     """Expose only branch-valid organization roles for assigning team work."""
     permission_classes = [IsAuthenticated]
