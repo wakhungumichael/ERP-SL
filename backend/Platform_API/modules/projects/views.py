@@ -628,6 +628,43 @@ class ProjectMemberListCreateAPIView(APIView):
         return Response(ProjectMemberSerializer(member).data, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
 
 
+class ProjectMemberDetailAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @transaction.atomic
+    def delete(self, request, pk, member_id):
+        _tenant_and_activation(request)
+        _require(request.user, "manage_project_members")
+        project = _project_scope(request.user).filter(pk=pk).first()
+        if not project:
+            return Response({"detail": "Project not found."}, status=status.HTTP_404_NOT_FOUND)
+        member = project.members.filter(pk=member_id).select_related("user").first()
+        if not member:
+            return Response({"detail": "Project member not found."}, status=status.HTTP_404_NOT_FOUND)
+        fields = ["updated_by", "updated_at"]
+        if project.manager_id == member.user_id:
+            project.manager = None
+            fields.append("manager")
+        if project.owner_id == member.user_id:
+            project.owner = None
+            fields.append("owner")
+        if len(fields) > 2:
+            project.updated_by = request.user
+            project.save(update_fields=fields)
+        member_name = member.user.get_full_name() or member.user.username
+        member.delete()
+        log_business_event(
+            event_group="data_lifecycle",
+            event_type="project_member_removed",
+            tenant=project.tenant,
+            actor=request.user,
+            obj=project,
+            branch=project.branch,
+            note=f"Project member removed: {member_name}.",
+        )
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
 class TaskListCreateAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
