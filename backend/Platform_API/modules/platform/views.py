@@ -2325,6 +2325,35 @@ class WorkflowInboxAPIView(APIView):
         )
 
 
+class WorkflowRecordHistoryAPIView(APIView):
+    """Return only workflow records the active user may see for one ERP entity."""
+    permission_classes = (IsAuthenticated,)
+
+    def get(self, request):
+        module_slug = str(request.query_params.get("module_slug") or "").strip()
+        entity_type = str(request.query_params.get("entity_type") or "").strip()
+        entity_id = request.query_params.get("entity_id")
+        if not module_slug or not entity_type or not entity_id:
+            raise ValidationError({"detail": "module_slug, entity_type, and entity_id are required."})
+        try:
+            entity_id = int(entity_id)
+        except (TypeError, ValueError):
+            raise ValidationError({"entity_id": "Enter a valid entity ID."})
+        qs = WorkflowInboxItem.objects.select_related("workflow", "node_definition", "assigned_group", "assigned_user", "acted_by").filter(
+            module_slug=module_slug, entity_type=entity_type, entity_id=entity_id
+        )
+        if not _is_superadmin(request.user):
+            tenant = _request_tenant_or_none(request.user)
+            if tenant is None:
+                qs = qs.none()
+            else:
+                group_ids = _active_workflow_group_ids(request.user)
+                qs = qs.filter(tenant=tenant).filter(
+                    Q(metadata__submitted_by=request.user.id) | Q(assigned_user=request.user) | Q(assigned_group_id__in=group_ids) | Q(acted_by=request.user)
+                )
+        return success_response("Workflow history loaded successfully.", data=WorkflowInboxItemSerializer(qs.order_by("created_at"), many=True).data)
+
+
 class WorkflowRequirementAPIView(APIView):
     """Lets a module determine whether a configured workflow currently applies."""
 
