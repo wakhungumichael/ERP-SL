@@ -7,10 +7,20 @@ const LAST_ACTIVITY_KEY = 'sl-erp-last-activity';
 const SESSION_EXPIRED_KEY = 'sl-erp-session-expired';
 const DEFAULT_IDLE_TIMEOUT_MINUTES = 30;
 
-function redirectToLogin(reason: 'idle' | 'expired') {
+function tenantLoginPath(user?: Record<string, unknown> | null) {
+  const rememberedCode = localStorage.getItem('sl-erp-tenant-code')?.trim();
+  const activeMembershipId = String(user?.active_membership_id ?? '');
+  const memberships = Array.isArray(user?.memberships) ? user.memberships as Array<Record<string, unknown>> : [];
+  const activeMembership = memberships.find((membership) => String(membership.id ?? '') === activeMembershipId);
+  const membershipCode = String(activeMembership?.tenant_code ?? activeMembership?.organization_code ?? '').trim();
+  const code = rememberedCode || membershipCode;
+  return code ? `/login/${encodeURIComponent(code)}` : '/login';
+}
+
+function redirectToLogin(reason: 'idle' | 'expired', user?: Record<string, unknown> | null) {
   // A full navigation unmounts protected pages before their cached queries are
   // cleared, avoiding a transient render with an invalid authentication state.
-  window.location.replace(`/login?reason=${reason}`);
+  window.location.replace(`${tenantLoginPath(user)}?reason=${reason}`);
 }
 
 export interface AuthContextValue {
@@ -120,8 +130,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!token || isLoading) return;
     if (authErrorStatus === 401) {
+      const loginUser = unwrappedUser;
       clearToken();
-      redirectToLogin('expired');
+      redirectToLogin('expired', loginUser);
     }
   }, [authErrorStatus, isLoading, token]);
 
@@ -146,8 +157,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         keepalive: true,
       });
       localStorage.setItem(SESSION_EXPIRED_KEY, 'true');
+      const loginUser = unwrappedUser;
       clearToken();
-      redirectToLogin('idle');
+      redirectToLogin('idle', loginUser);
     };
 
     recordActivity();
