@@ -986,6 +986,12 @@ class TicketTaskListCreateAPIView(APIView):
         if not branch_id:
             raise PermissionDenied("Select an active branch before creating a task.")
         priority_map = {"low": "low", "normal": "medium", "high": "high", "urgent": "critical"}
+        priority = request.data.get("priority") or priority_map.get(ticket.priority, "medium")
+        if priority not in dict(ProjectTask.PRIORITY_CHOICES):
+            raise serializers.ValidationError({"priority": "Choose low, medium, high, or critical."})
+        due_date = request.data.get("due_date") or None
+        if due_date:
+            due_date = serializers.DateField().run_validation(due_date)
         task = ProjectTask(
             tenant=tenant,
             branch_id=branch_id,
@@ -993,7 +999,9 @@ class TicketTaskListCreateAPIView(APIView):
             title=request.data.get("title") or ticket.subject,
             description=request.data.get("description") or ticket.description,
             source_ticket=ticket,
-            priority=priority_map.get(ticket.priority, "medium"),
+            task_type=str(request.data.get("task_type") or "")[:100],
+            priority=priority,
+            due_date=due_date,
             created_by=request.user,
             updated_by=request.user,
             assigned_by=request.user,

@@ -61,6 +61,12 @@ export default function TicketingQueue() {
   const [statusFilter, setStatusFilter] = useState<'all' | 'new' | 'open' | 'pending' | 'resolved' | 'closed'>('all');
   const [priorityFilter, setPriorityFilter] = useState<'all' | 'low' | 'normal' | 'high' | 'urgent'>('all');
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [taskDialogOpen, setTaskDialogOpen] = useState(false);
+  const [taskTitle, setTaskTitle] = useState('');
+  const [taskDescription, setTaskDescription] = useState('');
+  const [taskPriority, setTaskPriority] = useState('medium');
+  const [taskDueDate, setTaskDueDate] = useState('');
+  const [taskType, setTaskType] = useState('');
   const [replyChannel, setReplyChannel] = useState<'portal' | 'email' | 'whatsapp'>('portal');
 
   const { data, isLoading } = useQuery<TicketRow[]>({
@@ -176,14 +182,14 @@ export default function TicketingQueue() {
   const createTaskMutation = useMutation({
     mutationFn: async () => {
       if (!selectedTicket) return null;
-      const response = await authFetch(token!, `/api/projects/tickets/${selectedTicket.id}/tasks/`, { method: 'POST', body: JSON.stringify({}) });
+      const response = await authFetch(token!, `/api/projects/tickets/${selectedTicket.id}/tasks/`, { method: 'POST', body: JSON.stringify({ title: taskTitle, description: taskDescription, priority: taskPriority, due_date: taskDueDate || null, task_type: taskType }) });
       if (!response.ok) {
         const body = await response.json().catch(() => ({}));
         throw new Error(body.detail || 'Task could not be created from this ticket.');
       }
       return response.json() as Promise<{ number: string }>;
     },
-    onSuccess: (task) => task && toast({ title: 'Draft task created', description: `${task.number} is linked to this ticket.` }),
+    onSuccess: (task) => { if (task) { setTaskDialogOpen(false); setTaskTitle(''); setTaskDescription(''); setTaskDueDate(''); setTaskType(''); toast({ title: 'Draft task created', description: `${task.number} is linked to this ticket.` }); } },
     onError: (error: Error) => toast({ title: 'Could not create task', description: error.message, variant: 'destructive' }),
   });
 
@@ -283,8 +289,8 @@ export default function TicketingQueue() {
               <Button variant="outline" size="sm" onClick={() => statusMutation.mutate('closed')} disabled={statusMutation.isPending || selectedTicket.status === 'closed'}>
                 Close
               </Button>
-              <Button variant="outline" size="sm" onClick={() => createTaskMutation.mutate()} disabled={createTaskMutation.isPending}>
-                {createTaskMutation.isPending ? 'Creating task...' : 'Create Task'}
+              <Button variant="outline" size="sm" onClick={() => { setTaskTitle(selectedTicket.subject); setTaskDescription(selectedTicket.description || ''); setTaskPriority(selectedTicket.priority === 'urgent' ? 'critical' : selectedTicket.priority === 'normal' ? 'medium' : selectedTicket.priority); setTaskDialogOpen(true); }}>
+                Create Task
               </Button>
             </div>
             <div className="flex gap-3">
@@ -344,6 +350,9 @@ export default function TicketingQueue() {
             </div>
           </div>
         )}
+      </ERPFormDialog>
+      <ERPFormDialog open={taskDialogOpen} onOpenChange={setTaskDialogOpen} title="Create Task from Ticket" maxWidthClassName="max-w-2xl" footer={<div className="flex w-full justify-end gap-2"><Button variant="outline" onClick={() => setTaskDialogOpen(false)}>Cancel</Button><Button disabled={!taskTitle.trim() || createTaskMutation.isPending} onClick={() => createTaskMutation.mutate()}>{createTaskMutation.isPending ? 'Creating task...' : 'Create Draft Task'}</Button></div>}>
+        <div className="grid gap-4"><Input value={taskTitle} onChange={(event) => setTaskTitle(event.target.value)} placeholder="Task title" /><Textarea value={taskDescription} onChange={(event) => setTaskDescription(event.target.value)} placeholder="Task description" rows={5} /><div className="grid gap-4 sm:grid-cols-3"><Input value={taskType} onChange={(event) => setTaskType(event.target.value)} placeholder="Task type" /><Select value={taskPriority} onValueChange={setTaskPriority}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="low">Low</SelectItem><SelectItem value="medium">Medium</SelectItem><SelectItem value="high">High</SelectItem><SelectItem value="critical">Critical</SelectItem></SelectContent></Select><Input value={taskDueDate} onChange={(event) => setTaskDueDate(event.target.value)} type="date" /></div><p className="text-xs text-muted-foreground">The source ticket remains unchanged. The new task will be created as a draft in your active branch.</p></div>
       </ERPFormDialog>
     </div>
   );
