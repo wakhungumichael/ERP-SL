@@ -189,6 +189,10 @@ export default function TaskDetail({ id }: { id: string }) {
   const [isEvidence, setIsEvidence] = useState(false);
   const [assigneeId, setAssigneeId] = useState("");
   const [subtaskTitle, setSubtaskTitle] = useState("");
+  const [subtaskDescription, setSubtaskDescription] = useState("");
+  const [subtaskDueDate, setSubtaskDueDate] = useState("");
+  const [subtaskPriority, setSubtaskPriority] = useState("medium");
+  const [subtaskEstimatedHours, setSubtaskEstimatedHours] = useState("");
   const [subtaskOpen, setSubtaskOpen] = useState(false);
   const [roleAssignmentOpen, setRoleAssignmentOpen] = useState(false);
   const [assignedRoleId, setAssignedRoleId] = useState("none");
@@ -474,6 +478,10 @@ export default function TaskDetail({ id }: { id: string }) {
     },
     onSuccess: () => {
       setSubtaskTitle("");
+      setSubtaskDescription("");
+      setSubtaskDueDate("");
+      setSubtaskPriority("medium");
+      setSubtaskEstimatedHours("");
       setSubtaskOpen(false);
       setDependencyId("");
       refresh([structurePath]);
@@ -595,8 +603,47 @@ export default function TaskDetail({ id }: { id: string }) {
               onChange={(event) => setSubtaskTitle(event.target.value)}
               placeholder="Subtask title"
             />
+            <Textarea
+              value={subtaskDescription}
+              onChange={(event) => setSubtaskDescription(event.target.value)}
+              placeholder="Describe the deliverable or acceptance criteria"
+            />
+            <div className="grid gap-2 sm:grid-cols-3">
+              <Input
+                type="date"
+                value={subtaskDueDate}
+                aria-label="Subtask due date"
+                onChange={(event) => setSubtaskDueDate(event.target.value)}
+              />
+              <Select
+                value={subtaskPriority}
+                onValueChange={setSubtaskPriority}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="low">Low priority</SelectItem>
+                  <SelectItem value="medium">Medium priority</SelectItem>
+                  <SelectItem value="high">High priority</SelectItem>
+                  <SelectItem value="critical">Critical priority</SelectItem>
+                </SelectContent>
+              </Select>
+              <Input
+                type="number"
+                min="0"
+                step="0.25"
+                value={subtaskEstimatedHours}
+                aria-label="Subtask estimated hours"
+                placeholder="Estimated hours"
+                onChange={(event) =>
+                  setSubtaskEstimatedHours(event.target.value)
+                }
+              />
+            </div>
             <p className="text-sm text-muted-foreground">
-              The subtask inherits this task’s project, branch, and priority.
+              The subtask inherits this task’s project and branch. Set planning
+              details now or refine it from the new task record.
             </p>
           </div>
           <DialogFooter>
@@ -605,9 +652,24 @@ export default function TaskDetail({ id }: { id: string }) {
             </Button>
             <Button
               disabled={!subtaskTitle.trim() || addStructure.isPending}
-              onClick={() =>
-                addStructure.mutate({ action: "subtask", title: subtaskTitle })
-              }
+              onClick={() => {
+                const hours = Number(subtaskEstimatedHours || 0);
+                if (!Number.isFinite(hours) || hours < 0) {
+                  toast({
+                    title: "Estimated hours must be zero or more.",
+                    variant: "destructive",
+                  });
+                  return;
+                }
+                addStructure.mutate({
+                  action: "subtask",
+                  title: subtaskTitle,
+                  description: subtaskDescription,
+                  due_date: subtaskDueDate,
+                  priority: subtaskPriority,
+                  estimated_hours: subtaskEstimatedHours,
+                });
+              }}
             >
               {addStructure.isPending ? "Creating..." : "Create subtask"}
             </Button>
@@ -1102,28 +1164,12 @@ export default function TaskDetail({ id }: { id: string }) {
                 <h2 className="font-semibold">Subtasks & Dependencies</h2>
                 <div className="mt-3 grid gap-5 lg:grid-cols-2">
                   <div>
-                    <div className="flex gap-2">
-                      <Input
-                        value={subtaskTitle}
-                        onChange={(event) =>
-                          setSubtaskTitle(event.target.value)
-                        }
-                        placeholder="New subtask title"
-                      />
-                      <Button
-                        disabled={
-                          !subtaskTitle.trim() || addStructure.isPending
-                        }
-                        onClick={() =>
-                          addStructure.mutate({
-                            action: "subtask",
-                            title: subtaskTitle,
-                          })
-                        }
-                      >
-                        Add subtask
-                      </Button>
-                    </div>
+                    <Button
+                      variant="outline"
+                      onClick={() => setSubtaskOpen(true)}
+                    >
+                      Create planned subtask
+                    </Button>
                     <div className="mt-3 space-y-2">
                       {(structure.data?.subtasks ?? []).map((subtask) => (
                         <Link

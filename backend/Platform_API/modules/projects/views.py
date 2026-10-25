@@ -627,11 +627,27 @@ class TaskStructureAPIView(APIView):
             title = str(request.data.get("title") or "").strip()
             if not title:
                 raise serializers.ValidationError({"title": "Enter a subtask title."})
-            subtask = ProjectTask.objects.create(
-                tenant=tenant, branch=task.branch, number=_next_reference(tenant, ProjectTask, "TSK"),
-                title=title, description=str(request.data.get("description") or ""), project=task.project,
-                parent_task=task, priority=task.priority, created_by=request.user, updated_by=request.user, assigned_by=request.user,
+            payload = {
+                "branch": task.branch_id,
+                "number": _next_reference(tenant, ProjectTask, "TSK"),
+                "title": title,
+                "description": str(request.data.get("description") or ""),
+                "project": task.project_id,
+                "parent_task": task.id,
+                "priority": request.data.get("priority") or task.priority,
+                "due_date": request.data.get("due_date") or None,
+                "estimated_hours": request.data.get("estimated_hours") or None,
+            }
+            serializer = TaskSerializer(data=payload)
+            serializer.is_valid(raise_exception=True)
+            subtask = serializer.save(
+                tenant=tenant,
+                created_by=request.user,
+                updated_by=request.user,
+                assigned_by=request.user,
             )
+            subtask.full_clean()
+            subtask.save()
             log_business_event(event_group="data_lifecycle", event_type="subtask_created", tenant=tenant, actor=request.user, obj=subtask, branch=task.branch, note=f"Subtask created under {task.number}.")
             return Response(TaskSerializer(subtask).data, status=status.HTTP_201_CREATED)
         if action == "dependency":
