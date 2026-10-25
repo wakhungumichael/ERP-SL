@@ -272,6 +272,11 @@ CELERY_BEAT_SCHEDULE = {
         # Every 10 minutes
         "schedule": crontab(minute="*/10"),
     },
+    "send-project-reminders": {
+        "task": "SL_Projects.tasks.send_project_reminders",
+        # One daily in-app reminder sweep after the working day begins.
+        "schedule": crontab(hour="8", minute="0"),
+    },
 }
 
 # ── Logging ───────────────────────────────────────────────────────────────────
