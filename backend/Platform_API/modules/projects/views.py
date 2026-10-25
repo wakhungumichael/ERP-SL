@@ -92,6 +92,23 @@ def _next_reference(tenant, model, prefix):
     return f"{prefix}-{timezone.localdate():%Y}-{sequence:04d}"
 
 
+def _would_create_dependency_cycle(task_id, depends_on_id):
+    """Return whether adding task -> depends_on would create a dependency loop."""
+    pending = [depends_on_id]
+    visited = set()
+    while pending:
+        current_id = pending.pop()
+        if current_id == task_id:
+            return True
+        if current_id in visited:
+            continue
+        visited.add(current_id)
+        pending.extend(
+            TaskDependency.objects.filter(task_id=current_id).values_list("depends_on_id", flat=True)
+        )
+    return False
+
+
 class ProjectSerializer(serializers.ModelSerializer):
     manager_name = serializers.SerializerMethodField()
     owner_name = serializers.SerializerMethodField()
@@ -393,6 +410,8 @@ class TaskStructureAPIView(APIView):
                 raise serializers.ValidationError({"depends_on_id": "Choose a task in your active branch."})
             if depends_on.id == task.id or depends_on.project_id != task.project_id:
                 raise serializers.ValidationError({"depends_on_id": "Dependencies must be another task in the same project."})
+            if _would_create_dependency_cycle(task.id, depends_on.id):
+                raise serializers.ValidationError({"depends_on_id": "This dependency would create a circular task dependency."})
             relation, created = TaskDependency.objects.get_or_create(task=task, depends_on=depends_on)
             if created:
                 log_business_event(event_group="data_lifecycle", event_type="dependency_added", tenant=tenant, actor=request.user, obj=task, branch=task.branch, note=f"Dependency added: {depends_on.number}.")
