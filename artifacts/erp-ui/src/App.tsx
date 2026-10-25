@@ -238,6 +238,7 @@ function Router() {
       <Route path="/projects/follow-ups"><Shell><ProjectFollowUps /></Shell></Route>
       <Route path="/projects/:id">{params => <Shell><ProjectDetail id={params.id} /></Shell>}</Route>
       <Route path="/projects/my-tasks"><Shell><ProjectsWorkspace mode="mine" /></Shell></Route>
+      <Route path="/projects/team-tasks"><Shell><ProjectsWorkspace mode="team" /></Shell></Route>
       <Route path="/projects"><Shell><ProjectsWorkspace mode="projects" /></Shell></Route>
       <Route path="/workspace/operations/dashboard">
         <Shell>
