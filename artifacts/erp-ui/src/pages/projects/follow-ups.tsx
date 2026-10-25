@@ -6,6 +6,7 @@ import { useAuth } from '@/context/use-auth';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ListingPagination } from '@/components/erp/listing/pagination';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ERPWorkspacePage } from '@/components/erp/workspace/workspace-page';
 import { useToast } from '@/hooks/use-toast';
 import { apiErrorFromResponse } from '@/lib/api-errors';
@@ -21,11 +22,14 @@ export default function ProjectFollowUps() {
   const client = useQueryClient();
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
+  const [status, setStatus] = useState('all');
   const followUps = useQuery<FollowUpPage>({
-    queryKey: ['projects-follow-ups', page, pageSize],
+    queryKey: ['projects-follow-ups', page, pageSize, status],
     enabled: !!token,
     queryFn: async () => {
-      const response = await fetch(`/api/projects/follow-ups/?page=${page}&page_size=${pageSize}`, { headers: { Authorization: `Token ${token}` } });
+      const query = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
+      if (status !== 'all') query.set('status', status);
+      const response = await fetch(`/api/projects/follow-ups/?${query}`, { headers: { Authorization: `Token ${token}` } });
       if (!response.ok) throw await apiErrorFromResponse(response, 'Follow-ups could not be loaded.');
       return response.json();
     },
@@ -51,7 +55,8 @@ export default function ProjectFollowUps() {
       <Metric label="Overdue" value={summary?.overdue ?? 0} accent="text-red-600" />
       <Metric label="Completed" value={summary?.completed ?? 0} />
     </div>
-    <div className="mt-5 overflow-x-auto rounded-lg border bg-card">
+    <div className="mt-5 flex justify-end"><Select value={status} onValueChange={(value) => { setStatus(value); setPage(1); }}><SelectTrigger className="w-44"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">All statuses</SelectItem><SelectItem value="scheduled">Scheduled</SelectItem><SelectItem value="pending">Pending</SelectItem><SelectItem value="overdue">Overdue</SelectItem><SelectItem value="completed">Completed</SelectItem><SelectItem value="cancelled">Cancelled</SelectItem></SelectContent></Select></div>
+    <div className="mt-3 overflow-x-auto rounded-lg border bg-card">
       <table className="w-full min-w-[760px] text-sm"><thead className="border-b bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground"><tr><th className="px-4 py-3">Due</th><th className="px-4 py-3">Task</th><th className="px-4 py-3">Notes</th><th className="px-4 py-3">Owner</th><th className="px-4 py-3">Status</th><th className="px-4 py-3 text-right">Action</th></tr></thead><tbody>{list.map((item) => <tr className="border-b last:border-0" key={item.id}><td className="px-4 py-3">{formatDate(item.follow_up_date)}</td><td className="px-4 py-3"><Link href={`/projects/tasks/${item.task_id}`}><span className="cursor-pointer font-medium hover:underline">{item.task_number} - {item.task_title}</span></Link></td><td className="px-4 py-3 text-muted-foreground">{item.notes || '-'}</td><td className="px-4 py-3">{item.owner}</td><td className="px-4 py-3"><Badge variant="outline">{item.status}</Badge></td><td className="px-4 py-3 text-right">{!['completed', 'cancelled'].includes(item.status) ? <Button size="sm" variant="outline" disabled={complete.isPending} onClick={() => complete.mutate(item)}>Complete</Button> : null}</td></tr>)}</tbody></table>
       {!list.length && <div className="p-10 text-center text-sm text-muted-foreground">No follow-ups are scheduled in this branch.</div>}
       <ListingPagination page={page} pageSize={pageSize} totalCount={followUps.data?.count ?? 0} onPage={setPage} onPageSize={setPageSize} />

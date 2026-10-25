@@ -320,9 +320,12 @@ class TaskFollowUpWorkspaceAPIView(APIView):
         _require(request.user, "view_projecttask")
         tasks = _task_scope(request.user)
         follow_ups = TaskFollowUp.objects.filter(task__in=tasks).select_related("task", "owner").order_by("follow_up_date", "id")
-        if state := request.query_params.get("status"):
-            follow_ups = follow_ups.filter(status=state)
         today = timezone.localdate()
+        if state := request.query_params.get("status"):
+            if state == "overdue":
+                follow_ups = follow_ups.filter(status__in=["scheduled", "pending"], follow_up_date__lt=today)
+            else:
+                follow_ups = follow_ups.filter(status=state)
         summary = {
             "total": follow_ups.count(),
             "open": follow_ups.exclude(status__in=["completed", "cancelled"]).count(),
