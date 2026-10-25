@@ -13,6 +13,7 @@ urlpatterns = [
     path("projects/", views.ProjectListCreateAPIView.as_view(), name="project-list"),
     path("projects/<int:pk>/", views.ProjectDetailAPIView.as_view(), name="project-detail"),
     path("projects/<int:pk>/close/", views.ProjectCloseAPIView.as_view(), name="project-close"),
+    path("projects/<int:pk>/documents/", views.ProjectDocumentListAPIView.as_view(), name="project-document-list"),
     path("projects/<int:pk>/milestones/", views.ProjectMilestoneListCreateAPIView.as_view(), name="project-milestone-list"),
     path("projects/<int:pk>/milestones/<int:milestone_id>/complete/", views.ProjectMilestoneCompleteAPIView.as_view(), name="project-milestone-complete"),
     path("projects/<int:pk>/members/", views.ProjectMemberListCreateAPIView.as_view(), name="project-member-list"),

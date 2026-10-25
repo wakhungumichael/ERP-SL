@@ -207,6 +207,8 @@ class TaskCommentSerializer(serializers.ModelSerializer):
 
 class TaskAttachmentSerializer(serializers.ModelSerializer):
     uploaded_by_name = serializers.SerializerMethodField()
+    task_number = serializers.CharField(source="task.number", read_only=True)
+    task_title = serializers.CharField(source="task.title", read_only=True)
 
     class Meta:
         model = TaskAttachment
@@ -567,6 +569,20 @@ class ProjectCloseAPIView(APIView):
             note=f"Project marked {target_status}.",
         )
         return Response(ProjectSerializer(project).data)
+
+
+class ProjectDocumentListAPIView(APIView):
+    """List task attachments and approval evidence belonging to one project."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+        _tenant_and_activation(request)
+        _require(request.user, "view_project")
+        project = _project_scope(request.user).filter(pk=pk).first()
+        if not project:
+            return Response({"detail": "Project not found."}, status=status.HTTP_404_NOT_FOUND)
+        attachments = TaskAttachment.objects.filter(task__project=project).select_related("task", "uploaded_by").order_by("-created_at")
+        return Response(TaskAttachmentSerializer(attachments, many=True, context={"request": request}).data)
 
 
 class ProjectMilestoneListCreateAPIView(APIView):
