@@ -729,9 +729,14 @@ export default function ProjectDetail({ id }: { id: string }) {
                       assignments.
                     </p>
                   </div>
-                  <Link href={`/projects/tasks?project=${id}`}>
-                    <Button variant="outline">View all tasks</Button>
-                  </Link>
+                  <div className="flex gap-2">
+                    <Link href={`/projects/tasks?project=${id}`}>
+                      <Button variant="outline">View all tasks</Button>
+                    </Link>
+                    <Link href={`/projects/tasks?project=${id}&create=1}`}>
+                      <Button>Add task</Button>
+                    </Link>
+                  </div>
                 </div>
                 <div className="mt-4 space-y-2">
                   {projectTasks.map((task) => (
