@@ -21,6 +21,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { apiErrorFromResponse } from "@/lib/api-errors";
 import { RecordAuditTrail } from "@/components/audit/record-audit-trail";
@@ -625,498 +626,553 @@ export default function TaskDetail({ id }: { id: string }) {
           Loading task details...
         </div>
       ) : (
-        <div className="grid gap-5 lg:grid-cols-3">
-          <section className="rounded-lg border bg-card p-5 lg:col-span-2">
-            <h2 className="font-semibold">Task Summary</h2>
-            <p className="mt-3 whitespace-pre-wrap text-sm text-muted-foreground">
-              {record.description || "No task description provided."}
-            </p>
-            <dl className="mt-5 grid gap-4 text-sm sm:grid-cols-2">
-              <div>
-                <dt className="text-muted-foreground">Project</dt>
-                <dd className="font-medium">
-                  {record.project_name || "Standalone task"}
-                </dd>
-              </div>
-              <div>
-                <dt className="text-muted-foreground">Assigned to</dt>
-                <dd className="font-medium">
-                  {record.assignee_name || "Unassigned"}
-                </dd>
-              </div>
-              <div>
-                <dt className="text-muted-foreground">Branch</dt>
-                <dd className="font-medium">{record.branch_name}</dd>
-              </div>
-              <div>
-                <dt className="text-muted-foreground">Due date</dt>
-                <dd className="font-medium">{formatDate(record.due_date)}</dd>
-              </div>
-              <div>
-                <dt className="text-muted-foreground">Hours</dt>
-                <dd className="font-medium">
-                  {record.actual_hours || "0"} actual /{" "}
-                  {record.estimated_hours || "—"} estimated
-                </dd>
-              </div>
-            </dl>
-            <details className="mt-5 rounded border p-3">
-              <summary className="cursor-pointer font-medium">
-                Edit task planning
-              </summary>
-              <div className="mt-3 grid gap-3">
-                <Input
-                  defaultValue={record.title}
-                  onChange={(event) => setEditTitle(event.target.value)}
-                  placeholder="Task title"
-                />
-                <Textarea
-                  defaultValue={record.description}
-                  onChange={(event) => setEditDescription(event.target.value)}
-                  placeholder="Task description"
-                />
-                <div className="grid gap-2 sm:grid-cols-3">
-                  <Input
-                    defaultValue={record.due_date || ""}
-                    type="date"
-                    onChange={(event) => setEditDueDate(event.target.value)}
-                  />
-                  <Select
-                    defaultValue={record.priority}
-                    onValueChange={setEditPriority}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="low">Low</SelectItem>
-                      <SelectItem value="medium">Medium</SelectItem>
-                      <SelectItem value="high">High</SelectItem>
-                      <SelectItem value="critical">Critical</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <Select
-                    defaultValue={record.status}
-                    onValueChange={setEditStatus}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="draft">Draft</SelectItem>
-                      <SelectItem value="todo">To do</SelectItem>
-                      <SelectItem value="in_progress">In progress</SelectItem>
-                      <SelectItem value="blocked">Blocked</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <Button
-                  className="w-fit"
-                  disabled={saveTask.isPending}
-                  onClick={() => saveTask.mutate()}
-                >
-                  {saveTask.isPending ? "Saving..." : "Save task details"}
-                </Button>
-              </div>
-            </details>
-          </section>
-          <aside className="rounded-lg border bg-card p-5">
-            <h2 className="font-semibold">Current State</h2>
-            <Badge className="mt-3" variant="outline">
-              {record.status.replaceAll("_", " ")}
-            </Badge>
-            <div className="mt-5 text-3xl font-bold">
-              {record.progress_percentage}%
-            </div>
-            <p className="mt-1 text-sm text-muted-foreground">
-              {workflow.data?.data.current_stage
-                ? `Approval stage: ${workflow.data.data.current_stage}${workflow.data.data.current_role ? ` - ${workflow.data.data.current_role}` : ""}`
-                : record.workflow_stage
-                  ? `Approval stage: ${record.workflow_stage}`
-                  : "No approval stage active."}
-            </p>
-            <div className="mt-4 space-y-2">
-              <p className="text-xs font-medium text-muted-foreground">
-                Assign task
-              </p>
-              <Select value={assigneeId} onValueChange={setAssigneeId}>
-                <SelectTrigger>
-                  <SelectValue
-                    placeholder={record.assignee_name || "Unassigned"}
-                  />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="unassigned">Unassigned</SelectItem>
-                  {(assignees.data ?? []).map((person) => (
-                    <SelectItem key={person.id} value={String(person.id)}>
-                      {person.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Button
-                className="w-full"
-                variant="outline"
-                disabled={assign.isPending}
-                onClick={() => assign.mutate()}
-              >
-                Save assignment
-              </Button>
-            </div>
-            {workflow.data?.data.required &&
-            !workflow.data.data.in_progress &&
-            workflow.data.data.can_forward ? (
-              <Button
-                className="mt-4 w-full"
-                disabled={forward.isPending}
-                onClick={() => forward.mutate()}
-              >
-                {forward.isPending ? "Forwarding..." : "Forward for Approval"}
-              </Button>
-            ) : null}
-            {workflow.data?.data.required && workflow.data.data.in_progress ? (
-              <p className="mt-4 text-xs text-muted-foreground">
-                This task is already in the approval queue.
-              </p>
-            ) : null}
-          </aside>
-          <section className="rounded-lg border bg-card p-5 lg:col-span-2">
-            <h2 className="font-semibold">Progress Updates</h2>
-            <div className="mt-3 grid gap-2 sm:grid-cols-[8rem_8rem_1fr_auto]">
-              <Input
-                type="number"
-                min="0"
-                max="100"
-                value={progress}
-                onChange={(event) => setProgress(event.target.value)}
-                placeholder="Progress %"
-              />
-              <Input
-                type="number"
-                min="0"
-                step="0.25"
-                value={timeSpent}
-                onChange={(event) => setTimeSpent(event.target.value)}
-                placeholder="Hours worked"
-              />
-              <Textarea
-                value={note}
-                onChange={(event) => setNote(event.target.value)}
-                placeholder="Describe completed work, blockers, or next action"
-              />
-              <Button
-                disabled={!progress || !note.trim() || addUpdate.isPending}
-                onClick={() => addUpdate.mutate()}
-              >
-                Add update
-              </Button>
-            </div>
-            <div className="mt-4 space-y-3">
-              {(updates.data ?? []).map((update) => (
-                <div className="rounded border p-3 text-sm" key={update.id}>
-                  <div className="flex justify-between gap-3">
-                    <span className="font-medium">
-                      {update.progress_percentage}% progress
-                      {Number(update.time_spent_hours) > 0
-                        ? ` · ${update.time_spent_hours} h logged`
-                        : ""}
-                    </span>
-                    <span className="text-muted-foreground">
-                      {formatDate(update.created_at)}
-                    </span>
-                  </div>
-                  <p className="mt-1 text-muted-foreground">
-                    {update.update_description}
-                  </p>
-                </div>
-              ))}
-              {!updates.data?.length && (
-                <p className="text-sm text-muted-foreground">
-                  No progress updates recorded yet.
+        <Tabs defaultValue="overview">
+          <TabsList className="h-auto w-full justify-start overflow-x-auto">
+            <TabsTrigger value="overview">Overview</TabsTrigger>
+            <TabsTrigger value="activity">Activity & follow-ups</TabsTrigger>
+            <TabsTrigger value="discussion">Discussion & files</TabsTrigger>
+            <TabsTrigger value="structure">Subtasks & dependencies</TabsTrigger>
+            <TabsTrigger value="workflow">Workflow history</TabsTrigger>
+          </TabsList>
+          <TabsContent value="overview">
+            <div className="grid gap-5 lg:grid-cols-3">
+              <section className="rounded-lg border bg-card p-5 lg:col-span-2">
+                <h2 className="font-semibold">Task Summary</h2>
+                <p className="mt-3 whitespace-pre-wrap text-sm text-muted-foreground">
+                  {record.description || "No task description provided."}
                 </p>
-              )}
-            </div>
-          </section>
-          <section className="rounded-lg border bg-card p-5">
-            <h2 className="font-semibold">Follow-ups</h2>
-            <div className="mt-3 space-y-2">
-              <Input
-                type="date"
-                value={followUpDate}
-                onChange={(event) => setFollowUpDate(event.target.value)}
-              />
-              <Textarea
-                value={followUpNotes}
-                onChange={(event) => setFollowUpNotes(event.target.value)}
-                placeholder="What needs to happen?"
-              />
-              <Button
-                className="w-full"
-                variant="outline"
-                disabled={!followUpDate || addFollowUp.isPending}
-                onClick={() => addFollowUp.mutate()}
-              >
-                Schedule follow-up
-              </Button>
-            </div>
-            <div className="mt-4 space-y-2">
-              {(followUps.data ?? []).map((followUp) => (
-                <div className="rounded border p-3 text-sm" key={followUp.id}>
-                  <div className="flex justify-between gap-2">
-                    <span className="font-medium">
-                      {formatDate(followUp.follow_up_date)}
-                    </span>
-                    <Badge variant="outline">{followUp.status}</Badge>
+                <dl className="mt-5 grid gap-4 text-sm sm:grid-cols-2">
+                  <div>
+                    <dt className="text-muted-foreground">Project</dt>
+                    <dd className="font-medium">
+                      {record.project_name || "Standalone task"}
+                    </dd>
                   </div>
-                  <p className="mt-1 text-muted-foreground">
-                    {followUp.notes || "No notes"}
-                  </p>
-                  <div className="mt-2 flex items-center justify-between gap-2">
-                    <p className="text-xs text-muted-foreground">
-                      Owner: {followUp.owner_name}
-                    </p>
-                    {!["completed", "cancelled"].includes(followUp.status) ? (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={completeFollowUp.isPending}
-                        onClick={() => completeFollowUp.mutate(followUp.id)}
+                  <div>
+                    <dt className="text-muted-foreground">Assigned to</dt>
+                    <dd className="font-medium">
+                      {record.assignee_name || "Unassigned"}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted-foreground">Branch</dt>
+                    <dd className="font-medium">{record.branch_name}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted-foreground">Due date</dt>
+                    <dd className="font-medium">
+                      {formatDate(record.due_date)}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted-foreground">Hours</dt>
+                    <dd className="font-medium">
+                      {record.actual_hours || "0"} actual /{" "}
+                      {record.estimated_hours || "—"} estimated
+                    </dd>
+                  </div>
+                </dl>
+                <details className="mt-5 rounded border p-3">
+                  <summary className="cursor-pointer font-medium">
+                    Edit task planning
+                  </summary>
+                  <div className="mt-3 grid gap-3">
+                    <Input
+                      defaultValue={record.title}
+                      onChange={(event) => setEditTitle(event.target.value)}
+                      placeholder="Task title"
+                    />
+                    <Textarea
+                      defaultValue={record.description}
+                      onChange={(event) =>
+                        setEditDescription(event.target.value)
+                      }
+                      placeholder="Task description"
+                    />
+                    <div className="grid gap-2 sm:grid-cols-3">
+                      <Input
+                        defaultValue={record.due_date || ""}
+                        type="date"
+                        onChange={(event) => setEditDueDate(event.target.value)}
+                      />
+                      <Select
+                        defaultValue={record.priority}
+                        onValueChange={setEditPriority}
                       >
-                        Complete
-                      </Button>
-                    ) : null}
-                  </div>
-                </div>
-              ))}
-              {!followUps.data?.length && (
-                <p className="text-sm text-muted-foreground">
-                  No follow-ups are scheduled yet.
-                </p>
-              )}
-            </div>
-          </section>
-          <section className="rounded-lg border bg-card p-5 lg:col-span-3">
-            <h2 className="font-semibold">Discussion</h2>
-            <div className="mt-3 flex gap-2">
-              <Textarea
-                value={comment}
-                onChange={(event) => setComment(event.target.value)}
-                placeholder="Add a task comment"
-              />
-              <Button
-                disabled={!comment.trim() || addComment.isPending}
-                onClick={() => addComment.mutate()}
-              >
-                Comment
-              </Button>
-            </div>
-            <div className="mt-4 space-y-3">
-              {(comments.data ?? []).map((entry) => (
-                <div className="rounded border p-3 text-sm" key={entry.id}>
-                  <div className="flex justify-between gap-3">
-                    <span className="font-medium">{entry.author_name}</span>
-                    <span className="text-muted-foreground">
-                      {formatDate(entry.created_at)}
-                    </span>
-                  </div>
-                  <p className="mt-1 whitespace-pre-wrap text-muted-foreground">
-                    {entry.body}
-                  </p>
-                </div>
-              ))}
-              {!comments.data?.length && (
-                <p className="text-sm text-muted-foreground">
-                  No discussion entries yet.
-                </p>
-              )}
-            </div>
-          </section>
-          <section className="rounded-lg border bg-card p-5 lg:col-span-3">
-            <h2 className="font-semibold">Attachments & Evidence</h2>
-            <div className="mt-3 flex flex-wrap items-center gap-2">
-              <Input
-                className="max-w-md"
-                type="file"
-                onChange={(event) =>
-                  setAttachment(event.target.files?.[0] ?? null)
-                }
-              />
-              <label className="flex items-center gap-2 text-sm">
-                <input
-                  checked={isEvidence}
-                  type="checkbox"
-                  onChange={(event) => setIsEvidence(event.target.checked)}
-                />{" "}
-                Approval evidence
-              </label>
-              <Button
-                disabled={!attachment || uploadAttachment.isPending}
-                onClick={() => uploadAttachment.mutate()}
-              >
-                {uploadAttachment.isPending ? "Uploading..." : "Upload"}
-              </Button>
-            </div>
-            <p className="mt-2 text-xs text-muted-foreground">
-              Up to 10 MB per file. Mark evidence so reviewers can identify
-              supporting material quickly.
-            </p>
-            <div className="mt-4 space-y-2">
-              {(attachments.data ?? []).map((file) => (
-                <a
-                  className="flex items-center justify-between rounded border p-3 text-sm hover:bg-muted/40"
-                  href={file.file}
-                  key={file.id}
-                  rel="noreferrer"
-                  target="_blank"
-                >
-                  <span>
-                    {file.original_name}
-                    {file.is_evidence ? " (evidence)" : ""}
-                  </span>
-                  <span className="text-muted-foreground">
-                    {file.uploaded_by_name}
-                  </span>
-                </a>
-              ))}
-              {!attachments.data?.length && (
-                <p className="text-sm text-muted-foreground">
-                  No files attached to this task.
-                </p>
-              )}
-            </div>
-          </section>
-          <section className="rounded-lg border bg-card p-5 lg:col-span-3">
-            <h2 className="font-semibold">Subtasks & Dependencies</h2>
-            <div className="mt-3 grid gap-5 lg:grid-cols-2">
-              <div>
-                <div className="flex gap-2">
-                  <Input
-                    value={subtaskTitle}
-                    onChange={(event) => setSubtaskTitle(event.target.value)}
-                    placeholder="New subtask title"
-                  />
-                  <Button
-                    disabled={!subtaskTitle.trim() || addStructure.isPending}
-                    onClick={() =>
-                      addStructure.mutate({
-                        action: "subtask",
-                        title: subtaskTitle,
-                      })
-                    }
-                  >
-                    Add subtask
-                  </Button>
-                </div>
-                <div className="mt-3 space-y-2">
-                  {(structure.data?.subtasks ?? []).map((subtask) => (
-                    <div
-                      className="rounded border p-3 text-sm"
-                      key={subtask.id}
-                    >
-                      {subtask.number} - {subtask.title}{" "}
-                      <Badge className="ml-2" variant="outline">
-                        {subtask.status}
-                      </Badge>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="low">Low</SelectItem>
+                          <SelectItem value="medium">Medium</SelectItem>
+                          <SelectItem value="high">High</SelectItem>
+                          <SelectItem value="critical">Critical</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <Select
+                        defaultValue={record.status}
+                        onValueChange={setEditStatus}
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="draft">Draft</SelectItem>
+                          <SelectItem value="todo">To do</SelectItem>
+                          <SelectItem value="in_progress">
+                            In progress
+                          </SelectItem>
+                          <SelectItem value="blocked">Blocked</SelectItem>
+                        </SelectContent>
+                      </Select>
                     </div>
-                  ))}
-                  {!structure.data?.subtasks.length && (
-                    <p className="text-sm text-muted-foreground">
-                      No subtasks yet.
-                    </p>
-                  )}
+                    <Button
+                      className="w-fit"
+                      disabled={saveTask.isPending}
+                      onClick={() => saveTask.mutate()}
+                    >
+                      {saveTask.isPending ? "Saving..." : "Save task details"}
+                    </Button>
+                  </div>
+                </details>
+              </section>
+              <aside className="rounded-lg border bg-card p-5">
+                <h2 className="font-semibold">Current State</h2>
+                <Badge className="mt-3" variant="outline">
+                  {record.status.replaceAll("_", " ")}
+                </Badge>
+                <div className="mt-5 text-3xl font-bold">
+                  {record.progress_percentage}%
                 </div>
-              </div>
-              <div>
-                <div className="flex gap-2">
-                  <Select value={dependencyId} onValueChange={setDependencyId}>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  {workflow.data?.data.current_stage
+                    ? `Approval stage: ${workflow.data.data.current_stage}${workflow.data.data.current_role ? ` - ${workflow.data.data.current_role}` : ""}`
+                    : record.workflow_stage
+                      ? `Approval stage: ${record.workflow_stage}`
+                      : "No approval stage active."}
+                </p>
+                <div className="mt-4 space-y-2">
+                  <p className="text-xs font-medium text-muted-foreground">
+                    Assign task
+                  </p>
+                  <Select value={assigneeId} onValueChange={setAssigneeId}>
                     <SelectTrigger>
-                      <SelectValue placeholder="Add dependency" />
+                      <SelectValue
+                        placeholder={record.assignee_name || "Unassigned"}
+                      />
                     </SelectTrigger>
                     <SelectContent>
-                      {(structure.data?.candidates ?? []).map((candidate) => (
-                        <SelectItem
-                          key={candidate.id}
-                          value={String(candidate.id)}
-                        >
-                          {candidate.number} - {candidate.title}
+                      <SelectItem value="unassigned">Unassigned</SelectItem>
+                      {(assignees.data ?? []).map((person) => (
+                        <SelectItem key={person.id} value={String(person.id)}>
+                          {person.name}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
                   <Button
-                    disabled={!dependencyId || addStructure.isPending}
-                    onClick={() =>
-                      addStructure.mutate({
-                        action: "dependency",
-                        depends_on_id: dependencyId,
-                      })
-                    }
+                    className="w-full"
+                    variant="outline"
+                    disabled={assign.isPending}
+                    onClick={() => assign.mutate()}
                   >
-                    Add dependency
+                    Save assignment
                   </Button>
                 </div>
-                <div className="mt-3 space-y-2">
-                  {(structure.data?.dependencies ?? []).map((dependency) => (
-                    <div
-                      className="rounded border p-3 text-sm"
-                      key={dependency.id}
-                    >
-                      {dependency.number} - {dependency.title}{" "}
-                      <Badge className="ml-2" variant="outline">
-                        {dependency.status}
-                      </Badge>
+                {workflow.data?.data.required &&
+                !workflow.data.data.in_progress &&
+                workflow.data.data.can_forward ? (
+                  <Button
+                    className="mt-4 w-full"
+                    disabled={forward.isPending}
+                    onClick={() => forward.mutate()}
+                  >
+                    {forward.isPending
+                      ? "Forwarding..."
+                      : "Forward for Approval"}
+                  </Button>
+                ) : null}
+                {workflow.data?.data.required &&
+                workflow.data.data.in_progress ? (
+                  <p className="mt-4 text-xs text-muted-foreground">
+                    This task is already in the approval queue.
+                  </p>
+                ) : null}
+              </aside>
+            </div>
+          </TabsContent>
+          <TabsContent value="activity">
+            <div className="grid gap-5 lg:grid-cols-3">
+              <section className="rounded-lg border bg-card p-5 lg:col-span-2">
+                <h2 className="font-semibold">Progress Updates</h2>
+                <div className="mt-3 grid gap-2 sm:grid-cols-[8rem_8rem_1fr_auto]">
+                  <Input
+                    type="number"
+                    min="0"
+                    max="100"
+                    value={progress}
+                    onChange={(event) => setProgress(event.target.value)}
+                    placeholder="Progress %"
+                  />
+                  <Input
+                    type="number"
+                    min="0"
+                    step="0.25"
+                    value={timeSpent}
+                    onChange={(event) => setTimeSpent(event.target.value)}
+                    placeholder="Hours worked"
+                  />
+                  <Textarea
+                    value={note}
+                    onChange={(event) => setNote(event.target.value)}
+                    placeholder="Describe completed work, blockers, or next action"
+                  />
+                  <Button
+                    disabled={!progress || !note.trim() || addUpdate.isPending}
+                    onClick={() => addUpdate.mutate()}
+                  >
+                    Add update
+                  </Button>
+                </div>
+                <div className="mt-4 space-y-3">
+                  {(updates.data ?? []).map((update) => (
+                    <div className="rounded border p-3 text-sm" key={update.id}>
+                      <div className="flex justify-between gap-3">
+                        <span className="font-medium">
+                          {update.progress_percentage}% progress
+                          {Number(update.time_spent_hours) > 0
+                            ? ` · ${update.time_spent_hours} h logged`
+                            : ""}
+                        </span>
+                        <span className="text-muted-foreground">
+                          {formatDate(update.created_at)}
+                        </span>
+                      </div>
+                      <p className="mt-1 text-muted-foreground">
+                        {update.update_description}
+                      </p>
                     </div>
                   ))}
-                  {!structure.data?.dependencies.length && (
+                  {!updates.data?.length && (
                     <p className="text-sm text-muted-foreground">
-                      No dependencies recorded.
+                      No progress updates recorded yet.
                     </p>
                   )}
                 </div>
-              </div>
-            </div>
-          </section>
-          <section className="rounded-lg border bg-card p-5 lg:col-span-3">
-            <h2 className="font-semibold">Workflow History</h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Every submission, decision, and reviewer comment for this task.
-            </p>
-            <div className="mt-4 space-y-3">
-              {(workflowHistory.data?.data ?? []).map((item) => (
-                <div className="rounded border p-3 text-sm" key={item.id}>
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <strong>{item.title}</strong>
-                    <Badge variant="outline">{item.status}</Badge>
-                  </div>
-                  <p className="mt-1 text-muted-foreground">{item.detail}</p>
-                  <p className="mt-2 text-xs text-muted-foreground">
-                    Assigned to {item.assigned_group_name || "an approver"} ·{" "}
-                    {formatDateTime(item.created_at)}
-                  </p>
-                  {(item.metadata?.workflow_history ?? []).map(
-                    (event, index) => (
-                      <div
-                        className="mt-2 border-l-2 pl-3 text-xs text-muted-foreground"
-                        key={`${item.id}-${index}`}
-                      >
-                        <span className="font-medium text-foreground">
-                          {event.action}
-                        </span>{" "}
-                        by {event.actor_name} · {formatDateTime(event.at)}
-                        {event.comment ? ` — ${event.comment}` : ""}
+              </section>
+              <section className="rounded-lg border bg-card p-5">
+                <h2 className="font-semibold">Follow-ups</h2>
+                <div className="mt-3 space-y-2">
+                  <Input
+                    type="date"
+                    value={followUpDate}
+                    onChange={(event) => setFollowUpDate(event.target.value)}
+                  />
+                  <Textarea
+                    value={followUpNotes}
+                    onChange={(event) => setFollowUpNotes(event.target.value)}
+                    placeholder="What needs to happen?"
+                  />
+                  <Button
+                    className="w-full"
+                    variant="outline"
+                    disabled={!followUpDate || addFollowUp.isPending}
+                    onClick={() => addFollowUp.mutate()}
+                  >
+                    Schedule follow-up
+                  </Button>
+                </div>
+                <div className="mt-4 space-y-2">
+                  {(followUps.data ?? []).map((followUp) => (
+                    <div
+                      className="rounded border p-3 text-sm"
+                      key={followUp.id}
+                    >
+                      <div className="flex justify-between gap-2">
+                        <span className="font-medium">
+                          {formatDate(followUp.follow_up_date)}
+                        </span>
+                        <Badge variant="outline">{followUp.status}</Badge>
                       </div>
-                    ),
+                      <p className="mt-1 text-muted-foreground">
+                        {followUp.notes || "No notes"}
+                      </p>
+                      <div className="mt-2 flex items-center justify-between gap-2">
+                        <p className="text-xs text-muted-foreground">
+                          Owner: {followUp.owner_name}
+                        </p>
+                        {!["completed", "cancelled"].includes(
+                          followUp.status,
+                        ) ? (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={completeFollowUp.isPending}
+                            onClick={() => completeFollowUp.mutate(followUp.id)}
+                          >
+                            Complete
+                          </Button>
+                        ) : null}
+                      </div>
+                    </div>
+                  ))}
+                  {!followUps.data?.length && (
+                    <p className="text-sm text-muted-foreground">
+                      No follow-ups are scheduled yet.
+                    </p>
                   )}
                 </div>
-              ))}
-              {!workflowHistory.data?.data.length && (
-                <p className="py-6 text-center text-sm text-muted-foreground">
-                  This task has not entered a workflow yet.
-                </p>
-              )}
+              </section>
             </div>
-          </section>
-        </div>
+          </TabsContent>
+          <TabsContent value="discussion">
+            <div className="grid gap-5 lg:grid-cols-3">
+              <section className="rounded-lg border bg-card p-5 lg:col-span-3">
+                <h2 className="font-semibold">Discussion</h2>
+                <div className="mt-3 flex gap-2">
+                  <Textarea
+                    value={comment}
+                    onChange={(event) => setComment(event.target.value)}
+                    placeholder="Add a task comment"
+                  />
+                  <Button
+                    disabled={!comment.trim() || addComment.isPending}
+                    onClick={() => addComment.mutate()}
+                  >
+                    Comment
+                  </Button>
+                </div>
+                <div className="mt-4 space-y-3">
+                  {(comments.data ?? []).map((entry) => (
+                    <div className="rounded border p-3 text-sm" key={entry.id}>
+                      <div className="flex justify-between gap-3">
+                        <span className="font-medium">{entry.author_name}</span>
+                        <span className="text-muted-foreground">
+                          {formatDate(entry.created_at)}
+                        </span>
+                      </div>
+                      <p className="mt-1 whitespace-pre-wrap text-muted-foreground">
+                        {entry.body}
+                      </p>
+                    </div>
+                  ))}
+                  {!comments.data?.length && (
+                    <p className="text-sm text-muted-foreground">
+                      No discussion entries yet.
+                    </p>
+                  )}
+                </div>
+              </section>
+            </div>
+          </TabsContent>
+          <TabsContent value="structure">
+            <div className="grid gap-5 lg:grid-cols-3">
+              <section className="rounded-lg border bg-card p-5 lg:col-span-3">
+                <h2 className="font-semibold">Attachments & Evidence</h2>
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <Input
+                    className="max-w-md"
+                    type="file"
+                    onChange={(event) =>
+                      setAttachment(event.target.files?.[0] ?? null)
+                    }
+                  />
+                  <label className="flex items-center gap-2 text-sm">
+                    <input
+                      checked={isEvidence}
+                      type="checkbox"
+                      onChange={(event) => setIsEvidence(event.target.checked)}
+                    />{" "}
+                    Approval evidence
+                  </label>
+                  <Button
+                    disabled={!attachment || uploadAttachment.isPending}
+                    onClick={() => uploadAttachment.mutate()}
+                  >
+                    {uploadAttachment.isPending ? "Uploading..." : "Upload"}
+                  </Button>
+                </div>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Up to 10 MB per file. Mark evidence so reviewers can identify
+                  supporting material quickly.
+                </p>
+                <div className="mt-4 space-y-2">
+                  {(attachments.data ?? []).map((file) => (
+                    <a
+                      className="flex items-center justify-between rounded border p-3 text-sm hover:bg-muted/40"
+                      href={file.file}
+                      key={file.id}
+                      rel="noreferrer"
+                      target="_blank"
+                    >
+                      <span>
+                        {file.original_name}
+                        {file.is_evidence ? " (evidence)" : ""}
+                      </span>
+                      <span className="text-muted-foreground">
+                        {file.uploaded_by_name}
+                      </span>
+                    </a>
+                  ))}
+                  {!attachments.data?.length && (
+                    <p className="text-sm text-muted-foreground">
+                      No files attached to this task.
+                    </p>
+                  )}
+                </div>
+              </section>
+            </div>
+          </TabsContent>
+          <TabsContent value="workflow">
+            <div className="grid gap-5 lg:grid-cols-3">
+              <section className="rounded-lg border bg-card p-5 lg:col-span-3">
+                <h2 className="font-semibold">Subtasks & Dependencies</h2>
+                <div className="mt-3 grid gap-5 lg:grid-cols-2">
+                  <div>
+                    <div className="flex gap-2">
+                      <Input
+                        value={subtaskTitle}
+                        onChange={(event) =>
+                          setSubtaskTitle(event.target.value)
+                        }
+                        placeholder="New subtask title"
+                      />
+                      <Button
+                        disabled={
+                          !subtaskTitle.trim() || addStructure.isPending
+                        }
+                        onClick={() =>
+                          addStructure.mutate({
+                            action: "subtask",
+                            title: subtaskTitle,
+                          })
+                        }
+                      >
+                        Add subtask
+                      </Button>
+                    </div>
+                    <div className="mt-3 space-y-2">
+                      {(structure.data?.subtasks ?? []).map((subtask) => (
+                        <div
+                          className="rounded border p-3 text-sm"
+                          key={subtask.id}
+                        >
+                          {subtask.number} - {subtask.title}{" "}
+                          <Badge className="ml-2" variant="outline">
+                            {subtask.status}
+                          </Badge>
+                        </div>
+                      ))}
+                      {!structure.data?.subtasks.length && (
+                        <p className="text-sm text-muted-foreground">
+                          No subtasks yet.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="flex gap-2">
+                      <Select
+                        value={dependencyId}
+                        onValueChange={setDependencyId}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Add dependency" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {(structure.data?.candidates ?? []).map(
+                            (candidate) => (
+                              <SelectItem
+                                key={candidate.id}
+                                value={String(candidate.id)}
+                              >
+                                {candidate.number} - {candidate.title}
+                              </SelectItem>
+                            ),
+                          )}
+                        </SelectContent>
+                      </Select>
+                      <Button
+                        disabled={!dependencyId || addStructure.isPending}
+                        onClick={() =>
+                          addStructure.mutate({
+                            action: "dependency",
+                            depends_on_id: dependencyId,
+                          })
+                        }
+                      >
+                        Add dependency
+                      </Button>
+                    </div>
+                    <div className="mt-3 space-y-2">
+                      {(structure.data?.dependencies ?? []).map(
+                        (dependency) => (
+                          <div
+                            className="rounded border p-3 text-sm"
+                            key={dependency.id}
+                          >
+                            {dependency.number} - {dependency.title}{" "}
+                            <Badge className="ml-2" variant="outline">
+                              {dependency.status}
+                            </Badge>
+                          </div>
+                        ),
+                      )}
+                      {!structure.data?.dependencies.length && (
+                        <p className="text-sm text-muted-foreground">
+                          No dependencies recorded.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </section>
+              <section className="rounded-lg border bg-card p-5 lg:col-span-3">
+                <h2 className="font-semibold">Workflow History</h2>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Every submission, decision, and reviewer comment for this
+                  task.
+                </p>
+                <div className="mt-4 space-y-3">
+                  {(workflowHistory.data?.data ?? []).map((item) => (
+                    <div className="rounded border p-3 text-sm" key={item.id}>
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <strong>{item.title}</strong>
+                        <Badge variant="outline">{item.status}</Badge>
+                      </div>
+                      <p className="mt-1 text-muted-foreground">
+                        {item.detail}
+                      </p>
+                      <p className="mt-2 text-xs text-muted-foreground">
+                        Assigned to {item.assigned_group_name || "an approver"}{" "}
+                        · {formatDateTime(item.created_at)}
+                      </p>
+                      {(item.metadata?.workflow_history ?? []).map(
+                        (event, index) => (
+                          <div
+                            className="mt-2 border-l-2 pl-3 text-xs text-muted-foreground"
+                            key={`${item.id}-${index}`}
+                          >
+                            <span className="font-medium text-foreground">
+                              {event.action}
+                            </span>{" "}
+                            by {event.actor_name} · {formatDateTime(event.at)}
+                            {event.comment ? ` — ${event.comment}` : ""}
+                          </div>
+                        ),
+                      )}
+                    </div>
+                  ))}
+                  {!workflowHistory.data?.data.length && (
+                    <p className="py-6 text-center text-sm text-muted-foreground">
+                      This task has not entered a workflow yet.
+                    </p>
+                  )}
+                </div>
+              </section>
+            </div>
+          </TabsContent>
+        </Tabs>
       )}
     </ERPWorkspacePage>
   );
