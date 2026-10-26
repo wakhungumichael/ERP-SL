@@ -1318,9 +1318,12 @@ class TokenLoginSerializer(serializers.Serializer):
         selected organization while the membership's default flag remains the
         single source of truth for the current context.
         """
-        memberships = OrganizationMembership.objects.select_for_update().select_related(
-            "tenant", "branch"
-        ).filter(user=user, is_active=True)
+        # Do not join the nullable branch relation in a row-locking query:
+        # PostgreSQL cannot apply FOR UPDATE to the nullable side of that
+        # outer join. Related tenant/branch values are loaded lazily below.
+        memberships = OrganizationMembership.objects.select_for_update().filter(
+            user=user, is_active=True
+        )
         membership = None
         if tenant_code:
             tenant = Tenant.objects.filter(code__iexact=tenant_code).first()
