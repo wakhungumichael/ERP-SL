@@ -321,11 +321,27 @@ def build_workspace_navigation(*, user, tenant=None):
         for item in section.items.filter(is_active=True):
             if has_tenant_context and item.required_module_id and item.required_module.slug not in active_module_slugs:
                 continue
-            if item.required_permission and (
-                item.required_permission not in active_permission_codes
+            required_any_permissions = [
+                str(permission).strip()
+                for permission in (item.metadata or {}).get("required_any_permissions", [])
+                if str(permission).strip()
+            ]
+            has_required_permission = (
+                item.required_permission in active_permission_codes
                 if active_permission_codes is not None
-                else not user.has_perm(item.required_permission)
-            ):
+                else user.has_perm(item.required_permission)
+            ) if item.required_permission else True
+            has_any_required_permission = (
+                any(
+                    permission in active_permission_codes
+                    if active_permission_codes is not None
+                    else user.has_perm(permission)
+                    for permission in required_any_permissions
+                )
+                if required_any_permissions
+                else True
+            )
+            if not has_required_permission or not has_any_required_permission:
                 continue
 
             access_rows = [row for row in item.role_access.all() if row.can_view]

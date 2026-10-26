@@ -1,5 +1,5 @@
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
-const PATH_PERMISSION_RULES: Array<{ prefix: string; permissions: string[] }> = [
+const PATH_PERMISSION_RULES: Array<{ prefix: string; permissions: string[]; exact?: boolean }> = [
   { prefix: '/dashboard', permissions: ['Platform_Core.can_view_workspace_dashboard'] },
   { prefix: '/workspace/operations/dashboard', permissions: ['Platform_Core.can_view_weighbridge_overview'] },
   { prefix: '/weighbridge/weighment-entry', permissions: ['SL_Weighbridge.can_access_weighment_entry'] },
@@ -45,6 +45,17 @@ const PATH_PERMISSION_RULES: Array<{ prefix: string; permissions: string[] }> = 
   { prefix: '/ticketing/overview', permissions: ['Platform_Core.can_view_ticketing_overview'] },
 
   { prefix: '/hr/staff', permissions: ['SL_HR.*'] },
+  { prefix: '/projects/overview', permissions: ['SL_Projects.view_project_dashboard'] },
+  { prefix: '/projects/team-tasks', permissions: ['SL_Projects.view_all_projecttask'] },
+  { prefix: '/projects/my-tasks', permissions: ['SL_Projects.view_own_projecttask', 'SL_Projects.view_all_projecttask'] },
+  { prefix: '/projects/board', permissions: ['SL_Projects.view_all_projecttask'] },
+  { prefix: '/projects/calendar', permissions: ['SL_Projects.view_own_projecttask', 'SL_Projects.view_all_projecttask'] },
+  { prefix: '/projects/reports', permissions: ['SL_Projects.export_project', 'SL_Projects.export_projecttask'] },
+  { prefix: '/projects/follow-ups', permissions: ['SL_Projects.view_own_projecttask', 'SL_Projects.view_all_projecttask'] },
+  { prefix: '/projects/tasks', exact: true, permissions: ['SL_Projects.view_all_projecttask'] },
+  { prefix: '/projects/tasks/', permissions: ['SL_Projects.view_own_projecttask', 'SL_Projects.view_all_projecttask'] },
+  { prefix: '/projects', exact: true, permissions: ['SL_Projects.view_project'] },
+  { prefix: '/projects/', permissions: ['SL_Projects.view_project'] },
   { prefix: '/procurement/requisitions', permissions: ['SL_Procurement.*_requisition'] },
   { prefix: '/procurement/vendors', permissions: ['SL_CRM.*_supplier'] },
   { prefix: '/procurement/purchase-orders', permissions: ['SL_Procurement.*_purchaseorder'] },
@@ -68,7 +79,8 @@ const PATH_PERMISSION_RULES: Array<{ prefix: string; permissions: string[] }> = 
   { prefix: '/services/overview', permissions: ['Platform_Core.can_view_services_overview'] },
 ].sort((a, b) => b.prefix.length - a.prefix.length);
 
-function pathMatches(path: string, prefix: string) {
+function pathMatches(path: string, prefix: string, exact = false) {
+  if (exact) return path === prefix;
   return path === prefix || path.startsWith(`${prefix}/`);
 }
 
@@ -82,7 +94,7 @@ function permissionMatches(permission: string, requirement: string) {
 export function hasMenuPathPermission(path: string, permissions: string[]) {
   if (path === '/') return true;
   const cleanPath = path.split('?')[0]?.split('#')[0] ?? path;
-  const rule = PATH_PERMISSION_RULES.find(candidate => pathMatches(cleanPath, candidate.prefix));
+  const rule = PATH_PERMISSION_RULES.find(candidate => pathMatches(cleanPath, candidate.prefix, candidate.exact));
   if (!rule) return false;
   return rule.permissions.some(requirement =>
     permissions.some(permission => permissionMatches(permission, requirement)),

@@ -378,21 +378,22 @@ class Command(BaseCommand):
             defaults={"title": "Projects & Tasks", "icon": "kanban-square", "module": projects_module,
                       "description": "Plan projects, assign work, and follow up on deadlines.", "sort_order": 58, "is_active": True},
         )
-        for item_key, title, icon, route_path, api_path, sort_order in (
-            ("overview", "Overview", "layout-dashboard", "/projects/overview", "/api/projects/dashboard/", 1),
-            ("projects", "Projects", "folder-kanban", "/projects", "/api/projects/projects/", 2),
-            ("all-tasks", "All Tasks", "list-todo", "/projects/tasks", "/api/projects/tasks/", 3),
-            ("my-tasks", "My Tasks", "user-check", "/projects/my-tasks", "/api/projects/tasks/?scope=mine", 4),
-            ("team-tasks", "Team Tasks", "users-round", "/projects/team-tasks", "/api/projects/tasks/?scope=team", 5),
-            ("task-board", "Task Board", "columns-3", "/projects/board", "/api/projects/tasks/?page_size=100", 6),
-            ("task-calendar", "Calendar", "calendar-days", "/projects/calendar", "/api/projects/tasks/?page_size=100", 7),
-            ("reports", "Reports", "chart-no-axes-combined", "/projects/reports", "/api/projects/reports/", 8),
-            ("follow-ups", "Follow-ups", "calendar-check", "/projects/follow-ups", "/api/projects/follow-ups/", 9),
+        for item_key, title, icon, route_path, api_path, sort_order, permissions in (
+            ("overview", "Overview", "layout-dashboard", "/projects/overview", "/api/projects/dashboard/", 1, ["SL_Projects.view_project_dashboard"]),
+            ("projects", "Projects", "folder-kanban", "/projects", "/api/projects/projects/", 2, ["SL_Projects.view_project"]),
+            ("all-tasks", "All Tasks", "list-todo", "/projects/tasks", "/api/projects/tasks/", 3, ["SL_Projects.view_all_projecttask"]),
+            ("my-tasks", "My Tasks", "user-check", "/projects/my-tasks", "/api/projects/tasks/?scope=mine", 4, ["SL_Projects.view_own_projecttask", "SL_Projects.view_all_projecttask"]),
+            ("team-tasks", "Team Tasks", "users-round", "/projects/team-tasks", "/api/projects/tasks/?scope=team", 5, ["SL_Projects.view_all_projecttask"]),
+            ("task-board", "Task Board", "columns-3", "/projects/board", "/api/projects/tasks/?page_size=100", 6, ["SL_Projects.view_all_projecttask"]),
+            ("task-calendar", "Calendar", "calendar-days", "/projects/calendar", "/api/projects/tasks/?page_size=100", 7, ["SL_Projects.view_own_projecttask", "SL_Projects.view_all_projecttask"]),
+            ("reports", "Reports", "chart-no-axes-combined", "/projects/reports", "/api/projects/reports/", 8, ["SL_Projects.export_project", "SL_Projects.export_projecttask"]),
+            ("follow-ups", "Follow-ups", "calendar-check", "/projects/follow-ups", "/api/projects/follow-ups/", 9, ["SL_Projects.view_own_projecttask", "SL_Projects.view_all_projecttask"]),
         ):
             WorkspaceMenuItem.objects.update_or_create(
                 section=projects_section, key=item_key,
                 defaults={"title": title, "icon": icon, "route_path": route_path, "api_path": api_path,
-                          "required_module": projects_module, "sort_order": sort_order, "is_active": True},
+                          "required_module": projects_module, "metadata": {"required_any_permissions": permissions},
+                          "sort_order": sort_order, "is_active": True},
             )
         for item_key, item_defaults in (
             (
