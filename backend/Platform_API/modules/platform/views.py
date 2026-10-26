@@ -2354,6 +2354,14 @@ class WorkflowRecordHistoryAPIView(APIView):
         return success_response("Workflow history loaded successfully.", data=WorkflowInboxItemSerializer(qs.order_by("created_at"), many=True).data)
 
 
+def _binding_for_workflow_event(bindings, trigger_event):
+    # Event lists are small tenant-scoped configuration. Checking membership in
+    # Python preserves priority on both PostgreSQL and SQLite, whose JSON field
+    # does not support the array containment lookup.
+    return next((binding for binding in bindings.order_by("-is_primary", "id")
+                 if not binding.trigger_events or trigger_event in binding.trigger_events), None)
+
+
 class WorkflowRequirementAPIView(APIView):
     """Lets a module determine whether a configured workflow currently applies."""
 
@@ -2367,10 +2375,11 @@ class WorkflowRequirementAPIView(APIView):
         entity_id = request.query_params.get("entity_id")
         if not tenant or not module_slug or not entity_type:
             return success_response("Workflow requirement resolved.", data={"required": False, "binding": None})
-        binding = WorkflowEntityBinding.objects.select_related("workflow").filter(
+        bindings = WorkflowEntityBinding.objects.select_related("workflow").filter(
             workflow__tenant=tenant, workflow__is_active=True, workflow__status="published",
             module_slug=module_slug, entity_type=entity_type, is_active=True,
-        ).filter(Q(trigger_events__contains=[trigger_event]) | Q(trigger_events=[])).order_by("-is_primary", "id").first()
+        )
+        binding = _binding_for_workflow_event(bindings, trigger_event)
         active_item = None
         if binding and entity_id:
             try:
@@ -2573,7 +2582,10 @@ def _workflow_recipients(node, tenant):
     if node.assigned_user_id:
         return User.objects.filter(pk=node.assigned_user_id)
     if node.approval_group_id:
-        return User.objects.filter(groups=node.approval_group, tenant_profile__tenant=tenant).distinct()
+        return User.objects.filter(is_active=True, groups=node.approval_group).filter(
+            Q(tenant_profile__tenant=tenant) |
+            Q(organization_memberships__tenant=tenant, organization_memberships__is_active=True)
+        ).distinct()
     return User.objects.none()
 
 
@@ -2737,9 +2749,7 @@ class WorkflowForwardAPIView(APIView):
         )
         if binding_id := request.data.get("binding_id"):
             bindings = bindings.filter(id=binding_id)
-        binding = bindings.filter(Q(trigger_events__contains=[trigger_event]) | Q(trigger_events=[])).order_by(
-            "-is_primary", "id"
-        ).first()
+        binding = _binding_for_workflow_event(bindings, trigger_event)
         if not binding:
             raise ValidationError({"detail": "No active workflow is configured for this module record and trigger."})
 
@@ -4105,6 +4115,7 @@ class TenantSettingsAPIView(APIView):
         # must never receive administrative configuration or SMTP details.
         safe_fields = {
             "id", "tenant", "logo_url", "primary_color", "workspace_name",
+            "secondary_color", "accent_color", "sidebar_color",
             "support_email", "footer_text", "invoice_prefix",
         }
         serialized = TenantSettingsSerializer(settings_obj, context={"request": request}).data

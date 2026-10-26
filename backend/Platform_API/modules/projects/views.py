@@ -63,25 +63,58 @@ def _active_role_name(user, tenant):
     return membership.effective_role_group_name() if membership else ""
 
 
+def _has_permission(user, codename):
+    # Selected task roles must not inherit unrelated permissions from another role.
+    tenant = resolve_user_tenant(user)
+    role = _active_role_name(user, tenant) if tenant not in (None, NO_TENANT_ACCESS) else ""
+    if role and role not in {"Tenant Admin", "Platform Admin", "Super Admin"} and not user.is_superuser:
+        group = user.groups.filter(name=role).first()
+        if group:
+            return group.permissions.filter(content_type__app_label="SL_Projects", codename=codename).exists()
+    return has_active_permission(user, f"SL_Projects.{codename}")
+
+
 def _require(user, codename):
-    if not has_active_permission(user, f"SL_Projects.{codename}"):
+    allowed = _has_permission(user, codename)
+    if codename == "view_projecttask":
+        allowed = allowed or _has_permission(user, "view_own_projecttask") or _has_permission(user, "view_all_projecttask")
+    if not allowed:
         raise PermissionDenied("Your active role does not have permission for this action.")
+
+
+def _can_view_all_tasks(user):
+    return _has_permission(user, "view_all_projecttask")
+
+
+def _personal_tasks(user):
+    tenant = resolve_user_tenant(user)
+    role = _active_role_name(user, tenant) if tenant not in (None, NO_TENANT_ACCESS) else ""
+    own = Q(primary_assignee=user) | Q(collaborators__user=user)
+    if role:
+        own |= Q(assigned_role__name=role)
+    return own
+
+
+def _task_scope(user):
+    qs = apply_tenant_filter(
+        ProjectTask.objects.select_related("branch", "project", "milestone", "primary_assignee", "assigned_role", "source_ticket"), user
+    )
+    branch_id = _active_branch_id(user)
+    if branch_id:
+        qs = qs.filter(branch_id=branch_id)
+    if not _can_view_all_tasks(user):
+        qs = qs.filter(_personal_tasks(user) | Q(created_by=user))
+    return qs.distinct()
 
 
 def _project_scope(user):
     qs = apply_tenant_filter(Project.objects.select_related("branch", "manager", "owner"), user)
     branch_id = _active_branch_id(user)
     if branch_id:
-        qs = qs.filter(Q(branch_id=branch_id) | Q(participating_branches__branch_id=branch_id)).distinct()
-    return qs
-
-
-def _task_scope(user):
-    qs = apply_tenant_filter(
-        ProjectTask.objects.select_related("branch", "project", "milestone", "primary_assignee", "source_ticket"), user
-    )
-    branch_id = _active_branch_id(user)
-    return qs.filter(branch_id=branch_id) if branch_id else qs
+        qs = qs.filter(Q(branch_id=branch_id) | Q(participating_branches__branch_id=branch_id))
+    if not _can_view_all_tasks(user):
+        qs = qs.filter(Q(manager=user) | Q(owner=user) | Q(created_by=user) | Q(members__user=user) | Q(pk__in=_task_scope(user).values("project_id")))
+    return qs.distinct()
 
 
 def _ensure_tenant_relation(tenant, obj, label):
@@ -97,7 +130,7 @@ def _ensure_active_tenant_user(tenant, user, label, branch=None):
         tenant=tenant, user=user, is_active=True
     )
     if branch is not None:
-        memberships = memberships.filter(Q(branch=branch) | Q(branches=branch))
+        memberships = memberships.filter(Q(branch=branch) | Q(branches=branch) | Q(branch_role_assignments__branch=branch, branch_role_assignments__is_active=True) | Q(is_org_admin=True))
     if not memberships.exists():
         scope = " in this branch" if branch is not None else ""
         raise serializers.ValidationError({
@@ -108,8 +141,11 @@ def _ensure_active_tenant_user(tenant, user, label, branch=None):
 def _next_reference(tenant, model, prefix):
     """Serialize reference allocation per tenant so concurrent drafts stay unique."""
     type(tenant).objects.select_for_update().get(pk=tenant.pk)
-    sequence = model.objects.filter(tenant=tenant).count() + 1
-    return f"{prefix}-{timezone.localdate():%Y}-{sequence:04d}"
+    field = "number" if model is ProjectTask else "code"
+    reference_prefix = f"{prefix}-{timezone.localdate():%Y}-"
+    references = model.objects.filter(tenant=tenant, **{f"{field}__startswith": reference_prefix}).values_list(field, flat=True)
+    sequence = max((int(value[len(reference_prefix):]) for value in references if value[len(reference_prefix):].isdigit()), default=0) + 1
+    return f"{reference_prefix}{sequence:04d}"
 
 
 def _date_range(request, *, start_field, end_field):
@@ -130,6 +166,29 @@ def _date_range(request, *, start_field, end_field):
     if end:
         filters[f"{end_field}__lte"] = end
     return filters
+
+
+def _filter_task_register(qs, request):
+    if value := request.query_params.get("status"):
+        qs = qs.filter(status=value)
+    if value := request.query_params.get("priority"):
+        qs = qs.filter(priority=value)
+    if value := request.query_params.get("project"):
+        try:
+            project_id = int(value)
+        except (TypeError, ValueError):
+            raise serializers.ValidationError({
+                "project": "Choose a valid project identifier."
+            })
+        qs = qs.filter(project_id=project_id)
+    if value := request.query_params.get("search"):
+        qs = qs.filter(Q(number__icontains=value) | Q(title__icontains=value) | Q(description__icontains=value))
+    if request.query_params.get("scope") == "mine":
+        qs = qs.filter(_personal_tasks(request.user)).distinct()
+    if request.query_params.get("scope") == "team":
+        role = _active_role_name(request.user, resolve_user_tenant(request.user))
+        qs = qs.filter(assigned_role__name=role) if role else qs.none()
+    return qs.filter(**_date_range(request, start_field="due_date", end_field="due_date"))
 
 
 def _would_create_dependency_cycle(task_id, depends_on_id):
@@ -467,16 +526,17 @@ class ProjectsDashboardAPIView(APIView):
 
     def get(self, request):
         _tenant_and_activation(request)
-        _require(request.user, "view_project")
+        _require(request.user, "view_projecttask")
         tasks = _task_scope(request.user)
         projects = _project_scope(request.user)
         today = timezone.localdate()
         open_tasks = tasks.exclude(status__in=["completed", "cancelled"])
         return Response({
+            "access": {"view_all_tasks": _can_view_all_tasks(request.user), "role": _active_role_name(request.user, resolve_user_tenant(request.user)), "can_create_task": _has_permission(request.user, "add_projecttask"), "can_create_project": _has_permission(request.user, "add_project"), "can_export": _has_permission(request.user, "export_projecttask")},
             "counts": {
                 "active_projects": projects.filter(status="active").count(),
                 "open_tasks": open_tasks.count(),
-                "my_tasks": open_tasks.filter(primary_assignee=request.user).count(),
+                "my_tasks": open_tasks.filter(_personal_tasks(request.user)).distinct().count(),
                 "overdue_tasks": open_tasks.filter(due_date__lt=today).count(),
                 "blocked_tasks": tasks.filter(status="blocked").count(),
                 "awaiting_review": tasks.filter(status="in_review").count(),
@@ -484,8 +544,26 @@ class ProjectsDashboardAPIView(APIView):
             },
             "recent_tasks": TaskSerializer(tasks.order_by("-updated_at")[:6], many=True).data,
             "upcoming_deadlines": TaskSerializer(open_tasks.filter(due_date__isnull=False).order_by("due_date", "priority")[:6], many=True).data,
-            "tasks_by_status": list(tasks.values("status").annotate(count=Count("id")).order_by("status")),
-            "tasks_by_priority": list(tasks.values("priority").annotate(count=Count("id")).order_by("priority")),
+            "tasks_by_status": list(tasks.values("status").annotate(count=Count("id", distinct=True)).order_by("status")),
+            "tasks_by_priority": list(tasks.values("priority").annotate(count=Count("id", distinct=True)).order_by("priority")),
+        })
+
+
+class ProjectTaskAlertsAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        _tenant_and_activation(request)
+        _require(request.user, "view_projecttask")
+        today = timezone.localdate()
+        tasks = _task_scope(request.user).filter(_personal_tasks(request.user)).exclude(status__in=["completed", "cancelled"]).distinct()
+        followups = TaskFollowUp.objects.filter(task__in=tasks, status__in=["scheduled", "pending", "overdue"], follow_up_date__lte=today)
+        due = tasks.filter(due_date__lte=today)
+        return Response({
+            "count": due.count() + followups.count(), "open_count": tasks.count(),
+            "overdue_count": tasks.filter(due_date__lt=today).count(),
+            "items": [{"id": f"task-{task.pk}", "title": task.title, "reference": task.number, "date": task.due_date, "route_path": f"/projects/tasks/{task.pk}"} for task in due.order_by("due_date", "pk")[:8]] +
+                     [{"id": f"followup-{item.pk}", "title": item.notes, "reference": item.task.number, "date": item.follow_up_date, "route_path": f"/projects/tasks/{item.task_id}"} for item in followups.select_related("task")[:8]],
         })
 
 
@@ -494,13 +572,26 @@ class ProjectsReportsAPIView(APIView):
 
     def get(self, request):
         _tenant_and_activation(request)
-        _require(request.user, "view_project")
-        tasks = _task_scope(request.user)
+        _require(request.user, "view_projecttask")
+        kind = request.query_params.get("report", "tasks")
+        tasks = _filter_task_register(_task_scope(request.user), request) if kind in {"tasks", "workload"} else _task_scope(request.user)
         projects = _project_scope(request.user)
+        if kind == "projects":
+            projects = projects.filter(**_date_range(request, start_field="target_end_date", end_field="target_end_date"))
+            if value := request.query_params.get("search"):
+                projects = projects.filter(Q(code__icontains=value) | Q(name__icontains=value))
         today = timezone.localdate()
         follow_ups = TaskFollowUp.objects.filter(task__in=tasks)
         milestones = ProjectMilestone.objects.filter(project__in=projects)
-        return Response({
+        if kind == "follow-ups":
+            follow_ups = follow_ups.filter(**_date_range(request, start_field="follow_up_date", end_field="follow_up_date"))
+            if value := request.query_params.get("search"):
+                follow_ups = follow_ups.filter(Q(notes__icontains=value) | Q(task__title__icontains=value) | Q(task__number__icontains=value))
+        if kind == "milestones":
+            milestones = milestones.filter(**_date_range(request, start_field="due_date", end_field="due_date"))
+            if value := request.query_params.get("search"):
+                milestones = milestones.filter(name__icontains=value)
+        payload = {
             "summary": {
                 "projects": projects.count(),
                 "active_projects": projects.filter(status="active").count(),
@@ -512,8 +603,8 @@ class ProjectsReportsAPIView(APIView):
                     status__in=["scheduled", "pending"], follow_up_date__lt=today
                 ).count(),
             },
-            "tasks_by_status": list(tasks.values("status").annotate(count=Count("id")).order_by("status")),
-            "tasks_by_priority": list(tasks.values("priority").annotate(count=Count("id")).order_by("priority")),
+            "tasks_by_status": list(tasks.values("status").annotate(count=Count("id", distinct=True)).order_by("status")),
+            "tasks_by_priority": list(tasks.values("priority").annotate(count=Count("id", distinct=True)).order_by("priority")),
             "project_progress": list(
                 projects.values("code", "name", "progress_percentage", "status")
                 .order_by("progress_percentage", "target_end_date", "name")[:10]
@@ -527,9 +618,32 @@ class ProjectsReportsAPIView(APIView):
             ),
             "workload": [
                 {"assignee": row["primary_assignee__username"], "name": row["primary_assignee__first_name"] or row["primary_assignee__username"], "count": row["count"]}
-                for row in tasks.exclude(status__in=["completed", "cancelled"]).values("primary_assignee__username", "primary_assignee__first_name").annotate(count=Count("id")).order_by("-count")[:10]
+                for row in tasks.exclude(status__in=["completed", "cancelled"]).values("primary_assignee__username", "primary_assignee__first_name").annotate(count=Count("id", distinct=True)).order_by("-count")[:10]
             ],
-        })
+        }
+        report_type = request.query_params.get("report", "tasks")
+        from SL_Projects.reporting import project_report_rows, report_document
+        columns, rows = project_report_rows(report_type, tasks, projects, follow_ups, milestones)
+        download = request.query_params.get("download")
+        if download in {"csv", "pdf"}:
+            _require(request.user, "export_projecttask")
+            if download == "pdf":
+                from Platform_Core.document_pdf import document_pdf_response
+                return document_pdf_response(report_document(resolve_user_tenant(request.user), report_type, columns, rows, request), f"projects-{report_type}.pdf")
+            response = HttpResponse(content_type="text/csv; charset=utf-8")
+            response["Content-Disposition"] = f'attachment; filename="projects-{report_type}.csv"'
+            writer = csv.writer(response)
+            writer.writerow(columns)
+            for row in rows:
+                writer.writerow([("'" + str(value)) if str(value).startswith(("=", "+", "-", "@")) else value for value in row])
+            return response
+        paginator = ProjectsPagination()
+        page = paginator.paginate_queryset(rows, request)
+        payload.update({"columns": columns, "rows": page, "count": len(rows), "report": report_type, "can_export": _has_permission(request.user, "export_projecttask")})
+        return Response(payload)
+
+
+
 
 
 class ProjectCalendarAPIView(APIView):
@@ -613,13 +727,17 @@ class TaskExportAPIView(APIView):
         response["Content-Disposition"] = 'attachment; filename="project-tasks.csv"'
         writer = csv.writer(response)
         writer.writerow(["Number", "Task", "Project", "Branch", "Assignee", "Status", "Priority", "Progress %", "Due date", "Workflow stage"])
-        for task in _task_scope(request.user):
+        for task in _filter_task_register(_task_scope(request.user), request):
             writer.writerow([task.number, task.title, task.project.name if task.project_id else "", task.branch.name, task.primary_assignee.get_full_name() or task.primary_assignee.username if task.primary_assignee_id else "", task.status, task.priority, task.progress_percentage, task.due_date or "", task.workflow_stage])
         return response
 
 
 class TaskFollowUpWorkspaceAPIView(APIView):
     permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        task_id = serializers.IntegerField(min_value=1).run_validation(request.data.get("task"))
+        return TaskFollowUpListCreateAPIView().post(request, pk=task_id)
 
     def get(self, request):
         _tenant_and_activation(request)
@@ -661,6 +779,7 @@ class TaskFollowUpWorkspaceAPIView(APIView):
         } for follow_up in page]
         response = paginator.get_paginated_response(payload)
         response.data["summary"] = summary
+        response.data["can_create"] = _has_permission(request.user, "add_taskfollowup")
         return response
 
 
@@ -926,8 +1045,8 @@ class TaskStructureAPIView(APIView):
             return Response({"detail": "Task not found."}, status=status.HTTP_404_NOT_FOUND)
         candidates = _task_scope(request.user).filter(project=task.project).exclude(pk=task.pk).exclude(parent_task=task) if task.project_id else _task_scope(request.user).filter(project__isnull=True).exclude(pk=task.pk).exclude(parent_task=task)
         return Response({
-            "subtasks": TaskSerializer(task.subtasks.select_related("primary_assignee"), many=True).data,
-            "dependencies": TaskSerializer(ProjectTask.objects.filter(dependent_tasks__task=task).select_related("primary_assignee"), many=True).data,
+            "subtasks": TaskSerializer(_task_scope(request.user).filter(parent_task=task), many=True).data,
+            "dependencies": TaskSerializer(_task_scope(request.user).filter(dependent_tasks__task=task), many=True).data,
             "candidates": TaskSerializer(candidates[:100], many=True).data,
         })
 
@@ -1445,18 +1564,7 @@ class TaskListCreateAPIView(APIView):
         _tenant_and_activation(request)
         _require(request.user, "view_projecttask")
         qs = _task_scope(request.user)
-        if value := request.query_params.get("status"):
-            qs = qs.filter(status=value)
-        if request.query_params.get("scope") == "mine":
-            qs = qs.filter(primary_assignee=request.user)
-        if request.query_params.get("scope") == "team":
-            role_name = _active_role_name(request.user, tenant_or_403(request.user))
-            qs = qs.filter(assigned_role__name=role_name) if role_name else qs.none()
-        if value := request.query_params.get("project"):
-            qs = qs.filter(project_id=value)
-        if value := request.query_params.get("search"):
-            qs = qs.filter(Q(number__icontains=value) | Q(title__icontains=value) | Q(description__icontains=value))
-        qs = qs.filter(**_date_range(request, start_field="due_date", end_field="due_date"))
+        qs = _filter_task_register(qs, request)
         ordering = request.query_params.get("ordering", "due_date")
         if ordering.lstrip("-") in {
             "number",
@@ -1472,7 +1580,9 @@ class TaskListCreateAPIView(APIView):
             qs = qs.order_by(ordering, "id")
         paginator = ProjectsPagination()
         page = paginator.paginate_queryset(qs, request)
-        return paginator.get_paginated_response(TaskSerializer(page, many=True).data)
+        response = paginator.get_paginated_response(TaskSerializer(page, many=True).data)
+        response.data["access"] = {"view_all_tasks": _can_view_all_tasks(request.user), "can_create": _has_permission(request.user, "add_projecttask")}
+        return response
 
     @transaction.atomic
     def post(self, request):

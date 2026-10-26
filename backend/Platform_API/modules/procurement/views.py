@@ -1,4 +1,5 @@
 # Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu.
+from Platform_Core.document_pdf import document_pdf_response, wants_document_pdf
 import json
 from decimal import Decimal
 
@@ -1519,6 +1520,8 @@ class PurchaseOrderDocumentView(APIView):
             return Response({"error": "Not found."}, status=status.HTTP_404_NOT_FOUND)
         tenant = po.tenant
         rendered = render_purchase_order_document(po, request=request, tenant=tenant)
+        if wants_document_pdf(request):
+            return document_pdf_response(rendered, f'{po.reference or f"PO-{po.pk:04d}"}.pdf')
         return HttpResponse(rendered.html, content_type="text/html; charset=utf-8")
 
 

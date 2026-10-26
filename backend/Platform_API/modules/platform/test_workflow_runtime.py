@@ -91,6 +91,21 @@ class WorkflowRuntimeTests(TestCase):
         self.assertEqual(item.status, "completed")
         self.assertEqual(item.acted_by, self.approver)
 
+    def test_notifications_include_approvers_with_an_active_organization_membership(self):
+        other_tenant = Tenant.objects.create(name="Other profile tenant", code="workflow-other-profile")
+        self.approver.tenant_profile.tenant = other_tenant
+        self.approver.tenant_profile.save(update_fields=["tenant"])
+        OrganizationMembership.objects.create(user=self.approver, tenant=self.tenant, role="member", is_active=True, is_default=True)
+        self.client.force_authenticate(self.submitter)
+
+        response = self.client.post(reverse("workflow-forward"), {
+            "module_slug": "weighbridge", "entity_type": "weighbridge_transaction", "entity_id": 96,
+        }, format="json")
+
+        self.assertEqual(response.status_code, 201, response.data)
+        item = WorkflowInboxItem.objects.get(entity_id=96)
+        self.assertTrue(SystemNotification.objects.filter(tenant=self.tenant, recipient=self.approver, source_id=item.pk).exists())
+
     def test_published_workflow_is_revised_instead_of_edited(self):
         self.client.force_authenticate(self.submitter)
 
@@ -129,6 +144,26 @@ class WorkflowRuntimeTests(TestCase):
 
         forwarded = self.client.post(reverse("workflow-forward"), {"module_slug": "weighbridge", "entity_type": "weighbridge_transaction", "entity_id": 92}, format="json")
         self.assertEqual(forwarded.status_code, 400)
+
+    def test_binding_trigger_must_match_unless_the_event_list_is_empty(self):
+        binding = self.workflow.entity_bindings.get()
+        binding.trigger_events = ["issue"]
+        binding.save(update_fields=["trigger_events"])
+        self.client.force_authenticate(self.submitter)
+        params = {"module_slug": "weighbridge", "entity_type": "weighbridge_transaction", "trigger_event": "submit"}
+
+        requirement = self.client.get(reverse("workflow-requirement"), params)
+        self.assertEqual(requirement.status_code, 200)
+        self.assertFalse(requirement.data["data"]["required"])
+        forwarded = self.client.post(reverse("workflow-forward"), {**params, "entity_id": 95}, format="json")
+        self.assertEqual(forwarded.status_code, 400)
+        self.assertFalse(WorkflowInboxItem.objects.filter(entity_id=95).exists())
+
+        binding.trigger_events = []
+        binding.save(update_fields=["trigger_events"])
+        requirement = self.client.get(reverse("workflow-requirement"), params)
+        self.assertEqual(requirement.status_code, 200)
+        self.assertTrue(requirement.data["data"]["required"])
 
     def test_forwarding_requires_the_active_role_permission(self):
         submitter = User.objects.create_user("workflow_limited_submitter", password="pass")

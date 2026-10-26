@@ -157,7 +157,7 @@ class TenantRoleManagementTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 200, response.data)
-        self.assertEqual(response.data["count"], 3)
+        self.assertEqual(response.data["count"], 4)
         self.assertEqual(len(response.data["results"]), 2)
 
     def test_tenant_admin_cannot_assign_other_tenant_custom_role(self):

@@ -58,6 +58,12 @@ const STAGE_COLORS: Record<string, string> = {
 };
 
 type CRMTab = 'companies' | 'people' | 'suppliers' | 'opportunities';
+type CRMRow =
+  | { kind: 'companies'; value: Organisation }
+  | { kind: 'people'; value: Contact }
+  | { kind: 'suppliers'; value: Supplier }
+  | { kind: 'opportunities'; value: Lead };
+
 
 // ── Main Screen ───────────────────────────────────────────────────────────────
 
@@ -102,6 +108,11 @@ export default function CRMScreen() {
   const people:        Contact[]      = Array.isArray(peopleData)    ? peopleData    : peopleData?.results ?? [];
   const suppliers:     Supplier[]     = Array.isArray(suppliersData) ? suppliersData : suppliersData?.results ?? [];
   const opportunities: Lead[]         = Array.isArray(oppsData)      ? oppsData      : oppsData?.results ?? [];
+
+  const rows: CRMRow[] = tab === 'companies' ? companies.map(value => ({ kind: 'companies', value })) :
+    tab === 'people' ? people.map(value => ({ kind: 'people', value })) :
+    tab === 'suppliers' ? suppliers.map(value => ({ kind: 'suppliers', value })) :
+    opportunities.map(value => ({ kind: 'opportunities', value }));
 
   const isLoading = cLoading || pLoading || sLoading || oLoading;
   const refetch = tab === 'companies' ? refetchC : tab === 'people' ? refetchP : tab === 'suppliers' ? refetchS : refetchO;
@@ -231,20 +242,17 @@ export default function CRMScreen() {
       {isLoading ? (
         <ActivityIndicator style={{ marginTop: 40 }} color={C.primary} />
       ) : (
-        <FlatList
-          data={
-            tab === 'companies' ? companies :
-            tab === 'people' ? people :
-            tab === 'suppliers' ? suppliers :
-            opportunities
-          }
-          keyExtractor={item => String((item as any).id)}
-          renderItem={
-            tab === 'companies'     ? renderCompany :
-            tab === 'people'        ? renderPerson :
-            tab === 'suppliers'     ? renderSupplier :
-            renderOpp
-          }
+        <FlatList<CRMRow>
+          data={rows}
+          keyExtractor={item => `${item.kind}-${item.value.id}`}
+          renderItem={({ item }) => {
+            switch (item.kind) {
+              case 'companies': return renderCompany({ item: item.value });
+              case 'people': return renderPerson({ item: item.value });
+              case 'suppliers': return renderSupplier({ item: item.value });
+              case 'opportunities': return renderOpp({ item: item.value });
+            }
+          }}
           contentContainerStyle={{ padding: 16, paddingBottom: insets.bottom + 100 }}
           ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
           refreshControl={<RefreshControl refreshing={false} onRefresh={refetch} tintColor={C.primary} />}

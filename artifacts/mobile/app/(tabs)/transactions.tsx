@@ -258,7 +258,7 @@ function TxCard({ tx, onPay }: TxCardProps) {
           <Text style={styles.weightLabel}>Tare</Text>
           <Text style={styles.weightVal}>{formatWeight(tx.tare_weight)}</Text>
         </View>
-        <Feather name="equals" size={12} color={C.primary} />
+        <Text style={{ color: C.primary }}>=</Text>
         <View style={styles.weightBlock}>
           <Text style={styles.weightLabel}>Net</Text>
           <Text style={[styles.weightVal, styles.netWeight]}>{formatWeight(tx.net_weight)}</Text>

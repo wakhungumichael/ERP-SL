@@ -33,6 +33,7 @@ const conditionOperators = [
   { value: 'is_false', label: 'Is false', help: 'For no/false flags. No value is needed.' },
 ];
 const conditionFields = [
+  { value: 'estimated_total', label: 'Requisition estimated total', description: 'Estimated total used by native procurement approvals.' },
   { value: 'context.total_amount', label: 'Total amount', description: 'Total document amount supplied when forwarding.' },
   { value: 'context.charge', label: 'Charge', description: 'Charge or fee supplied by the record.' },
   { value: 'context.status', label: 'Record status', description: 'Current document status.' },
@@ -48,6 +49,7 @@ const documents: DocumentOption[] = [
   { module: 'Procurement', slug: 'procurement', type: 'procurement_requisition', label: 'Procurement Requisition', trigger: 'submit', route: '/procurement/requisitions' },
   { module: 'Purchases', slug: 'purchases', type: 'purchase_order', label: 'Purchase Order', trigger: 'submit', route: '/procurement/purchase-orders' },
   { module: 'Purchases', slug: 'purchases', type: 'goods_receipt', label: 'Goods Receipt', trigger: 'complete', route: '/procurement/receipts' },
+  { module: 'Sales', slug: 'sales', type: 'estimate', label: 'Sales Estimate', trigger: 'submit', route: '/sales/estimates' },
   { module: 'Sales', slug: 'sales', type: 'sales_order', label: 'Sales Order', trigger: 'submit', route: '/sales/orders' },
   { module: 'Sales', slug: 'sales', type: 'sales_invoice', label: 'Sales Invoice', trigger: 'submit', route: '/sales/invoices' },
   { module: 'Accounting', slug: 'accounting', type: 'vendor_bill', label: 'Vendor Bill', trigger: 'submit', route: '/finance/payables' },
@@ -55,8 +57,10 @@ const documents: DocumentOption[] = [
   { module: 'Accounting', slug: 'accounting', type: 'journal_entry', label: 'Journal Entry', trigger: 'post', route: '/finance/transactions' },
   { module: 'Inventory', slug: 'inventory', type: 'stock_adjustment', label: 'Stock Adjustment', trigger: 'submit', route: '/inventory/movements' },
   { module: 'HR & Payroll', slug: 'hr-payroll', type: 'leave_request', label: 'Leave Request', trigger: 'submit', route: '/hr/staff' },
-  { module: 'CRM', slug: 'crm', type: 'opportunity', label: 'CRM Opportunity', trigger: 'submit', route: '/crm' },
-  { module: 'Ticketing', slug: 'ticketing', type: 'service_ticket', label: 'Service Ticket', trigger: 'submit', route: '/tickets' },
+  { module: 'CRM', slug: 'crm', type: 'opportunity', label: 'CRM Opportunity', trigger: 'submit', route: '/crm/opportunities' },
+  { module: 'Ticketing', slug: 'ticketing', type: 'service_ticket', label: 'Service Ticket', trigger: 'submit', route: '/ticketing/queue' },
+  { module: 'Projects & Tasks', slug: 'projects-tasks', type: 'project', label: 'Project', trigger: 'submit', route: '/projects' },
+  { module: 'Projects & Tasks', slug: 'projects-tasks', type: 'project_task', label: 'Project Task', trigger: 'submit', route: '/projects/tasks' },
 ];
 const wizardSteps = ['Document', 'General', 'Approval', 'Routing', 'Notifications', 'Review'];
 const blankForm = (document: DocumentOption) => ({ name: `${document.label} Approval`, code: `${document.type.replaceAll('_', '-')}-approval`, description: '', trigger_event: document.trigger });

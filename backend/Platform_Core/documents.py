@@ -111,6 +111,12 @@ def resolve_document_template(*, tenant, document_type):
             .first()
         )
 
+    from .template_library import ensure_shared_document_template_library, upgrade_shared_template
+    if template is None:
+        ensure_shared_document_template_library()
+        template = DocumentTemplate.objects.filter(tenant__isnull=True, document_type=document_type, is_active=True, is_default=True).order_by("id").first()
+    elif template.tenant_id is None:
+        template = upgrade_shared_template(template)
     return template, settings_obj
 
 
@@ -1039,7 +1045,7 @@ def render_business_document(*, tenant, document_type, context, request=None, pd
 
     # Shared templates are general-purpose. Weighbridge tickets use a dedicated
     # compact print layout, while a tenant's explicitly selected template wins.
-    use_compact_receipt = document_type == "receipt" and not getattr(template, "tenant_id", None)
+    use_compact_receipt = document_type == "receipt" and not getattr(template, "tenant_id", None) and not getattr(settings_obj, "receipt_template_id", None)
     template_body = _default_body(document_type) if use_compact_receipt else (
         template.body_template if template and template.body_template else _default_body(document_type)
     )
@@ -1047,6 +1053,7 @@ def render_business_document(*, tenant, document_type, context, request=None, pd
         stylesheet = _receipt_pdf_stylesheet(primary_color) if pdf_optimized else _receipt_stylesheet(primary_color)
     else:
         stylesheet = template.stylesheet if template and template.stylesheet else _default_stylesheet(primary_color)
+    stylesheet = _render_template_string(stylesheet, context)
     rendered_body = _render_template_string(template_body, context)
     if document_type == "receipt" and not use_compact_receipt and context.get("transaction_image_url") and "transaction-capture" not in rendered_body:
         rendered_body += _render_template_string(
@@ -1259,6 +1266,7 @@ def render_document_template_preview(template, *, tenant=None, request=None):
     primary_color = context["branding"]["primary_color"] or "#E85D26"
     template_body = template.body_template or _default_body(template.document_type)
     stylesheet = template.stylesheet or _default_stylesheet(primary_color)
+    stylesheet = _render_template_string(stylesheet, context)
     rendered_body = _render_template_string(template_body, context)
     html = f"""<!DOCTYPE html>
 <html lang="en">

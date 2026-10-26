@@ -1,4 +1,5 @@
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
+import { downloadDocumentPdf } from '@/lib/document-download';
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useLocation } from 'wouter';
@@ -432,16 +433,7 @@ export default function EstimatesPage() {
         headers: authHeaders(token),
       });
       if (!r.ok) throw new Error('Failed to download estimate');
-      const html = await r.text();
-      const blob = new Blob([html], { type: 'text/html' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `${estimate.estimate_number}.html`;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      await downloadDocumentPdf(r, `${estimate.estimate_number}.pdf`);
     } catch (error: any) {
       toast({ title: 'Download failed', description: error.message, variant: 'destructive' });
     }
@@ -514,15 +506,6 @@ export default function EstimatesPage() {
       toast({ title: 'Convert failed', description: error.message, variant: 'destructive' });
     }
   }
-
-  const flowSteps = previewEstimate ? [
-    { label: 'Estimate Drafted', active: true },
-    { label: 'Estimate Sent', active: ['sent', 'accepted'].includes(previewEstimate.status) || !!previewEstimate.converted_to_sales_order || !!previewEstimate.converted_to_invoice },
-    { label: 'Estimate Accepted', active: previewEstimate.status === 'accepted' || !!previewEstimate.converted_to_sales_order || !!previewEstimate.converted_to_invoice },
-    { label: 'Sales Order Created', active: !!previewEstimate.converted_to_sales_order },
-    { label: 'Draft Invoice Created', active: !!previewEstimate.converted_to_invoice },
-    { label: 'Accounting Posted On Issue', active: false },
-  ] : [];
 
   return (
     <div className="space-y-6 p-6">
@@ -841,17 +824,17 @@ export default function EstimatesPage() {
       </Dialog>
 
       <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
-        <DialogContent className="max-w-6xl max-h-[94vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>{previewEstimate?.estimate_number || 'Quote Preview'}</DialogTitle>
+        <DialogContent className="h-[100dvh] max-h-[100dvh] max-w-6xl content-start overflow-y-auto p-4 sm:h-auto sm:max-h-[94dvh] sm:p-6">
+          <DialogHeader className="min-w-0 pr-8 text-left">
+            <DialogTitle className="break-words">{previewEstimate?.estimate_number || 'Quote Preview'}</DialogTitle>
           </DialogHeader>
           {previewLoading || !previewEstimate ? (
             <div className="py-16 text-center text-muted-foreground">Loading preview…</div>
           ) : (
-            <div className="space-y-5">
-              <div className="flex flex-wrap gap-2">
+            <div className="min-w-0 space-y-4 sm:space-y-5">
+              <div className="flex flex-col gap-2 [&>button]:min-h-11 sm:flex-row sm:flex-wrap sm:[&>button]:min-h-0">
                 <Button size="sm" variant="outline" onClick={() => handleDownload(previewEstimate)}>
-                  <Download className="h-4 w-4 mr-1" /> Download
+                  <Download className="h-4 w-4 mr-1" /> Download PDF
                 </Button>
                 <Button size="sm" variant="outline" onClick={() => openEmailDialog(previewEstimate)}>
                   <Mail className="h-4 w-4 mr-1" /> Email
@@ -896,23 +879,7 @@ export default function EstimatesPage() {
                 </Button>
               </div>
 
-              <div className="rounded-lg border p-4 space-y-3">
-                <div>
-                  <p className="text-sm font-semibold">Sales Flow</p>
-                  <p className="text-xs text-muted-foreground">
-                    Once a quote is accepted, create the order for operations. Accounting starts when the invoice is issued, not when the quote or order is created.
-                  </p>
-                </div>
-                <div className="grid gap-2 md:grid-cols-6">
-                  {flowSteps.map((step) => (
-                    <div key={step.label} className={`rounded-md border px-3 py-2 text-xs font-medium ${step.active ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-muted/30 text-muted-foreground'}`}>
-                      {step.label}
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div className="grid gap-4 md:grid-cols-3">
+              <div className="grid gap-3 break-words sm:gap-4 md:grid-cols-3 [&>div]:min-w-0">
                 <Card>
                   <CardContent className="pt-4">
                     <p className="text-xs text-muted-foreground">Customer</p>
@@ -933,8 +900,8 @@ export default function EstimatesPage() {
                 </Card>
               </div>
 
-              <div className="rounded-lg border overflow-hidden">
-                <iframe title="Estimate Preview" srcDoc={previewHtml} className="w-full min-h-[70vh] bg-white" />
+              <div className="min-w-0 overflow-hidden rounded-lg border">
+                <iframe title="Estimate Preview" srcDoc={previewHtml} className="block min-h-[70dvh] w-full bg-white" />
               </div>
             </div>
           )}

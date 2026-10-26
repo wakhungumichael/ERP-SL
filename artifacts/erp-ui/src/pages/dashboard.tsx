@@ -25,7 +25,7 @@ const MODULE_ALIASES: Record<string, string[]> = {
 
 export default function Dashboard() {
   const [, setLocation] = useLocation();
-  const { tenantContext, isLoading } = useTenantTheme();
+  const { tenantContext, isLoading } = useTenantTheme({ applyTheme: false });
   const { hasPermission, hasWorkspacePermission, canViewSensitive } = useDashboardAccess();
   const canViewDashboard = hasPermission('view_dashboard');
   const visibleModuleKeys = useMemo(() => new Set([
@@ -66,7 +66,6 @@ export default function Dashboard() {
       <div>
         <div className="flex flex-wrap items-center gap-2">
           <Badge className="bg-primary/10 text-primary hover:bg-primary/10">Business performance</Badge>
-          <Badge variant="outline">Role-based view</Badge>
         </div>
         <h1 className="mt-3 text-2xl font-black tracking-tight">{greeting(tenantContext.branding.timezone)}, {tenantContext.displayName || tenantContext.tenantName}</h1>
         <p className="mt-1 text-sm text-muted-foreground">Live operational, collection, and workflow signals for your current role.</p>
@@ -78,7 +77,7 @@ export default function Dashboard() {
       </div>
     </header>
 
-    {dashboard.customizeMode ? <DashboardCustomizer widgets={widgets} layout={dashboard.layout} customizeMode={dashboard.customizeMode} setCustomizeMode={dashboard.setCustomizeMode} updateItem={dashboard.updateItem} resetLayout={dashboard.resetLayout} serializedPayload={dashboard.serializedPayload} /> : null}
+    {dashboard.customizeMode ? <DashboardCustomizer widgets={widgets} layout={dashboard.layout} customizeMode={dashboard.customizeMode} setCustomizeMode={dashboard.setCustomizeMode} updateItem={dashboard.updateItem} resetLayout={dashboard.resetLayout} /> : null}
     {widgets.length ? <DashboardGridEngine widgets={widgets} layout={dashboard.layout} tenantContext={tenantContext} canViewSensitive={canViewSensitive} customizeMode={dashboard.customizeMode} updateItem={dashboard.updateItem} moveItem={dashboard.moveItem} swapItems={dashboard.swapItems} cycleWidgetWidth={dashboard.cycleWidgetWidth} /> : <div className="rounded-xl border border-dashed p-10 text-center text-sm text-muted-foreground">No dashboard panels are available for this role. Ask an administrator to assign module overview permissions.</div>}
   </div>;
 }

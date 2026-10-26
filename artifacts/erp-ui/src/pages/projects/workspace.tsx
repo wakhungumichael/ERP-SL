@@ -79,8 +79,10 @@ function label(value: string) {
 }
 
 function useApi<T>(path: string, token: string | null) {
+  const { user } = useAuth();
+  const context = user as any;
   return useQuery<T>({
-    queryKey: ["projects", path],
+    queryKey: ["projects", path, token, context?.organization_id, context?.branch_id, context?.active_role_group_name],
     enabled: Boolean(token),
     queryFn: async () => {
       const response = await fetch(path, {
@@ -185,8 +187,8 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
     try {
       const response = await fetch(
         isProjects
-          ? "/api/projects/projects/export/"
-          : "/api/projects/tasks/export/",
+          ? `/api/projects/projects/export/?${query}`
+          : `/api/projects/tasks/export/?${query}`,
         { headers: { Authorization: `Token ${token}` } },
       );
       if (!response.ok)
@@ -302,6 +304,7 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
       }),
   });
   const metrics = useApi<{
+    access: { view_all_tasks: boolean; role: string; can_create_task: boolean; can_create_project: boolean; can_export: boolean };
     counts: Record<string, number>;
     recent_tasks: Task[];
     upcoming_deadlines: Task[];
@@ -368,7 +371,7 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
     return (
       <ERPWorkspacePage
         title={title}
-        description="Plan work, track delivery, and follow up across your active branch."
+        description={`${metrics.data?.access.role?.split(':').pop() || 'Your workspace'} · ${metrics.data?.access.view_all_tasks ? 'All permitted branch tasks' : 'Your assigned work, collaborations, and role tasks'}`}
       >
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <Metric
@@ -561,14 +564,14 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
           </Button>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" onClick={() => void exportRegister()}>
+          <Button variant="outline" onClick={() => void exportRegister()} disabled={!metrics.data?.access.can_export}>
             <Download className="mr-2 h-4 w-4" />
             Export CSV
           </Button>
-          <Button onClick={() => setCreateOpen(true)}>
+          {(isProjects ? metrics.data?.access.can_create_project : metrics.data?.access.can_create_task) && <Button onClick={() => setCreateOpen(true)}>
             <Plus className="mr-2 h-4 w-4" />
             New {isProjects ? "Project" : "Task"}
-          </Button>
+          </Button>}
         </div>
       </div>
       {filtersOpen && (
@@ -795,7 +798,8 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
             })}
           </tbody>
         </table>
-        {!records.isLoading && !items.length && (
+        {records.isError && <p role="alert" className="p-4 text-sm text-destructive">{records.error.message}</p>}
+        {!records.isLoading && !records.isError && !items.length && (
           <div className="p-10 text-center text-sm text-muted-foreground">
             No records match the selected filters.
           </div>

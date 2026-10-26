@@ -510,7 +510,7 @@ export default function CaptureScreen() {
       {openSheet === 'item' && (
         <PickerSheet
           title="Select Item"
-          items={items}
+          items={itemList}
           getLabel={(i) => i.name}
           getValue={(i) => i.id}
           onSelect={(i) => { setItemId(i.id); setItemName(i.name); }}

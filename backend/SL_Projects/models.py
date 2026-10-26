@@ -155,6 +155,8 @@ class ProjectTask(AuditMetadataMixin, models.Model):
         ordering = ["due_date", "-created_at"]
         unique_together = ("tenant", "number")
         permissions = [
+            ("view_own_projecttask", "Can view own and role-assigned project tasks"),
+            ("view_all_projecttask", "Can view all project tasks in the active workspace"),
             ("assign_projecttask", "Can assign project tasks"),
             ("update_projecttask_progress", "Can update project task progress"),
             ("complete_projecttask", "Can complete project tasks"),

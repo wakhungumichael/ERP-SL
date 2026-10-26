@@ -32,6 +32,7 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.units import inch
 from reportlab.lib.utils import ImageReader
+from Platform_Core.document_pdf import document_pdf_bytes, document_pdf_response, wants_document_pdf
 from reportlab.pdfgen import canvas
 from reportlab.platypus import Paragraph, Table, TableStyle
 
@@ -1001,10 +1002,9 @@ class EstimateDocumentView(APIView):
         if not obj:
             return Response({"error": "Not found."}, status=status.HTTP_404_NOT_FOUND)
         rendered = render_estimate_document(obj, request=request)
-        response = HttpResponse(rendered.html, content_type="text/html; charset=utf-8")
-        if request.query_params.get("download") in {"1", "true", "yes"}:
-            response["Content-Disposition"] = f'attachment; filename="{obj.estimate_number}.html"'
-        return response
+        if wants_document_pdf(request):
+            return document_pdf_response(rendered, f"{obj.estimate_number}.pdf")
+        return HttpResponse(rendered.html, content_type="text/html; charset=utf-8")
 
 
 class EstimateEmailSerializer(serializers.Serializer):
@@ -1053,6 +1053,7 @@ class EstimateEmailView(APIView):
             f"Regards,\n{company_name}"
         )
 
+        pdf_attachment = document_pdf_bytes(rendered.html)
         connection = get_tenant_smtp_connection(settings_obj)
         email = EmailMultiAlternatives(
             subject=subject,
@@ -1068,9 +1069,9 @@ class EstimateEmailView(APIView):
             "text/html",
         )
         email.attach(
-            f"{obj.estimate_number}.html",
-            rendered.html,
-            "text/html",
+            f"{obj.estimate_number}.pdf",
+            pdf_attachment,
+            "application/pdf",
         )
         email.send()
 
@@ -1761,8 +1762,20 @@ class CustomerStatementDocumentView(APIView):
                 ),
                 "terms": "This statement summarizes invoice balances and settled payments for the selected customer.",
             },
+            "statement_invoices": [
+                {"number": invoice["invoice_number"], "date": invoice["invoice_date"], "due_date": invoice.get("due_date"),
+                 "total": _money(invoice["total"], currency), "paid": _money(invoice["paid_amount"], currency),
+                 "balance": _money(invoice["balance_amount"], currency)}
+                for invoice in payload.get("invoices", [])
+            ],
+            "statement_aging": [
+                {"label": label, "amount": _money(payload["aging"].get(key, 0), currency)}
+                for key, label in (("current", "Current"), ("days_1_30", "1–30 days"), ("days_31_60", "31–60 days"), ("days_61_90", "61–90 days"), ("days_90_plus", "90+ days"))
+            ],
+            "statement_payments": [{**payment, "amount": _money(payment.get("amount", 0), currency)} for payment in payload.get("recent_payments", [])],
             "lines": lines,
             "totals": {
+                "paid_display": _money(payload["summary"]["total_paid"], currency),
                 "subtotal": Decimal(str(payload["summary"]["total_invoiced"])),
                 "subtotal_display": _money(payload["summary"]["total_invoiced"], currency),
                 "tax": Decimal("0.00"),
@@ -1780,16 +1793,8 @@ class CustomerStatementDocumentView(APIView):
             context=document_context,
             request=request,
         )
-        wants_pdf = (
-            request.query_params.get("download") == "pdf"
-        )
-        if wants_pdf:
-            return _statement_pdf_response(
-                payload=payload,
-                customer_id=customer_id,
-                request=request,
-                tenant=tenant,
-            )
+        if wants_document_pdf(request):
+            return document_pdf_response(rendered, f"customer_statement_{customer_id}.pdf")
         return HttpResponse(rendered.html, content_type="text/html; charset=utf-8")
 
 

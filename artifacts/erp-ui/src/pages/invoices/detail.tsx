@@ -1,4 +1,5 @@
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
+import { downloadDocumentPdf } from '@/lib/document-download';
 import { useState } from 'react';
 import { useLocation } from 'wouter';
 import {
@@ -27,7 +28,7 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import {
   ArrowLeft, CheckCircle2, DollarSign, Send, FileText,
-  Building2, Hash, Calendar, AlertCircle, Printer, Tag, Mail, MailX,
+  Building2, Hash, Calendar, AlertCircle, Download, Tag, Mail, MailX,
 } from 'lucide-react';
 
 /* ─────────────────────────────────────────── helpers ── */
@@ -192,16 +193,11 @@ export default function InvoiceDetail({ id }: { id: string }) {
   const openInvoiceDocument = async () => {
     if (!token || Number.isNaN(numericId)) return;
     try {
-      const res = await fetch(`/api/payments/invoices/${numericId}/document/`, {
+      const res = await fetch(`/api/payments/invoices/${numericId}/document/?download=pdf`, {
         headers: { Authorization: `Token ${token}` },
       });
       if (!res.ok) throw new Error(`Failed to open document (${res.status})`);
-      const html = await res.text();
-      const blob = new Blob([html], { type: 'text/html' });
-      const url = URL.createObjectURL(blob);
-      const win = window.open(url, '_blank', 'noopener,noreferrer');
-      if (!win) throw new Error('Popup was blocked by the browser');
-      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      await downloadDocumentPdf(res, `${data?.invoice_number || `INV-${numericId}`}.pdf`);
     } catch (err: any) {
       toast({
         title: 'Unable to open invoice document',
@@ -291,8 +287,8 @@ export default function InvoiceDetail({ id }: { id: string }) {
               <CheckCircle2 className="h-3.5 w-3.5" /> Fully Paid
             </Badge>
           )}
-          <Button variant="ghost" size="icon" title="Open printable invoice" onClick={openInvoiceDocument}>
-            <Printer className="h-4 w-4" />
+          <Button variant="ghost" size="icon" title="Download invoice PDF" aria-label="Download invoice PDF" onClick={openInvoiceDocument}>
+            <Download className="h-4 w-4" />
           </Button>
         </div>
       </div>

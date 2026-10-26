@@ -4,7 +4,7 @@ from django.test import TestCase
 from django.urls import reverse
 from rest_framework.test import APIClient
 
-from Platform_Core.models import PlatformBrandingSettings, Tenant, TenantSettings
+from Platform_Core.models import PlatformBrandingSettings, Tenant, TenantSettings, TenantUserProfile
 
 
 class PlatformBrandingIsolationTests(TestCase):
@@ -57,3 +57,42 @@ class PlatformBrandingIsolationTests(TestCase):
         response = client.put(self.platform_url, {"platform_name": "Attempted takeover"}, format="json")
         self.assertEqual(response.status_code, 403)
         self.assertFalse(PlatformBrandingSettings.objects.filter(platform_name="Attempted takeover").exists())
+
+
+class TenantThemeTests(TestCase):
+    def setUp(self):
+        self.tenant = Tenant.objects.create(name="Theme tenant", code="theme-tenant")
+        self.admin = User.objects.create_user("theme-admin")
+        TenantUserProfile.objects.create(user=self.admin, tenant=self.tenant, is_tenant_admin=True)
+        self.member = User.objects.create_user("theme-member")
+        TenantUserProfile.objects.create(user=self.member, tenant=self.tenant)
+        self.client = APIClient()
+        self.client.force_authenticate(self.admin)
+        self.url = reverse("tenant-settings", args=[self.tenant.pk])
+
+    def test_palette_persists_and_is_available_to_workspace_members(self):
+        palette = {"primary_color": "#000000", "secondary_color": "#ffffff", "accent_color": "#00ff00", "sidebar_color": "#123456"}
+        response = self.client.put(self.url, palette, format="json")
+        self.assertEqual(response.status_code, 200, response.data)
+        self.client.force_authenticate(self.member)
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200, response.data)
+        for field, value in palette.items():
+            self.assertEqual(response.data["data"][field], value)
+            self.assertEqual(getattr(TenantSettings.objects.get(tenant=self.tenant), field), value)
+        self.assertNotIn("smtp_password", response.data["data"])
+        denied = self.client.put(self.url, {"primary_color": "#ffffff"}, format="json")
+        self.assertEqual(denied.status_code, 403)
+
+    def test_invalid_colors_are_rejected(self):
+        for field in ("primary_color", "secondary_color", "accent_color", "sidebar_color"):
+            with self.subTest(field=field):
+                response = self.client.put(self.url, {field: "not-a-color"}, format="json")
+                self.assertEqual(response.status_code, 400, response.data)
+
+    def test_optional_colors_can_be_reset(self):
+        response = self.client.put(self.url, {"secondary_color": "#fff"}, format="json")
+        self.assertEqual(response.status_code, 200, response.data)
+        response = self.client.put(self.url, {"secondary_color": "", "accent_color": "", "sidebar_color": ""}, format="json")
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(TenantSettings.objects.get(tenant=self.tenant).secondary_color, "")

@@ -859,12 +859,17 @@ class TenantSettingsSerializer(serializers.ModelSerializer):
     receipt_template = DocumentTemplateSerializer(read_only=True)
     statement_template = DocumentTemplateSerializer(read_only=True)
     purchase_order_template = DocumentTemplateSerializer(read_only=True)
+    primary_color = serializers.RegexField(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$", required=False, allow_blank=True)
+    secondary_color = serializers.RegexField(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$", required=False, allow_blank=True)
+    accent_color = serializers.RegexField(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$", required=False, allow_blank=True)
+    sidebar_color = serializers.RegexField(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$", required=False, allow_blank=True)
     session_timeout_minutes = serializers.IntegerField(min_value=5, max_value=1440, required=False)
 
     class Meta:
         model = TenantSettings
         fields = (
             "id", "tenant", "logo_url", "logo_file", "primary_color", "workspace_name",
+            "secondary_color", "accent_color", "sidebar_color",
             "login_page_config", "footer_menu", "landing_page_config", "support_email",
             "invoice_prefix", "footer_text", "default_tax_name", "default_tax_rate",
             "invoice_template", "invoice_template_id",

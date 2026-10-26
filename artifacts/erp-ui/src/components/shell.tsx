@@ -2,6 +2,7 @@
 import { Link, useLocation } from 'wouter';
 import { useAuthLogout } from '@workspace/api-client-react';
 import { LogOut, Scale, ChevronRight, ChevronDown, Search, UserCircle2, Settings, PanelTop, X, Menu, ShieldAlert, LayoutDashboard, ShoppingCart, Package, Landmark, Users, Ticket, BarChart3, ClipboardList, Factory, Store, Wrench, Boxes, FileText, Truck, CreditCard, FolderKanban, ContactRound, Download, Bell } from 'lucide-react';
+import { activeNavigationPath } from '@/lib/navigation-active';
 import { Button } from '@/components/ui/button';
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { Input } from '@/components/ui/input';
@@ -323,12 +324,8 @@ interface NavSectionProps {
 }
 
 function NavSectionItem({ section, location, sidebarCollapsed, open, onToggle }: NavSectionProps) {
-  const hasActive = section.items.some(
-    item =>
-      location === item.path ||
-      (item.path !== '/' && location.startsWith(item.path + '/')) ||
-      (item.path === '/dashboard' && location === '/'),
-  );
+  const activePath = activeNavigationPath(location, section.items.map(item => item.path));
+  const hasActive = !!activePath;
   const singleItem = section.items.length === 1 ? section.items[0] : null;
   const renderAsDirectLink = !!singleItem && singleItem.title.toLowerCase() === section.title.toLowerCase();
 
@@ -360,7 +357,7 @@ function NavSectionItem({ section, location, sidebarCollapsed, open, onToggle }:
               }`}
             >
               <span className={`flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.12em] transition-colors ${
-                hasActive ? 'text-primary/90' : 'text-sidebar-foreground/50 group-hover:text-sidebar-foreground/75'
+                hasActive ? 'text-sidebar-foreground' : 'text-sidebar-foreground/50 group-hover:text-sidebar-foreground/75'
               }`}>
                 <NavigationIcon path={section.key} className="h-3.5 w-3.5" />
                 {section.title}
@@ -385,10 +382,7 @@ function NavSectionItem({ section, location, sidebarCollapsed, open, onToggle }:
           >
             <div className="space-y-0.5 px-2 pb-1">
               {section.items.map(item => {
-                const active =
-                  location === item.path ||
-                  (item.path !== '/' && location.startsWith(item.path + '/')) ||
-                  (item.path === '/dashboard' && location === '/');
+                const active = item.path === activePath;
 
                 return (
                   <Link
@@ -425,9 +419,9 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(loadCollapsedSections);
   const [sidebarSearch, setSidebarSearch] = useState('');
-  const [globalSearch, setGlobalSearch] = useState('');
   const [profileOpen, setProfileOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [taskAlertsOpen, setTaskAlertsOpen] = useState(false);
   const [profileForm, setProfileForm] = useState({ first_name: '', last_name: '', email: '', username: '' });
   const [passwordForm, setPasswordForm] = useState({ current_password: '', new_password: '', new_password_confirmation: '' });
   const [profileMessage, setProfileMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -657,7 +651,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
       : [HOME_SECTION, ...remainingSections, ...platformSections];
   const workspaceHomePath = navSections
     .flatMap((section) => section.items)
-    .find((item) => item.path === '/weighbridge/weighment-entry')?.path
+    .find((item) => item.path === '/dashboard')?.path
     ?? navSections.flatMap((section) => section.items)[0]?.path
     ?? '/dashboard';
   const routeAccess = useMemo(
@@ -669,19 +663,6 @@ export function Shell({ children }: { children: React.ReactNode }) {
       isPermissionDrivenRole: usesPermissionDrivenNavigation,
     }),
     [effectiveRole, location, tenantContext.activeModuleSlugs, (user as any)?.permissions],
-  );
-
-  const searchIndex = useMemo(
-    () =>
-      navSections.flatMap(section =>
-        section.items.map(item => ({
-          key: `${section.key}-${item.key}`,
-          title: item.title,
-          path: item.path,
-          sectionTitle: section.title,
-        })),
-      ),
-    [navSections],
   );
 
   const filteredSidebarSections = useMemo(() => {
@@ -702,23 +683,21 @@ export function Shell({ children }: { children: React.ReactNode }) {
       .filter(section => section.items.length > 0);
   }, [navSections, sidebarSearch]);
 
-  const globalMatches = useMemo(() => {
-    if (!globalSearch.trim()) return [];
-    return searchIndex
-      .filter(
-        entry =>
-          matchesSearch(entry.title, globalSearch) ||
-          matchesSearch(entry.sectionTitle, globalSearch) ||
-          matchesSearch(entry.path, globalSearch),
-      )
-      .slice(0, 8);
-  }, [searchIndex, globalSearch]);
-
   const displayName =
     (user as any)?.first_name
       ? `${(user as any).first_name} ${(user as any).last_name ?? ''}`.trim()
       : (user as any)?.username ?? 'User';
   const email = (user as any)?.email ?? 'No email available';
+  const taskAlerts = useQuery({
+    queryKey: ['project-task-alerts', token, (user as any)?.organization_id, (user as any)?.branch_id, activeRoleGroupName],
+    enabled: !!token && tenantContext.activeModuleSlugs.includes('projects-tasks'),
+    refetchInterval: 30_000,
+    queryFn: async () => {
+      const response = await fetch('/api/projects/task-alerts/', { headers: { Authorization: `Token ${token}` } });
+      if (!response.ok) return { can_view: false, count: 0, open_count: 0, items: [] };
+      return { ...(await response.json()), can_view: true };
+    },
+  });
   const systemNotifications = useQuery({
     queryKey: ['system-notifications', token],
     enabled: !!token,
@@ -771,7 +750,6 @@ export function Shell({ children }: { children: React.ReactNode }) {
   };
   const openRoute = (path: string) => {
     setLocation(path);
-    setGlobalSearch('');
   };
   const renderNavSections = (collapsed: boolean) => (
     <>
@@ -901,70 +879,24 @@ export function Shell({ children }: { children: React.ReactNode }) {
                 .flatMap(s => s.items)
                 .find(
                   item =>
-                    location === item.path ||
-                    (item.path !== '/' && location.startsWith(item.path + '/')) ||
-                    (item.path === '/dashboard' && location === '/'),
+                    item.path === activeNavigationPath(location, navSections.flatMap(section => section.items).map(entry => entry.path)),
                 )?.title ?? 'Operations Center'}
             </div>
 
-            <div className="relative w-full max-w-xl">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                value={globalSearch}
-                onChange={event => setGlobalSearch(event.target.value)}
-                onKeyDown={event => {
-                  if (event.key === 'Enter' && globalMatches[0]) {
-                    event.preventDefault();
-                    openRoute(globalMatches[0].path);
-                  }
-                  if (event.key === 'Escape') setGlobalSearch('');
-                }}
-                placeholder="Search pages, modules, and settings"
-                className="h-10 bg-background pl-9 pr-9"
-              />
-              {globalSearch && (
-                <button
-                  type="button"
-                  onClick={() => setGlobalSearch('')}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground transition-colors hover:text-foreground"
-                  aria-label="Clear global search"
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              )}
-
-              {globalSearch.trim() && (
-                <div className="absolute left-0 right-0 top-[calc(100%+0.5rem)] z-30 overflow-hidden rounded-xl border bg-popover shadow-lg">
-                  {globalMatches.length ? (
-                    <div className="py-1">
-                      {globalMatches.map(entry => (
-                        <button
-                          key={entry.key}
-                          type="button"
-                          onClick={() => openRoute(entry.path)}
-                          className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left transition-colors hover:bg-accent"
-                        >
-                          <div className="min-w-0">
-                            <div className="truncate text-sm font-medium text-popover-foreground">{entry.title}</div>
-                            <div className="truncate text-xs text-muted-foreground">
-                              {entry.sectionTitle} • {entry.path}
-                            </div>
-                          </div>
-                          <PanelTop className="h-4 w-4 shrink-0 text-muted-foreground" />
-                        </button>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="px-3 py-4 text-sm text-muted-foreground">
-                      No pages found for "{globalSearch}".
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
           </div>
 
           <div className="flex items-center gap-3">
+            {taskAlerts.data?.can_view && <Sheet open={taskAlertsOpen} onOpenChange={setTaskAlertsOpen}>
+              <Button variant="ghost" size="icon" onClick={() => setTaskAlertsOpen(true)} aria-label="My task reminders" title="My task reminders" className={`relative ${taskAlerts.data.count > 0 ? 'text-destructive' : 'text-muted-foreground'}`}>
+                <ClipboardList className="h-5 w-5" />
+                {taskAlerts.data.count > 0 && <span className="absolute right-0 top-0 min-w-4 rounded-full bg-destructive px-1 text-center text-[10px] font-bold leading-4 text-destructive-foreground">{taskAlerts.data.count > 99 ? '99+' : taskAlerts.data.count}</span>}
+              </Button>
+              <SheetContent className="flex w-full flex-col p-0 sm:max-w-md"><SheetHeader className="border-b p-5 text-left"><SheetTitle>My task reminders</SheetTitle><SheetDescription>{taskAlerts.data.open_count} open assignments · due and overdue work in your active workspace</SheetDescription></SheetHeader>
+                <div className="min-h-0 flex-1 divide-y overflow-y-auto">{(taskAlerts.data.items ?? []).map((item: any) => <button key={item.id} className="block w-full space-y-1 p-5 text-left hover:bg-accent" onClick={() => { setTaskAlertsOpen(false); setLocation(item.route_path); }}><span className="block text-xs text-muted-foreground">{item.reference} · {item.date}</span><span className="block text-sm font-medium">{item.title}</span></button>)}
+                  {!taskAlerts.data.items?.length && <p className="p-5 text-sm text-muted-foreground">No tasks or follow-ups are due right now.</p>}
+                </div><div className="border-t p-4"><Button asChild className="w-full"><Link href="/projects/my-tasks" onClick={() => setTaskAlertsOpen(false)}>Open My Tasks</Link></Button></div>
+              </SheetContent>
+            </Sheet>}
             <Sheet open={notificationsOpen} onOpenChange={setNotificationsOpen}>
               <Button variant="ghost" size="icon" onClick={() => setNotificationsOpen(true)} className="relative text-muted-foreground hover:text-foreground" title="System notifications">
                 <Bell className="h-5 w-5" />

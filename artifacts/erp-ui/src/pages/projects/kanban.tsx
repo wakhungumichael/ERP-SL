@@ -14,6 +14,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { ListingPagination } from "@/components/erp/listing/pagination";
 import { ERPWorkspacePage } from "@/components/erp/workspace/workspace-page";
 import { apiErrorFromResponse } from "@/lib/api-errors";
 
@@ -30,7 +31,7 @@ type Task = {
   status: string;
   workflow_stage: string;
 };
-type Page = { results: Task[] };
+type Page = { count: number; results: Task[]; access: { can_create: boolean; view_all_tasks: boolean } };
 type ProjectPage = {
   results: Array<{ id: number; code: string; name: string }>;
 };
@@ -41,17 +42,20 @@ const columns = [
   ["in_review", "In Review", "border-amber-200 bg-amber-50"],
   ["blocked", "Blocked", "border-red-200 bg-red-50"],
   ["completed", "Completed", "border-emerald-200 bg-emerald-50"],
+  ["cancelled", "Cancelled", "border-slate-200 bg-slate-50"],
 ] as const;
 
 export default function ProjectKanban() {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
   const [search, setSearch] = useState("");
   const [project, setProject] = useState("all");
-  const query = new URLSearchParams({ page_size: "100" });
+  const query = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
   if (search.trim()) query.set("search", search.trim());
   if (project !== "all") query.set("project", project);
   const tasks = useQuery<Page>({
-    queryKey: ["projects-kanban", search, project],
+    queryKey: ["projects-kanban", token, (user as any)?.organization_id, (user as any)?.branch_id, (user as any)?.active_role_group_name, search, project, page, pageSize],
     enabled: !!token,
     queryFn: async () => {
       const response = await fetch(`/api/projects/tasks/?${query.toString()}`, {
@@ -66,7 +70,7 @@ export default function ProjectKanban() {
     },
   });
   const projects = useQuery<ProjectPage>({
-    queryKey: ["projects-kanban-options"],
+    queryKey: ["projects-kanban-options", token, (user as any)?.organization_id, (user as any)?.branch_id, (user as any)?.active_role_group_name],
     enabled: !!token,
     queryFn: async () => {
       const response = await fetch("/api/projects/projects/?page_size=100", {
@@ -90,11 +94,11 @@ export default function ProjectKanban() {
         <div className="flex flex-1 flex-col gap-3 sm:flex-row">
           <Input
             value={search}
-            onChange={(event) => setSearch(event.target.value)}
+            onChange={(event) => { setSearch(event.target.value); setPage(1); }}
             placeholder="Search task number, title, or description"
             className="sm:max-w-md"
           />
-          <Select value={project} onValueChange={setProject}>
+          <Select value={project} onValueChange={(value) => { setProject(value); setPage(1); }}>
             <SelectTrigger className="sm:w-64">
               <SelectValue placeholder="All projects" />
             </SelectTrigger>
@@ -108,7 +112,7 @@ export default function ProjectKanban() {
             </SelectContent>
           </Select>
         </div>
-        <Link
+        {tasks.data?.access.can_create && <Link
           href={
             project === "all"
               ? "/projects/tasks?create=1"
@@ -119,9 +123,11 @@ export default function ProjectKanban() {
             <Plus className="mr-2 h-4 w-4" />
             New task
           </Button>
-        </Link>
+        </Link>}
       </div>
-      <div className="grid min-w-max grid-cols-5 gap-4 overflow-x-auto pb-3">
+      {tasks.isError && <p role="alert" className="mb-4 text-sm text-destructive">{tasks.error.message}</p>}
+      <p className="mb-3 text-xs text-muted-foreground">{tasks.isLoading ? 'Loading tasks…' : `${tasks.data?.count ?? 0} accessible tasks · ${tasks.data?.access.view_all_tasks ? 'Workspace view' : 'Your work and role assignments'}`}</p>
+      <div className="overflow-x-auto pb-3"><div className="grid min-w-max grid-cols-5 gap-4">
         {columns.map(([status, title, tone]) => {
           const columnTasks = list.filter((task) => task.status === status);
           return (
@@ -149,7 +155,7 @@ export default function ProjectKanban() {
                       </p>
                       <div className="mt-3 h-1.5 overflow-hidden rounded bg-muted">
                         <div
-                          className="h-full bg-[#C4B13B]"
+                          className="h-full bg-primary"
                           style={{ width: `${task.progress_percentage}%` }}
                         />
                       </div>
@@ -174,7 +180,8 @@ export default function ProjectKanban() {
             </section>
           );
         })}
-      </div>
+      </div></div>
+      <ListingPagination page={page} pageSize={pageSize} totalCount={tasks.data?.count ?? 0} onPage={setPage} onPageSize={(value) => { setPageSize(value); setPage(1); }} />
     </ERPWorkspacePage>
   );
 }

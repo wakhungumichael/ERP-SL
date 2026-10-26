@@ -5,6 +5,8 @@ import { useAuth } from '@/context/use-auth';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -15,8 +17,8 @@ import { cn } from '@/lib/utils';
 import {
   ArrowDownAZ,
   ArrowUpAZ,
-  ChevronLeft,
-  ChevronRight,
+  Check,
+  ChevronsUpDown,
   Download,
   Eye,
   FileSpreadsheet,
@@ -149,7 +151,6 @@ interface Statement {
   };
 }
 
-type CustomerSortKey = 'name' | 'phone' | 'email';
 type InvoiceSortKey = 'invoice_number' | 'invoice_date' | 'due_date' | 'source_module' | 'status' | 'total' | 'paid_amount' | 'balance_amount';
 type SortDirection = 'asc' | 'desc';
 
@@ -480,8 +481,8 @@ function SortableHead({
 export default function StatementsPage() {
   const { token } = useAuth();
   const [customerSearch, setCustomerSearch] = useState('');
-  const [customerPage, setCustomerPage] = useState(1);
-  const [customerPageSize, setCustomerPageSize] = useState(8);
+  const [customerPickerOpen, setCustomerPickerOpen] = useState(false);
+  const [selectedCustomerName, setSelectedCustomerName] = useState('');
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
@@ -492,13 +493,9 @@ export default function StatementsPage() {
     key: 'invoice_date',
     direction: 'desc',
   });
-  const [customerSort, setCustomerSort] = useState<{ key: CustomerSortKey; direction: SortDirection }>({
-    key: 'name',
-    direction: 'asc',
-  });
   const [previewOpen, setPreviewOpen] = useState(false);
 
-  const { data: customersData, isLoading: loadingCustomers } = useQuery({
+  const { data: customersData, isLoading: loadingCustomers, isError: customerSearchError } = useQuery({
     queryKey: ['statement-customers', token, customerSearch],
     enabled: !!token,
     queryFn: async () => {
@@ -528,22 +525,6 @@ export default function StatementsPage() {
       return r.json() as Promise<Statement>;
     },
   });
-
-  const sortedCustomers = [...customers].sort((a, b) => {
-    const left = customerSort.key === 'phone'
-      ? (a.phone_number || a.phone || '')
-      : customerSort.key === 'email'
-        ? (a.email || '')
-        : a.name;
-    const right = customerSort.key === 'phone'
-      ? (b.phone_number || b.phone || '')
-      : customerSort.key === 'email'
-        ? (b.email || '')
-        : b.name;
-    return compareValues(left, right, customerSort.direction);
-  });
-  const customerTotalPages = Math.max(1, Math.ceil(sortedCustomers.length / customerPageSize));
-  const pagedCustomers = sortedCustomers.slice((customerPage - 1) * customerPageSize, customerPage * customerPageSize);
 
   const invoiceStatuses = Array.from(new Set((statement?.invoices ?? []).map((invoice) => invoice.status).filter(Boolean)));
   const invoiceSources = Array.from(new Set((statement?.invoices ?? []).map((invoice) => invoice.source_module).filter(Boolean)));
@@ -605,13 +586,6 @@ export default function StatementsPage() {
       dateFmt(payment.date),
     ].some((value) => value?.toLowerCase().includes(term));
   });
-
-  function toggleCustomerSort(key: CustomerSortKey) {
-    setCustomerSort((current) => ({
-      key,
-      direction: current.key === key && current.direction === 'asc' ? 'desc' : 'asc',
-    }));
-  }
 
   function toggleInvoiceSort(key: InvoiceSortKey) {
     setInvoiceSort((current) => ({
@@ -757,7 +731,7 @@ export default function StatementsPage() {
     : '';
 
   return (
-    <div className="space-y-6 p-6">
+    <div className="min-w-0 space-y-6 p-4 sm:p-6">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div>
           <h1 className="text-2xl font-semibold">Customer Statements</h1>
@@ -785,223 +759,132 @@ export default function StatementsPage() {
         </div>
       </div>
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,460px)_minmax(0,1fr)]">
-        <Card className="overflow-hidden">
-          <CardContent className="space-y-4 p-4">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <h2 className="text-lg font-semibold">Customers</h2>
-                <p className="text-sm text-muted-foreground">Use search, sorting, and pagination as the list grows.</p>
-              </div>
-              <div className="flex items-center gap-2 text-sm">
-                <span className="text-muted-foreground">Rows</span>
-                <Select
-                  value={String(customerPageSize)}
-                  onValueChange={(value) => {
-                    setCustomerPageSize(Number(value));
-                    setCustomerPage(1);
-                  }}
-                >
-                  <SelectTrigger className="w-20">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {[8, 12, 20, 30].map((size) => (
-                      <SelectItem key={size} value={String(size)}>
-                        {size}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+      <Card>
+        <CardContent className="space-y-4 p-4">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+              <h2 className="text-sm font-semibold">Search &amp; filters</h2>
             </div>
+            <Badge variant="outline" className="w-fit max-w-full whitespace-normal">
+              {statement ? `${filteredOutstandingInvoices.length} outstanding invoices • ${filteredRecentPayments.length} payments` : 'No customer selected'}
+            </Badge>
+          </div>
 
-            <div className="relative">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
+            <div className="min-w-0 sm:col-span-2">
+              <label id="statement-customer-label" className="mb-1 block text-xs text-muted-foreground">Customer</label>
+              <Popover open={customerPickerOpen} onOpenChange={(open) => { setCustomerPickerOpen(open); if (open) setCustomerSearch(''); }}>
+                <PopoverTrigger asChild>
+                  <Button variant="outline" role="combobox" aria-expanded={customerPickerOpen} aria-labelledby="statement-customer-label statement-customer-value" className="h-10 w-full justify-between gap-2 font-normal">
+                    <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
+                    <span id="statement-customer-value" className="min-w-0 flex-1 truncate text-left">{selectedCustomerName || 'Search customers by name, phone, or email…'}</span>
+                    <ChevronsUpDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent align="start" className="w-[var(--radix-popover-trigger-width)] max-w-[calc(100vw-2rem)] p-0">
+                  <Command shouldFilter={false}>
+                    <CommandInput aria-label="Search customers" placeholder="Search by name, phone, or email…" value={customerSearch} onValueChange={setCustomerSearch} />
+                    <CommandList>
+                      {loadingCustomers ? <p className="p-4 text-sm text-muted-foreground" role="status">Searching customers…</p> : customerSearchError ? <p className="p-4 text-sm text-destructive" role="alert">Unable to load customers. Try searching again.</p> : (
+                        <>
+                          <CommandEmpty>No customers found.</CommandEmpty>
+                          <CommandGroup>
+                            {customers.map((customer) => (
+                              <CommandItem key={customer.id} value={String(customer.id)} onSelect={() => {
+                                setSelectedId(customer.id);
+                                setSelectedCustomerName(customer.name);
+                                setCustomerPickerOpen(false);
+                                setInvoiceStatusFilter('all');
+                                setInvoiceSourceFilter('all');
+                                setDetailSearch('');
+                              }} className="items-start py-3">
+                                <Check className={cn('mt-0.5 h-4 w-4 shrink-0', selectedId === customer.id ? 'opacity-100' : 'opacity-0')} />
+                                <span className="min-w-0 flex-1 break-words">
+                                  <span className="block font-medium">{customer.name}</span>
+                                  <span className="block text-xs opacity-70">{[customer.phone_number || customer.phone, customer.email].filter(Boolean).join(' · ')}</span>
+                                </span>
+                              </CommandItem>
+                            ))}
+                          </CommandGroup>
+                        </>
+                      )}
+                    </CommandList>
+                    {customers.length === 100 && <p className="border-t p-3 text-xs text-muted-foreground">Showing the first 100 matches. Type more to narrow your search.</p>}
+                  </Command>
+                </PopoverContent>
+              </Popover>
+            </div>
+            <div>
+              <label htmlFor="statement-date-from" className="mb-1 block text-xs text-muted-foreground">From</label>
+              <Input id="statement-date-from" type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+            </div>
+            <div>
+              <label htmlFor="statement-date-to" className="mb-1 block text-xs text-muted-foreground">To</label>
+              <Input id="statement-date-to" type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs text-muted-foreground">Invoice status</label>
+              <Select value={invoiceStatusFilter} onValueChange={setInvoiceStatusFilter}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All statuses</SelectItem>
+                  {invoiceStatuses.map((status) => (
+                    <SelectItem key={status} value={status}>
+                      {status}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <label className="mb-1 block text-xs text-muted-foreground">Invoice source</label>
+              <Select value={invoiceSourceFilter} onValueChange={setInvoiceSourceFilter}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All sources</SelectItem>
+                  {invoiceSources.map((source) => (
+                    <SelectItem key={source} value={source}>
+                      {source}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="sm:col-span-2 xl:col-span-6">
+              <label htmlFor="statement-content-search" className="mb-1 block text-xs text-muted-foreground">Search in selected statement</label>
               <Input
-                className="pl-9"
-                placeholder="Search by customer name, phone, or email…"
-                value={customerSearch}
-                onChange={(e) => {
-                  setCustomerSearch(e.target.value);
-                  setCustomerPage(1);
-                }}
+                id="statement-content-search"
+                placeholder="Search invoice numbers, transactions, branches, vehicles, references, or statuses…"
+                value={detailSearch}
+                onChange={(e) => setDetailSearch(e.target.value)}
               />
             </div>
+          </div>
 
-            <div className="rounded-md border">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <SortableHead
-                      label="Customer"
-                      active={customerSort.key === 'name'}
-                      direction={customerSort.direction}
-                      onClick={() => toggleCustomerSort('name')}
-                    />
-                    <SortableHead
-                      label="Phone"
-                      active={customerSort.key === 'phone'}
-                      direction={customerSort.direction}
-                      onClick={() => toggleCustomerSort('phone')}
-                    />
-                    <SortableHead
-                      label="Email"
-                      active={customerSort.key === 'email'}
-                      direction={customerSort.direction}
-                      onClick={() => toggleCustomerSort('email')}
-                    />
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {loadingCustomers ? (
-                    <TableRow>
-                      <TableCell colSpan={3} className="py-10 text-center text-muted-foreground">Loading customers…</TableCell>
-                    </TableRow>
-                  ) : pagedCustomers.length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={3} className="py-10 text-center text-muted-foreground">No customers found</TableCell>
-                    </TableRow>
-                  ) : (
-                    pagedCustomers.map((customer) => (
-                      <TableRow
-                        key={customer.id}
-                        className={cn(
-                          'cursor-pointer transition-colors hover:bg-muted/50',
-                          selectedId === customer.id && 'bg-primary/10',
-                        )}
-                        onClick={() => setSelectedId(customer.id)}
-                      >
-                        <TableCell className="font-medium">{customer.name}</TableCell>
-                        <TableCell>{customer.phone_number || customer.phone || '—'}</TableCell>
-                        <TableCell>{customer.email || '—'}</TableCell>
-                      </TableRow>
-                    ))
-                  )}
-                </TableBody>
-              </Table>
-            </div>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" size="sm" onClick={() => applyQuickDatePreset('thisMonth')}>This month</Button>
+            <Button variant="outline" size="sm" onClick={() => applyQuickDatePreset('last30')}>Last 30 days</Button>
+            <Button variant="outline" size="sm" onClick={() => applyQuickDatePreset('clear')}>Clear dates</Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setInvoiceStatusFilter('all');
+                setInvoiceSourceFilter('all');
+                setDetailSearch('');
+              }}
+            >
+              Reset content filters
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
 
-            <div className="flex items-center justify-between text-sm">
-              <span className="text-muted-foreground">
-                Showing {sortedCustomers.length ? (customerPage - 1) * customerPageSize + 1 : 0}
-                -
-                {Math.min(customerPage * customerPageSize, sortedCustomers.length)} of {sortedCustomers.length}
-              </span>
-              <div className="flex items-center gap-2">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={customerPage <= 1}
-                  onClick={() => setCustomerPage((page) => Math.max(1, page - 1))}
-                >
-                  <ChevronLeft className="mr-1 h-4 w-4" />
-                  Previous
-                </Button>
-                <span className="text-muted-foreground">Page {customerPage} of {customerTotalPages}</span>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={customerPage >= customerTotalPages}
-                  onClick={() => setCustomerPage((page) => Math.min(customerTotalPages, page + 1))}
-                >
-                  Next
-                  <ChevronRight className="ml-1 h-4 w-4" />
-                </Button>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <div className="space-y-6">
-          <Card>
-            <CardContent className="space-y-4 p-4">
-              <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                <div>
-                  <h2 className="text-lg font-semibold">Statement Filters</h2>
-                  <p className="text-sm text-muted-foreground">Choose what appears on screen and in print or export output.</p>
-                </div>
-                <Badge variant="outline">
-                  {statement ? `${filteredOutstandingInvoices.length} outstanding invoices • ${filteredRecentPayments.length} payments` : 'No customer selected'}
-                </Badge>
-              </div>
-
-              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                <div>
-                  <label className="mb-1 block text-xs text-muted-foreground">From</label>
-                  <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs text-muted-foreground">To</label>
-                  <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs text-muted-foreground">Invoice status</label>
-                  <Select value={invoiceStatusFilter} onValueChange={setInvoiceStatusFilter}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All statuses</SelectItem>
-                      {invoiceStatuses.map((status) => (
-                        <SelectItem key={status} value={status}>
-                          {status}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs text-muted-foreground">Invoice source</label>
-                  <Select value={invoiceSourceFilter} onValueChange={setInvoiceSourceFilter}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All sources</SelectItem>
-                      {invoiceSources.map((source) => (
-                        <SelectItem key={source} value={source}>
-                          {source}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs text-muted-foreground">Statement snapshot</label>
-                  <div className="rounded-md border bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
-                    Outstanding invoices and recorded payments only
-                  </div>
-                </div>
-                <div className="md:col-span-2 xl:col-span-3">
-                  <label className="mb-1 block text-xs text-muted-foreground">Search in selected statement</label>
-                  <Input
-                    placeholder="Search invoice numbers, transactions, branches, vehicles, references, or statuses…"
-                    value={detailSearch}
-                    onChange={(e) => setDetailSearch(e.target.value)}
-                  />
-                </div>
-              </div>
-
-              <div className="flex flex-wrap gap-2">
-                <Button variant="outline" size="sm" onClick={() => applyQuickDatePreset('thisMonth')}>This month</Button>
-                <Button variant="outline" size="sm" onClick={() => applyQuickDatePreset('last30')}>Last 30 days</Button>
-                <Button variant="outline" size="sm" onClick={() => applyQuickDatePreset('clear')}>Clear dates</Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => {
-                    setInvoiceStatusFilter('all');
-                    setInvoiceSourceFilter('all');
-                    setDetailSearch('');
-                  }}
-                >
-                  Reset content filters
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-
+      <div className="min-w-0 space-y-6">
           {selectedId === null ? (
             <Card>
               <CardContent className="flex min-h-[420px] flex-col items-center justify-center gap-3 p-6 text-center text-muted-foreground">
@@ -1273,7 +1156,6 @@ export default function StatementsPage() {
               </Tabs>
             </>
           ) : null}
-        </div>
       </div>
 
       <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>

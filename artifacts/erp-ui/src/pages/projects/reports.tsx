@@ -1,10 +1,21 @@
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
+import { useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { ListingPagination } from "@/components/erp/listing/pagination";
+import { downloadDocumentPdf } from "@/lib/document-download";
+import { useToast } from "@/hooks/use-toast";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/context/use-auth";
 import { ERPWorkspacePage } from "@/components/erp/workspace/workspace-page";
 import { apiErrorFromResponse } from "@/lib/api-errors";
 
 type Report = {
+  columns: string[];
+  rows: Array<Array<string | number | null>>;
+  count: number;
+  can_export: boolean;
   summary: Record<string, number>;
   tasks_by_status: Array<{ status: string; count: number }>;
   tasks_by_priority: Array<{ priority: string; count: number }>;
@@ -49,7 +60,7 @@ function BarList({
             </div>
             <div className="mt-1 h-2 overflow-hidden rounded bg-muted">
               <div
-                className="h-full bg-[#C4B13B]"
+                className="h-full bg-primary"
                 style={{ width: `${(row.count / max) * 100}%` }}
               />
             </div>
@@ -84,7 +95,7 @@ function ProjectProgress({
             </div>
             <div className="mt-1 h-2 overflow-hidden rounded bg-muted">
               <div
-                className="h-full bg-[#C4B13B]"
+                className="h-full bg-primary"
                 style={{ width: `${project.progress_percentage}%` }}
               />
             </div>
@@ -129,12 +140,37 @@ function UpcomingMilestones({
 }
 
 export default function ProjectsReports() {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
+  const { toast } = useToast();
+  const [kind, setKind] = useState('tasks');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
+  const [search, setSearch] = useState('');
+  const [status, setStatus] = useState('all');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const params = new URLSearchParams({ report: kind, page: String(page), page_size: String(pageSize) });
+  if (search.trim()) params.set('search', search.trim());
+  if (status !== 'all') params.set('status', status);
+  if (dateFrom) params.set('date_from', dateFrom);
+  if (dateTo) params.set('date_to', dateTo);
+  const exportReport = async (format: 'csv' | 'pdf') => {
+    try {
+      const query = new URLSearchParams(params);
+      query.set('download', format);
+      const response = await fetch(`/api/projects/reports/?${query}`, { headers: { Authorization: `Token ${token}` } });
+      if (!response.ok) throw await apiErrorFromResponse(response, 'Report export failed.');
+      if (format === 'pdf') return await downloadDocumentPdf(response, `projects-${kind}.pdf`);
+      const url = URL.createObjectURL(await response.blob());
+      const link = document.createElement('a'); link.href = url; link.download = `projects-${kind}.csv`; link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (error: any) { toast({ title: 'Report export failed', description: error.message, variant: 'destructive' }); }
+  };
   const report = useQuery<Report>({
-    queryKey: ["projects-reports"],
+    queryKey: ["projects-reports", token, (user as any)?.organization_id, (user as any)?.branch_id, (user as any)?.active_role_group_name, params.toString()],
     enabled: !!token,
     queryFn: async () => {
-      const response = await fetch("/api/projects/reports/", {
+      const response = await fetch(`/api/projects/reports/?${params}`, {
         headers: { Authorization: `Token ${token}` },
       });
       if (!response.ok)
@@ -151,6 +187,31 @@ export default function ProjectsReports() {
       title="Projects & Tasks Reports"
       description="Active-branch project delivery, ticket work, follow-ups, and workload."
     >
+      <div className="mb-5 space-y-3 rounded-lg border bg-card p-4">
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="min-w-48 flex-1"><label className="mb-1 block text-xs text-muted-foreground">Report</label>
+            <Select value={kind} onValueChange={(value) => { setKind(value); setPage(1); setSearch(''); setStatus('all'); }}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>
+              {[['tasks', 'Task register'], ['projects', 'Project register'], ['follow-ups', 'Follow-up register'], ['workload', 'Assignee workload'], ['milestones', 'Project milestones']].map(([value, title]) => <SelectItem key={value} value={value}>{title}</SelectItem>)}
+            </SelectContent></Select>
+          </div>
+          <Button variant="outline" disabled={!data?.can_export} onClick={() => void exportReport('csv')}>Export CSV</Button>
+          <Button disabled={!data?.can_export} onClick={() => void exportReport('pdf')}>Download branded PDF</Button>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <Input aria-label="Search report" placeholder="Search report records" value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} />
+          <Input aria-label="From date" type="date" value={dateFrom} onChange={(event) => { setDateFrom(event.target.value); setPage(1); }} />
+          <Input aria-label="To date" type="date" value={dateTo} onChange={(event) => { setDateTo(event.target.value); setPage(1); }} />
+          {kind === 'tasks' && <Select value={status} onValueChange={(value) => { setStatus(value); setPage(1); }}><SelectTrigger aria-label="Task status"><SelectValue /></SelectTrigger><SelectContent>{['all','draft','todo','in_progress','blocked','in_review','completed','cancelled'].map(value => <SelectItem key={value} value={value}>{value === 'all' ? 'All statuses' : label(value)}</SelectItem>)}</SelectContent></Select>}
+        </div>
+      </div>
+      {report.isError && <p role="alert" className="mb-4 text-sm text-destructive">{report.error.message}</p>}
+      <section className="mb-5 overflow-hidden rounded-lg border bg-card">
+        <div className="overflow-x-auto"><table className="w-full min-w-[640px] text-sm"><thead className="border-b bg-muted/40"><tr>{(data?.columns ?? []).map(column => <th className="px-4 py-3 text-left font-semibold" key={column}>{column}</th>)}</tr></thead>
+          <tbody>{(data?.rows ?? []).map((row, index) => <tr className="border-b last:border-0" key={`${page}-${index}`}>{row.map((cell, column) => <td className="px-4 py-3" key={column}>{cell ?? '—'}</td>)}</tr>)}
+          {!data?.rows?.length && <tr><td colSpan={data?.columns?.length || 1} className="p-8 text-center text-muted-foreground">{report.isLoading ? 'Loading report…' : 'No records match the current filters.'}</td></tr>}</tbody>
+        </table></div>
+        <ListingPagination page={page} pageSize={pageSize} totalCount={data?.count ?? 0} onPage={setPage} onPageSize={(value) => { setPageSize(value); setPage(1); }} />
+      </section>
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         {[
           ["Projects", data?.summary.projects],

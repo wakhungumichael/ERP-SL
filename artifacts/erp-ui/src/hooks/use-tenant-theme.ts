@@ -4,36 +4,8 @@ import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '@/context/use-auth';
 import type { DashboardTenantContextValue } from '@/components/dashboard/types';
 import type { NavSection } from '@/lib/roles';
+import { themeVariables } from '@/lib/tenant-theme';
 import { fetchPublicSiteConfig } from '@/lib/public-site';
-
-function hexToHsl(hex: string) {
-  let normalized = hex.replace('#', '').trim();
-  if (normalized.length === 3) {
-    normalized = normalized.split('').map((ch) => ch + ch).join('');
-  }
-  if (normalized.length !== 6) return { h: 15, s: 80, l: 50 };
-
-  const r = parseInt(normalized.slice(0, 2), 16) / 255;
-  const g = parseInt(normalized.slice(2, 4), 16) / 255;
-  const b = parseInt(normalized.slice(4, 6), 16) / 255;
-  const max = Math.max(r, g, b);
-  const min = Math.min(r, g, b);
-  const delta = max - min;
-  let h = 0;
-
-  if (delta !== 0) {
-    if (max === r) h = ((g - b) / delta) % 6;
-    else if (max === g) h = (b - r) / delta + 2;
-    else h = (r - g) / delta + 4;
-  }
-
-  h = Math.round(h * 60);
-  if (h < 0) h += 360;
-
-  const l = (max + min) / 2;
-  const s = delta === 0 ? 0 : delta / (1 - Math.abs(2 * l - 1));
-  return { h, s: Math.round(s * 100), l: Math.round(l * 100) };
-}
 
 function normalizeSections(payload: any): NavSection[] {
   const workspace = payload?.workspace ?? payload;
@@ -67,7 +39,7 @@ function ensureHeadLink(rel: string) {
   return link;
 }
 
-export function useTenantTheme() {
+export function useTenantTheme({ applyTheme = true }: { applyTheme?: boolean } = {}) {
   const { token, role, user } = useAuth();
   const organizationId = (((user as any)?.organization_id ?? (user as any)?.tenant_id) as number | null | undefined) ?? null;
   const userId = ((user as any)?.id as number | null | undefined) ?? null;
@@ -168,12 +140,19 @@ export function useTenantTheme() {
   }, [organizationId, publicSite?.tenant?.name, role, settings, tenant, tenantCode, user, userId, workspace]);
 
   useEffect(() => {
+    if (!applyTheme) return;
     const root = document.documentElement;
-    const primary = hexToHsl(tenantContext.branding.primaryColor);
-    root.style.setProperty('--primary', `${primary.h} ${Math.max(45, primary.s)}% ${Math.max(40, Math.min(56, primary.l))}%`);
-    root.style.setProperty('--ring', `${primary.h} ${Math.max(45, primary.s)}% ${Math.max(40, Math.min(56, primary.l))}%`);
-    root.style.setProperty('--sidebar-primary', `${primary.h} ${Math.max(45, primary.s)}% ${Math.max(38, Math.min(52, primary.l))}%`);
-  }, [tenantContext.branding.primaryColor]);
+    const variables = themeVariables({
+      primary_color: tenantContext.branding.primaryColor,
+      secondary_color: settings.secondary_color,
+      accent_color: settings.accent_color,
+      sidebar_color: settings.sidebar_color,
+    });
+    for (const [name, value] of Object.entries(variables)) root.style.setProperty(name, value);
+    return () => {
+      for (const name of Object.keys(variables)) root.style.removeProperty(name);
+    };
+  }, [applyTheme, tenantContext.branding.primaryColor, settings.secondary_color, settings.accent_color, settings.sidebar_color]);
 
   useEffect(() => {
     if (typeof document === 'undefined') return;

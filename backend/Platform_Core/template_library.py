@@ -18,7 +18,7 @@ DOCUMENTS = [
 ]
 
 
-def _stylesheet(variant: str):
+def _legacy_stylesheet(variant: str):
     if variant == "modern":
         return """
           body{margin:0;background:#eef2ff;font-family:Arial,sans-serif;color:#0f172a}
@@ -50,7 +50,7 @@ def _stylesheet(variant: str):
     """
 
 
-def _body(document_label: str, variant: str):
+def _legacy_body(document_label: str, variant: str):
     if document_label == "Report":
         return f"""
           <div class="doc">
@@ -185,6 +185,33 @@ def _body(document_label: str, variant: str):
     """
 
 
+def _body(document_label, variant):
+    if document_label == "Report":
+        return _legacy_body(document_label, variant)
+    from .professional_templates import body
+    return body(document_label, variant)
+
+
+def _stylesheet(variant):
+    from .professional_templates import stylesheet
+    return stylesheet(variant)
+
+
+def upgrade_shared_template(template):
+    """Upgrade untouched library layouts while preserving customer edits."""
+    if template.tenant_id is not None:
+        return template
+    for document_type, label in DOCUMENTS:
+        for variant, title in VARIANTS:
+            if template.document_type != document_type or template.name != f"{label} {title}" or label == "Report":
+                continue
+            if template.body_template == _legacy_body(label, variant) and template.stylesheet == _legacy_stylesheet(variant):
+                template.body_template = _body(label, variant)
+                template.stylesheet = _stylesheet(variant)
+                template.save(update_fields=["body_template", "stylesheet", "updated_at"])
+    return template
+
+
 def ensure_shared_document_template_library():
     created = 0
     for document_type, document_label in DOCUMENTS:
@@ -209,7 +236,9 @@ def ensure_shared_document_template_library():
                     is_active=True,
                     subject_template=f"{document_label} {{{{ document.number }}}}",
                     body_template=_body(document_label, variant_key),
-                    stylesheet=_stylesheet(variant_key),
+                    stylesheet=_legacy_stylesheet(variant_key) if document_type == "report" else _stylesheet(variant_key),
                 )
                 created += 1
+            else:
+                upgrade_shared_template(template)
     return created

@@ -57,6 +57,7 @@ def _make_completed_transaction(branch, vehicle_type):
         item=item,
         vehicle_type=vehicle_type,
         status="Completed",
+        approval_status=True,
         payment_mode="Cash",
         payment_status="Pending",
         charge=1000.00,
@@ -123,15 +124,16 @@ class ReceivePaymentIdempotencyTests(TestCase):
         self.assertEqual(self.tx.payment_status, "Paid")
         self.assertEqual(self.tx.payment_mode, "Cash")  # first write wins
 
-    def test_pending_transaction_can_receive_payment(self):
-        """An unpaid transaction can still be settled from the receive-payment action."""
+    def test_pending_transaction_cannot_receive_payment(self):
+        """A pending weighment must be approved and completed before settlement."""
         self.tx.status = "Pending"
         self.tx.save(update_fields=["status"])
 
         response = self._post_receive_payment()
-        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertIn("Approve and complete", response.data["error"])
         self.tx.refresh_from_db()
-        self.assertEqual(self.tx.payment_status, "Paid")
+        self.assertEqual(self.tx.payment_status, "Pending")
 
     def test_debt_method_keeps_transaction_pending_and_invoice_outstanding(self):
         """Debt should flag the transaction without falsely settling the linked invoice."""
@@ -152,6 +154,16 @@ class ReceivePaymentIdempotencyTests(TestCase):
         self.assertEqual(invoice.status, "issued")
         self.assertEqual(response.data["payment_status"], "Pending")
         self.assertEqual(response.data["invoice_status"], "issued")
+
+    def test_unapproved_completed_transaction_cannot_receive_payment(self):
+        self.tx.approval_status = False
+        self.tx.save(update_fields=["approval_status"])
+
+        response = self._post_receive_payment()
+
+        self.assertEqual(response.status_code, 400, response.data)
+        self.tx.refresh_from_db()
+        self.assertEqual(self.tx.payment_status, "Pending")
 
     def test_no_payment_operation_rejects_payment_collection(self):
         from SL_Weighbridge.models import WeighingOperationType

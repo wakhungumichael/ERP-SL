@@ -5,6 +5,7 @@ from . import views
 
 
 urlpatterns = [
+    path("task-alerts/", views.ProjectTaskAlertsAPIView.as_view(), name="project-task-alerts"),
     path("dashboard/", views.ProjectsDashboardAPIView.as_view(), name="projects-dashboard"),
     path("reports/", views.ProjectsReportsAPIView.as_view(), name="projects-reports"),
     path("calendar/", views.ProjectCalendarAPIView.as_view(), name="projects-calendar"),

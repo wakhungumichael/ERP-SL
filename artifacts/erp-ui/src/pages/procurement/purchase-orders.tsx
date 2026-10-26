@@ -1,4 +1,5 @@
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
+import { downloadDocumentPdf } from '@/lib/document-download';
 import { useState, useCallback } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@/context/use-auth';
@@ -21,7 +22,7 @@ import { useToast } from '@/hooks/use-toast';
 import type { ReactElement } from 'react';
 import {
   ShoppingCart, Truck, Package, Search, Plus, Trash2,
-  ChevronRight, CheckCircle2, Clock, XCircle, ArrowRight, X, Printer,
+  ChevronRight, CheckCircle2, Clock, XCircle, ArrowRight, X, Download,
 } from 'lucide-react';
 
 /* ────────────────────────────────────────────────────────────── helpers ── */
@@ -260,16 +261,11 @@ function PODetail({ po, token, onBack, onRefresh }: { po: any; token: string | n
 
   const openPrintableDocument = async () => {
     try {
-      const res = await fetch(`/api/procurement/orders/${po.id}/document/`, {
+      const res = await fetch(`/api/procurement/orders/${po.id}/document/?download=pdf`, {
         headers: { Authorization: `Token ${token}` },
       });
       if (!res.ok) throw new Error((await res.json()).error ?? res.statusText);
-      const html = await res.text();
-      const blob = new Blob([html], { type: 'text/html' });
-      const url = URL.createObjectURL(blob);
-      const win = window.open(url, '_blank', 'noopener,noreferrer');
-      if (!win) throw new Error('Popup blocked');
-      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      await downloadDocumentPdf(res, `${po.reference || `PO-${po.id}`}.pdf`);
     } catch (e: any) {
       toast({ title: 'Unable to open purchase order', description: e.message, variant: 'destructive' });
     }
@@ -285,7 +281,7 @@ function PODetail({ po, token, onBack, onRefresh }: { po: any; token: string | n
         <div className="flex items-center gap-2">
           <StatusBadge status={po.status} />
           <Button size="sm" variant="outline" className="text-xs gap-1" onClick={openPrintableDocument}>
-            <Printer className="h-3.5 w-3.5" /> Print
+            <Download className="h-3.5 w-3.5" /> Download PDF
           </Button>
           {next.map(s => (
             <Button key={s} size="sm" variant={s === 'Cancelled' ? 'destructive' : 'outline'}

@@ -20,7 +20,8 @@ Each test confirms one of:
 
 import datetime
 
-from django.contrib.auth.models import User
+from django.contrib.auth.models import Permission, User
+from django.db.models import Q
 from django.test import TestCase
 from django.urls import reverse
 from rest_framework.test import APIClient
@@ -37,11 +38,26 @@ def _make_tenant(name, code=None):
     return t
 
 
+def _grant_isolation_permissions(user):
+    # Exercise tenant boundaries after authorization, rather than letting a
+    # missing endpoint permission mask an incorrect tenant queryset.
+    permissions = Permission.objects.filter(
+        Q(content_type__app_label="SL_Weighbridge", codename__in=[
+            "view_customer", "change_customer", "view_vehicle", "change_vehicle",
+            "can_view_all_weighbridge_transactions",
+        ]) | Q(content_type__app_label="Platform_Core", codename__in=[
+            "can_view_weighbridge_overview", "can_view_procurement_overview",
+        ])
+    )
+    user.user_permissions.add(*permissions)
+
+
 def _make_tenant_user(username, tenant, *, password="pass", is_staff=False):
     """Create a Django user bound to *tenant* via TenantUserProfile."""
     from Platform_Core.models import TenantUserProfile
     user = User.objects.create_user(username=username, password=password, is_staff=is_staff)
     TenantUserProfile.objects.create(user=user, tenant=tenant, is_tenant_admin=False)
+    _grant_isolation_permissions(user)
     return user
 
 
@@ -1012,6 +1028,14 @@ class DashboardSummaryIsolationTests(TestCase):
         self.tx_a.payment_status = "Pending"
         self.tx_a.save()
 
+        # The overview requires registered operational branches, as configured
+        # by Organization Settings in a real workspace.
+        from Platform_Core.models import TenantBranch
+        for tenant, branch in ((self.tenant_a, objs_a["branch"]), (self.tenant_b, objs_b["branch"])):
+            branch.tenant = tenant
+            branch.save(update_fields=["tenant"])
+            TenantBranch.objects.create(tenant=tenant, name=branch.name)
+
         self.inv_a = _make_invoice(objs_a["customer"], tenant=self.tenant_a)
 
         # Tenant A's purchase order
@@ -1170,6 +1194,8 @@ class ProfilelessUserDenyAllTests(TestCase):
         self.profileless_user = User.objects.create_user(
             username="no_profile_user", password="pass"
         )
+
+        _grant_isolation_permissions(self.profileless_user)
 
         # Create some data owned by a real tenant so we can confirm it's hidden
         tenant   = _make_tenant("RealCo", code="realco")
@@ -1430,6 +1456,7 @@ class WeighbridgeCustomerVehicleIsolationTests(TestCase):
     def test_profileless_customer_list_returns_empty(self):
         """A non-superuser with no TenantUserProfile must get an empty customer list."""
         profileless = User.objects.create_user("cv_noprofile", password="pass")
+        _grant_isolation_permissions(profileless)
         self.client.force_authenticate(user=profileless)
         resp = self.client.get(reverse("wb-customers"))
         self.assertEqual(resp.status_code, 200)
@@ -1442,6 +1469,7 @@ class WeighbridgeCustomerVehicleIsolationTests(TestCase):
     def test_profileless_vehicle_list_returns_empty(self):
         """A non-superuser with no TenantUserProfile must get an empty vehicle list."""
         profileless = User.objects.create_user("cv_noprofile_v", password="pass")
+        _grant_isolation_permissions(profileless)
         self.client.force_authenticate(user=profileless)
         resp = self.client.get(reverse("wb-vehicles"))
         self.assertEqual(resp.status_code, 200)
@@ -1454,6 +1482,7 @@ class WeighbridgeCustomerVehicleIsolationTests(TestCase):
     def test_profileless_customer_detail_returns_404(self):
         """Profileless user cannot fetch a customer by PK."""
         profileless = User.objects.create_user("cv_noprofile_cd", password="pass")
+        _grant_isolation_permissions(profileless)
         self.client.force_authenticate(user=profileless)
         url = reverse("wb-customer-detail", kwargs={"pk": self.customer_a.pk})
         resp = self.client.get(url)
@@ -1463,6 +1492,7 @@ class WeighbridgeCustomerVehicleIsolationTests(TestCase):
     def test_profileless_vehicle_detail_returns_404(self):
         """Profileless user cannot fetch a vehicle by PK."""
         profileless = User.objects.create_user("cv_noprofile_vd", password="pass")
+        _grant_isolation_permissions(profileless)
         self.client.force_authenticate(user=profileless)
         url = reverse("wb-vehicle-detail", kwargs={"pk": self.vehicle_a.pk})
         resp = self.client.get(url)

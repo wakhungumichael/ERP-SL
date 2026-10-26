@@ -250,7 +250,7 @@ class TenantDocumentRenderingTests(TestCase):
         html = response.content.decode()
         self.assertIn('class="wb-receipt"', html)
         self.assertIn("@page { size: A5 landscape;", html)
-        self.assertIn(".wb-receipt { width: 202mm; height: 140mm;", html)
+        self.assertIn(".wb-receipt { width: 202mm; margin: 12px auto;", html)
         self.assertIn("html, body { width: 210mm; height: 148mm;", html)
         self.assertIn("https://assets.example.test/metrix-logo.png", html)
         self.assertIn("24,000", html)

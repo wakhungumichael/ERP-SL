@@ -1,4 +1,5 @@
 # Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu.
+from Platform_Core.document_pdf import document_pdf_response, wants_document_pdf
 import logging
 import csv
 from datetime import timedelta
@@ -560,6 +561,8 @@ class InvoiceDocumentView(APIView):
             inv,
             request=request,
         )
+        if wants_document_pdf(request):
+            return document_pdf_response(rendered, f'{inv.invoice_number or f"INV-{inv.pk}"}.pdf')
         return HttpResponse(rendered.html, content_type="text/html; charset=utf-8")
 
 

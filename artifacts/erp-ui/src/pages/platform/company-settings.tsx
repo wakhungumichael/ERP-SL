@@ -18,6 +18,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
+import { contrastText } from '@/lib/tenant-theme';
 import { invalidateErpBranchQueries } from '@/lib/branches';
 
 const BASE = '/api/platform';
@@ -197,7 +198,11 @@ const DEFAULT_SUPPORT_PAGE_CONFIG = {
 const ORGANIZATION_CURRENCIES = ['KES', 'USD', 'EUR', 'GBP', 'UGX', 'TZS'];
 const PAGINATION_PAGE_SIZES = [5, 10, 25, 50];
 
-const BRANDING_SETTINGS_FIELDS = ['primary_color', 'workspace_name'] as const;
+const BRANDING_SETTINGS_FIELDS = ['primary_color', 'secondary_color', 'accent_color', 'sidebar_color', 'workspace_name'] as const;
+const DOCUMENT_TEMPLATE_FIELDS: Record<string, string> = {
+  invoice: 'invoice_template_id', quotation: 'estimate_template_id', receipt: 'receipt_template_id',
+  statement: 'statement_template_id', purchase_order: 'purchase_order_template_id',
+};
 const PLATFORM_BRANDING_FIELDS = ['branding_mode', 'dedicated_tenant', 'platform_name', 'logo_url', 'primary_color', 'footer_text', 'support_email'] as const;
 const PUBLIC_SITE_SETTINGS_FIELDS = ['login_page_config', 'landing_page_config', 'footer_menu'] as const;
 const EMAIL_SETTINGS_FIELDS = [
@@ -241,7 +246,11 @@ function api(token: string, path: string, method = 'GET', body?: object) {
         : `The API returned an unreadable response (HTTP ${r.status}).`;
       throw new Error(hint);
     }
-    if (!r.ok) throw new Error(j?.detail || j?.error || j?.message || JSON.stringify(j));
+    if (!r.ok) {
+      const message = j?.detail || j?.error || j?.message;
+      const details = j && typeof j === 'object' && Object.keys(j).length ? JSON.stringify(j) : '';
+      throw new Error(message || details || `Unable to ${method === 'GET' ? 'load' : 'save'} organization settings (HTTP ${r.status}). Please try again.`);
+    }
     return j;
   });
 }
@@ -2259,6 +2268,21 @@ export default function OrganizationSettings() {
     }
   };
 
+  const selectDocumentTemplate = useMutation({
+    mutationFn: async (template: any) => api(token!, `/tenants/${organizationId}/settings/`, 'PUT', {
+      [DOCUMENT_TEMPLATE_FIELDS[template.document_type]]: template.id,
+    }),
+    onSuccess: (response) => {
+      const saved = response?.data ?? response;
+      const assignments = Object.fromEntries(Object.values(DOCUMENT_TEMPLATE_FIELDS).map((field) => [field, saved[field.replace('_id', '')]?.id ?? null]));
+      setSettingsForm((current: any) => ({ ...current, ...assignments }));
+      qc.setQueryData(['my-tenant-settings', organizationId], response);
+      qc.setQueryData(['dashboard-tenant-settings', organizationId, token], saved);
+      toast({ title: 'Document template selected', description: 'New previews and PDF downloads will use this layout.' });
+    },
+    onError: (error: any) => toast({ title: 'Template selection failed', description: error.message, variant: 'destructive' }),
+  });
+
   const templatesByType = (documentType: string) =>
     templates.filter((t: any) => t.document_type === documentType && t.is_active !== false);
 
@@ -2266,7 +2290,7 @@ export default function OrganizationSettings() {
 
   const previewTemplate = async (templateId: number) => {
     try {
-      const res = await fetch(`${BASE}/documents/templates/${templateId}/preview/`, {
+      const res = await fetch(`${BASE}/documents/templates/${templateId}/preview/?tenant_id=${organizationId}`, {
         headers: { Authorization: `Token ${token}` },
       });
       if (!res.ok) {
@@ -2622,7 +2646,7 @@ export default function OrganizationSettings() {
                         <p className="text-xs text-muted-foreground">Shown in this organization workspace, its installed app, and customer-facing documents.</p>
                       </div>
                       <div className="space-y-1.5">
-                        <Label>Brand Color</Label>
+                        <Label>Primary Brand &amp; Button Color</Label>
                         <div className="flex items-center gap-3">
                           <Input
                             type="color"
@@ -2638,8 +2662,37 @@ export default function OrganizationSettings() {
                           />
                         </div>
                         <p className="text-xs text-muted-foreground">
-                          Used across this organization workspace, invoices, estimates, statements, and customer-facing documents.
+                          Used for primary buttons, active navigation, focus rings, and customer-facing documents. Your exact selected color is preserved.
                         </p>
+                      </div>
+                      <div className="grid gap-4 lg:grid-cols-3">
+                        {[
+                          { key: 'secondary_color', label: 'Secondary Button Color', fallback: '#e9e6e2', help: 'Secondary buttons throughout the ERP.' },
+                          { key: 'accent_color', label: 'Accent Color', fallback: '#ebe7e0', help: 'Menu highlights, selections, and hover backgrounds.' },
+                          { key: 'sidebar_color', label: 'Sidebar Color', fallback: '#211e1c', help: 'Navigation sidebar background.' },
+                        ].map(({ key, label, fallback, help }) => (
+                          <div key={key} className="min-w-0 space-y-1.5">
+                            <Label htmlFor={`branding-${key}`}>{label}</Label>
+                            <div className="flex items-center gap-2">
+                              <Input type="color" aria-label={`${label} picker`} className="h-11 w-14 shrink-0 p-1" value={/^#[0-9a-f]{6}$/i.test(settingsForm[key] || '') ? settingsForm[key] : fallback} onChange={sf(key)} />
+                              <Input id={`branding-${key}`} className="min-w-0 font-mono" value={settingsForm[key] ?? ''} onChange={sf(key)} placeholder="Default" />
+                            </div>
+                            <p className="text-xs text-muted-foreground">{help} Leave blank for the default theme color.</p>
+                            <Button size="sm" variant="outline" onClick={() => setSettingsForm((p: any) => ({ ...p, [key]: '' }))}>Use default</Button>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="rounded-xl border p-4 space-y-3">
+                        <p className="text-sm font-semibold">Workspace Preview</p>
+                        <p className="text-xs text-muted-foreground">Text adjusts automatically for contrast. Save Branding to apply these colors across this organization.</p>
+                        <div className="flex flex-col gap-3 sm:flex-row">
+                          <div className="rounded-md p-4" style={settingsForm.sidebar_color ? { backgroundColor: settingsForm.sidebar_color, color: contrastText(settingsForm.sidebar_color) } : { backgroundColor: 'hsl(var(--sidebar))', color: 'hsl(var(--sidebar-foreground))' }}>Navigation</div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="rounded-md px-4 py-2 text-sm font-medium" style={{ backgroundColor: settingsForm.primary_color || '#E85D26', color: contrastText(settingsForm.primary_color || '#E85D26') }}>Primary button</span>
+                            <span className="rounded-md bg-secondary px-4 py-2 text-sm font-medium text-secondary-foreground" style={settingsForm.secondary_color ? { backgroundColor: settingsForm.secondary_color, color: contrastText(settingsForm.secondary_color) } : undefined}>Secondary button</span>
+                            <span className="rounded-md bg-accent px-4 py-2 text-sm text-accent-foreground" style={settingsForm.accent_color ? { backgroundColor: settingsForm.accent_color, color: contrastText(settingsForm.accent_color) } : undefined}>Accent</span>
+                          </div>
+                        </div>
                       </div>
                       <div className="rounded-2xl border p-5" style={{ background: `linear-gradient(135deg, ${settingsForm.primary_color ?? '#E85D26'} 0%, #ffffff 85%)` }}>
                         <div className="rounded-xl bg-white/90 border p-4">
@@ -3123,7 +3176,7 @@ export default function OrganizationSettings() {
                       <Select value={String(settingsForm.invoice_template_id ?? '__none__')} onValueChange={v => setSettingsForm((p: any) => ({ ...p, invoice_template_id: v === '__none__' ? null : Number(v) }))}>
                         <SelectTrigger><SelectValue placeholder="Select invoice template" /></SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="__none__">No template</SelectItem>
+                          <SelectItem value="__none__">Automatic default</SelectItem>
                           {templatesByType('invoice').map((t: any) => (
                             <SelectItem key={t.id} value={String(t.id)}>{t.name}</SelectItem>
                           ))}
@@ -3135,7 +3188,7 @@ export default function OrganizationSettings() {
                       <Select value={String(settingsForm.estimate_template_id ?? '__none__')} onValueChange={v => setSettingsForm((p: any) => ({ ...p, estimate_template_id: v === '__none__' ? null : Number(v) }))}>
                         <SelectTrigger><SelectValue placeholder="Select estimate template" /></SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="__none__">No template</SelectItem>
+                          <SelectItem value="__none__">Automatic default</SelectItem>
                           {templatesByType('quotation').map((t: any) => (
                             <SelectItem key={t.id} value={String(t.id)}>{t.name}</SelectItem>
                           ))}
@@ -3147,7 +3200,7 @@ export default function OrganizationSettings() {
                       <Select value={String(settingsForm.receipt_template_id ?? '__none__')} onValueChange={v => setSettingsForm((p: any) => ({ ...p, receipt_template_id: v === '__none__' ? null : Number(v) }))}>
                         <SelectTrigger><SelectValue placeholder="Select receipt template" /></SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="__none__">No template</SelectItem>
+                          <SelectItem value="__none__">Automatic default</SelectItem>
                           {templatesByType('receipt').map((t: any) => (
                             <SelectItem key={t.id} value={String(t.id)}>{t.name}</SelectItem>
                           ))}
@@ -3159,7 +3212,7 @@ export default function OrganizationSettings() {
                       <Select value={String(settingsForm.statement_template_id ?? '__none__')} onValueChange={v => setSettingsForm((p: any) => ({ ...p, statement_template_id: v === '__none__' ? null : Number(v) }))}>
                         <SelectTrigger><SelectValue placeholder="Select statement template" /></SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="__none__">No template</SelectItem>
+                          <SelectItem value="__none__">Automatic default</SelectItem>
                           {templatesByType('statement').map((t: any) => (
                             <SelectItem key={t.id} value={String(t.id)}>{t.name}</SelectItem>
                           ))}
@@ -3171,7 +3224,7 @@ export default function OrganizationSettings() {
                       <Select value={String(settingsForm.purchase_order_template_id ?? '__none__')} onValueChange={v => setSettingsForm((p: any) => ({ ...p, purchase_order_template_id: v === '__none__' ? null : Number(v) }))}>
                         <SelectTrigger><SelectValue placeholder="Select purchase order template" /></SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="__none__">No template</SelectItem>
+                          <SelectItem value="__none__">Automatic default</SelectItem>
                           {templatesByType('purchase_order').map((t: any) => (
                             <SelectItem key={t.id} value={String(t.id)}>{t.name}</SelectItem>
                           ))}
@@ -3236,7 +3289,7 @@ export default function OrganizationSettings() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium">Document Templates</p>
-                <p className="text-xs text-muted-foreground">Create and manage centralized layouts for sales documents, finance documents, and ERP reports.</p>
+                <p className="text-xs text-muted-foreground">Preview Classic, Modern, and Compact layouts with your branding, then choose a layout for each document type. Downloads use PDF.</p>
               </div>
               <Button size="sm" onClick={() => setTemplateDialogOpen(true)} className="gap-1.5">
                 <Plus className="h-3.5 w-3.5" /> New Template
@@ -3280,22 +3333,27 @@ export default function OrganizationSettings() {
                               ) : (
                                 templatesByType(dt.value).map((t: any) => (
                                   <div key={t.id} className="rounded-xl border p-3">
-                                    <div className="flex items-center justify-between gap-3">
-                                      <div>
+                                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                                      <div className="min-w-0 break-words">
                                         <p className="text-sm font-semibold">{t.name}</p>
                                         <p className="text-xs text-muted-foreground">
                                           {t.tenant ? 'Organization template' : 'Shared template'} {t.is_default ? '· Default' : ''}
                                         </p>
                                       </div>
-                                      <div className="flex items-center gap-1">
-                                        <Button size="sm" variant="ghost" onClick={() => previewTemplate(t.id)}>
-                                          <Eye className="h-3.5 w-3.5" />
+                                      <div className="flex flex-wrap items-center gap-1">
+                                        <Button size="sm" variant="outline" onClick={() => previewTemplate(t.id)}>
+                                          <Eye className="h-3.5 w-3.5" /> Preview
                                         </Button>
-                                        <Button size="sm" variant="ghost" onClick={() => navigator.clipboard.writeText(t.body_template ?? '')}>
+                                        <Button size="sm" variant="ghost" aria-label={`Copy ${t.name} template`} onClick={() => navigator.clipboard.writeText(t.body_template ?? '')}>
                                           <Copy className="h-3.5 w-3.5" />
                                         </Button>
                                       </div>
                                     </div>
+                                    {DOCUMENT_TEMPLATE_FIELDS[dt.value] && (
+                                      <Button className="mt-3 w-full" size="sm" variant={settings[DOCUMENT_TEMPLATE_FIELDS[dt.value].replace('_id', '')]?.id === t.id ? 'secondary' : 'default'} disabled={selectDocumentTemplate.isPending || settings[DOCUMENT_TEMPLATE_FIELDS[dt.value].replace('_id', '')]?.id === t.id} onClick={() => selectDocumentTemplate.mutate(t)}>
+                                        {settings[DOCUMENT_TEMPLATE_FIELDS[dt.value].replace('_id', '')]?.id === t.id ? 'Selected for this organization' : `Use for ${dt.label}`}
+                                      </Button>
+                                    )}
                                   </div>
                                 ))
                               )}

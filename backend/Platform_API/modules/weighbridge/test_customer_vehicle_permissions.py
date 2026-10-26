@@ -458,6 +458,7 @@ class TellerReceiptWindowTests(TestCase):
             vehicle_type=self.vehicle_type,
             item=self.item,
             operator="Receipt Teller",
+            created_by=self.user,
             weight_type="First Weight",
             payment_mode="Cash",
             payment_status="Paid",

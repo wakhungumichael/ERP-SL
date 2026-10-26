@@ -1,11 +1,13 @@
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { Download } from "lucide-react";
+import { Download, Plus } from "lucide-react";
 import { Link } from "wouter";
 import { useAuth } from "@/context/use-auth";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { ListingPagination } from "@/components/erp/listing/pagination";
 import {
@@ -31,6 +33,7 @@ type FollowUp = {
 };
 type FollowUpPage = {
   count: number;
+  can_create: boolean;
   results: FollowUp[];
   summary: { total: number; open: number; completed: number; overdue: number };
 };
@@ -42,13 +45,37 @@ function formatDate(value: string) {
 }
 
 export default function ProjectFollowUps() {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const { toast } = useToast();
   const client = useQueryClient();
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
   const [status, setStatus] = useState("all");
   const [search, setSearch] = useState("");
+  const [createOpen, setCreateOpen] = useState(false);
+  const [taskSearch, setTaskSearch] = useState('');
+  const [taskId, setTaskId] = useState('');
+  const [followDate, setFollowDate] = useState('');
+  const [notes, setNotes] = useState('');
+  const options = useQuery<{ results: Array<{ id: number; number: string; title: string }> }>({
+    queryKey: ['project-followup-task-options', token, (user as any)?.organization_id, (user as any)?.branch_id, (user as any)?.active_role_group_name, taskSearch],
+    enabled: createOpen && !!token,
+    queryFn: async () => {
+      const response = await fetch(`/api/projects/tasks/?page_size=100&search=${encodeURIComponent(taskSearch)}`, { headers: { Authorization: `Token ${token}` } });
+      if (!response.ok) throw await apiErrorFromResponse(response, 'Tasks could not be loaded.');
+      return response.json();
+    },
+  });
+  const createFollowUp = useMutation({
+    mutationFn: async () => {
+      if (!taskId || !followDate || !notes.trim()) throw new Error('Select a task, follow-up date, and notes.');
+      const response = await fetch('/api/projects/follow-ups/', { method: 'POST', headers: { Authorization: `Token ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ task: Number(taskId), follow_up_date: followDate, notes: notes.trim() }) });
+      if (!response.ok) throw await apiErrorFromResponse(response, 'Follow-up could not be created.');
+      return response.json();
+    },
+    onSuccess: () => { setCreateOpen(false); setNotes(''); setTaskId(''); client.invalidateQueries({ queryKey: ['project-followups'] }); client.invalidateQueries({ queryKey: ['projects-follow-ups'] }); client.invalidateQueries({ queryKey: ['project-task-alerts'] }); toast({ title: 'Follow-up scheduled' }); },
+    onError: (error: Error) => toast({ title: 'Follow-up could not be created', description: error.message, variant: 'destructive' }),
+  });
   const exportRegister = async () => {
     try {
       const query = new URLSearchParams();
@@ -81,7 +108,7 @@ export default function ProjectFollowUps() {
     }
   };
   const followUps = useQuery<FollowUpPage>({
-    queryKey: ["projects-follow-ups", page, pageSize, status, search],
+    queryKey: ["projects-follow-ups", token, (user as any)?.organization_id, (user as any)?.branch_id, (user as any)?.active_role_group_name, page, pageSize, status, search],
     enabled: !!token,
     queryFn: async () => {
       const query = new URLSearchParams({
@@ -172,6 +199,7 @@ export default function ProjectFollowUps() {
               <SelectItem value="cancelled">Cancelled</SelectItem>
             </SelectContent>
           </Select>
+          <Button onClick={() => setCreateOpen(true)} disabled={!followUps.data?.can_create}><Plus className="mr-2 h-4 w-4" />New follow-up</Button>
           <Button variant="outline" onClick={exportRegister}>
             <Download className="mr-2 h-4 w-4" />
             Export CSV
@@ -237,6 +265,16 @@ export default function ProjectFollowUps() {
           onPageSize={setPageSize}
         />
       </div>
+      <Dialog open={createOpen} onOpenChange={setCreateOpen}><DialogContent className="max-h-[90dvh] overflow-y-auto"><DialogHeader><DialogTitle>Schedule follow-up</DialogTitle></DialogHeader>
+        <div className="space-y-4">
+          <Input aria-label="Search tasks for follow-up" placeholder="Search accessible tasks" value={taskSearch} onChange={event => setTaskSearch(event.target.value)} />
+          <Select value={taskId} onValueChange={setTaskId}><SelectTrigger aria-label="Follow-up task"><SelectValue placeholder="Select a task" /></SelectTrigger><SelectContent>{(options.data?.results ?? []).map(task => <SelectItem key={task.id} value={String(task.id)}>{task.number} · {task.title}</SelectItem>)}</SelectContent></Select>
+          {options.isError && <p role="alert" className="text-sm text-destructive">{options.error.message}</p>}
+          <label className="block text-sm">Follow-up date<Input type="date" value={followDate} onChange={event => setFollowDate(event.target.value)} /></label>
+          <label className="block text-sm">Notes<Textarea value={notes} onChange={event => setNotes(event.target.value)} placeholder="What needs to be checked or discussed?" /></label>
+        </div>
+        <DialogFooter><Button variant="outline" onClick={() => setCreateOpen(false)}>Cancel</Button><Button disabled={createFollowUp.isPending} onClick={() => createFollowUp.mutate()}>{createFollowUp.isPending ? 'Saving…' : 'Schedule follow-up'}</Button></DialogFooter>
+      </DialogContent></Dialog>
     </ERPWorkspacePage>
   );
 }
