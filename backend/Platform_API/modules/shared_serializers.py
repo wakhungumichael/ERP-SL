@@ -5,6 +5,7 @@ from django.contrib.auth import authenticate
 from django.contrib.auth.models import Group, Permission, User
 from django.contrib.contenttypes.models import ContentType
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 from rest_framework import serializers
 from Platform_Core.audit import log_business_event
@@ -1062,6 +1063,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
     is_org_admin = serializers.SerializerMethodField()
     is_tenant_admin = serializers.SerializerMethodField()
     memberships = serializers.SerializerMethodField()
+    departments = serializers.SerializerMethodField()
     active_membership_id = serializers.SerializerMethodField()
     active_role = serializers.SerializerMethodField()
     active_role_group_name = serializers.SerializerMethodField()
@@ -1096,6 +1098,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
             "is_org_admin",
             "is_tenant_admin",
             "memberships",
+            "departments",
             "active_membership_id",
             "active_role",
             "active_role_group_name",
@@ -1103,19 +1106,38 @@ class UserProfileSerializer(serializers.ModelSerializer):
             "session_timeout_minutes",
         )
 
+    def _workspace_groups(self, obj):
+        groups = obj.groups.all()
+        membership = self._active_membership(obj)
+        if membership and not obj.is_superuser:
+            groups = groups.filter(Q(name__startswith=tenant_role_prefix(membership.tenant_id)) | ~Q(name__startswith='tenant:'))
+            if not membership.is_org_admin:
+                groups = groups.exclude(name__in=PROTECTED_SHARED_ROLE_NAMES | {'Super Admin'})
+        return groups
+
     def get_permissions(self, obj):
         membership = self._active_membership(obj)
-        active_role_name = membership.effective_role_group_name() if membership else ""
+        active_role_name = membership.effective_role_group_name() if membership else ''
+        groups = self._workspace_groups(obj)
         if active_role_name and not obj.is_superuser:
-            active_group = obj.groups.filter(name=active_role_name).first()
-            if active_group is not None:
-                return sorted(
-                    f"{app_label}.{codename}"
-                    for app_label, codename in active_group.permissions.values_list(
-                        "content_type__app_label", "codename"
-                    )
-                )
-        return sorted(obj.get_all_permissions())
+            groups = groups.filter(name=active_role_name)
+        permissions = set(f'{app}.{code}' for app, code in Permission.objects.filter(group__in=groups).values_list('content_type__app_label', 'codename'))
+        if not active_role_name:
+            permissions.update(f'{app}.{code}' for app, code in obj.user_permissions.values_list('content_type__app_label', 'codename'))
+        if obj.is_superuser:
+            permissions.update(obj.get_all_permissions())
+        if membership:
+            from SL_Procurement.models import Department
+            if Department.objects.filter(tenant_id=membership.tenant_id, is_active=True).filter(Q(head=obj) | Q(deputy=obj)).exists():
+                permissions.update(f'SL_Procurement.{name}' for name in ['view_department', 'view_requisition', 'change_requisition', 'add_requisition', 'consolidate_requisitions'])
+        return sorted(permissions)
+
+    def get_departments(self, obj):
+        from SL_Procurement.models import Department
+        tenant_id = self.get_tenant_id(obj)
+        if not tenant_id:
+            return []
+        return [{'id': department.pk, 'name': department.name, 'code': department.code, 'is_head': department.head_id == obj.pk, 'is_deputy': department.deputy_id == obj.pk} for department in Department.objects.filter(tenant_id=tenant_id, is_active=True).filter(Q(head=obj) | Q(deputy=obj) | Q(members=obj)).distinct()]
 
     def _profile(self, obj):
         return getattr(obj, "tenant_profile", None)
@@ -1245,7 +1267,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
                 ]
         return [
             {"id": group.id, "name": group.name, "display_name": display_role_name(group.name, tenant_id)}
-            for group in obj.groups.order_by("name")
+            for group in self._workspace_groups(obj).order_by("name")
         ]
 
     def get_session_timeout_minutes(self, obj):
@@ -1260,6 +1282,10 @@ class UserProfileSerializer(serializers.ModelSerializer):
 class TokenLoginSerializer(serializers.Serializer):
     username = serializers.CharField()
     password = serializers.CharField(write_only=True, trim_whitespace=False)
+    # A tenant login URL (/login/<tenant-code>) must select that organization
+    # for the authenticated session.  Without this field the API fell back to
+    # whichever membership happened to be marked default.
+    tenant_code = serializers.CharField(required=False, allow_blank=True, trim_whitespace=True)
     active_role_id = serializers.IntegerField(required=False, min_value=1)
 
     def _bootstrap_membership_from_legacy_profile(self, user):
@@ -1284,6 +1310,55 @@ class TokenLoginSerializer(serializers.Serializer):
                 job_title=getattr(profile, "job_title", "") or "",
             )
 
+    def _select_organization(self, user, tenant_code):
+        """Make an allowed organization the user's current ERP context.
+
+        The ERP still has a number of legacy endpoints which resolve tenant
+        scope from ``TenantUserProfile``.  Keep that profile in sync with the
+        selected organization while the membership's default flag remains the
+        single source of truth for the current context.
+        """
+        memberships = OrganizationMembership.objects.select_for_update().select_related(
+            "tenant", "branch"
+        ).filter(user=user, is_active=True)
+        membership = None
+        if tenant_code:
+            tenant = Tenant.objects.filter(code__iexact=tenant_code).first()
+            if tenant is None or not tenant.is_active:
+                raise serializers.ValidationError({
+                    "tenant_code": "This organization is unavailable. Contact your administrator if you need access."
+                })
+            membership = memberships.filter(tenant=tenant).first()
+            if membership is None:
+                raise serializers.ValidationError({
+                    "tenant_code": "Your account is not assigned to this organization. Ask an organization administrator to invite you."
+                })
+        else:
+            membership = memberships.order_by("-is_default", "tenant__name").first()
+
+        if membership is None:
+            return None
+        if not membership.tenant.is_active:
+            raise serializers.ValidationError(
+                "Your organization's account has been suspended. Please contact your platform administrator."
+            )
+
+        memberships.exclude(pk=membership.pk).filter(is_default=True).update(is_default=False)
+        if not membership.is_default:
+            membership.is_default = True
+            membership.save(update_fields=["is_default", "updated_at"])
+
+        profile, _ = TenantUserProfile.objects.get_or_create(user=user)
+        profile.tenant = membership.tenant
+        profile.branch = membership.branch
+        profile.is_tenant_admin = membership.is_org_admin
+        profile.job_title = membership.job_title or ""
+        profile.save(update_fields=["tenant", "branch", "is_tenant_admin", "job_title", "updated_at"])
+        # _bootstrap_membership_from_legacy_profile may already have populated
+        # the reverse one-to-one cache with the previous organization.
+        user._state.fields_cache.pop("tenant_profile", None)
+        return membership
+
     def validate(self, attrs):
         request = self.context.get("request")
         username = (attrs.get("username") or "").strip()
@@ -1304,32 +1379,27 @@ class TokenLoginSerializer(serializers.Serializer):
             raise serializers.ValidationError("Invalid username or password.")
         if not user.is_active:
             raise serializers.ValidationError("This user account is inactive.")
-        # Reject login if the user's tenant has been suspended.
-        # Guard against nullable tenant on the profile (profile.tenant may be None).
-        profile = getattr(user, "tenant_profile", None)
-        tenant = getattr(profile, "tenant", None)
-        if tenant is not None and not tenant.is_active:
+        self._bootstrap_membership_from_legacy_profile(user)
+        try:
+            with transaction.atomic():
+                membership = self._select_organization(user, (attrs.get("tenant_code") or "").strip())
+        except serializers.ValidationError:
+            requested_tenant = Tenant.objects.filter(code__iexact=(attrs.get("tenant_code") or "").strip()).first()
             log_business_event(
                 event_group="security",
                 event_type="request",
-                tenant=tenant,
+                tenant=requested_tenant,
                 actor=user,
-                note="Blocked login because tenant account is suspended.",
+                note="Blocked login because the selected organization is unavailable or not assigned to the user.",
                 metadata={"username": username, "path": getattr(request, "path", "")},
                 status="failed",
             )
-            raise serializers.ValidationError(
-                "Your organization's account has been suspended. Please contact your platform administrator."
-            )
-        self._bootstrap_membership_from_legacy_profile(user)
+            raise
         requested_role_id = attrs.get("active_role_id")
         if requested_role_id:
             role = user.groups.filter(pk=requested_role_id).first()
             if role is None:
                 raise serializers.ValidationError({"active_role_id": "Choose one of your assigned roles."})
-            membership = OrganizationMembership.objects.filter(user=user, is_active=True, is_default=True).first()
-            if membership is None:
-                membership = OrganizationMembership.objects.filter(user=user, is_active=True).order_by("tenant__name").first()
             if membership:
                 membership.active_role_group_name = role.name
                 membership.save(update_fields=["active_role_group_name", "updated_at"])

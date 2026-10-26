@@ -253,7 +253,7 @@ export default function Login() {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     login.mutate(
-      { data: { username, password } },
+      { data: { username, password, tenant_code: params?.tenantCode || undefined } },
       {
         onSuccess: (raw) => {
           const payload = (raw as Record<string, unknown>)?.data as Record<string, unknown> | undefined;

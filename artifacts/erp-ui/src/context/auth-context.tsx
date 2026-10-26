@@ -13,7 +13,9 @@ function tenantLoginPath(user?: Record<string, unknown> | null) {
   const memberships = Array.isArray(user?.memberships) ? user.memberships as Array<Record<string, unknown>> : [];
   const activeMembership = memberships.find((membership) => String(membership.id ?? '') === activeMembershipId);
   const membershipCode = String(activeMembership?.tenant_code ?? activeMembership?.organization_code ?? '').trim();
-  const code = rememberedCode || membershipCode;
+  // The server-selected membership is authoritative. A remembered code may
+  // belong to a prior organization and must never redirect a user there.
+  const code = membershipCode || rememberedCode;
   return code ? `/login/${encodeURIComponent(code)}` : '/login';
 }
 
@@ -111,6 +113,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     localStorage.setItem(LAST_ACTIVITY_KEY, String(Date.now()));
     localStorage.removeItem(SESSION_EXPIRED_KEY);
     if (userPayload) {
+      const activeMembershipId = String(userPayload.active_membership_id ?? '');
+      const memberships = Array.isArray(userPayload.memberships)
+        ? userPayload.memberships as Array<Record<string, unknown>>
+        : [];
+      const activeMembership = memberships.find((membership) => String(membership.id ?? '') === activeMembershipId);
+      const tenantCode = String(activeMembership?.tenant_code ?? activeMembership?.organization_code ?? '').trim();
+      if (tenantCode) localStorage.setItem('sl-erp-tenant-code', tenantCode);
       localStorage.setItem('sl-erp-user', JSON.stringify(userPayload));
       setCachedUser(userPayload);
     }

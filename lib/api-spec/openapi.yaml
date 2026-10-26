@@ -796,6 +796,8 @@ components:
       properties:
         username: { type: string }
         password: { type: string }
+        tenant_code: { type: string, description: Organization code selected from a tenant login URL. }
+        active_role_id: { type: integer, minimum: 1 }
 
     AuthTokenResponse:
       type: object

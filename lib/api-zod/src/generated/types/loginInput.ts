@@ -9,4 +9,7 @@
 export interface LoginInput {
   username: string;
   password: string;
+  /** Organization code selected from a tenant login URL. */
+  tenant_code?: string;
+  active_role_id?: number;
 }
