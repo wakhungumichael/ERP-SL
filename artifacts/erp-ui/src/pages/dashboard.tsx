@@ -1,6 +1,6 @@
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { useMemo } from 'react';
-import { CalendarDays, LayoutGrid, RotateCcw, Settings2 } from 'lucide-react';
+import { ArrowRight, CalendarDays, LayoutGrid, RotateCcw, Settings2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { DashboardCustomizer, DashboardGridEngine } from '@/components/dashboard/engine';
@@ -51,13 +51,35 @@ export default function Dashboard() {
   if (isLoading) return <div className="p-12 text-center font-mono text-sm text-muted-foreground animate-pulse">Loading workspace dashboard...</div>;
 
   if (!canViewDashboard) {
-    return <div className="mx-auto flex min-h-[55vh] max-w-xl flex-col items-center justify-center gap-4 text-center">
-      <div className="rounded-full bg-muted p-4"><LayoutGrid className="h-8 w-8 text-muted-foreground" /></div>
-      <div>
-        <h1 className="text-2xl font-bold">Dashboard access is not assigned</h1>
-        <p className="mt-2 text-sm text-muted-foreground">Ask an administrator to grant your role the Workspace Dashboard permission. Operational users can continue directly to their assigned work area.</p>
-      </div>
-      <Button onClick={() => setLocation('/weighbridge/weighment-entry')}>Open Weighment Entry</Button>
+    const workspaceItems = tenantContext.sections
+      .flatMap((section) => section.items.map((item) => ({ ...item, section: section.title })))
+      .filter((item) => item.path && item.path !== '/dashboard')
+      .filter((item, index, items) => items.findIndex((candidate) => candidate.path === item.path) === index);
+
+    return <div className="mx-auto max-w-5xl space-y-6 py-4">
+      <header className="border-b border-border/80 pb-5">
+        <div className="flex items-center gap-3">
+          <div className="rounded-xl bg-primary/10 p-3"><LayoutGrid className="h-6 w-6 text-primary" /></div>
+          <div>
+            <h1 className="text-2xl font-bold">{tenantContext.tenantName}</h1>
+            <p className="mt-1 text-sm text-muted-foreground">Choose an area available to your current role.</p>
+          </div>
+        </div>
+      </header>
+      {workspaceItems.length ? <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {workspaceItems.map((item) => <button
+          key={item.path}
+          type="button"
+          onClick={() => setLocation(item.path)}
+          className="group flex min-h-28 flex-col rounded-xl border bg-card p-4 text-left shadow-sm transition-colors hover:border-primary/40 hover:bg-accent/40"
+        >
+          <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{item.section}</span>
+          <span className="mt-2 flex items-center justify-between gap-3 font-semibold">{item.title}<ArrowRight className="h-4 w-4 text-muted-foreground transition-transform group-hover:translate-x-1 group-hover:text-primary" /></span>
+        </button>)}
+      </div> : <div className="rounded-xl border border-dashed p-10 text-center">
+        <h2 className="font-semibold">No workspace areas are assigned yet</h2>
+        <p className="mt-2 text-sm text-muted-foreground">Ask an administrator to assign module access and menu permissions to your role.</p>
+      </div>}
     </div>;
   }
 
