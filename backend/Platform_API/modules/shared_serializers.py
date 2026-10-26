@@ -5,6 +5,7 @@ from django.contrib.auth import authenticate
 from django.contrib.auth.models import Group, Permission, User
 from django.contrib.contenttypes.models import ContentType
 from django.db import transaction
+from django.db.utils import OperationalError, ProgrammingError
 from django.db.models import Q
 from django.utils import timezone
 from rest_framework import serializers
@@ -1127,17 +1128,26 @@ class UserProfileSerializer(serializers.ModelSerializer):
         if obj.is_superuser:
             permissions.update(obj.get_all_permissions())
         if membership:
-            from SL_Procurement.models import Department
-            if Department.objects.filter(tenant_id=membership.tenant_id, is_active=True).filter(Q(head=obj) | Q(deputy=obj)).exists():
-                permissions.update(f'SL_Procurement.{name}' for name in ['view_department', 'view_requisition', 'change_requisition', 'add_requisition', 'consolidate_requisitions'])
+            # Departments are an optional Procurement capability. A tenant can
+            # operate without it, including while its optional schema has not
+            # yet been migrated. It must never prevent authentication.
+            try:
+                from SL_Procurement.models import Department
+                if Department.objects.filter(tenant_id=membership.tenant_id, is_active=True).filter(Q(head=obj) | Q(deputy=obj)).exists():
+                    permissions.update(f'SL_Procurement.{name}' for name in ['view_department', 'view_requisition', 'change_requisition', 'add_requisition', 'consolidate_requisitions'])
+            except (ImportError, OperationalError, ProgrammingError):
+                pass
         return sorted(permissions)
 
     def get_departments(self, obj):
-        from SL_Procurement.models import Department
         tenant_id = self.get_tenant_id(obj)
         if not tenant_id:
             return []
-        return [{'id': department.pk, 'name': department.name, 'code': department.code, 'is_head': department.head_id == obj.pk, 'is_deputy': department.deputy_id == obj.pk} for department in Department.objects.filter(tenant_id=tenant_id, is_active=True).filter(Q(head=obj) | Q(deputy=obj) | Q(members=obj)).distinct()]
+        try:
+            from SL_Procurement.models import Department
+            return [{'id': department.pk, 'name': department.name, 'code': department.code, 'is_head': department.head_id == obj.pk, 'is_deputy': department.deputy_id == obj.pk} for department in Department.objects.filter(tenant_id=tenant_id, is_active=True).filter(Q(head=obj) | Q(deputy=obj) | Q(members=obj)).distinct()]
+        except (ImportError, OperationalError, ProgrammingError):
+            return []
 
     def _profile(self, obj):
         return getattr(obj, "tenant_profile", None)
