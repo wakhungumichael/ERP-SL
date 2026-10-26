@@ -1,13 +1,16 @@
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
-import { useMemo } from 'react';
-import { ArrowRight, CalendarDays, LayoutGrid, RotateCcw, Settings2 } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { Bell, CalendarDays, CheckSquare2, ChevronDown, LayoutGrid, RotateCcw, Settings2 } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { DashboardCustomizer, DashboardGridEngine } from '@/components/dashboard/engine';
 import { DASHBOARD_WIDGETS } from '@/components/dashboard/registry';
 import { useDashboardLayout } from '@/hooks/use-dashboard-layout';
 import { useDashboardAccess } from '@/hooks/use-dashboard-access';
 import { useTenantTheme } from '@/hooks/use-tenant-theme';
+import { useAuth } from '@/context/use-auth';
 import { useLocation } from 'wouter';
 
 function greeting(timezone: string) {
@@ -25,9 +28,12 @@ const MODULE_ALIASES: Record<string, string[]> = {
 
 export default function Dashboard() {
   const [, setLocation] = useLocation();
+  const { token } = useAuth();
   const { tenantContext, isLoading } = useTenantTheme({ applyTheme: false });
   const { hasPermission, hasWorkspacePermission, canViewSensitive } = useDashboardAccess();
   const canViewDashboard = hasPermission('view_dashboard');
+  const [notificationsOpen, setNotificationsOpen] = useState(true);
+  const [tasksOpen, setTasksOpen] = useState(true);
   const visibleModuleKeys = useMemo(() => new Set([
     ...tenantContext.activeModuleSlugs,
     ...tenantContext.sections.map((section) => section.key),
@@ -47,39 +53,72 @@ export default function Dashboard() {
   const today = new Intl.DateTimeFormat(tenantContext.branding.locale || 'en-KE', {
     weekday: 'long', day: '2-digit', month: 'short', year: 'numeric', timeZone: tenantContext.branding.timezone,
   }).format(new Date());
+  const personalNotifications = useQuery({
+    queryKey: ['personal-dashboard-notifications', token],
+    enabled: !!token && !isLoading && !canViewDashboard,
+    queryFn: async () => {
+      const response = await fetch('/api/platform/notifications/?unread=1&page=1&page_size=8', {
+        headers: { Authorization: `Token ${token}` },
+      });
+      if (!response.ok) return [];
+      const body = await response.json();
+      const data = body?.data ?? body;
+      return Array.isArray(data?.results) ? data.results : [];
+    },
+  });
+  const personalTasks = useQuery({
+    queryKey: ['personal-dashboard-tasks', token, tenantContext.tenantId],
+    enabled: !!token && !isLoading && !canViewDashboard,
+    queryFn: async () => {
+      const response = await fetch('/api/projects/tasks/?scope=mine&page=1&page_size=8&ordering=due_date', {
+        headers: { Authorization: `Token ${token}` },
+      });
+      if (!response.ok) return [];
+      const body = await response.json();
+      const data = body?.data ?? body;
+      return Array.isArray(data?.results) ? data.results : [];
+    },
+  });
 
   if (isLoading) return <div className="p-12 text-center font-mono text-sm text-muted-foreground animate-pulse">Loading workspace dashboard...</div>;
 
   if (!canViewDashboard) {
-    const workspaceItems = tenantContext.sections
-      .flatMap((section) => section.items.map((item) => ({ ...item, section: section.title })))
-      .filter((item) => item.path && item.path !== '/dashboard')
-      .filter((item, index, items) => items.findIndex((candidate) => candidate.path === item.path) === index);
-
-    return <div className="mx-auto max-w-5xl space-y-6 py-4">
+    const notifications = personalNotifications.data ?? [];
+    const tasks = personalTasks.data ?? [];
+    return <div className="mx-auto max-w-4xl space-y-6 py-4">
       <header className="border-b border-border/80 pb-5">
         <div className="flex items-center gap-3">
           <div className="rounded-xl bg-primary/10 p-3"><LayoutGrid className="h-6 w-6 text-primary" /></div>
           <div>
             <h1 className="text-2xl font-bold">{tenantContext.tenantName}</h1>
-            <p className="mt-1 text-sm text-muted-foreground">Choose an area available to your current role.</p>
+            <p className="mt-1 text-sm text-muted-foreground">Your assigned work and notifications.</p>
           </div>
         </div>
       </header>
-      {workspaceItems.length ? <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {workspaceItems.map((item) => <button
-          key={item.path}
-          type="button"
-          onClick={() => setLocation(item.path)}
-          className="group flex min-h-28 flex-col rounded-xl border bg-card p-4 text-left shadow-sm transition-colors hover:border-primary/40 hover:bg-accent/40"
-        >
-          <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{item.section}</span>
-          <span className="mt-2 flex items-center justify-between gap-3 font-semibold">{item.title}<ArrowRight className="h-4 w-4 text-muted-foreground transition-transform group-hover:translate-x-1 group-hover:text-primary" /></span>
-        </button>)}
-      </div> : <div className="rounded-xl border border-dashed p-10 text-center">
-        <h2 className="font-semibold">No workspace areas are assigned yet</h2>
-        <p className="mt-2 text-sm text-muted-foreground">Ask an administrator to assign module access and menu permissions to your role.</p>
-      </div>}
+      <div className="space-y-3">
+        <Collapsible open={notificationsOpen} onOpenChange={setNotificationsOpen} className="rounded-xl border bg-card shadow-sm">
+          <CollapsibleTrigger className="flex w-full items-center justify-between gap-3 p-4 text-left">
+            <span className="flex items-center gap-3 font-semibold"><Bell className="h-4 w-4 text-primary" />Workflow notifications <Badge variant="secondary">{notifications.length}</Badge></span>
+            <ChevronDown className={`h-4 w-4 transition-transform ${notificationsOpen ? 'rotate-180' : ''}`} />
+          </CollapsibleTrigger>
+          <CollapsibleContent className="border-t">
+            {notifications.length ? <div className="divide-y">{notifications.map((notice: any) => <button key={notice.id} type="button" onClick={() => notice.route_path && setLocation(notice.route_path)} className="block w-full p-4 text-left hover:bg-accent/50 disabled:cursor-default" disabled={!notice.route_path}>
+              <p className="font-medium">{notice.title || 'System notification'}</p><p className="mt-1 text-sm text-muted-foreground">{notice.message || notice.body || 'A workflow item needs your attention.'}</p>
+            </button>)}</div> : <p className="p-5 text-sm text-muted-foreground">No unread workflow notifications.</p>}
+          </CollapsibleContent>
+        </Collapsible>
+        <Collapsible open={tasksOpen} onOpenChange={setTasksOpen} className="rounded-xl border bg-card shadow-sm">
+          <CollapsibleTrigger className="flex w-full items-center justify-between gap-3 p-4 text-left">
+            <span className="flex items-center gap-3 font-semibold"><CheckSquare2 className="h-4 w-4 text-primary" />My tasks <Badge variant="secondary">{tasks.length}</Badge></span>
+            <ChevronDown className={`h-4 w-4 transition-transform ${tasksOpen ? 'rotate-180' : ''}`} />
+          </CollapsibleTrigger>
+          <CollapsibleContent className="border-t">
+            {tasks.length ? <div className="divide-y">{tasks.map((task: any) => <button key={task.id} type="button" onClick={() => setLocation(`/projects/tasks/${task.id}`)} className="block w-full p-4 text-left hover:bg-accent/50">
+              <p className="font-medium">{task.number ? `${task.number} · ` : ''}{task.title}</p><p className="mt-1 text-sm text-muted-foreground">{task.status?.replaceAll('_', ' ') || 'Open'}{task.due_date ? ` · Due ${task.due_date}` : ''}</p>
+            </button>)}</div> : <p className="p-5 text-sm text-muted-foreground">No tasks are assigned to you.</p>}
+          </CollapsibleContent>
+        </Collapsible>
+      </div>
     </div>;
   }
 
