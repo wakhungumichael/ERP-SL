@@ -66,6 +66,18 @@ def _active_role_name(user, tenant):
 def _has_permission(user, codename):
     # Selected task roles must not inherit unrelated permissions from another role.
     tenant = resolve_user_tenant(user)
+    membership = (
+        OrganizationMembership.objects.filter(user=user, tenant=tenant, is_active=True)
+        .order_by("-is_default", "tenant__name")
+        .first()
+        if tenant not in (None, NO_TENANT_ACCESS)
+        else None
+    )
+    # Organization administrators manage the entire active organization. This
+    # must be evaluated against the selected tenant, never an unrelated
+    # membership that happens to belong to the same user.
+    if membership and membership.is_org_admin:
+        return True
     role = _active_role_name(user, tenant) if tenant not in (None, NO_TENANT_ACCESS) else ""
     if role and role not in {"Tenant Admin", "Platform Admin", "Super Admin"} and not user.is_superuser:
         group = user.groups.filter(name=role).first()
@@ -1126,7 +1138,14 @@ class ProjectListCreateAPIView(APIView):
         payload = request.data.copy()
         branch_id = _active_branch_id(request.user)
         if not branch_id:
-            raise PermissionDenied("Select an active branch before creating a project.")
+            # A newly created organization commonly has one operating branch
+            # before its members have been assigned branch-role records. Use
+            # that single branch rather than returning an opaque 403.
+            branch_ids = list(TenantBranch.objects.filter(tenant=tenant, is_active=True).values_list("id", flat=True)[:2])
+            if len(branch_ids) == 1:
+                branch_id = branch_ids[0]
+        if not branch_id:
+            raise PermissionDenied("Choose an active branch before creating a project. Ask an administrator to assign your branch access if none is available.")
         payload.setdefault("branch", branch_id)
         payload.setdefault("code", _next_reference(tenant, Project, "PRJ"))
         serializer = ProjectSerializer(data=payload)

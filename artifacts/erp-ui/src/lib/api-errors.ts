@@ -186,7 +186,13 @@ export function getUserFacingError(
     return { title: 'Sign-in required', description: 'Your session has ended. Please sign in again and continue.' };
   }
   if (status === 403) {
-    return { title: 'Access restricted', description: 'Your role does not allow this action. Contact an administrator if you need access.' };
+    const description = formatApiError(value, '');
+    return {
+      title: 'Access restricted',
+      description: description && !/^(403|forbidden|access denied)$/i.test(description.trim())
+        ? description
+        : 'Your role does not allow this action. Contact an administrator if you need access.',
+    };
   }
   if (status === 404) {
     return { title: 'Record not available', description: 'This record may have been removed or you may no longer have access to it.' };

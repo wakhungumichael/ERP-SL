@@ -1348,6 +1348,25 @@ class TokenLoginSerializer(serializers.Serializer):
             membership.is_default = True
             membership.save(update_fields=["is_default", "updated_at"])
 
+        # A role can be removed or renamed after a user has selected it. Do
+        # not let that stale value make every permission check fail on the
+        # next login; retain only a role the member is still assigned.
+        assigned_role_names = set(user.groups.values_list("name", flat=True))
+        selected_role_name = membership.effective_role_group_name()
+        if selected_role_name and selected_role_name not in assigned_role_names:
+            fallback_role_name = (membership.role_group_name or "").strip()
+            if fallback_role_name not in assigned_role_names:
+                fallback_role_name = next(
+                    (
+                        assignment.role_group.name
+                        for assignment in membership.branch_role_assignments.filter(is_active=True).select_related("role_group")
+                        if assignment.role_group.name in assigned_role_names
+                    ),
+                    "",
+                )
+            membership.active_role_group_name = fallback_role_name
+            membership.save(update_fields=["active_role_group_name", "updated_at"])
+
         profile, _ = TenantUserProfile.objects.get_or_create(user=user)
         profile.tenant = membership.tenant
         profile.branch = membership.branch
