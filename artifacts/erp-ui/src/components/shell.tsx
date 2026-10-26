@@ -55,22 +55,31 @@ type InstallPromptEvent = Event & { prompt: () => Promise<void>; userChoice: Pro
 
 function PwaInstallPrompt({ appName }: { appName: string }) {
   const [installEvent, setInstallEvent] = useState<InstallPromptEvent | null>(null);
-  const [dismissed, setDismissed] = useState(() => localStorage.getItem('pwa-install-dismissed') === 'true');
+  const [hiddenForVisit, setHiddenForVisit] = useState(false);
+  const [installed, setInstalled] = useState(() => window.matchMedia('(display-mode: standalone)').matches);
 
   useEffect(() => {
     const onPrompt = (event: Event) => {
       event.preventDefault();
       setInstallEvent(event as InstallPromptEvent);
     };
+    const onInstalled = () => {
+      setInstalled(true);
+      setInstallEvent(null);
+    };
     window.addEventListener('beforeinstallprompt', onPrompt);
-    return () => window.removeEventListener('beforeinstallprompt', onPrompt);
+    window.addEventListener('appinstalled', onInstalled);
+    return () => {
+      window.removeEventListener('beforeinstallprompt', onPrompt);
+      window.removeEventListener('appinstalled', onInstalled);
+    };
   }, []);
 
-  if (!installEvent || dismissed || window.matchMedia('(display-mode: standalone)').matches) return null;
-  return <div className="fixed inset-x-3 bottom-3 z-[100] mx-auto flex max-w-md items-center gap-3 rounded-2xl border bg-card p-3 shadow-xl md:hidden">
+  if (!installEvent || hiddenForVisit || installed) return null;
+  return <div className="fixed inset-x-3 bottom-3 z-[100] mx-auto flex max-w-md items-center gap-3 rounded-2xl border bg-card p-3 shadow-xl">
     <div className="min-w-0 flex-1"><p className="text-sm font-semibold">Install {appName}</p><p className="text-xs text-muted-foreground">Add this workspace to your phone for faster access.</p></div>
     <Button size="sm" onClick={async () => { await installEvent.prompt(); const choice = await installEvent.userChoice; if (choice.outcome === 'accepted') setInstallEvent(null); }}><Download className="h-4 w-4" /> Install</Button>
-    <Button size="icon" variant="ghost" onClick={() => { localStorage.setItem('pwa-install-dismissed', 'true'); setDismissed(true); }} aria-label="Dismiss install prompt"><X className="h-4 w-4" /></Button>
+    <Button size="icon" variant="ghost" onClick={() => setHiddenForVisit(true)} aria-label="Hide install prompt for this visit"><X className="h-4 w-4" /></Button>
   </div>;
 }
 
