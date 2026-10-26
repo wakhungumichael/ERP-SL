@@ -1,24 +1,14 @@
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import type { AppRole } from '@/lib/roles';
 
-const DASHBOARD_PERMISSION = 'Platform_Core.can_view_workspace_dashboard';
-const WEIGHMENT_ENTRY_PERMISSION = 'SL_Weighbridge.can_access_weighment_entry';
-
-/** Choose the least-privileged useful landing page after authentication. */
-export function getWorkspaceHomePath(role: AppRole, user: Record<string, unknown> | null) {
-  if (role === 'superadmin') return '/dashboard';
-
-  const permissions = new Set(
-    Array.isArray(user?.permissions) ? user.permissions.map(String) : [],
-  );
-  const canViewDashboard = role === 'tenant_admin'
-    || role === 'finance'
-    || permissions.has(DASHBOARD_PERMISSION);
-  const canUseWeighmentEntry = role === 'operator'
-    || permissions.has(WEIGHMENT_ENTRY_PERMISSION);
-
-  if (!canViewDashboard && canUseWeighmentEntry) {
-    return '/weighbridge/weighment-entry';
-  }
+/**
+ * Every signed-in workspace opens on the common dashboard. Dashboard widgets
+ * are independently permission-scoped, so this remains useful even where a
+ * role cannot use a vertical module such as Weighbridge.
+ *
+ * This is the safe fallback until a tenant-specific landing-page setting is
+ * introduced and validated against the active role's module permissions.
+ */
+export function getWorkspaceHomePath(_role: AppRole, _user: Record<string, unknown> | null) {
   return '/dashboard';
 }
