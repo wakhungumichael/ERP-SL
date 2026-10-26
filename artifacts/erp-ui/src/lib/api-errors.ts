@@ -212,6 +212,14 @@ export function getUserFacingError(
 
   const description = formatApiError(value, fallback);
   if (/could not reach the server|connection/i.test(description)) {
+    const isLocalWorkspace = typeof window !== 'undefined'
+      && ['localhost', '127.0.0.1'].includes(window.location.hostname);
+    if (isLocalWorkspace) {
+      return {
+        title: 'Local ERP service is offline',
+        description: 'Start PostgreSQL and the Django API, then refresh this page. Your data has not been changed.',
+      };
+    }
     return { title: 'Connection unavailable', description };
   }
   return { title: 'We could not complete that request', description };
