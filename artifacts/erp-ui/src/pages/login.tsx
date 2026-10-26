@@ -13,7 +13,7 @@ import { Switch } from '@/components/ui/switch';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/use-auth';
 import { getWorkspaceHomePath } from '@/lib/workspace-home';
-import { DEFAULT_PUBLIC_SITE, fetchPublicSiteConfig } from '@/lib/public-site';
+import { DEFAULT_PUBLIC_SITE, fetchPublicSiteConfig, getCachedPublicSiteConfig, type PublicSiteConfig } from '@/lib/public-site';
 import {
   Dialog,
   DialogContent,
@@ -24,6 +24,12 @@ import {
 } from '@/components/ui/dialog';
 
 const BASE = '/api/platform';
+
+const TENANT_LOGIN_PLACEHOLDER: PublicSiteConfig = {
+  ...DEFAULT_PUBLIC_SITE,
+  tenant: null,
+  branding: { ...DEFAULT_PUBLIC_SITE.branding, logo_url: '', primary_color: '#1f2937' },
+};
 
 type InstallPromptEvent = Event & {
   prompt: () => Promise<void>;
@@ -170,8 +176,9 @@ export default function Login() {
   const { data } = useQuery({
     queryKey: ['public-site-config', tenantCode ?? 'owner'],
     queryFn: () => fetchPublicSiteConfig(tenantCode),
+    initialData: () => getCachedPublicSiteConfig(tenantCode),
     retry: false,
-    staleTime: 5 * 60_000,
+    staleTime: 0,
   });
   const { data: industriesData } = useQuery({
     queryKey: ['onboarding-industries', pendingAuth?.token ?? 'none'],
@@ -186,7 +193,7 @@ export default function Login() {
     staleTime: 5 * 60_000,
   });
 
-  const site = data ?? DEFAULT_PUBLIC_SITE;
+  const site = data ?? (isOrganizationLogin ? TENANT_LOGIN_PLACEHOLDER : DEFAULT_PUBLIC_SITE);
   const industries: any[] = industriesData?.results ?? industriesData?.data?.results ?? [];
   const plans: any[] = plansData?.results ?? plansData?.data?.results ?? [];
   const brand = site.branding.primary_color ?? '#E85D26';
@@ -489,10 +496,12 @@ export default function Login() {
               <div className={`flex h-24 w-full items-center overflow-hidden ${isOrganizationLogin ? 'justify-center' : 'justify-start'}`}>
                 {logoUrl ? (
                   <img src={logoUrl} alt={`${site.tenant?.name ?? 'Organization'} logo`} className={`h-full w-full object-contain ${isOrganizationLogin ? 'object-center' : 'object-left'}`} />
-                ) : (
+                ) : !isOrganizationLogin ? (
                   <div className="flex h-20 w-20 items-center justify-center rounded-2xl text-lg font-black tracking-[0.2em] text-white" style={{ backgroundColor: brand }}>
                     SL
                   </div>
+                ) : (
+                  <div className="h-12 w-32 animate-pulse rounded-xl bg-slate-100" aria-label="Loading organization branding" />
                 )}
               </div>
               <h2 className="text-2xl font-black leading-none tracking-tight">Sign in</h2>

@@ -164,6 +164,28 @@ export const DEFAULT_PUBLIC_SITE: PublicSiteConfig = {
   modules: [],
 };
 
+const PUBLIC_SITE_CACHE_PREFIX = 'sl-erp-public-site:';
+
+export function getCachedPublicSiteConfig(tenantCode?: string): PublicSiteConfig | undefined {
+  if (typeof window === 'undefined') return undefined;
+  try {
+    const raw = window.localStorage.getItem(`${PUBLIC_SITE_CACHE_PREFIX}${tenantCode || 'platform'}`);
+    if (!raw) return undefined;
+    return JSON.parse(raw) as PublicSiteConfig;
+  } catch {
+    return undefined;
+  }
+}
+
+function cachePublicSiteConfig(site: PublicSiteConfig, tenantCode?: string) {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(`${PUBLIC_SITE_CACHE_PREFIX}${tenantCode || 'platform'}`, JSON.stringify(site));
+  } catch {
+    // A full or unavailable browser store should never block sign-in.
+  }
+}
+
 export async function fetchPublicSiteConfig(tenantCode?: string): Promise<PublicSiteConfig> {
   const query = tenantCode ? `?tenant_code=${encodeURIComponent(tenantCode)}` : '';
   const response = await fetch(`/api/platform/public/site/${query}`);
@@ -171,7 +193,7 @@ export async function fetchPublicSiteConfig(tenantCode?: string): Promise<Public
     throw new Error(`Failed to load site config (${response.status})`);
   }
   const json = await response.json();
-  return {
+  const site = {
     ...DEFAULT_PUBLIC_SITE,
     ...(json?.data ?? {}),
     branding: {
@@ -194,6 +216,8 @@ export async function fetchPublicSiteConfig(tenantCode?: string): Promise<Public
     plans: Array.isArray(json?.data?.plans) ? json.data.plans : [],
     modules: Array.isArray(json?.data?.modules) ? json.data.modules : [],
   };
+  cachePublicSiteConfig(site, tenantCode);
+  return site;
 }
 
 export function buildMarketingPath(tenantCode?: string, page?: string) {

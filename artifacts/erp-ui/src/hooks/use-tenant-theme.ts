@@ -5,7 +5,7 @@ import { useAuth } from '@/context/use-auth';
 import type { DashboardTenantContextValue } from '@/components/dashboard/types';
 import type { NavSection } from '@/lib/roles';
 import { themeVariables } from '@/lib/tenant-theme';
-import { fetchPublicSiteConfig } from '@/lib/public-site';
+import { fetchPublicSiteConfig, getCachedPublicSiteConfig } from '@/lib/public-site';
 
 function normalizeSections(payload: any): NavSection[] {
   const workspace = payload?.workspace ?? payload;
@@ -46,6 +46,7 @@ export function useTenantTheme({ applyTheme = true }: { applyTheme?: boolean } =
   const rememberedTenantCode = typeof window === 'undefined'
     ? ''
     : window.localStorage.getItem('sl-erp-tenant-code') || '';
+  const cachedPublicSite = getCachedPublicSiteConfig(rememberedTenantCode);
 
   const tenantQuery = useQuery({
     queryKey: ['dashboard-tenant-self', organizationId, token],
@@ -99,7 +100,8 @@ export function useTenantTheme({ applyTheme = true }: { applyTheme?: boolean } =
     queryFn: () => fetchPublicSiteConfig(tenantCode),
     enabled: !!tenantCode,
     retry: false,
-    staleTime: 5 * 60_000,
+    initialData: () => getCachedPublicSiteConfig(tenantCode),
+    staleTime: 0,
   });
 
   const publicSite = publicSiteQuery.data;
@@ -107,7 +109,7 @@ export function useTenantTheme({ applyTheme = true }: { applyTheme?: boolean } =
   const tenantContext = useMemo<DashboardTenantContextValue>(() => {
     // Signed-in workspaces always use their own tenant profile. Public SaaS
     // branding must never become a fallback that masks a tenant's identity.
-    const primaryColor = settings.primary_color || '#E85D26';
+    const primaryColor = settings.primary_color || publicSite?.branding?.primary_color || cachedPublicSite?.branding?.primary_color || '#E85D26';
     const displayName = (user as any)?.first_name
       ? `${(user as any).first_name} ${(user as any)?.last_name ?? ''}`.trim()
       : ((user as any)?.username ?? 'ERP User');
@@ -127,7 +129,7 @@ export function useTenantTheme({ applyTheme = true }: { applyTheme?: boolean } =
           : [],
       sections: normalizeSections(workspace),
       branding: {
-        logoUrl: settings.logo_url || '',
+        logoUrl: settings.logo_url || publicSite?.branding?.logo_url || cachedPublicSite?.branding?.logo_url || '',
         primaryColor,
         workspaceName: settings.workspace_name || tenant.name || publicSite?.tenant?.name || '',
         currency: tenant.default_currency || 'KES',
@@ -137,7 +139,7 @@ export function useTenantTheme({ applyTheme = true }: { applyTheme?: boolean } =
         supportEmail: settings.support_email || '',
       },
     };
-  }, [organizationId, publicSite?.tenant?.name, role, settings, tenant, tenantCode, user, userId, workspace]);
+  }, [cachedPublicSite?.branding?.logo_url, cachedPublicSite?.branding?.primary_color, organizationId, publicSite?.branding?.logo_url, publicSite?.branding?.primary_color, publicSite?.tenant?.name, role, settings, tenant, tenantCode, user, userId, workspace]);
 
   useEffect(() => {
     if (!applyTheme) return;
