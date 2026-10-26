@@ -77,7 +77,10 @@ export default function Dashboard() {
       </div>
     </header>
 
-    {dashboard.customizeMode ? <DashboardCustomizer widgets={widgets} layout={dashboard.layout} customizeMode={dashboard.customizeMode} setCustomizeMode={dashboard.setCustomizeMode} updateItem={dashboard.updateItem} resetLayout={dashboard.resetLayout} /> : null}
-    {widgets.length ? <DashboardGridEngine widgets={widgets} layout={dashboard.layout} tenantContext={tenantContext} canViewSensitive={canViewSensitive} customizeMode={dashboard.customizeMode} updateItem={dashboard.updateItem} moveItem={dashboard.moveItem} swapItems={dashboard.swapItems} cycleWidgetWidth={dashboard.cycleWidgetWidth} /> : <div className="rounded-xl border border-dashed p-10 text-center text-sm text-muted-foreground">No dashboard panels are available for this role. Ask an administrator to assign module overview permissions.</div>}
+    {dashboard.customizeMode ? (
+      <DashboardCustomizer widgets={widgets} layout={dashboard.layout} customizeMode={dashboard.customizeMode} setCustomizeMode={dashboard.setCustomizeMode} updateItem={dashboard.updateItem} resetLayout={dashboard.resetLayout} />
+    ) : widgets.length ? (
+      <DashboardGridEngine widgets={widgets} layout={dashboard.layout} tenantContext={tenantContext} canViewSensitive={canViewSensitive} customizeMode={false} updateItem={dashboard.updateItem} moveItem={dashboard.moveItem} swapItems={dashboard.swapItems} cycleWidgetWidth={dashboard.cycleWidgetWidth} />
+    ) : <div className="rounded-xl border border-dashed p-10 text-center text-sm text-muted-foreground">No dashboard panels are available for this role. Ask an administrator to assign module overview permissions.</div>}
   </div>;
 }

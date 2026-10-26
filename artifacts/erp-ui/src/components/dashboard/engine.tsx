@@ -21,7 +21,6 @@ import {
 } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import type {
   DashboardLayoutItem,
@@ -368,10 +367,10 @@ export function DashboardCustomizer({
       </CardHeader>
 
       {customizeMode ? (
-        <CardContent className="grid gap-5 xl:grid-cols-[minmax(280px,0.8fr)_minmax(0,1.2fr)]">
-          <div className="space-y-3">
+        <CardContent className="grid min-h-0 gap-5 xl:grid-cols-[minmax(280px,0.8fr)_minmax(0,1.2fr)]">
+          <div className="flex min-h-0 flex-col gap-3">
             <h3 className="text-sm font-semibold">Cards and visibility</h3>
-            <ScrollArea className="max-h-[420px] pr-4">
+            <div className="max-h-[min(60vh,560px)] overflow-y-auto pr-3">
               <div className="space-y-2">
                 {orderedWidgets.map((widget) => {
                   const item = layoutById.get(widget.id);
@@ -401,12 +400,12 @@ export function DashboardCustomizer({
                   );
                 })}
               </div>
-            </ScrollArea>
+            </div>
           </div>
 
-          <div className="space-y-3">
+          <div className="flex min-h-0 flex-col gap-3">
             <h3 className="text-sm font-semibold">Visible card order</h3>
-            <div className="grid grid-cols-1 gap-2 rounded-xl border border-dashed bg-muted/20 p-3 sm:grid-cols-2">
+            <div className="grid max-h-[min(60vh,560px)] grid-cols-1 gap-2 overflow-y-auto rounded-xl border border-dashed bg-muted/20 p-3 pr-4 sm:grid-cols-2">
               {orderedWidgets
                 .filter((widget) => layoutById.get(widget.id)?.isEnabled)
                 .map((widget) => (
