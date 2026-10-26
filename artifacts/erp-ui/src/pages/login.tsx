@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { useLocation, useRoute } from 'wouter';
 import { useQuery } from '@tanstack/react-query';
 import { useAuthLogin } from '@workspace/api-client-react';
-import { ArrowRight, CheckCircle2 } from 'lucide-react';
+import { ArrowRight, CheckCircle2, Download } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -24,6 +24,63 @@ import {
 } from '@/components/ui/dialog';
 
 const BASE = '/api/platform';
+
+type InstallPromptEvent = Event & {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>;
+};
+
+function LoginInstallPrompt() {
+  const [installEvent, setInstallEvent] = useState<InstallPromptEvent | null>(null);
+  const [hiddenForVisit, setHiddenForVisit] = useState(false);
+  const [installed, setInstalled] = useState(() => window.matchMedia('(display-mode: standalone)').matches);
+
+  useEffect(() => {
+    const onPrompt = (event: Event) => {
+      event.preventDefault();
+      setInstallEvent(event as InstallPromptEvent);
+    };
+    const onInstalled = () => {
+      setInstalled(true);
+      setInstallEvent(null);
+    };
+    window.addEventListener('beforeinstallprompt', onPrompt);
+    window.addEventListener('appinstalled', onInstalled);
+    return () => {
+      window.removeEventListener('beforeinstallprompt', onPrompt);
+      window.removeEventListener('appinstalled', onInstalled);
+    };
+  }, []);
+
+  if (!installEvent || installed || hiddenForVisit) return null;
+
+  return (
+    <div className="fixed inset-x-3 bottom-3 z-50 mx-auto flex max-w-md items-center gap-3 rounded-2xl border bg-card p-3 text-card-foreground shadow-xl">
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-semibold">Install this workspace</p>
+        <p className="text-xs text-muted-foreground">Add it to your device for faster, app-like access.</p>
+      </div>
+      <Button
+        size="sm"
+        onClick={async () => {
+          await installEvent.prompt();
+          const choice = await installEvent.userChoice;
+          if (choice.outcome === 'accepted') setInstallEvent(null);
+        }}
+      >
+        <Download className="h-4 w-4" />
+        Install
+      </Button>
+      <button
+        type="button"
+        onClick={() => setHiddenForVisit(true)}
+        className="text-xs font-medium text-muted-foreground hover:text-foreground"
+      >
+        Later
+      </button>
+    </div>
+  );
+}
 
 function setupApi(token: string, path: string, method = 'GET', body?: object) {
   return fetch(`${BASE}${path}`, {
@@ -69,6 +126,7 @@ function recommendPlanForIndustry(plans: any[], industryId?: number | null) {
 export default function Login() {
   const [, setLocation] = useLocation();
   const [, params] = useRoute('/login/:tenantCode');
+  const isOrganizationLogin = Boolean(params?.tenantCode);
   const rememberedTenantCode = typeof window !== 'undefined'
     ? window.localStorage.getItem('sl-erp-tenant-code')
     : null;
@@ -370,8 +428,8 @@ export default function Login() {
 
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(232,93,38,0.26),_transparent_30%),linear-gradient(180deg,#1c1917_0%,#292524_100%)] text-white">
-      <div className="mx-auto grid min-h-screen max-w-7xl lg:grid-cols-[1.08fr_0.92fr]">
-        <div className="flex flex-col justify-between px-8 py-10 sm:px-12 lg:px-14">
+      <div className={isOrganizationLogin ? 'flex min-h-screen items-center justify-center px-5 py-8 sm:px-8' : 'mx-auto grid min-h-screen max-w-7xl lg:grid-cols-[1.08fr_0.92fr]'}>
+        {!isOrganizationLogin ? <div className="flex flex-col justify-between px-8 py-10 sm:px-12 lg:px-14">
           <div className="flex items-center">
             <div className="flex items-center">
               <div className="flex h-36 w-96 max-w-full items-center justify-start overflow-hidden">
@@ -423,14 +481,14 @@ export default function Login() {
               ))}
             </div>
           </footer>
-        </div>
+        </div> : null}
 
-        <div className="flex items-center justify-center px-8 py-10 sm:px-12 lg:px-14">
-          <div className="w-full max-w-md rounded-[32px] border border-white/10 bg-white p-8 text-slate-950 shadow-[0_35px_120px_rgba(0,0,0,0.35)]">
+        <div className={isOrganizationLogin ? 'w-full max-w-md' : 'flex items-center justify-center px-8 py-10 sm:px-12 lg:px-14'}>
+          <div className="w-full max-w-md rounded-[32px] border border-white/10 bg-white p-6 text-slate-950 shadow-[0_35px_120px_rgba(0,0,0,0.35)] sm:p-8">
             <div className="space-y-5">
-              <div className="flex h-24 w-full items-center justify-start overflow-hidden">
+              <div className={`flex h-24 w-full items-center overflow-hidden ${isOrganizationLogin ? 'justify-center' : 'justify-start'}`}>
                 {logoUrl ? (
-                  <img src={logoUrl} alt={`${site.tenant?.name ?? 'Organization'} logo`} className="h-full w-full object-contain object-left" />
+                  <img src={logoUrl} alt={`${site.tenant?.name ?? 'Organization'} logo`} className={`h-full w-full object-contain ${isOrganizationLogin ? 'object-center' : 'object-left'}`} />
                 ) : (
                   <div className="flex h-20 w-20 items-center justify-center rounded-2xl text-lg font-black tracking-[0.2em] text-white" style={{ backgroundColor: brand }}>
                     SL
@@ -489,7 +547,7 @@ export default function Login() {
               </Button>
             </form>
 
-            {showPublicRegistration ? <div className="mt-5 flex items-center justify-between gap-3 text-sm">
+            {!isOrganizationLogin && showPublicRegistration ? <div className="mt-5 flex items-center justify-between gap-3 text-sm">
               <span className="text-slate-500">No account yet?</span>
               <button
                 type="button"
@@ -501,7 +559,7 @@ export default function Login() {
               </button>
             </div> : null}
 
-            {requestedIntent === 'subscribe' ? (
+            {!isOrganizationLogin && requestedIntent === 'subscribe' ? (
               <div className="mt-4 rounded-2xl border border-[#f1d7c8] bg-[#fff8f3] p-4 text-sm text-slate-700">
                 <p className="font-semibold text-slate-900">Continue with your subscription</p>
                 <p className="mt-1 leading-6">
@@ -510,7 +568,7 @@ export default function Login() {
               </div>
             ) : null}
 
-            {showPricingCard ? <div className="mt-6 rounded-3xl bg-slate-50 p-5">
+            {!isOrganizationLogin && showPricingCard ? <div className="mt-6 rounded-3xl bg-slate-50 p-5">
               <p className="text-sm font-semibold text-slate-900">Need product pricing first?</p>
               <p className="mt-1 text-sm leading-6 text-slate-600">
                 Review the public subscription plans and billing packages before you enter the workspace.
@@ -528,6 +586,7 @@ export default function Login() {
           </div>
         </div>
       </div>
+      <LoginInstallPrompt />
 
       <Dialog open={registerOpen} onOpenChange={(open) => { if (!open) resetRegisterFlow(); else setRegisterOpen(true); }}>
         <DialogContent className="h-[100dvh] max-h-[100dvh] max-w-5xl overflow-hidden rounded-none border-0 p-0 md:h-auto md:max-h-[90vh] md:rounded-[32px]">
