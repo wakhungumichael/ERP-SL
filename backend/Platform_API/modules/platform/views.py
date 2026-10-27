@@ -574,6 +574,41 @@ TENANT_PERMISSION_MODULE_SLUGS = {
     "SL_Projects": {"projects-tasks"},
 }
 
+# Invoices currently live in the SL_Weighbridge Django app for historical
+# reasons, but manual invoicing is a standalone finance capability.  Keep its
+# permissions available to an organisation that has Invoicing enabled even
+# when it does not use the Weighbridge module.
+INVOICING_PERMISSION_MODELS = {"invoice", "invoiceline", "invoicecharge"}
+
+TENANT_ACCOUNTING_CORE_MODELS = {
+    "account", "accountingperiod", "accountingperiodauditlog",
+    "accountingpostingrule", "bankreconciliationsession",
+    "bankstatementline", "financialyear", "journal", "journalentry",
+    "journalentryline",
+}
+TENANT_WORKFLOW_CORE_MODELS = {
+    "workflowdefinition", "workflowentitybinding", "workflowinboxitem",
+    "workflownodedefinition", "workflowstepdefinition",
+    "workflowtransitiondefinition", "documenttemplate",
+}
+TENANT_WORKSPACE_PERMISSION_MODULES = {
+    "can_view_workspace_dashboard": {"platform-core"},
+    "can_access_finance_workspace": {"accounting"},
+    "can_view_erp_reports": {"reporting"},
+    "can_view_weighbridge_overview": {"weighbridge", "commercial-weighbridge"},
+    "can_view_sales_overview": {"sales"},
+    "can_view_inventory_overview": {"inventory"},
+    "can_view_finance_overview": {"accounting"},
+    "can_view_crm_overview": {"crm"},
+    "can_view_ticketing_overview": {"ticketing"},
+    "can_view_manufacturing_overview": {"manufacturing"},
+    "can_view_retail_overview": {"retail"},
+    "can_view_services_overview": {"services"},
+    "can_view_procurement_overview": {"procurement"},
+    "can_view_budgeting_overview": {"budgeting"},
+    "can_view_hr_overview": {"hr-payroll", "hr", "hcm"},
+}
+
 
 def _tenant_admin_profile(user):
     if not user.is_authenticated or user.is_superuser:
@@ -745,28 +780,44 @@ def _role_belongs_to_tenant(group, tenant_id):
 
 
 def _tenant_manageable_permissions_queryset(tenant):
-    # The permission editor is a role template, not a subscription screen.  It
-    # must expose every tenant-safe ERP module so roles can be configured before
-    # a module is licensed.  Subscription checks still decide whether that
-    # module appears in the live workspace.
-    tenant_app_labels = list(TENANT_PERMISSION_MODULE_SLUGS)
-    return Permission.objects.select_related("content_type").filter(
+    # Mirror the modules enabled for the active organization by SaaS Admin.
+    active_slugs = get_active_tenant_module_slugs(tenant)
+    tenant_app_labels = [
+        app_label for app_label, slugs in TENANT_PERMISSION_MODULE_SLUGS.items()
+        if active_slugs.intersection(slugs)
+    ]
+    core_models = set()
+    if "accounting" in active_slugs:
+        core_models.update(TENANT_ACCOUNTING_CORE_MODELS)
+    if "platform-core" in active_slugs:
+        core_models.update(TENANT_WORKFLOW_CORE_MODELS)
+    workspace_codenames = {
+        codename for codename, slugs in TENANT_WORKSPACE_PERMISSION_MODULES.items()
+        if active_slugs.intersection(slugs)
+    }
+    permission_filters = (
         Q(content_type__app_label__in=tenant_app_labels)
         | Q(
             content_type__app_label="Platform_Core",
-            content_type__model__in=TENANT_MANAGEABLE_PLATFORM_CORE_MODELS,
+            content_type__model__in=core_models,
         )
         | Q(
             content_type__app_label="Platform_Core",
             content_type__model="tenantsettings",
-            codename__in=TENANT_WORKSPACE_PERMISSION_CODENAMES,
+            codename__in=workspace_codenames,
         )
         | Q(
             content_type__app_label="Platform_Core",
             content_type__model__in=["auditeventlog", "auditaccesslog"],
-            codename__in=TENANT_AUDIT_PERMISSION_CODENAMES,
+            codename__in=(TENANT_AUDIT_PERMISSION_CODENAMES if "platform-core" in active_slugs else set()),
         )
     )
+    if active_slugs.intersection({"invoicing", "billing"}):
+        permission_filters |= Q(
+            content_type__app_label="SL_Weighbridge",
+            content_type__model__in=INVOICING_PERMISSION_MODELS,
+        )
+    return Permission.objects.select_related("content_type").filter(permission_filters)
 
 
 def _validate_tenant_role_permissions(permission_list, *, tenant):

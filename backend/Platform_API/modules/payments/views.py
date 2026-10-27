@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 try:
     from Platform_Core.integrations import list_payment_gateway_capabilities
-    from Platform_Core.models import Tenant
+    from Platform_Core.models import Tenant, TenantSettings
     from Platform_Core.accounting import assert_posting_allowed, sync_invoice_posting, sync_payment_posting
     from Platform_Core.documents import render_invoice_document
     from Platform_Core.platform import get_active_tenant_module_slugs
@@ -38,7 +38,7 @@ except ImportError:
     get_active_tenant_module_slugs = None
 
 try:
-    from SL_Weighbridge.models import Invoice, InvoiceLine, Transaction, Customer, InvoiceEmailLog
+    from SL_Weighbridge.models import Invoice, InvoiceLine, InvoiceCharge, Transaction, Customer, InvoiceEmailLog
     HAS_PAYMENT_MODELS = True
 except ImportError:
     HAS_PAYMENT_MODELS = False
@@ -91,6 +91,12 @@ def _serialize_invoice(inv, with_lines=False, with_transactions=False):
         "customer_phone": customer["phone"],
         "status":         inv.status,
         "total_amount":   float(inv.total_amount or 0),
+        "subtotal_amount": float(getattr(inv, "subtotal_amount", 0) or 0),
+        "tax_total": float(getattr(inv, "tax_total", 0) or 0),
+        "charge_total": float(getattr(inv, "charge_total", 0) or 0),
+        "tax_mode": getattr(inv, "tax_mode", "per_line"),
+        "combined_tax_name": getattr(inv, "combined_tax_name", "") or "",
+        "combined_tax_rate": float(getattr(inv, "combined_tax_rate", 0) or 0),
         "currency":       getattr(inv, "currency", "KES") or "KES",
         "issued_at":      inv.issued_at.isoformat()  if getattr(inv, "issued_at",   None) else None,
         "due_date":       str(inv.due_date)           if getattr(inv, "due_date",    None) else None,
@@ -102,7 +108,7 @@ def _serialize_invoice(inv, with_lines=False, with_transactions=False):
 
     if with_lines:
         try:
-            lines = InvoiceLine.objects.filter(invoice=inv).select_related("vehicle_type")
+            lines = InvoiceLine.objects.filter(invoice=inv).select_related("vehicle_type", "product")
             data["lines"] = [
                 {
                     "id":           line.id,
@@ -110,12 +116,17 @@ def _serialize_invoice(inv, with_lines=False, with_transactions=False):
                         getattr(getattr(line, "vehicle_type", None), "name", "") or "Service"
                     ),
                     "vehicle_type": getattr(getattr(line, "vehicle_type", None), "name", ""),
+                    "product": getattr(line, "product_id", None),
+                    "product_name": getattr(getattr(line, "product", None), "name", ""),
                     "quantity":     getattr(line, "quantity", 0),
                     "unit_price":   float(getattr(line, "unit_price", 0) or 0),
+                    "tax_rate": float(getattr(line, "tax_rate", 0) or 0),
+                    "tax_amount": float(getattr(line, "tax_amount", 0) or 0),
                     "total":        float(getattr(line, "total_amount", 0) or 0),
                 }
                 for line in lines
             ]
+            data["charges"] = [{"id": charge.id, "name": charge.name, "calculation_type": charge.calculation_type, "rate": float(charge.rate), "amount": float(charge.amount)} for charge in inv.charges.all()]
         except Exception:
             data["lines"] = []
 
@@ -460,6 +471,12 @@ class InvoiceListView(APIView):
         due_date      = request.data.get("due_date")
         notes         = request.data.get("notes", "")
         source_module = request.data.get("source_module", "manual")
+        tax_mode = request.data.get("tax_mode", "per_line")
+        combined_tax_rate = Decimal(str(request.data.get("combined_tax_rate", 0) or 0))
+        charge_ids = request.data.get("charge_ids", []) or []
+
+        if tax_mode not in {"per_line", "combined"} or combined_tax_rate < 0:
+            return Response({"error": "Choose a valid tax method and tax rate."}, status=status.HTTP_400_BAD_REQUEST)
 
         if not customer_id:
             return Response({"error": "customer_id is required."}, status=status.HTTP_400_BAD_REQUEST)
@@ -471,17 +488,61 @@ class InvoiceListView(APIView):
         except Customer.DoesNotExist:
             return Response({"error": "Customer not found."}, status=status.HTTP_404_NOT_FOUND)
 
-        # Calculate total
-        total = 0.0
-        for item in line_items:
-            qty = float(item.get("qty", item.get("quantity", 1)) or 1)
-            unit_price = float(item.get("unit_price", 0) or 0)
-            total += qty * unit_price
-
+        from SL_Sales.models import Product, OrganisationCharge
         user_tenant = self._get_user_tenant(request)
+        settings_obj = None
+        if user_tenant is not None:
+            settings_obj, _ = TenantSettings.objects.get_or_create(tenant=user_tenant)
+        default_tax_rate = Decimal(str(settings_obj.default_tax_rate if settings_obj else 0))
+
+        # Validate and snapshot catalogue values. The description remains
+        # editable so invoices preserve the wording agreed with the customer.
+        normalized_lines = []
+        subtotal = Decimal("0")
+        line_tax_total = Decimal("0")
+        for item in line_items:
+            try:
+                qty = Decimal(str(item.get("qty", item.get("quantity", 1)) or 1))
+                unit_price = Decimal(str(item.get("unit_price", 0) or 0))
+            except Exception:
+                return Response({"error": "Quantity and unit price must be valid numbers."}, status=status.HTTP_400_BAD_REQUEST)
+            if qty <= 0 or unit_price < 0:
+                return Response({"error": "Quantity must be above zero and unit price cannot be negative."}, status=status.HTTP_400_BAD_REQUEST)
+            product = None
+            if item.get("product_id"):
+                product = Product.objects.filter(pk=item["product_id"], tenant=user_tenant, is_active=True, is_sales_item=True).first()
+                if product is None:
+                    return Response({"error": "Choose an active sales product from this organization."}, status=status.HTTP_400_BAD_REQUEST)
+            description = str(item.get("description") or (product.description if product else "") or (product.name if product else "Service")).strip()
+            line_total = qty * unit_price
+            line_tax_rate = Decimal(str(item.get("tax_rate", product.tax_rate if product else default_tax_rate) or 0)) if tax_mode == "per_line" else Decimal("0")
+            if line_tax_rate < 0:
+                return Response({"error": "Tax rate cannot be negative."}, status=status.HTTP_400_BAD_REQUEST)
+            line_tax = (line_total * line_tax_rate / Decimal("100")).quantize(Decimal("0.01"))
+            subtotal += line_total
+            line_tax_total += line_tax
+            normalized_lines.append((product, description, qty, unit_price, line_total, line_tax_rate, line_tax))
+
+        tax_total = line_tax_total if tax_mode == "per_line" else (subtotal * combined_tax_rate / Decimal("100")).quantize(Decimal("0.01"))
+        selected_charges = OrganisationCharge.objects.filter(tenant=user_tenant, is_active=True, applies_to__in=["invoice", "both"], id__in=charge_ids)
+        charge_rows = []
+        charge_total = Decimal("0")
+        for charge in selected_charges:
+            amount = (subtotal * charge.rate / Decimal("100")) if charge.calculation_type == "percentage" else Decimal(str(charge.rate))
+            amount = amount.quantize(Decimal("0.01"))
+            charge_total += amount
+            charge_rows.append((charge, amount))
+        total = subtotal + tax_total + charge_total
+
         inv = Invoice.objects.create(
             customer=customer,
             total_amount=total,
+            subtotal_amount=subtotal,
+            tax_total=tax_total,
+            charge_total=charge_total,
+            tax_mode=tax_mode,
+            combined_tax_name=(settings_obj.default_tax_name if settings_obj and tax_mode == "combined" else ""),
+            combined_tax_rate=combined_tax_rate if tax_mode == "combined" else Decimal("0"),
             currency=currency,
             due_date=due_date or (timezone.now() + timedelta(days=30)).date(),
             status='draft',
@@ -490,17 +551,19 @@ class InvoiceListView(APIView):
             tenant=user_tenant,
         )
 
-        for item in line_items:
-            qty = float(item.get("qty", item.get("quantity", 1)) or 1)
-            unit_price = float(item.get("unit_price", 0) or 0)
-            line_total = qty * unit_price
+        for product, description, qty, unit_price, line_total, line_tax_rate, line_tax in normalized_lines:
             InvoiceLine.objects.create(
                 invoice=inv,
-                description=item.get("description", "Service"),
-                quantity=int(qty),
+                product=product,
+                description=description,
+                quantity=qty,
                 unit_price=unit_price,
+                tax_rate=line_tax_rate,
+                tax_amount=line_tax,
                 total_amount=line_total,
             )
+        for charge, amount in charge_rows:
+            InvoiceCharge.objects.create(invoice=inv, charge_rule=charge, name=charge.name, calculation_type=charge.calculation_type, rate=charge.rate, amount=amount)
 
         return Response(_serialize_invoice(inv, with_lines=True), status=status.HTTP_201_CREATED)
 

@@ -894,6 +894,12 @@ class Invoice(models.Model):
     transactions   = models.ManyToManyField('Transaction', blank=True)
     invoice_number = models.CharField(max_length=100, unique=True, blank=True)
     total_amount   = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    subtotal_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    tax_total = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    charge_total = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    tax_mode = models.CharField(max_length=16, default='per_line')
+    combined_tax_name = models.CharField(max_length=100, blank=True)
+    combined_tax_rate = models.DecimalField(max_digits=5, decimal_places=2, default=0)
     currency       = models.CharField(max_length=10, default='KES')
     issued_date    = models.DateTimeField(auto_now_add=True)          # creation timestamp
     issued_at      = models.DateTimeField(null=True, blank=True)       # set when formally issued
@@ -930,14 +936,27 @@ class Invoice(models.Model):
 class InvoiceLine(models.Model):
     invoice      = models.ForeignKey(Invoice, related_name='lines', on_delete=models.CASCADE)
     vehicle_type = models.ForeignKey('VehicleType', on_delete=models.SET_NULL, null=True, blank=True)
+    product      = models.ForeignKey('SL_Sales.Product', on_delete=models.SET_NULL, null=True, blank=True, related_name='invoice_lines')
     description  = models.CharField(max_length=300, blank=True)
-    quantity     = models.PositiveIntegerField(default=1)
+    quantity     = models.DecimalField(max_digits=10, decimal_places=3, default=1)
     unit_price   = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    tax_rate     = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    tax_amount   = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     total_amount = models.DecimalField(max_digits=10, decimal_places=2)
 
     def __str__(self):
         label = self.description or (self.vehicle_type.name if self.vehicle_type else 'Line')
         return f"{label} - Qty: {self.quantity} - Amount: {self.total_amount}"
+
+
+class InvoiceCharge(models.Model):
+    """Immutable invoice snapshot of a tenant-configured levy or fee."""
+    invoice = models.ForeignKey(Invoice, related_name='charges', on_delete=models.CASCADE)
+    charge_rule = models.ForeignKey('SL_Sales.OrganisationCharge', on_delete=models.SET_NULL, null=True, blank=True)
+    name = models.CharField(max_length=120)
+    calculation_type = models.CharField(max_length=12, default='percentage')
+    rate = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
 
 
 

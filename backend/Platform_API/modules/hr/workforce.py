@@ -471,7 +471,20 @@ class LeaveActionView(APIView):
         event(request, obj, 'update', f'Leave request {action}.')
         recipient = obj.employee.user if action != 'submit' else obj.employee.manager or (obj.employee.department.head if obj.employee.department_id else None)
         if recipient and recipient.pk != request.user.pk:
-            SystemNotification.objects.create(tenant=obj.employee.tenant, recipient=recipient, category='reminder', title=f'Leave request {obj.status}', message=f'{obj.employee.full_name}: {obj.get_leave_type_display()} {obj.start_date} to {obj.end_date}.', route_path='/hr/leave', source_type='hr_leave', source_id=obj.pk)
+            SystemNotification.objects.update_or_create(
+                tenant=obj.employee.tenant,
+                recipient=recipient,
+                source_type='hr_leave',
+                source_id=obj.pk,
+                defaults={
+                    'category': 'reminder',
+                    'title': f'Leave request {obj.status}',
+                    'message': f'{obj.employee.full_name}: {obj.get_leave_type_display()} {obj.start_date} to {obj.end_date}.',
+                    'route_path': '/hr/leave',
+                    'is_read': False,
+                    'read_at': None,
+                },
+            )
         return Response(LeaveSerializer(obj).data)
 
 

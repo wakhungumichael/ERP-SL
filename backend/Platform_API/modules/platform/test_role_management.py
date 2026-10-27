@@ -50,7 +50,10 @@ class TenantRoleManagementTests(TestCase):
         self.client = APIClient()
         self.tenant_a = _make_tenant("Tenant A", "tenant-a")
         self.tenant_b = _make_tenant("Tenant B", "tenant-b")
-        for module_slug in sorted({slug for slugs in TENANT_PERMISSION_MODULE_SLUGS.values() for slug in slugs}):
+        for module_slug in sorted(
+            {slug for slugs in TENANT_PERMISSION_MODULE_SLUGS.values() for slug in slugs}
+            | {"platform-core", "accounting", "reporting"}
+        ):
             module, _ = ModuleDefinition.objects.get_or_create(
                 slug=module_slug,
                 defaults={"name": module_slug.replace("-", " ").title(), "is_active": True},
@@ -251,14 +254,24 @@ class TenantRoleManagementTests(TestCase):
         self.assertIn(allowed_permission.id, permission_ids)
         self.assertNotIn(protected_permission.id, permission_ids)
 
-    def test_permission_catalog_includes_unlicensed_tenant_modules_for_role_templates(self):
+    def test_permission_catalog_excludes_modules_not_enabled_for_the_tenant_plan(self):
         self.client.force_authenticate(user=self.tenant_admin_b)
 
         response = self.client.get(reverse("platform-permission-list"))
 
         self.assertEqual(response.status_code, 200, response.data)
         app_labels = {item["content_type"]["app_label"] for item in response.data}
-        self.assertTrue({"SL_CRM", "SL_HR", "SL_Inventory", "SL_Procurement", "SL_Sales", "SL_Ticketing"}.issubset(app_labels))
+        self.assertFalse({"SL_CRM", "SL_HR", "SL_Inventory", "SL_Procurement", "SL_Sales", "SL_Ticketing"}.intersection(app_labels))
+
+    def test_permission_catalog_tracks_module_activation_changes(self):
+        self.client.force_authenticate(user=self.tenant_admin_b)
+        crm, _ = ModuleDefinition.objects.get_or_create(slug="crm", defaults={"name": "CRM"})
+        TenantModuleActivation.objects.create(tenant=self.tenant_b, module=crm, status="enabled")
+        enabled = self.client.get(reverse("platform-permission-list"))
+        self.assertIn("SL_CRM", {item["content_type"]["app_label"] for item in enabled.data})
+        self.tenant_b.module_activations.filter(module=crm).update(status="disabled")
+        disabled = self.client.get(reverse("platform-permission-list"))
+        self.assertNotIn("SL_CRM", {item["content_type"]["app_label"] for item in disabled.data})
 
     def test_permission_catalog_includes_tenant_accounting_but_not_saas_control(self):
         self.client.force_authenticate(user=self.tenant_admin_a)

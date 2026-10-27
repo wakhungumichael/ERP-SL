@@ -27,6 +27,7 @@ const PATH_PERMISSION_RULES: Array<{ prefix: string; permissions: string[]; exac
   { prefix: '/inventory/overview', permissions: ['Platform_Core.can_view_inventory_overview'] },
 
   { prefix: '/finance/overview', permissions: ['Platform_Core.can_view_finance_overview'] },
+  { prefix: '/payments/invoices', permissions: ['SL_Weighbridge.view_invoice', 'SL_Weighbridge.add_invoice', 'SL_Weighbridge.change_invoice'] },
   { prefix: '/finance', permissions: ['Platform_Core.can_access_finance_workspace'] },
   { prefix: '/accounting', permissions: ['Platform_Core.can_access_finance_workspace'] },
   { prefix: '/payments', permissions: ['Platform_Core.can_access_finance_workspace'] },
@@ -53,8 +54,8 @@ const PATH_PERMISSION_RULES: Array<{ prefix: string; permissions: string[]; exac
   { prefix: '/projects/follow-ups', permissions: ['SL_Projects.view_projecttask', 'SL_Projects.view_own_projecttask', 'SL_Projects.view_all_projecttask'] },
   { prefix: '/projects/tasks', exact: true, permissions: ['SL_Projects.view_projecttask', 'SL_Projects.view_all_projecttask'] },
   { prefix: '/projects/tasks/', permissions: ['SL_Projects.view_projecttask', 'SL_Projects.view_own_projecttask', 'SL_Projects.view_all_projecttask'] },
-  { prefix: '/projects', exact: true, permissions: ['SL_Projects.view_project'] },
-  { prefix: '/projects/', permissions: ['SL_Projects.view_project'] },
+  { prefix: '/projects', exact: true, permissions: ['SL_Projects.view_project', 'SL_Projects.add_project', 'SL_Projects.view_projecttask', 'SL_Projects.view_own_projecttask', 'SL_Projects.view_all_projecttask'] },
+  { prefix: '/projects/', permissions: ['SL_Projects.view_project', 'SL_Projects.add_project', 'SL_Projects.view_projecttask', 'SL_Projects.view_own_projecttask', 'SL_Projects.view_all_projecttask'] },
   { prefix: '/hr/employees', permissions: ['SL_HR.view_employee', 'SL_HR.view_all_employee', 'SL_HR.add_employee', 'SL_HR.request_own_leave'] },
   { prefix: '/hr/leave', permissions: ['SL_HR.request_own_leave', 'SL_HR.view_all_leaverequest', 'SL_HR.approve_leaverequest'] },
   { prefix: '/hr/requests', permissions: ['SL_HR.add_employeeservicerequest', 'SL_HR.change_employeeservicerequest'] },

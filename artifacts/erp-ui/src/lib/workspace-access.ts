@@ -139,7 +139,23 @@ export function evaluateWorkspaceRouteAccess({
   }
 
   if (isPermissionDrivenRole) {
-    if (!hasMenuPathPermission(normalizedPath, permissions)) {
+    // Task detail pages are opened from task registers.  They share the same
+    // visibility contract as the registers; the API then scopes the specific
+    // record to the active branch, assignment and role.  Keeping this check
+    // explicit prevents a stale/generic route rule from hiding a task that
+    // was correctly listed to the user.
+    const isProjectTaskDetail = /^\/projects\/tasks\/[^/]+\/?$/.test(normalizedPath);
+    const isProjectDetail = /^\/projects\/[^/]+\/?$/.test(normalizedPath)
+      && !normalizedPath.startsWith('/projects/tasks/');
+    if (isProjectTaskDetail || isProjectDetail) {
+      const requiredPermissions = isProjectTaskDetail
+        ? ['SL_Projects.view_projecttask', 'SL_Projects.view_own_projecttask', 'SL_Projects.view_all_projecttask']
+        : ['SL_Projects.view_project', 'SL_Projects.add_project', 'SL_Projects.view_projecttask', 'SL_Projects.view_own_projecttask', 'SL_Projects.view_all_projecttask'];
+      const canViewRecord = requiredPermissions.some((required) => permissions.includes(required));
+      if (!canViewRecord) {
+        return { allowed: false, reason: 'permission', rule };
+      }
+    } else if (!hasMenuPathPermission(normalizedPath, permissions)) {
       return { allowed: false, reason: 'permission', rule };
     }
   }

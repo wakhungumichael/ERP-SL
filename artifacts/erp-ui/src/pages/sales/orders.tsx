@@ -4,14 +4,16 @@ import { useQuery } from '@tanstack/react-query';
 import { Link, useLocation } from 'wouter';
 import { useAuth } from '@/context/use-auth';
 import { useToast } from '@/hooks/use-toast';
-import { ProcessFlow } from '@/components/workflow/process-flow';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
-import { FileSpreadsheet, Receipt, ArrowRight, Boxes, CheckCircle2, TrendingUp } from 'lucide-react';
+import { FileSpreadsheet, Receipt, ArrowRight, Plus, X } from 'lucide-react';
 
 const BASE_URL = import.meta.env.BASE_URL?.replace(/\/$/, '') ?? '';
 const fmt = (v: number) => 'KES ' + Number(v ?? 0).toLocaleString('en-KE', { minimumFractionDigits: 2 });
@@ -56,6 +58,13 @@ function parseErrorMessage(body: any, fallback: string) {
   return fallback;
 }
 
+function responseItems(payload: any, preferredKey?: string): any[] {
+  if (Array.isArray(payload)) return payload;
+  if (preferredKey && Array.isArray(payload?.[preferredKey])) return payload[preferredKey];
+  if (Array.isArray(payload?.results)) return payload.results;
+  return [];
+}
+
 export default function SalesOrdersPage() {
   const { token } = useAuth();
   const { toast } = useToast();
@@ -67,6 +76,7 @@ export default function SalesOrdersPage() {
   const [dateTo, setDateTo] = useState('');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState('10');
+  const [createOpen, setCreateOpen] = useState(false);
 
   const params = new URLSearchParams();
   if (statusFilter) params.set('status', statusFilter);
@@ -128,6 +138,7 @@ export default function SalesOrdersPage() {
             Track confirmed customer orders, monitor fulfillment, and create invoices at the right time.
           </p>
         </div>
+        <Button onClick={() => setCreateOpen(true)}><Plus className="mr-2 h-4 w-4" /> New Sales Order</Button>
       </div>
 
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
@@ -145,42 +156,6 @@ export default function SalesOrdersPage() {
           </Card>
         ))}
       </div>
-
-      <ProcessFlow
-        title="Order Flow"
-        description="Move customer work from quote to order, fulfillment, invoice, and collection in one clear flow."
-        stages={[
-          { label: 'Estimate', active: true },
-          { label: 'Sales Order', active: true, current: true },
-          { label: 'Fulfillment', active: counts.fulfilled > 0 },
-          { label: 'Invoice', active: counts.invoiced > 0 },
-          { label: 'Collection' },
-          { label: 'Accounting' },
-        ]}
-        actions={[
-          {
-            label: 'Quotes',
-            href: '/sales/estimates',
-            icon: <TrendingUp className="h-4 w-4 text-violet-600" />,
-            helper: 'Orders should start from approved customer quotes.',
-            tone: 'default',
-          },
-          {
-            label: 'Fulfillment',
-            href: '/inventory/overview',
-            icon: <Boxes className="h-4 w-4 text-sky-600" />,
-            helper: 'Reserve stock and dispatch customer orders from inventory.',
-            tone: 'warning',
-          },
-          {
-            label: 'Invoices',
-            href: '/payments/invoices',
-            icon: <CheckCircle2 className="h-4 w-4 text-emerald-600" />,
-            helper: 'Turn completed work into billing and receivables.',
-            tone: 'success',
-          },
-        ]}
-      />
 
       <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
         <div className="flex flex-1 flex-wrap gap-3">
@@ -316,6 +291,65 @@ export default function SalesOrdersPage() {
           </Button>
         </div>
       </div>
+      <NewSalesOrderDialog open={createOpen} onOpenChange={setCreateOpen} token={token} onSaved={() => { setCreateOpen(false); void refetch(); }} />
     </div>
   );
+}
+
+type OrderLine = { product: number | null; description: string; quantity: number; unit_price: number; tax_rate: number; discount_amount: number; sort_order: number };
+
+function NewSalesOrderDialog({ open, onOpenChange, token, onSaved }: { open: boolean; onOpenChange: (open: boolean) => void; token: string | null; onSaved: () => void }) {
+  const { toast } = useToast();
+  const [customer, setCustomer] = useState('');
+  const [delivery, setDelivery] = useState('');
+  const [notes, setNotes] = useState('');
+  const [lines, setLines] = useState<OrderLine[]>([{ product: null, description: '', quantity: 1, unit_price: 0, tax_rate: 0, discount_amount: 0, sort_order: 0 }]);
+  const [saving, setSaving] = useState(false);
+  const customersQuery = useQuery({
+    queryKey: ['sales-order-customers', token],
+    enabled: !!token && open,
+    queryFn: async () => {
+      const response = await fetch('/api/sales/customers/?page_size=100', { headers: { Authorization: `Token ${token}` } });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(parseErrorMessage(body, 'Customers could not be loaded. Check that your role can view Sales customers.'));
+      return body;
+    },
+  });
+  const productsQuery = useQuery({
+    queryKey: ['sales-order-products', token],
+    enabled: !!token && open,
+    queryFn: async () => {
+      const response = await fetch('/api/sales/products/?is_active=true&page_size=100', { headers: { Authorization: `Token ${token}` } });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(parseErrorMessage(body, 'Products and services could not be loaded.'));
+      return body;
+    },
+  });
+  const customers = responseItems(customersQuery.data, 'customers');
+  const products = responseItems(productsQuery.data, 'products');
+  const updateLine = (index: number, values: Partial<OrderLine>) => setLines(current => current.map((line, lineIndex) => lineIndex === index ? { ...line, ...values } : line));
+  const chooseProduct = (index: number, value: string) => {
+    const product = products.find(item => String(item.id) === value);
+    updateLine(index, { product: product?.id ?? null, description: product?.description || product?.name || '', unit_price: Number(product?.unit_price ?? 0), tax_rate: Number(product?.tax_rate ?? 0) });
+  };
+  const save = async () => {
+    if (!customer || lines.every(line => !line.description.trim())) return;
+    setSaving(true);
+    try {
+      const response = await fetch('/api/sales/sales-orders/', { method: 'POST', headers: { Authorization: `Token ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ customer: Number(customer), expected_delivery_date: delivery || null, status: 'draft', notes, line_items: lines.filter(line => line.description.trim()) }) });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(parseErrorMessage(body, 'Sales order could not be created.'));
+      toast({ title: `Sales order ${body.order_number} created` });
+      onSaved();
+    } catch (error: any) { toast({ title: 'Could not create sales order', description: error.message, variant: 'destructive' }); }
+    finally { setSaving(false); }
+  };
+  const loadingReferences = customersQuery.isLoading || productsQuery.isLoading;
+  const referenceError = customersQuery.error || productsQuery.error;
+  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="max-h-[90vh] max-w-4xl overflow-y-auto"><DialogHeader><DialogTitle>New Sales Order</DialogTitle></DialogHeader><div className="space-y-4">
+    {referenceError ? <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive"><p className="font-medium">The order form could not load its options.</p><p className="mt-1">{(referenceError as Error).message}</p><Button type="button" size="sm" variant="outline" className="mt-3" onClick={() => { void customersQuery.refetch(); void productsQuery.refetch(); }}>Try again</Button></div> : null}
+    <div className="grid gap-3 sm:grid-cols-2"><div><Label>Customer</Label><Select value={customer} onValueChange={setCustomer} disabled={loadingReferences || customersQuery.isError}><SelectTrigger><SelectValue placeholder={customersQuery.isLoading ? "Loading customers…" : customers.length ? "Select customer" : "No customers available"} /></SelectTrigger><SelectContent>{customers.map(item => <SelectItem key={item.id} value={String(item.id)}>{item.name}</SelectItem>)}</SelectContent></Select>{!customersQuery.isLoading && !customersQuery.isError && customers.length === 0 ? <p className="mt-1 text-xs text-muted-foreground">Add a Sales customer before creating an order.</p> : null}</div><div><Label>Expected delivery</Label><Input type="date" value={delivery} onChange={event => setDelivery(event.target.value)} /></div></div>
+    <div className="space-y-2"><div className="flex justify-between"><Label>Products, services and descriptions</Label><Button size="sm" variant="outline" onClick={() => setLines(current => [...current, { product: null, description: '', quantity: 1, unit_price: 0, tax_rate: 0, discount_amount: 0, sort_order: current.length }])}>Add row</Button></div>{lines.map((line, index) => <div className="grid gap-2 rounded-lg border p-3 sm:grid-cols-[1.2fr_2fr_.6fr_.8fr_auto]" key={index}><Select value={line.product ? String(line.product) : '__custom__'} onValueChange={value => chooseProduct(index, value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="__custom__">Custom line</SelectItem>{products.map(item => <SelectItem key={item.id} value={String(item.id)}>{item.name}</SelectItem>)}</SelectContent></Select><Input placeholder="Editable description" value={line.description} onChange={event => updateLine(index, { description: event.target.value })} /><Input type="number" min="0.001" step="0.001" value={line.quantity} onChange={event => updateLine(index, { quantity: Number(event.target.value) })} /><Input type="number" min="0" step="0.01" value={line.unit_price} onChange={event => updateLine(index, { unit_price: Number(event.target.value) })} /><Button size="icon" variant="ghost" disabled={lines.length === 1} onClick={() => setLines(current => current.filter((_, lineIndex) => lineIndex !== index))}><X className="h-4 w-4" /></Button></div>)}</div>
+    <div><Label>Notes</Label><Textarea value={notes} onChange={event => setNotes(event.target.value)} /></div>
+  </div><DialogFooter><Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button><Button disabled={saving || loadingReferences || !!referenceError || !customer || lines.every(line => !line.description.trim())} onClick={() => void save()}>{saving ? 'Creating…' : 'Create sales order'}</Button></DialogFooter></DialogContent></Dialog>;
 }

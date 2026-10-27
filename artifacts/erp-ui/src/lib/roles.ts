@@ -120,6 +120,7 @@ export const STATIC_NAV: NavSection[] = [
       { key: 'finance-overview',       title: 'Overview',           path: '/finance/overview',           roles: FINANCE_UP },
       { key: 'finance-journal-entries',title: 'Journal Entries',    path: '/finance/transactions',       roles: FINANCE_UP },
       { key: 'finance-coa',            title: 'Chart of Accounts',  path: '/finance/chart-of-accounts',  roles: ADMIN_UP },
+      { key: 'finance-invoices',       title: 'Invoices',           path: '/payments/invoices',          roles: FINANCE_UP },
       { key: 'finance-ar',             title: 'Accounts Receivable',path: '/finance/receivables',        roles: FINANCE_UP },
       { key: 'finance-ap',             title: 'Accounts Payable',   path: '/finance/payables',           roles: FINANCE_UP },
       { key: 'finance-cash',           title: 'Cash & Payments',    path: '/finance/payment-methods',    roles: FINANCE_UP },

@@ -74,6 +74,27 @@ class ProjectWorkspaceTests(TestCase):
         mine = self.client.get('/api/projects/tasks/?scope=mine').data
         self.assertEqual({r['id'] for r in mine['results']}, {self.own.pk, self.collab.pk})
 
+    def test_standard_task_view_sees_all_branch_tasks_and_project_creator_can_open_register(self):
+        standard = Group.objects.create(name=f'tenant:{self.tenant.pk}:Standard task viewer')
+        standard.permissions.set(Permission.objects.filter(
+            content_type__app_label='SL_Projects',
+            codename__in=['view_projecttask', 'add_project'],
+        ))
+        self.user.groups.add(standard)
+        self.membership.active_role_group_name = standard.name
+        self.membership.save(update_fields=['active_role_group_name'])
+
+        tasks = self.client.get('/api/projects/tasks/?page_size=100')
+        self.assertEqual(tasks.status_code, 200, tasks.data)
+        self.assertTrue(tasks.data['access']['view_all_tasks'])
+        self.assertEqual({row['id'] for row in tasks.data['results']}, {
+            self.own.pk, self.team.pk, self.collab.pk, self.hidden.pk,
+        })
+        self.assertEqual(self.client.get(f'/api/projects/tasks/{self.hidden.pk}/').status_code, 200)
+        projects = self.client.get('/api/projects/projects/')
+        self.assertEqual(projects.status_code, 200, projects.data)
+        self.assertTrue(projects.data['access']['can_create'])
+
     def test_followups_can_be_created_only_for_visible_tasks(self):
         payload = dict(task=self.own.pk, follow_up_date=str(timezone.localdate()), notes='Call customer')
         self.assertEqual(self.client.post('/api/projects/follow-ups/', payload).status_code, 201)

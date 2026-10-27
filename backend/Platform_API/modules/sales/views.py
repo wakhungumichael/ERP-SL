@@ -22,6 +22,7 @@ from django.db.models import Q, Sum
 from django.http import HttpResponse
 from django.core.mail import EmailMultiAlternatives
 from django.utils import timezone
+from django.utils.text import slugify
 from rest_framework import generics, serializers, status
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import IsAuthenticated
@@ -547,6 +548,9 @@ def _statement_pdf_response(*, payload, customer_id, request, tenant):
 
 class ProductSerializer(serializers.ModelSerializer):
     source = serializers.SerializerMethodField()
+    # Codes are convenient catalogue references, but quick-create forms should
+    # not force users to invent one. A tenant-unique code is generated below.
+    code = serializers.CharField(required=False, allow_blank=True)
 
     class Meta:
         model = Product
@@ -559,6 +563,37 @@ class ProductSerializer(serializers.ModelSerializer):
             "created_at", "updated_at",
         ]
         read_only_fields = ["id", "tenant", "created_at", "updated_at"]
+        # Django's generated unique-together validator marks the optional code
+        # as required. Tenant-aware validation below preserves uniqueness while
+        # keeping quick product/service creation usable.
+        validators = []
+
+    def validate(self, attrs):
+        request = self.context.get("request")
+        tenant = _tenant_or_400(request.user) if request else getattr(self.instance, "tenant", None)
+        code = str(attrs.get("code") or "").strip().upper()
+        if not code:
+            base = slugify(str(attrs.get("name") or "item")).replace("-", "_").upper()[:40] or "ITEM"
+            code = base
+            suffix = 2
+            existing = Product.objects.filter(tenant=tenant, code=code)
+            if self.instance is not None:
+                existing = existing.exclude(pk=self.instance.pk)
+            while existing.exists():
+                suffix_text = f"_{suffix}"
+                code = f"{base[:50 - len(suffix_text)]}{suffix_text}"
+                suffix += 1
+                existing = Product.objects.filter(tenant=tenant, code=code)
+                if self.instance is not None:
+                    existing = existing.exclude(pk=self.instance.pk)
+        elif tenant is not None:
+            duplicate = Product.objects.filter(tenant=tenant, code__iexact=code)
+            if self.instance is not None:
+                duplicate = duplicate.exclude(pk=self.instance.pk)
+            if duplicate.exists():
+                raise serializers.ValidationError({"code": "A product or service with this code already exists."})
+        attrs["code"] = code
+        return attrs
 
     def get_source(self, obj):
         code = (obj.code or "").upper()

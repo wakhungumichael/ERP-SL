@@ -1,11 +1,15 @@
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
-import { useEffect, useState } from "react";
+import { ReactNode, useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useLocation, useSearch } from "wouter";
 import {
   BriefcaseBusiness,
   ClipboardList,
+  ChevronDown,
+  ChevronUp,
   Download,
+  FolderKanban,
+  ListTodo,
   Plus,
   Search,
   SlidersHorizontal,
@@ -113,12 +117,14 @@ function Metric({
   label: title,
   value,
   icon: Icon,
+  href,
 }: {
   label: string;
   value: number | undefined;
   icon: typeof BriefcaseBusiness;
+  href?: string;
 }) {
-  return (
+  const content = (
     <div className="rounded-lg border bg-card p-5 shadow-sm">
       <div className="flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-muted-foreground">
         <span>{title}</span>
@@ -126,6 +132,56 @@ function Metric({
       </div>
       <div className="mt-3 text-3xl font-bold tabular-nums">{value ?? 0}</div>
     </div>
+  );
+  return href ? (
+    <Link href={href}>
+      <div className="group cursor-pointer transition hover:-translate-y-0.5 hover:border-[#C4B13B]/70 hover:shadow-md">
+        {content}
+      </div>
+    </Link>
+  ) : content;
+}
+
+function OverviewSection({
+  title,
+  description,
+  action,
+  children,
+  defaultOpen = true,
+}: {
+  title: string;
+  description?: string;
+  action?: ReactNode;
+  children: ReactNode;
+  defaultOpen?: boolean;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <section className="rounded-lg border bg-card shadow-sm">
+      <div className="flex min-h-14 items-center justify-between gap-3 px-5 py-3">
+        <button
+          type="button"
+          className="flex min-w-0 flex-1 items-center gap-3 text-left"
+          onClick={() => setOpen((value) => !value)}
+          aria-expanded={open}
+        >
+          <span className="rounded-md bg-[#C4B13B]/10 p-2 text-[#9a8500]">
+            <FolderKanban className="h-4 w-4" />
+          </span>
+          <span className="min-w-0">
+            <span className="block font-semibold">{title}</span>
+            {description ? <span className="block truncate text-sm text-muted-foreground">{description}</span> : null}
+          </span>
+        </button>
+        <div className="flex shrink-0 items-center gap-2">
+          {open ? action : null}
+          <Button size="icon" variant="ghost" onClick={() => setOpen((value) => !value)} aria-label={`${open ? "Collapse" : "Expand"} ${title}`}>
+            {open ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+          </Button>
+        </div>
+      </div>
+      {open ? <div className="border-t p-5">{children}</div> : null}
+    </section>
   );
 }
 
@@ -462,22 +518,30 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
             </DialogFooter>
           </DialogContent>
         </Dialog>
+        <OverviewSection
+          title="Work overview"
+          description="A live summary for your active branch and selected role. Select a card to drill into the matching register."
+          action={<Link href="/projects/tasks"><Button size="sm" variant="outline"><ListTodo className="mr-2 h-4 w-4" />View all tasks</Button></Link>}
+        >
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <Metric
             label="Active projects"
             value={counts?.active_projects}
             icon={BriefcaseBusiness}
+            href="/projects?status=active"
           />
           <Metric
             label="Open tasks"
             value={counts?.open_tasks}
             icon={ClipboardList}
+            href="/projects/tasks?status=todo"
           />
-          <Metric label="My tasks" value={counts?.my_tasks} icon={UserCheck} />
+          <Metric label="My tasks" value={counts?.my_tasks} icon={UserCheck} href="/projects/my-tasks" />
           <Metric
             label="Overdue tasks"
             value={counts?.overdue_tasks}
             icon={ClipboardList}
+            href="/projects/tasks?overdue=1"
           />
         </div>
         <div className="mt-4 grid gap-4 md:grid-cols-3">
@@ -485,19 +549,25 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
             label="Blocked tasks"
             value={counts?.blocked_tasks}
             icon={ClipboardList}
+            href="/projects/tasks?status=blocked"
           />
           <Metric
             label="Awaiting review"
             value={counts?.awaiting_review}
             icon={UserCheck}
+            href="/projects/tasks?status=in_review"
           />
           <Metric
             label="Ticket-linked tasks"
             value={counts?.ticket_tasks}
             icon={BriefcaseBusiness}
+            href="/projects/tasks?ticket_linked=1"
           />
         </div>
-        <div className="mt-6 grid gap-4 lg:grid-cols-2">
+        </OverviewSection>
+        <div className="mt-5 grid gap-5 xl:grid-cols-2">
+        <OverviewSection title="Task health" description="Status and priority distribution across work you are permitted to see.">
+          <div className="grid gap-4 lg:grid-cols-2">
           <Distribution
             title="Tasks by status"
             rows={metrics.data?.tasks_by_status ?? []}
@@ -506,10 +576,23 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
             title="Tasks by priority"
             rows={metrics.data?.tasks_by_priority ?? []}
           />
+          </div>
+        </OverviewSection>
+        <OverviewSection
+          title="Quick actions"
+          description="Start work or go directly to your operating views."
+          defaultOpen={false}
+        >
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Link href="/projects"><Button className="w-full justify-between" variant="outline">View projects <ChevronDown className="h-4 w-4 -rotate-90" /></Button></Link>
+            <Link href="/projects/tasks?create=1"><Button className="w-full justify-between">Create task <Plus className="h-4 w-4" /></Button></Link>
+            <Link href="/projects/task-board"><Button className="w-full justify-between" variant="outline">Open task board <ChevronDown className="h-4 w-4 -rotate-90" /></Button></Link>
+            <Link href="/projects/calendar"><Button className="w-full justify-between" variant="outline">View calendar <ChevronDown className="h-4 w-4 -rotate-90" /></Button></Link>
+          </div>
+        </OverviewSection>
         </div>
-        <div className="mt-6 grid gap-4 lg:grid-cols-2">
-          <div className="rounded-lg border bg-card p-5">
-            <h2 className="font-semibold">Recent task activity</h2>
+        <div className="mt-5 grid gap-5 xl:grid-cols-2">
+          <OverviewSection title="Recent task activity" description="Latest changes to work in your permitted scope." action={<Link href="/projects/tasks"><Button size="sm" variant="ghost">View all</Button></Link>}>
             <div className="mt-3 space-y-2">
               {(metrics.data?.recent_tasks ?? []).map((task) => (
                 <Link href={`/projects/tasks/${task.id}`} key={task.id}>
@@ -530,9 +613,8 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
                 </p>
               )}
             </div>
-          </div>
-          <div className="rounded-lg border bg-card p-5">
-            <h2 className="font-semibold">Upcoming deadlines</h2>
+          </OverviewSection>
+          <OverviewSection title="Upcoming deadlines" description="Open tasks ordered by their due date." action={<Link href="/projects/calendar"><Button size="sm" variant="ghost">View calendar</Button></Link>}>
             <div className="mt-3 space-y-2">
               {(metrics.data?.upcoming_deadlines ?? []).map((task) => (
                 <Link href={`/projects/tasks/${task.id}`} key={task.id}>
@@ -554,51 +636,7 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
                 </p>
               )}
             </div>
-          </div>
-        </div>
-        <div className="mt-4 grid gap-4 lg:grid-cols-3">
-          <div className="rounded-lg border bg-card p-6">
-            <h2 className="font-semibold">Start work</h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Create a project or assign a standalone task in your active
-              branch.
-            </p>
-            <div className="mt-4 flex gap-2">
-              <Link href="/projects">
-                <Button variant="outline">View projects</Button>
-              </Link>
-              <Link href="/projects/tasks">
-                <Button>View tasks</Button>
-              </Link>
-            </div>
-          </div>
-          <div className="rounded-lg border bg-card p-6">
-            <h2 className="font-semibold">Review work</h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Move blocked work, assigned-role tasks, and approval-ready records
-              forward.
-            </p>
-            <div className="mt-4 flex gap-2">
-              <Link href="/projects/team-tasks">
-                <Button variant="outline">Team tasks</Button>
-              </Link>
-              <Link href="/projects/follow-ups">
-                <Button variant="outline">Follow-ups</Button>
-              </Link>
-            </div>
-          </div>
-          <div className="rounded-lg border bg-card p-6">
-            <h2 className="font-semibold">Workflow ready</h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Tasks begin in Draft and can use the central approval engine when
-              a tenant workflow is configured.
-            </p>
-            <div className="mt-4">
-              <Link href="/workflows/approvals">
-                <Button variant="outline">Workflow requests</Button>
-              </Link>
-            </div>
-          </div>
+          </OverviewSection>
         </div>
       </ERPWorkspacePage>
     );

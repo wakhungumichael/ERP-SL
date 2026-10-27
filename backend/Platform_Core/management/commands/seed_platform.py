@@ -380,8 +380,8 @@ class Command(BaseCommand):
         )
         for item_key, title, icon, route_path, api_path, sort_order, permissions in (
             ("overview", "Overview", "layout-dashboard", "/projects/overview", "/api/projects/dashboard/", 1, ["SL_Projects.view_project_dashboard", "SL_Projects.view_projecttask", "SL_Projects.view_own_projecttask", "SL_Projects.view_all_projecttask"]),
-            ("projects", "Projects", "folder-kanban", "/projects", "/api/projects/projects/", 2, ["SL_Projects.view_project"]),
-            ("all-tasks", "All Tasks", "list-todo", "/projects/tasks", "/api/projects/tasks/", 3, ["SL_Projects.view_all_projecttask"]),
+            ("projects", "Projects", "folder-kanban", "/projects", "/api/projects/projects/", 2, ["SL_Projects.view_project", "SL_Projects.add_project", "SL_Projects.view_projecttask", "SL_Projects.view_own_projecttask", "SL_Projects.view_all_projecttask"]),
+            ("all-tasks", "All Tasks", "list-todo", "/projects/tasks", "/api/projects/tasks/", 3, ["SL_Projects.view_projecttask", "SL_Projects.view_all_projecttask"]),
             ("my-tasks", "My Tasks", "user-check", "/projects/my-tasks", "/api/projects/tasks/?scope=mine", 4, ["SL_Projects.view_projecttask", "SL_Projects.view_own_projecttask", "SL_Projects.view_all_projecttask"]),
             ("team-tasks", "Team Tasks", "users-round", "/projects/team-tasks", "/api/projects/tasks/?scope=team", 5, ["SL_Projects.view_all_projecttask"]),
             ("task-board", "Task Board", "columns-3", "/projects/board", "/api/projects/tasks/?page_size=100", 6, ["SL_Projects.view_projecttask", "SL_Projects.view_own_projecttask", "SL_Projects.view_all_projecttask"]),

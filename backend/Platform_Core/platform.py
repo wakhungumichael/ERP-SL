@@ -294,7 +294,7 @@ def build_workspace_navigation(*, user, tenant=None):
         if tenant is not None:
             memberships = memberships.filter(tenant=tenant)
         membership = memberships.filter(is_default=True).first() or memberships.order_by("tenant__name").first()
-        active_role_name = membership.effective_role_group_name()
+        active_role_name = membership.effective_role_group_name() if membership else ""
         if active_role_name:
             active_group = user.groups.filter(name=active_role_name).first()
             if active_group is not None:

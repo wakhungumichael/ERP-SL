@@ -365,20 +365,24 @@ export default function InvoiceDetail({ id }: { id: string }) {
           <Table>
             <TableHeader>
               <TableRow className="bg-muted/50 hover:bg-muted/50">
-                  <TableHead className="text-[10px] font-bold uppercase tracking-widest">Vehicle Type</TableHead>
-                  <TableHead className="text-[10px] font-bold uppercase tracking-widest">Item</TableHead>
+                  {inv.source_module === 'weighbridge' && <TableHead className="text-[10px] font-bold uppercase tracking-widest">Vehicle Type</TableHead>}
+                  <TableHead className="text-[10px] font-bold uppercase tracking-widest">Product / Service</TableHead>
+                  <TableHead className="text-[10px] font-bold uppercase tracking-widest">Description</TableHead>
                   <TableHead className="text-[10px] font-bold uppercase tracking-widest text-right">Qty</TableHead>
+                  <TableHead className="text-[10px] font-bold uppercase tracking-widest text-right">Unit Price</TableHead>
                   <TableHead className="text-[10px] font-bold uppercase tracking-widest text-right">Amount</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
               {lines.length === 0 ? (
-                <TableRow><TableCell colSpan={4} className="py-6 text-center text-sm text-muted-foreground">No items.</TableCell></TableRow>
+                <TableRow><TableCell colSpan={inv.source_module === 'weighbridge' ? 6 : 5} className="py-6 text-center text-sm text-muted-foreground">No items.</TableCell></TableRow>
               ) : lines.map((line: any) => (
                 <TableRow key={line.id} className="hover:bg-muted/30">
-                  <TableCell className="py-2 text-sm font-medium">{line.vehicle_type || 'General'}</TableCell>
+                  {inv.source_module === 'weighbridge' && <TableCell className="py-2 text-sm font-medium">{line.vehicle_type || 'General'}</TableCell>}
+                  <TableCell className="py-2 text-sm font-medium">{line.product_name || 'Custom line'}</TableCell>
                   <TableCell className="py-2 text-sm">{line.description || line.product_name || 'General item'}</TableCell>
                   <TableCell className="py-2 text-right font-mono text-sm">{line.quantity}</TableCell>
+                  <TableCell className="py-2 text-right font-mono text-sm">{kes(line.unit_price, inv.currency)}</TableCell>
                   <TableCell className="py-2 text-right font-mono font-bold text-sm">
                     {kes(line.total, inv.currency)}
                   </TableCell>

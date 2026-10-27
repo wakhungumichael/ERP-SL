@@ -36,6 +36,7 @@ import { useTenantTheme } from '@/hooks/use-tenant-theme';
 import { evaluateWorkspaceRouteAccess } from '@/lib/workspace-access';
 import { hasMenuPathPermission } from '@/lib/permission-access';
 import { organizationLandingPath } from '@/lib/organization-landing';
+import { ERPHelpDrawer } from '@/components/erp/help-drawer';
 import {
   Select,
   SelectContent,
@@ -89,7 +90,7 @@ const STATIC_SECTION_MODULES: Record<string, string[]> = {
   weighbridge: ['weighbridge', 'commercial-weighbridge'],
   sales: ['sales', 'invoicing', 'billing'],
   inventory: ['inventory', 'stock-control', 'warehouse-management'],
-  finance: ['finance', 'accounting', 'accounts-receivable', 'accounts-payable', 'cash-management', 'budgeting'],
+  finance: ['finance', 'accounting', 'invoicing', 'billing', 'accounts-receivable', 'accounts-payable', 'cash-management', 'budgeting'],
   crm: ['crm'],
   ticketing: ['ticketing'],
   reports: ['reporting'],
@@ -445,18 +446,6 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const tenantLoginPath = tenantContext.tenantCode
     ? `/login/${encodeURIComponent(tenantContext.tenantCode)}`
     : '/login';
-
-  useEffect(() => {
-    if (!token || isLoading || !user || location !== '/projects') return;
-    const current = user as any;
-    const permissions: string[] = Array.isArray(current.permissions) ? current.permissions : [];
-    const active = String(current.active_role_group_name || current.active_role || '');
-    const administrator = current.is_superuser || ((current.is_org_admin || current.is_tenant_admin) && ['', 'Tenant Admin', 'system_admin', 'owner', 'tenant_admin'].includes(active));
-    if (!administrator && !permissions.includes('SL_Projects.view_project')) {
-      if (permissions.includes('SL_Projects.view_all_projecttask') || permissions.includes('SL_Projects.view_projecttask')) setLocation('/projects/tasks');
-      else if (permissions.includes('SL_Projects.view_own_projecttask')) setLocation('/projects/my-tasks');
-    }
-  }, [token, isLoading, user, location, setLocation]);
 
   useEffect(() => {
     if (!token && !location.startsWith('/login')) setLocation(tenantLoginPath);
@@ -912,6 +901,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
           </div>
 
           <div className="flex items-center gap-3">
+            <ERPHelpDrawer location={location} />
             {taskAlerts.data?.can_view && <Sheet open={taskAlertsOpen} onOpenChange={setTaskAlertsOpen}>
               <Button variant="ghost" size="icon" onClick={() => setTaskAlertsOpen(true)} aria-label="My task reminders" title="My task reminders" className={`relative ${taskAlerts.data.count > 0 ? 'text-destructive' : 'text-muted-foreground'}`}>
                 <ClipboardList className="h-5 w-5" />

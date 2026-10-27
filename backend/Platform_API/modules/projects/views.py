@@ -96,8 +96,18 @@ def _require(user, codename):
         raise PermissionDenied("Your active role does not have permission for this action.")
 
 
+def _require_project_read(user):
+    """Allow project context to the same roles that can read project work."""
+    if _has_permission(user, "view_project"):
+        return
+    _require(user, "view_projecttask")
+
+
 def _can_view_all_tasks(user):
-    return _has_permission(user, "view_all_projecttask")
+    # The model-level view permission grants workspace-wide task visibility,
+    # matching the menu and API checks that accept it for task pages. The
+    # scoped "own" permission keeps its personal-only narrowing.
+    return _has_permission(user, "view_all_projecttask") or _has_permission(user, "view_projecttask")
 
 
 def _personal_tasks(user):
@@ -183,10 +193,19 @@ def _date_range(request, *, start_field, end_field):
 
 
 def _filter_task_register(qs, request):
-    if value := request.query_params.get("status"):
+    # "all" is the UI's no-filter sentinel, not a real status value.
+    if (value := request.query_params.get("status")) and value != "all":
         qs = qs.filter(status=value)
     if value := request.query_params.get("priority"):
         qs = qs.filter(priority=value)
+    # Dashboard drill-downs use these explicit flags rather than encoding a
+    # date in the browser. They remain optional for all other task registers.
+    if request.query_params.get("overdue") == "1":
+        qs = qs.exclude(status__in=["completed", "cancelled"]).filter(
+            due_date__lt=timezone.localdate()
+        )
+    if request.query_params.get("ticket_linked") == "1":
+        qs = qs.filter(source_ticket__isnull=False)
     if value := request.query_params.get("project"):
         try:
             project_id = int(value)
@@ -1277,7 +1296,8 @@ class ProjectListCreateAPIView(APIView):
 
     def get(self, request):
         _tenant_and_activation(request)
-        _require(request.user, "view_project")
+        if not _has_permission(request.user, "add_project"):
+            _require_project_read(request.user)
         qs = _project_scope(request.user)
         if value := request.query_params.get("status"):
             qs = qs.filter(status=value)
@@ -1356,7 +1376,7 @@ class ProjectDetailAPIView(APIView):
 
     def get(self, request, pk):
         _tenant_and_activation(request)
-        _require(request.user, "view_project")
+        _require_project_read(request.user)
         project = self._get(request.user, pk)
         if not project:
             return Response({"detail": "Project not found."}, status=status.HTTP_404_NOT_FOUND)
@@ -1458,7 +1478,7 @@ class ProjectDocumentListAPIView(APIView):
 
     def get(self, request, pk):
         _tenant_and_activation(request)
-        _require(request.user, "view_project")
+        _require_project_read(request.user)
         project = _project_scope(request.user).filter(pk=pk).first()
         if not project:
             return Response({"detail": "Project not found."}, status=status.HTTP_404_NOT_FOUND)
@@ -1523,7 +1543,7 @@ class ProjectMilestoneListCreateAPIView(APIView):
 
     def get(self, request, pk):
         _tenant_and_activation(request)
-        _require(request.user, "view_project")
+        _require_project_read(request.user)
         project = self._project(request.user, pk)
         if not project:
             return Response({"detail": "Project not found."}, status=status.HTTP_404_NOT_FOUND)
@@ -1625,7 +1645,7 @@ class ProjectMemberListCreateAPIView(APIView):
 
     def get(self, request, pk):
         _tenant_and_activation(request)
-        _require(request.user, "view_project")
+        _require_project_read(request.user)
         project = self._project(request.user, pk)
         if not project:
             return Response({"detail": "Project not found."}, status=status.HTTP_404_NOT_FOUND)

@@ -84,6 +84,24 @@ class SalesOrderFlowTests(TestCase):
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual([product["code"] for product in response.data["results"]], ["A-1"])
 
+    def test_quick_create_product_generates_code_when_form_omits_it(self):
+        response = self.client.post(
+            reverse("sales-product-list"),
+            {
+                "name": "Annual support",
+                "description": "Support service",
+                "product_type": "service",
+                "unit_price": "555.00",
+                "is_active": True,
+                "is_sales_item": True,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data["code"], "ANNUAL_SUPPORT")
+        self.assertEqual(response.data["tenant"], self.tenant.pk)
+
     def test_sales_order_can_convert_to_invoice(self):
         order = SalesOrder.objects.create(
             tenant=self.tenant,
