@@ -1,7 +1,7 @@
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useLocation } from "wouter";
+import { Link, useLocation, useSearch } from "wouter";
 import {
   BriefcaseBusiness,
   ClipboardList,
@@ -37,7 +37,7 @@ import { apiErrorFromResponse } from "@/lib/api-errors";
 import { useToast } from "@/hooks/use-toast";
 
 type PageMode = "overview" | "projects" | "tasks" | "mine" | "team";
-type PageResult<T> = { count: number; results: T[] };
+type PageResult<T> = { count: number; results: T[]; access?: { can_create: boolean; can_export: boolean } };
 type Project = {
   id: number;
   code: string;
@@ -78,12 +78,12 @@ function label(value: string) {
   return value.replaceAll("_", " ");
 }
 
-function useApi<T>(path: string, token: string | null) {
+function useApi<T>(path: string, token: string | null, enabled = true) {
   const { user } = useAuth();
   const context = user as any;
   return useQuery<T>({
     queryKey: ["projects", path, token, context?.organization_id, context?.branch_id, context?.active_role_group_name],
-    enabled: Boolean(token),
+    enabled: Boolean(token) && enabled,
     queryFn: async () => {
       const response = await fetch(path, {
         headers: { Authorization: `Token ${token}` },
@@ -159,6 +159,7 @@ function Distribution({
 
 export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
   const [location, navigate] = useLocation();
+  const routeSearch = useSearch();
   const { token } = useAuth();
   const { toast } = useToast();
   const [page, setPage] = useState(1);
@@ -169,6 +170,7 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [clearSamplesOpen, setClearSamplesOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [recordTitle, setRecordTitle] = useState("");
   const [recordDescription, setRecordDescription] = useState("");
@@ -213,6 +215,16 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
       });
     }
   };
+  const clearSamples = useMutation({
+    mutationFn: async () => {
+      const response = await fetch('/api/projects/sample-data/', { method: 'DELETE', headers: { Authorization: `Token ${token}` } });
+      if (!response.ok) throw await apiErrorFromResponse(response, 'Sample data could not be removed.');
+      return response.json();
+    },
+    onSuccess: () => { queryClient.invalidateQueries(); setClearSamplesOpen(false); toast({ title: 'Untouched sample data removed' }); },
+    onError: (error: Error) => toast({ title: 'Sample data retained', description: error.message, variant: 'destructive' }),
+  });
+
   const createRecord = useMutation({
     mutationFn: async () => {
       if (
@@ -304,15 +316,15 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
       }),
   });
   const metrics = useApi<{
-    access: { view_all_tasks: boolean; role: string; can_create_task: boolean; can_create_project: boolean; can_export: boolean };
+    access: { view_all_tasks: boolean; role: string; can_create_task: boolean; can_create_project: boolean; can_export: boolean; can_manage_samples: boolean; has_samples: boolean };
     counts: Record<string, number>;
     recent_tasks: Task[];
     upcoming_deadlines: Task[];
     tasks_by_status: Array<{ status: string; count: number }>;
     tasks_by_priority: Array<{ priority: string; count: number }>;
-  }>("/api/projects/dashboard/", token);
+  }>("/api/projects/dashboard/", token, mode === "overview");
   const isProjects = mode === "projects";
-  const routeQuery = new URLSearchParams(location.split("?")[1] || "");
+  const routeQuery = new URLSearchParams(routeSearch);
   const requestedProject = routeQuery.get("project") || "";
   const shouldCreateTask = routeQuery.get("create") === "1";
   useEffect(() => {
@@ -323,21 +335,23 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
     setPage(1);
   }, [mode]);
   useEffect(() => {
-    if (mode === "tasks" && requestedProject) {
-      setTaskProject(requestedProject);
-      setCreateOpen(shouldCreateTask);
+    if (mode === "tasks" && shouldCreateTask) {
+      if (requestedProject) setTaskProject(requestedProject);
+      setCreateOpen(true);
     }
   }, [mode, requestedProject, shouldCreateTask]);
   const endpoint = isProjects
     ? "/api/projects/projects/"
     : "/api/projects/tasks/";
-  const projectChoices = useApi<PageResult<Project>>(
-    "/api/projects/projects/?page_size=100",
+  const projectChoices = useApi<PageResult<Pick<Project, "id" | "code" | "name">>>(
+    "/api/projects/project-options/?page_size=100",
     token,
+    !isProjects && createOpen,
   );
   const assigneeChoices = useApi<Assignee[]>(
     "/api/projects/tasks/assignees/",
     token,
+    createOpen,
   );
   const query = new URLSearchParams({
     page: String(page),
@@ -354,6 +368,7 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
   const records = useApi<PageResult<Project | Task>>(
     `${endpoint}?${query}`,
     token,
+    mode !== "overview",
   );
   const title =
     mode === "overview"
@@ -373,6 +388,8 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
         title={title}
         description={`${metrics.data?.access.role?.split(':').pop() || 'Your workspace'} · ${metrics.data?.access.view_all_tasks ? 'All permitted branch tasks' : 'Your assigned work, collaborations, and role tasks'}`}
       >
+        {metrics.data?.access.can_manage_samples && metrics.data?.access.has_samples ? <div className="mb-4 flex justify-end"><Button variant="outline" onClick={() => setClearSamplesOpen(true)}>Remove sample data</Button></div> : null}
+        <Dialog open={clearSamplesOpen} onOpenChange={setClearSamplesOpen}><DialogContent><DialogHeader><DialogTitle>Remove this organization's sample project data?</DialogTitle></DialogHeader><p>Removes untouched records marked [SAMPLE] across this organization. Cleanup stops if any sample contains edits or real work. Existing business records are preserved.</p><DialogFooter><Button variant="outline" onClick={() => setClearSamplesOpen(false)}>Cancel</Button><Button variant="destructive" disabled={clearSamples.isPending} onClick={() => clearSamples.mutate()}>Remove sample data</Button></DialogFooter></DialogContent></Dialog>
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <Metric
             label="Active projects"
@@ -564,11 +581,11 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
           </Button>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" onClick={() => void exportRegister()} disabled={!metrics.data?.access.can_export}>
+          <Button variant="outline" onClick={() => void exportRegister()} disabled={!records.data?.access?.can_export}>
             <Download className="mr-2 h-4 w-4" />
             Export CSV
           </Button>
-          {(isProjects ? metrics.data?.access.can_create_project : metrics.data?.access.can_create_task) && <Button onClick={() => setCreateOpen(true)}>
+          {records.data?.access?.can_create && <Button onClick={() => setCreateOpen(true)}>
             <Plus className="mr-2 h-4 w-4" />
             New {isProjects ? "Project" : "Task"}
           </Button>}

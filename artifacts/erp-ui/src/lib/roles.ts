@@ -180,8 +180,13 @@ export const STATIC_NAV: NavSection[] = [
   {
     key: 'hr',
     title: 'HR',
-    roles: ADMIN_UP,
+    roles: ERP_USERS,
     items: [
+      { key: 'hr-employees', title: 'Employees & Onboarding', path: '/hr/employees', roles: ERP_USERS },
+      { key: 'hr-leave', title: 'Leave Requests', path: '/hr/leave', roles: ERP_USERS },
+      { key: 'hr-requests', title: 'Employee Requests', path: '/hr/requests', roles: ERP_USERS },
+      { key: 'hr-payslips', title: 'My Payslips', path: '/hr/my-payslips', roles: ERP_USERS },
+      { key: 'hr-settings', title: 'HR Settings', path: '/hr/settings', roles: ADMIN_UP },
       { key: 'hr-staff', title: 'Staff Directory', path: '/hr/staff', roles: ADMIN_UP },
     ],
   },

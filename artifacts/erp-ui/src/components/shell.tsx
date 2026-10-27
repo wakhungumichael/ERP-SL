@@ -35,6 +35,7 @@ import type { AppRole } from '@/lib/roles';
 import { useTenantTheme } from '@/hooks/use-tenant-theme';
 import { evaluateWorkspaceRouteAccess } from '@/lib/workspace-access';
 import { hasMenuPathPermission } from '@/lib/permission-access';
+import { organizationLandingPath } from '@/lib/organization-landing';
 import {
   Select,
   SelectContent,
@@ -429,6 +430,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const memberships = Array.isArray((user as any)?.memberships) ? (user as any).memberships : [];
   const availableRoles = Array.isArray((user as any)?.available_roles) ? (user as any).available_roles : [];
   const activeRoleGroupName = String((user as any)?.active_role_group_name ?? '');
+  const canManageOrganization = !!(user as any)?.is_superuser || !!(user as any)?.is_org_admin || !!(user as any)?.is_tenant_admin;
   const activeRoleEntry = availableRoles.find((entry: any) => entry.name === activeRoleGroupName);
   const activeMembershipId = (user as any)?.active_membership_id ? String((user as any).active_membership_id) : '';
   const activeOrganizationName = tenantContext.tenantName
@@ -443,6 +445,18 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const tenantLoginPath = tenantContext.tenantCode
     ? `/login/${encodeURIComponent(tenantContext.tenantCode)}`
     : '/login';
+
+  useEffect(() => {
+    if (!token || isLoading || !user || location !== '/projects') return;
+    const current = user as any;
+    const permissions: string[] = Array.isArray(current.permissions) ? current.permissions : [];
+    const active = String(current.active_role_group_name || current.active_role || '');
+    const administrator = current.is_superuser || ((current.is_org_admin || current.is_tenant_admin) && ['', 'Tenant Admin', 'system_admin', 'owner', 'tenant_admin'].includes(active));
+    if (!administrator && !permissions.includes('SL_Projects.view_project')) {
+      if (permissions.includes('SL_Projects.view_all_projecttask') || permissions.includes('SL_Projects.view_projecttask')) setLocation('/projects/tasks');
+      else if (permissions.includes('SL_Projects.view_own_projecttask')) setLocation('/projects/my-tasks');
+    }
+  }, [token, isLoading, user, location, setLocation]);
 
   useEffect(() => {
     if (!token && !location.startsWith('/login')) setLocation(tenantLoginPath);
@@ -478,6 +492,13 @@ export function Shell({ children }: { children: React.ReactNode }) {
     });
   };
 
+  const moveToSelectedWorkspace = async (payload: any) => {
+    const profile = payload?.data ?? payload;
+    const context = await fetch('/api/platform/workspace/navigation/', { headers: { Authorization: `Token ${token}` } });
+    const navigation = context.ok ? await context.json() : {};
+    setLocation(organizationLandingPath(profile, navigation));
+  };
+
   const switchOrganizationMutation = useMutation({
     mutationFn: async (membershipId: string) => {
       const res = await fetch('/api/platform/auth/switch-organization/', {
@@ -492,9 +513,14 @@ export function Shell({ children }: { children: React.ReactNode }) {
       if (!res.ok) throw new Error(payload?.message || payload?.detail || 'Failed to switch organization.');
       return payload;
     },
-    onSuccess: async () => {
+    onSuccess: async (payload) => {
+      await queryClient.cancelQueries();
+      queryClient.removeQueries({ predicate: query => query.queryKey[0] !== 'platform-auth-me' });
       await refreshUser();
+      setProfileOpen(false);
+      await moveToSelectedWorkspace(payload);
     },
+    onError: (error: Error) => setProfileMessage({ type: 'error', text: error.message }),
   });
 
   const switchRoleMutation = useMutation({
@@ -509,13 +535,13 @@ export function Shell({ children }: { children: React.ReactNode }) {
       if (!res.ok) throw new Error(payload?.message || payload?.detail || 'Failed to switch role.');
       return payload;
     },
-    onSuccess: async () => {
+    onSuccess: async (payload) => {
       // Role-scoped API queries may share keys with the prior role. Invalidate
       // the complete workspace cache before returning to the landing page.
       await queryClient.invalidateQueries();
       await refreshUser();
       await queryClient.refetchQueries({ type: 'active' });
-      setLocation('/');
+      await moveToSelectedWorkspace(payload);
     },
   });
 
@@ -983,7 +1009,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
             </Button>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-foreground hover:bg-accent">
+                <Button aria-label="Open my profile" variant="ghost" size="icon" className="text-muted-foreground hover:text-foreground hover:bg-accent">
                   <UserCircle2 className="h-5 w-5" />
                 </Button>
               </DropdownMenuTrigger>
@@ -1018,12 +1044,12 @@ export function Shell({ children }: { children: React.ReactNode }) {
                 ) : null}
                 <DropdownMenuItem onSelect={() => setProfileOpen(true)}>
                   <UserCircle2 className="h-4 w-4" />
-                  View Profile
+                  My profile & organizations
                 </DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => setLocation('/platform/organization-settings')}>
+                {canManageOrganization && <DropdownMenuItem onSelect={() => setLocation('/platform/organization-settings')}>
                   <Settings className="h-4 w-4" />
                   Organization Settings
-                </DropdownMenuItem>
+                </DropdownMenuItem>}
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onSelect={handleLogout}>
                   <LogOut className="h-4 w-4" />
@@ -1120,11 +1146,11 @@ export function Shell({ children }: { children: React.ReactNode }) {
       </Sheet>
 
       <Dialog open={profileOpen} onOpenChange={setProfileOpen}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Profile</DialogTitle>
+            <DialogTitle>My profile & organizations</DialogTitle>
             <DialogDescription>
-              Manage your account details and password.
+              Switch your organization and manage your account details and password.
             </DialogDescription>
           </DialogHeader>
 
@@ -1132,6 +1158,37 @@ export function Shell({ children }: { children: React.ReactNode }) {
             {profileMessage && (
               <div role="alert" className={`rounded-lg border px-3 py-2 text-sm ${profileMessage.type === 'success' ? 'border-emerald-300 bg-emerald-50 text-emerald-800' : 'border-destructive/40 bg-destructive/10 text-destructive'}`}>
                 {profileMessage.text}
+              </div>
+            )}
+
+            {memberships.length > 0 && (
+              <div className="rounded-xl border p-4">
+                <div className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">Switch organization</div>
+                <div className="mt-3 space-y-2">
+                  <Select
+                    value={activeMembershipId}
+                    onValueChange={(value) => {
+                      if (!value || value === activeMembershipId || switchOrganizationMutation.isPending) return;
+                      switchOrganizationMutation.mutate(value);
+                    }}
+                  >
+                    <SelectTrigger aria-label="Switch organization" disabled={switchOrganizationMutation.isPending}>
+                      <SelectValue placeholder="Select organization" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {memberships.map((membership: any) => (
+                        <SelectItem key={membership.id} value={String(membership.id)}>
+                          {membership.organization_name ?? membership.tenant_name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <div className="text-xs text-muted-foreground">
+                    {switchOrganizationMutation.isPending
+                      ? 'Switching organization...'
+                      : 'ERP data and access will follow the selected organization context.'}
+                  </div>
+                </div>
               </div>
             )}
 
@@ -1174,37 +1231,6 @@ export function Shell({ children }: { children: React.ReactNode }) {
               </Button>
             </div>
 
-            {memberships.length > 0 && (
-              <div className="rounded-xl border p-4">
-                <div className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">Active Organization</div>
-                <div className="mt-3 space-y-2">
-                  <Select
-                    value={activeMembershipId}
-                    onValueChange={(value) => {
-                      if (!value || value === activeMembershipId || switchOrganizationMutation.isPending) return;
-                      switchOrganizationMutation.mutate(value);
-                    }}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select organization" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {memberships.map((membership: any) => (
-                        <SelectItem key={membership.id} value={String(membership.id)}>
-                          {membership.organization_name ?? membership.tenant_name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <div className="text-xs text-muted-foreground">
-                    {switchOrganizationMutation.isPending
-                      ? 'Switching organization...'
-                      : 'ERP data and access will follow the selected organization context.'}
-                  </div>
-                </div>
-              </div>
-            )}
-
             {Array.isArray((user as any)?.available_roles) && (user as any).available_roles.length > 1 && (
               <div className="rounded-xl border p-4">
                 <div className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">Active Branch and Role</div>
@@ -1229,6 +1255,8 @@ export function Shell({ children }: { children: React.ReactNode }) {
               </div>
             )}
 
+            {(user as any)?.departments?.length ? <div className="rounded-xl border p-4"><div className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">Departments</div><div className="mt-2 space-y-1">{(user as any).departments.map((department: any) => <div key={department.id} className="text-sm">{department.name}{department.is_head ? ' · Head' : department.is_deputy ? ' · Deputy' : ' · Member'}</div>)}</div></div> : null}
+
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="rounded-xl border p-4">
                 <div className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">Role</div>
@@ -1241,10 +1269,10 @@ export function Shell({ children }: { children: React.ReactNode }) {
             </div>
 
             <div className="flex flex-wrap gap-2">
-              <Button variant="outline" onClick={() => { setProfileOpen(false); setLocation('/platform/organization-settings'); }}>
+              {canManageOrganization && <Button variant="outline" onClick={() => { setProfileOpen(false); setLocation('/platform/organization-settings'); }}>
                 <Settings className="h-4 w-4" />
-                Open Settings
-              </Button>
+                Organization Settings
+              </Button>}
               <Button variant="ghost" onClick={handleLogout}>
                 <LogOut className="h-4 w-4" />
                 Logout

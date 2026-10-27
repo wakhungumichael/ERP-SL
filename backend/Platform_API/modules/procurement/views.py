@@ -5,12 +5,13 @@ from decimal import Decimal
 
 from django.http import HttpResponse
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import Q, Sum
 from django.contrib.auth.models import Group
 from django.utils import timezone
 from django.core.paginator import Paginator
 from rest_framework import serializers, status
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from Platform_API.modules.mixins import (
@@ -18,6 +19,7 @@ from Platform_API.modules.mixins import (
     apply_tenant_filter,
     resolve_user_tenant,
     user_belongs_to_tenant,
+    has_active_permission,
 )
 from Platform_Core.documents import render_purchase_order_document
 from SL_Inventory.services import sync_goods_receipt_to_inventory
@@ -25,6 +27,8 @@ from SL_Inventory.services import sync_goods_receipt_to_inventory
 try:
     from SL_Procurement.models import (
         ApprovalMatrix,
+        ProcurementPolicy,
+        Department,
         GoodsReceiptLine,
         GoodsReceiptNote,
         PurchaseOrder,
@@ -183,6 +187,11 @@ class GoodsReceiptWriteSerializer(serializers.ModelSerializer):
 class RequisitionLineSerializer(serializers.ModelSerializer):
     gl_account_code = serializers.CharField(source="gl_account.code", read_only=True)
 
+    def validate(self, data):
+        if data.get('quantity', 1) <= 0 or data.get('unit_price', 0) < 0:
+            raise ValidationError({'amount': 'Quantity must be positive and unit price non-negative.'})
+        return data
+
     class Meta:
         model = RequisitionLine
         fields = [
@@ -202,6 +211,7 @@ class RequisitionSerializer(serializers.ModelSerializer):
         model = Requisition
         fields = [
             "id", "tenant", "branch", "requested_by", "requested_by_name",
+            "department", "request_kind", "department_status", "department_decided_by", "department_decision_notes", "department_decided_at", "parent_requisition", "budget_line", "sales_order",
             "request_number", "title", "description", "cost_center", "gl_account",
             "gl_account_code", "project_code", "needed_by", "status", "budget_status",
             "budget_message", "estimated_total", "currency", "vendor_option",
@@ -248,8 +258,13 @@ class RequisitionWriteSerializer(serializers.ModelSerializer):
         model = Requisition
         fields = [
             "branch", "title", "description", "cost_center", "gl_account",
+            "department", "request_kind", "budget_line", "sales_order",
             "project_code", "needed_by", "status", "currency", "vendor_option", "lines",
         ]
+
+    def validate(self, data):
+        from .requisition_flow import validate_requisition_data
+        return validate_requisition_data(self, data)
 
     def _sync_lines(self, requisition, lines_data):
         requisition.lines.all().delete()
@@ -433,81 +448,46 @@ def _validate_goods_receipt_payload(*, tenant, branch=None, purchase_order=None,
     return errors
 
 
-def _run_budget_check(requisition):
-    if not HAS_BUDGETING_MODELS or not requisition.gl_account_id:
-        return "pending", "No matching budget control configured yet."
-
+def _selected_budget_line(requisition, *, lock=False):
+    if not HAS_BUDGETING_MODELS:
+        return None
     effective_date = requisition.needed_by or timezone.localdate()
-    month = effective_date.month if effective_date else None
-    lines = BudgetLine.objects.filter(
-        budget__tenant=requisition.tenant,
-        budget__status="active",
-        account_id=requisition.gl_account_id,
-        cost_center=requisition.cost_center,
-        period_year=effective_date.year,
-    )
-    if month:
-        lines = lines.filter(period_month__in=[month, None])
-    budget_line = lines.select_related("budget").order_by("-period_month").first()
-    if not budget_line:
-        return "pending", "No active budget line matched this requisition."
+    lines = BudgetLine.objects.filter(budget__tenant=requisition.tenant, budget__status="active", budget__currency=requisition.currency,
+        budget__start_date__lte=effective_date, budget__end_date__gte=effective_date,
+        account_id=requisition.gl_account_id, cost_center=requisition.cost_center,
+        project_code=requisition.project_code, period_year=effective_date.year)
+    lines = lines.filter(Q(period_month=effective_date.month) | Q(period_month__isnull=True))
+    if requisition.budget_line_id:
+        lines = lines.filter(pk=requisition.budget_line_id)
+    if lock:
+        lines = lines.select_for_update()
+    return lines.select_related("budget", "account").order_by("-period_month", "pk").first()
 
+
+def _run_budget_check(requisition):
+    budget_line = _selected_budget_line(requisition, lock=transaction.get_connection().in_atomic_block)
+    if not budget_line:
+        return "blocked", "Choose an active budget line matching this department, account, period, project and currency."
     available = budget_line.available_amount
-    result = "passed" if available >= requisition.estimated_total else (
-        "warning" if budget_line.budget.control_mode == "soft" else "blocked"
-    )
-    message = (
-        f"Budget available {available} for {budget_line.cost_center} / {budget_line.account.code}."
-        if result != "blocked"
-        else f"Budget exceeded. Available {available}, requested {requisition.estimated_total}."
-    )
-    BudgetCheckLog.objects.create(
-        tenant=requisition.tenant,
-        budget_line=budget_line,
-        requisition_reference=requisition.request_number,
-        amount=requisition.estimated_total,
-        result="pass" if result == "passed" else ("warn" if result == "warning" else "block"),
-        message=message,
-        checked_by=requisition.requested_by,
-    )
+    existing = BudgetCommitment.objects.filter(tenant=requisition.tenant, source_type="requisition", source_reference=requisition.request_number, state="committed").aggregate(total=Sum('amount'))['total'] or Decimal('0')
+    available += existing
+    result = "passed" if available >= requisition.estimated_total else ("warning" if budget_line.budget.control_mode == "soft" else "blocked")
+    message = f"Budget available {available}; requested {requisition.estimated_total}."
+    BudgetCheckLog.objects.create(tenant=requisition.tenant, budget_line=budget_line, requisition_reference=requisition.request_number, amount=requisition.estimated_total,
+        result={"passed": "pass", "warning": "warn", "blocked": "block"}[result], message=message, checked_by=requisition.requested_by)
     return result, message
 
 
 def _create_commitment_for_requisition(requisition):
-    if not HAS_BUDGETING_MODELS or not requisition.gl_account_id:
-        return
-    effective_date = requisition.needed_by or timezone.localdate()
-    lines = BudgetLine.objects.filter(
-        budget__tenant=requisition.tenant,
-        budget__status="active",
-        account_id=requisition.gl_account_id,
-        cost_center=requisition.cost_center,
-        period_year=effective_date.year,
-    )
-    if effective_date:
-        lines = lines.filter(period_month__in=[effective_date.month, None])
-    budget_line = lines.select_related("budget").order_by("-period_month").first()
+    budget_line = _selected_budget_line(requisition, lock=True)
     if not budget_line:
+        raise ValidationError({"budget_line": "An active matching budget line is required."})
+    if BudgetCommitment.objects.filter(tenant=requisition.tenant, source_type="requisition", source_reference=requisition.request_number, state="committed").exists():
         return
-    exists = BudgetCommitment.objects.filter(
-        tenant=requisition.tenant,
-        budget_line=budget_line,
-        source_type="requisition",
-        source_reference=requisition.request_number,
-        state="committed",
-    ).exists()
-    if exists:
-        return
-    BudgetCommitment.objects.create(
-        tenant=requisition.tenant,
-        budget_line=budget_line,
-        source_type="requisition",
-        source_reference=requisition.request_number,
-        state="committed",
-        amount=requisition.estimated_total,
-        created_by=requisition.requested_by,
-    )
-    budget_line.committed_amount = (budget_line.committed_amount or Decimal("0.00")) + requisition.estimated_total
+    if budget_line.budget.control_mode == "hard" and budget_line.available_amount < requisition.estimated_total:
+        raise ValidationError({"budget_line": "Budget availability has changed. This request exceeds the remaining budget."})
+    BudgetCommitment.objects.create(tenant=requisition.tenant, budget_line=budget_line, source_type="requisition", source_reference=requisition.request_number, state="committed", amount=requisition.estimated_total, created_by=requisition.requested_by)
+    budget_line.committed_amount += requisition.estimated_total
     budget_line.save(update_fields=["committed_amount", "updated_at"])
 
 
@@ -750,7 +730,8 @@ def _close_workflow_inbox_items(requisition, *, status_value, acted_by=None):
 
 def _sync_requisition_approvals(requisition):
     requisition.approvals.all().delete()
-    workflow, steps = _matching_central_workflow_steps(requisition)
+    use_matrix = ProcurementPolicy.objects.filter(tenant=requisition.tenant, approval_source="matrix").exists()
+    workflow, steps = (None, []) if use_matrix else _matching_central_workflow_steps(requisition)
     if steps:
         for step in steps:
             if isinstance(step, WorkflowNodeDefinition) and step.approval_group_id and step.approval_mode in {"any_one", "all_members", "quorum"}:
@@ -785,6 +766,8 @@ def _sync_requisition_approvals(requisition):
         return steps
 
     rules = _matching_approval_rules(requisition)
+    if not rules:
+        raise ValidationError({"approvals": "No active approval route matches this request. Configure approval rules before submitting."})
     for rule in rules:
         RequisitionApproval.objects.create(
             requisition=requisition,
@@ -914,15 +897,23 @@ class ApprovalMatrixListCreateView(APIView):
         ).order_by("cost_center", "step_order", "min_amount")
         if cost_center := request.query_params.get("cost_center"):
             qs = qs.filter(cost_center=cost_center)
-        return Response({"results": ApprovalMatrixSerializer(qs, many=True).data, "count": qs.count()})
+        from .requisition_flow import procurement_can
+        tenant = _resolve_tenant(request.user)
+        source = ProcurementPolicy.objects.filter(tenant=tenant).values_list('approval_source', flat=True).first() or 'workflow'
+        return Response({"results": ApprovalMatrixSerializer(qs, many=True).data, "count": qs.count(), "routing_source": source,
+            "access": {name: procurement_can(request.user, f'{name}_approvalmatrix') for name in ['add', 'change', 'delete']}})
 
     def post(self, request):
         tenant = _resolve_tenant(request.user)
         if tenant is False:
             return Response({"error": "No tenant profile linked."}, status=status.HTTP_403_FORBIDDEN)
+        from .requisition_flow import procurement_require, validate_approval_rule
+        procurement_require(request.user, "add_approvalmatrix")
         serializer = ApprovalMatrixWriteSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        validate_approval_rule(serializer, tenant)
         obj = serializer.save(tenant=tenant)
+        ProcurementPolicy.objects.update_or_create(tenant=tenant, defaults={"approval_source": "matrix"})
         return Response(ApprovalMatrixSerializer(obj).data, status=status.HTTP_201_CREATED)
 
 
@@ -942,15 +933,22 @@ class ApprovalMatrixDetailView(APIView):
         obj = self._get(request, pk)
         if not obj:
             return Response({"error": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        from .requisition_flow import procurement_require, validate_approval_rule
+        procurement_require(request.user, "change_approvalmatrix")
         serializer = ApprovalMatrixWriteSerializer(obj, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
+        validate_approval_rule(serializer, obj.tenant)
         obj = serializer.save()
+        ProcurementPolicy.objects.update_or_create(tenant=obj.tenant, defaults={"approval_source": "matrix"})
         return Response(ApprovalMatrixSerializer(obj).data)
 
     def delete(self, request, pk):
         obj = self._get(request, pk)
         if not obj:
             return Response({"error": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        from .requisition_flow import procurement_require
+        procurement_require(request.user, "delete_approvalmatrix")
+        ProcurementPolicy.objects.update_or_create(tenant=obj.tenant, defaults={"approval_source": "matrix"})
         obj.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
@@ -959,7 +957,13 @@ class ApprovalGroupListView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        groups = Group.objects.order_by("name").values("id", "name")
+        tenant = _resolve_tenant(request.user)
+        groups = Group.objects.order_by("name")
+        if tenant not in (False, None):
+            groups = groups.filter(Q(name__startswith=f'tenant:{tenant.pk}:') | ~Q(name__startswith='tenant:'))
+        elif tenant is False:
+            groups = groups.none()
+        groups = groups.values("id", "name")
         return Response({"results": list(groups), "count": len(groups)})
 
 
@@ -971,6 +975,8 @@ class RequisitionListCreateView(APIView):
             request.user,
             Requisition.objects.prefetch_related("lines").select_related("gl_account", "requested_by"),
         ).order_by("-created_at")
+        from .requisition_flow import scope_requisitions, procurement_can, active_approval_groups
+        qs = scope_requisitions(request.user, qs)
         if status_filter := request.query_params.get("status"):
             qs = qs.filter(status=status_filter)
         if budget_status := request.query_params.get("budget_status"):
@@ -1001,14 +1007,19 @@ class RequisitionListCreateView(APIView):
             "total_pages": paginator.num_pages,
             "next": page_obj.next_page_number() if page_obj.has_next() else None,
             "previous": page_obj.previous_page_number() if page_obj.has_previous() else None,
+            "access": {"view_all": procurement_can(request.user, "view_all_requisition"), "add": procurement_can(request.user, "add_requisition"), "change": procurement_can(request.user, "change_requisition") or Department.objects.filter(tenant=_resolve_tenant(request.user), is_active=True).filter(Q(head=request.user) | Q(deputy=request.user)).exists(), "approve": procurement_can(request.user, "approve_requisition") or qs.filter(approvals__status="pending", approvals__approval_group__in=active_approval_groups(request.user)).exists(), "create_order": procurement_can(request.user, "add_purchaseorder")},
         })
 
     def post(self, request):
+        from .requisition_flow import procurement_require
+        procurement_require(request.user, "add_requisition")
         tenant = _resolve_tenant(request.user)
         if tenant is False:
             return Response({"error": "No tenant profile linked."}, status=status.HTTP_403_FORBIDDEN)
-        serializer = RequisitionWriteSerializer(data=request.data)
+        serializer = RequisitionWriteSerializer(data=request.data, context={"request": request, "tenant": tenant})
         serializer.is_valid(raise_exception=True)
+        if serializer.validated_data.get("status", "draft") != "draft":
+            raise ValidationError({"status": "Create a draft, then submit it through the requisition action."})
         relation_errors = _validate_requisition_payload(
             tenant=tenant,
             branch=serializer.validated_data.get("branch"),
@@ -1042,10 +1053,10 @@ class RequisitionDetailView(APIView):
 
     def _get(self, request, pk):
         try:
-            return _apply_requisition_tenant_filter(
-                request.user,
-                Requisition.objects.prefetch_related("lines").select_related("gl_account", "requested_by"),
-            ).get(pk=pk)
+            from .requisition_flow import scope_requisitions
+            return scope_requisitions(request.user, _apply_requisition_tenant_filter(
+                request.user, Requisition.objects.prefetch_related("lines").select_related("gl_account", "requested_by"),
+            )).get(pk=pk)
         except Requisition.DoesNotExist:
             return None
 
@@ -1059,7 +1070,15 @@ class RequisitionDetailView(APIView):
         requisition = self._get(request, pk)
         if not requisition:
             return Response({"error": "Not found."}, status=status.HTTP_404_NOT_FOUND)
-        serializer = RequisitionWriteSerializer(requisition, data=request.data, partial=True)
+        from .requisition_flow import procurement_require, procurement_can, is_department_lead
+        procurement_require(request.user, "change_requisition")
+        if requisition.requested_by_id != request.user.pk and not procurement_can(request.user, "view_all_requisition") and not (requisition.department_id and is_department_lead(requisition.department, request.user)):
+            raise PermissionDenied("Only the requester or department head may edit this draft.")
+        if requisition.status != "draft" or requisition.parent_requisition_id:
+            raise ValidationError({"status": "Only unconsolidated draft requisitions may be edited."})
+        if request.data.get("status", "draft") != "draft":
+            raise ValidationError({"status": "Use the requisition lifecycle actions to submit."})
+        serializer = RequisitionWriteSerializer(requisition, data=request.data, partial=True, context={"request": request, "tenant": requisition.tenant})
         serializer.is_valid(raise_exception=True)
         relation_errors = _validate_requisition_payload(
             tenant=requisition.tenant,
@@ -1155,78 +1174,34 @@ class PurchaseOrderListCreateView(APIView):
 class RequisitionStatusView(APIView):
     permission_classes = [IsAuthenticated]
 
-    ALLOWED_TRANSITIONS = {
-        "draft": ["submitted", "cancelled"],
-        "submitted": ["pending_approval", "cancelled", "rejected"],
-        "pending_approval": ["approved", "rejected", "cancelled"],
-        "approved": ["po_created", "cancelled"],
-        "po_created": [],
-        "rejected": ["draft"],
-        "cancelled": ["draft"],
-    }
-
+    @transaction.atomic
     def patch(self, request, pk):
-        requisition = RequisitionDetailView()._get(request, pk)
-        if not requisition:
-            return Response({"error": "Not found."}, status=status.HTTP_404_NOT_FOUND)
-        new_status = request.data.get("status")
-        allowed = self.ALLOWED_TRANSITIONS.get(requisition.status, [])
-        if new_status not in allowed:
-            return Response(
-                {"error": f"Cannot transition from '{requisition.status}' to '{new_status}'. Allowed: {allowed}"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        if new_status in {"submitted", "pending_approval"}:
-            budget_status, budget_message = _run_budget_check(requisition)
-            requisition.budget_status = budget_status
-            requisition.budget_message = budget_message
-            if budget_status == "blocked":
-                return Response(
-                    {"error": budget_message, "budget_status": budget_status},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-            requisition.submitted_at = requisition.submitted_at or timezone.now()
-            rules = _sync_requisition_approvals(requisition)
-            if new_status == "pending_approval" and not rules:
-                _finalize_requisition_approval(requisition)
-                return Response(RequisitionSerializer(requisition).data)
-        if new_status == "approved":
-            if requisition.approvals.filter(status="pending").exists():
-                return Response(
-                    {"error": "Requisition still has pending approval steps."},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-            _finalize_requisition_approval(requisition)
-            return Response(RequisitionSerializer(requisition).data)
-        requisition.status = new_status
-        requisition.save(
-            update_fields=[
-                "status",
-                "budget_status",
-                "budget_message",
-                "submitted_at",
-                "approved_at",
-                "updated_at",
-            ]
-        )
-        return Response(RequisitionSerializer(requisition).data)
+        from .requisition_flow import change_requisition_status
+        return change_requisition_status(request, pk)
 
 
 class RequisitionApprovalActionView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @transaction.atomic
     def post(self, request, pk):
         requisition = RequisitionDetailView()._get(request, pk)
         if not requisition:
             return Response({"error": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        requisition = Requisition.objects.select_for_update().get(pk=requisition.pk)
+        if requisition.status != 'pending_approval':
+            raise ValidationError({'status': 'Requisition is not awaiting higher approval.'})
+        if requisition.request_kind == 'individual':
+            raise ValidationError({'request_kind': 'The department head must approve and consolidate individual requests first.'})
         approval_batch = _current_pending_approval_batch(requisition)
         approval = approval_batch.filter(assigned_user=request.user).first() or approval_batch.first()
         if not approval:
             return Response({"error": "No pending approval step."}, status=status.HTTP_400_BAD_REQUEST)
 
-        decision = (request.data.get("decision") or "approve").lower()
+        decision = serializers.ChoiceField(choices=['approve', 'reject']).run_validation(request.data.get('decision', 'approve'))
         notes = request.data.get("notes", "")
-        user_group_ids = set(request.user.groups.values_list("id", flat=True))
+        from .requisition_flow import active_approval_groups
+        user_group_ids = set(active_approval_groups(request.user).values_list("id", flat=True))
         if not request.user.is_superuser and approval.approval_group_id not in user_group_ids:
             return Response(
                 {"error": f"Current step requires membership in '{approval.approval_group.name}'."},
@@ -1249,6 +1224,8 @@ class RequisitionApprovalActionView(APIView):
                 requisition.status = "rejected"
                 requisition.save(update_fields=["status", "updated_at"])
                 _close_workflow_inbox_items(requisition, status_value="rejected", acted_by=request.user)
+                from .requisition_flow import release_commitment
+                release_commitment(requisition)
                 return Response(RequisitionSerializer(requisition).data)
 
             approval.status = "approved"
@@ -1293,7 +1270,10 @@ class RequisitionApprovalActionView(APIView):
 class RequisitionConvertToPOView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @transaction.atomic
     def post(self, request, pk):
+        from .requisition_flow import procurement_require
+        procurement_require(request.user, "add_purchaseorder")
         requisition = RequisitionDetailView()._get(request, pk)
         if not requisition:
             return Response({"error": "Not found."}, status=status.HTTP_404_NOT_FOUND)
@@ -1303,6 +1283,7 @@ class RequisitionConvertToPOView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        requisition = Requisition.objects.select_for_update().get(pk=requisition.pk)
         existing = _apply_purchase_order_tenant_filter(
             request.user,
             PurchaseOrder.objects.prefetch_related("items"),

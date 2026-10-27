@@ -1304,8 +1304,13 @@ class SwitchOrganizationAPIView(APIView):
 
         membership_id = request.data.get("membership_id")
         tenant_id = request.data.get("tenant_id")
-        memberships = _organization_membership_queryset(request.user)
+        memberships = _organization_membership_queryset(request.user).filter(tenant__is_active=True).exclude(tenant__status__in=["archived", "suspended"])
 
+        try:
+            membership_id = int(membership_id) if membership_id else None
+            tenant_id = int(tenant_id) if tenant_id else None
+        except (ValueError, TypeError):
+            return error_response('Choose a valid organization membership.', status_code=status.HTTP_400_BAD_REQUEST)
         membership = None
         if membership_id:
             membership = memberships.filter(pk=membership_id).first()
@@ -1406,16 +1411,21 @@ class ActiveRoleAPIView(APIView):
         except (TypeError, ValueError):
             return error_response("role_id is required.", status_code=status.HTTP_400_BAD_REQUEST)
 
-        role = request.user.groups.filter(pk=role_id).first()
-        if role is None:
-            return error_response("You can only switch to a role assigned to your account.", status_code=status.HTTP_403_FORBIDDEN)
+        role = Group.objects.filter(pk=role_id).first()
         membership = (
             OrganizationMembership.objects.filter(user=request.user, is_active=True, is_default=True).first()
             or OrganizationMembership.objects.filter(user=request.user, is_active=True).order_by("tenant__name").first()
         )
         if membership is None:
             return error_response("No active organization membership was found.", status_code=status.HTTP_400_BAD_REQUEST)
-        if membership.branch_role_assignments.filter(is_active=True).exists() and not membership.branch_role_assignments.filter(
+        virtual_admin = bool(role and role.name == 'Tenant Admin' and membership.is_org_admin)
+        if role is None or (not request.user.groups.filter(pk=role_id).exists() and not virtual_admin):
+            return error_response('You can only switch to an assigned role in this organization.', status_code=status.HTTP_403_FORBIDDEN)
+        if role.name.startswith('tenant:') and not role.name.startswith(tenant_role_prefix(membership.tenant_id)):
+            return error_response('This role belongs to another organization.', status_code=status.HTTP_403_FORBIDDEN)
+        if role.name in PROTECTED_SHARED_ROLE_NAMES and not membership.is_org_admin:
+            return error_response('This organization has not assigned you administrator access.', status_code=status.HTTP_403_FORBIDDEN)
+        if not virtual_admin and membership.branch_role_assignments.filter(is_active=True).exists() and not membership.branch_role_assignments.filter(
             is_active=True, branch_id=membership.branch_id, role_group=role
         ).exists():
             return error_response("This role is not assigned to your active branch.", status_code=status.HTTP_403_FORBIDDEN)
@@ -1557,7 +1567,7 @@ class PlatformUserRoleAssignmentAPIView(APIView):
         # Organization admin: may only assign non-privileged groups to users in own organization.
         # Others: forbidden.
         caller_is_superadmin = _is_superadmin(request.user)
-        caller_profile = getattr(request.user, "tenant_profile", None)
+        caller_profile = _tenant_admin_profile(request.user)
         caller_is_tenant_admin = caller_profile and caller_profile.is_tenant_admin
 
         if not caller_is_superadmin and not caller_is_tenant_admin:
@@ -1575,7 +1585,8 @@ class PlatformUserRoleAssignmentAPIView(APIView):
             # Organization admin must only act on users in their own organization —
             # use an explicit DB query to avoid OneToOneField getattr edge cases.
             target_profile = TenantUserProfile.objects.filter(user=target_user).first()
-            if not target_profile or target_profile.tenant_id != caller_profile.tenant_id:
+            target_membership = OrganizationMembership.objects.filter(user=target_user, tenant_id=caller_profile.tenant_id, is_active=True).first()
+            if not target_membership and (not target_profile or target_profile.tenant_id != caller_profile.tenant_id):
                 return error_response(
                     "You may only manage users within your own organization.",
                     status_code=status.HTTP_403_FORBIDDEN,
@@ -1613,13 +1624,30 @@ class PlatformUserRoleAssignmentAPIView(APIView):
             # An organization administrator can hold operational roles as well.
             # Preserve the protected administrator group so assigning Finance,
             # Supervisor, etc. never accidentally removes admin access.
-            if not caller_is_superadmin and target_profile.is_tenant_admin:
+            if not caller_is_superadmin and ((target_membership and target_membership.is_org_admin) or (target_profile and target_profile.tenant_id == caller_profile.tenant_id and target_profile.is_tenant_admin)):
                 tenant_admin_group = Group.objects.filter(name="Tenant Admin").first()
-                if tenant_admin_group and tenant_admin_group not in groups:
+                if tenant_admin_group and target_user.groups.filter(pk=tenant_admin_group.pk).exists() and tenant_admin_group not in groups:
                     groups = [*groups, tenant_admin_group]
+            if not caller_is_superadmin:
+                other_memberships = OrganizationMembership.objects.filter(user=target_user, is_active=True).exclude(tenant_id=caller_profile.tenant_id)
+                other_names = set(other_memberships.values_list('role_group_name', flat=True)) | set(other_memberships.values_list('active_role_group_name', flat=True)) | set(OrganizationBranchRoleAssignment.objects.filter(membership__in=other_memberships, is_active=True).values_list('role_group__name', flat=True))
+                retained = [group for group in target_user.groups.all() if (group.name.startswith('tenant:') and not group.name.startswith(tenant_role_prefix(caller_profile.tenant_id))) or group.name in other_names or (group.name == 'Tenant Admin' and other_memberships.filter(is_org_admin=True).exists())]
+                groups = list(groups) + retained
             target_user.groups.set(groups)
         else:
             target_user.groups.add(*groups)
+
+        if replace_existing and not caller_is_superadmin:
+            remaining_ids = set(target_user.groups.values_list('pk', flat=True))
+            OrganizationBranchRoleAssignment.objects.filter(membership__user=target_user, membership__tenant_id=caller_profile.tenant_id).exclude(role_group_id__in=remaining_ids).delete()
+            for membership in OrganizationMembership.objects.filter(user=target_user, tenant_id=caller_profile.tenant_id, is_active=True):
+                role = membership.effective_role_group_name()
+                if role and not target_user.groups.filter(name=role).exists():
+                    primary = next((group.name for group in groups if group.name in TENANT_ASSIGNABLE_SHARED_ROLE_NAMES or group.name.startswith(tenant_role_prefix(membership.tenant_id))), '')
+                    membership.active_role_group_name = 'Tenant Admin' if membership.is_org_admin else primary
+                    membership.role_group_name = membership.active_role_group_name
+                    membership.role = _resolve_membership_role(membership.role_group_name, membership.is_org_admin)
+                    membership.save(update_fields=['active_role_group_name', 'role_group_name', 'role', 'updated_at'])
 
         return success_response(
             "User roles assigned successfully.",
@@ -1641,15 +1669,28 @@ class PlatformRoleListAPIView(ModuleAPIViewMixin, generics.ListCreateAPIView):
             )
         return super().list(request, *args, **kwargs)
 
+    def _selected_tenant(self):
+        value = self.request.query_params.get('tenant_id')
+        if not value:
+            return None
+        tenant = Tenant.objects.filter(pk=value).first() if str(value).isdigit() else None
+        if tenant is None or (not _is_superadmin(self.request.user) and not _user_has_tenant_access(self.request.user, tenant, require_admin=True)):
+            raise PermissionDenied('You cannot manage roles in the selected organization.')
+        return tenant
+
     def get_queryset(self):
+        tenant = self._selected_tenant()
+        if tenant:
+            return Group.objects.filter(Q(name__in=TENANT_ASSIGNABLE_SHARED_ROLE_NAMES) | Q(name__startswith=tenant_role_prefix(tenant.pk))).prefetch_related(Prefetch('permissions', queryset=_tenant_manageable_permissions_queryset(tenant)))
         return _roles_with_visible_permissions_queryset(self.request.user)
 
     def get_serializer_context(self):
         context = super().get_serializer_context()
         profile = _tenant_admin_profile(self.request.user)
+        selected = self._selected_tenant()
         context.update(
             {
-                "tenant_id": getattr(profile, "tenant_id", None),
+                "tenant_id": selected.pk if selected else getattr(profile, "tenant_id", None),
                 "is_superadmin": _is_superadmin(self.request.user),
             }
         )
@@ -1967,13 +2008,20 @@ def _workflow_forward_allowed(user):
 
 
 def _active_workflow_group_ids(user):
-    """Limit workflow work to the role selected for the active organization."""
+    """Limit workflow assignments to the active organization's selected role."""
     membership = _active_organization_membership(user)
-    active_role_name = membership.effective_role_group_name() if membership else ""
-    if active_role_name:
-        return set(user.groups.filter(name=active_role_name).values_list("id", flat=True))
-    # Preserve legacy behavior only until an account selects an active role.
-    return set(user.groups.values_list("id", flat=True))
+    groups = user.groups.all()
+    if membership:
+        groups = groups.filter(Q(name__startswith=tenant_role_prefix(membership.tenant_id)) | ~Q(name__startswith='tenant:'))
+        if not membership.is_org_admin:
+            groups = groups.exclude(name__in=PROTECTED_SHARED_ROLE_NAMES)
+        role = membership.effective_role_group_name()
+        if role:
+            if membership.is_org_admin and role == 'Tenant Admin':
+                groups = groups.filter(name__in=['Tenant Admin', f'tenant:{membership.tenant_id}:Organization Approvers'])
+            else:
+                groups = groups.filter(name=role)
+    return set(groups.values_list('pk', flat=True))
 
 
 def _active_workflow_role_name(user):
@@ -4422,6 +4470,8 @@ class PlatformUserMembershipListCreateAPIView(APIView):
                 )
 
         memberships = OrganizationMembership.objects.filter(user=target_user).select_related("tenant", "branch").order_by("-is_default", "tenant__name")
+        if not _is_superadmin(request.user) and request.user.pk != target_user.pk:
+            memberships = memberships.filter(tenant_id__in=manageable_ids)
         return success_response(
             "Organization memberships loaded.",
             data={"memberships": OrganizationMembershipSerializer(memberships, many=True).data},
@@ -4478,6 +4528,7 @@ class PlatformUserMembershipListCreateAPIView(APIView):
                     "branch": branch,
                     "role": role,
                     "role_group_name": role_group_name,
+                    "active_role_group_name": role_group_name,
                     "is_org_admin": is_org_admin,
                     "is_active": bool(request.data.get("is_active", True)),
                     "job_title": str(request.data.get("job_title") or "").strip(),
@@ -4488,7 +4539,11 @@ class PlatformUserMembershipListCreateAPIView(APIView):
                 membership.save(update_fields=["branch", "role", "role_group_name", "active_role_group_name", "updated_at"])
             else:
                 membership.branches.set(assigned_branches)
-            if role_group and branch_role_assignments is None:
+            if role_group and (branch_role_assignments is None or not resolved_assignments):
+                membership.role_group_name = role_group.name
+                membership.active_role_group_name = role_group.name
+                membership.role = role
+                membership.save(update_fields=['role_group_name', 'active_role_group_name', 'role', 'updated_at'])
                 target_user.groups.add(role_group)
             if is_default or not OrganizationMembership.objects.filter(user=target_user, is_default=True, is_active=True).exclude(pk=membership.pk).exists():
                 OrganizationMembership.objects.filter(user=target_user).exclude(pk=membership.pk).update(is_default=False)
@@ -4560,6 +4615,8 @@ class PlatformUserMembershipDetailAPIView(APIView):
         if "job_title" in request.data:
             membership.job_title = str(request.data.get("job_title") or "")
 
+        if "role_group_name" in request.data:
+            membership.active_role_group_name = membership.role_group_name
         with transaction.atomic():
             membership.save()
             if branch_role_assignments is not None:
@@ -4567,7 +4624,10 @@ class PlatformUserMembershipDetailAPIView(APIView):
                 membership.save(update_fields=["branch", "role", "role_group_name", "active_role_group_name", "updated_at"])
             elif assigned_branches is not None:
                 membership.branches.set(assigned_branches)
-            if role_group and branch_role_assignments is None:
+            if role_group and (branch_role_assignments is None or not resolved_assignments):
+                membership.role_group_name = role_group.name
+                membership.active_role_group_name = role_group.name
+                membership.save(update_fields=['role_group_name', 'active_role_group_name', 'updated_at'])
                 membership.user.groups.add(role_group)
             if bool(request.data.get("is_default")):
                 OrganizationMembership.objects.filter(user=membership.user).exclude(pk=membership.pk).update(is_default=False)

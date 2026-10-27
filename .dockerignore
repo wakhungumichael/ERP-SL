@@ -31,3 +31,5 @@ backend/staticfiles
 backend/logos
 backend/vehicle_images
 attached_assets
+
+.cache

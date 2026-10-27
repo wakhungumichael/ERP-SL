@@ -1,46 +1,77 @@
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
-import { useEffect, useState } from 'react';
-import { useAuth } from '@/context/use-auth';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { useToast } from '@/hooks/use-toast';
+import { useEffect, useState } from "react";
+import { useAuth } from "@/context/use-auth";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { useToast } from "@/hooks/use-toast";
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
-} from '@/components/ui/dialog';
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
 import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from '@/components/ui/select';
-import { Users as UsersIcon, Plus, Search, RefreshCw, ShieldCheck, UserX, UserCheck, Pencil, Copy, Eye, EyeOff } from 'lucide-react';
-import { detectRole, ROLE_LABELS, ROLE_COLORS, type AppRole } from '@/lib/roles';
-import { ListingPagination } from '@/components/erp/listing/pagination';
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Users as UsersIcon,
+  Plus,
+  Search,
+  RefreshCw,
+  ShieldCheck,
+  UserX,
+  UserCheck,
+  Pencil,
+  Copy,
+  Eye,
+  EyeOff,
+} from "lucide-react";
+import {
+  detectRole,
+  ROLE_LABELS,
+  ROLE_COLORS,
+  type AppRole,
+} from "@/lib/roles";
+import { ListingPagination } from "@/components/erp/listing/pagination";
 
-const BASE = '/api/platform';
+const BASE = "/api/platform";
 
 function extractApiErrorMessage(payload: any): string {
-  if (!payload) return 'Request failed.';
-  if (typeof payload === 'string') return payload;
-  if (typeof payload?.message === 'string' && payload.message.trim()) return payload.message;
-  if (typeof payload?.detail === 'string' && payload.detail.trim()) return payload.detail;
-  if (typeof payload?.error === 'string' && payload.error.trim()) return payload.error;
+  if (!payload) return "Request failed.";
+  if (typeof payload === "string") return payload;
+  if (typeof payload?.message === "string" && payload.message.trim())
+    return payload.message;
+  if (typeof payload?.detail === "string" && payload.detail.trim())
+    return payload.detail;
+  if (typeof payload?.error === "string" && payload.error.trim())
+    return payload.error;
 
   const errors = payload?.errors;
-  if (errors && typeof errors === 'object') {
+  if (errors && typeof errors === "object") {
     const firstError = Object.values(errors).flat().find(Boolean);
-    if (typeof firstError === 'string' && firstError.trim()) return firstError;
+    if (typeof firstError === "string" && firstError.trim()) return firstError;
   }
 
-  return 'Request failed.';
+  return "Request failed.";
 }
 
-function api(token: string, path: string, method = 'GET', body?: object) {
+function api(token: string, path: string, method = "GET", body?: object) {
   return fetch(`${BASE}${path}`, {
     method,
-    headers: { Authorization: `Token ${token}`, 'Content-Type': 'application/json' },
+    headers: {
+      Authorization: `Token ${token}`,
+      "Content-Type": "application/json",
+    },
     body: body ? JSON.stringify(body) : undefined,
-  }).then(async r => {
+  }).then(async (r) => {
     const j = await r.json();
     if (!r.ok) throw new Error(extractApiErrorMessage(j));
     return j;
@@ -49,14 +80,14 @@ function api(token: string, path: string, method = 'GET', body?: object) {
 
 function displayGroupName(group: any): string {
   if (group?.display_name) return group.display_name;
-  const name = String(group?.name ?? '');
-  return name.startsWith('tenant:') ? (name.split(':', 3)[2] || name) : name;
+  const name = String(group?.name ?? "");
+  return name.startsWith("tenant:") ? name.split(":", 3)[2] || name : name;
 }
 
 const ROLE_GROUPS = [
-  { value: 'Tenant Admin', label: 'Organization Admin' },
-  { value: 'Finance', label: 'Finance' },
-  { value: 'Operator', label: 'Operator' },
+  { value: "Tenant Admin", label: "Organization Admin" },
+  { value: "Finance", label: "Finance" },
+  { value: "Operator", label: "Operator" },
 ];
 
 interface AssignableRole {
@@ -73,7 +104,13 @@ interface PasswordResult {
   title: string;
 }
 
-function PasswordBanner({ result, onDismiss }: { result: PasswordResult; onDismiss: () => void }) {
+function PasswordBanner({
+  result,
+  onDismiss,
+}: {
+  result: PasswordResult;
+  onDismiss: () => void;
+}) {
   const [visible, setVisible] = useState(false);
   const [copied, setCopied] = useState(false);
 
@@ -89,26 +126,54 @@ function PasswordBanner({ result, onDismiss }: { result: PasswordResult; onDismi
       <CardContent className="p-4">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
-            <p className="text-sm font-semibold text-emerald-800 dark:text-emerald-300">{result.title}</p>
+            <p className="text-sm font-semibold text-emerald-800 dark:text-emerald-300">
+              {result.title}
+            </p>
             <p className="mt-0.5 text-xs text-emerald-700 dark:text-emerald-400">
-              Username: <span className="font-mono font-semibold">{result.username}</span>
-              {' '}· Email: <span className="font-mono">{result.email}</span>
+              Username:{" "}
+              <span className="font-mono font-semibold">{result.username}</span>{" "}
+              · Email: <span className="font-mono">{result.email}</span>
             </p>
             <div className="mt-2 flex items-center gap-2">
               <code className="flex-1 truncate rounded border border-emerald-200 bg-emerald-100 px-2 py-1 text-sm font-mono text-emerald-900 dark:border-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-200">
-                {visible ? result.temp_password : '••••••••••••'}
+                {visible ? result.temp_password : "••••••••••••"}
               </code>
-              <button onClick={() => setVisible(v => !v)} className="p-1 text-emerald-700 dark:text-emerald-400" title={visible ? 'Hide' : 'Show'}>
-                {visible ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              <button
+                onClick={() => setVisible((v) => !v)}
+                className="p-1 text-emerald-700 dark:text-emerald-400"
+                title={visible ? "Hide" : "Show"}
+              >
+                {visible ? (
+                  <EyeOff className="h-4 w-4" />
+                ) : (
+                  <Eye className="h-4 w-4" />
+                )}
               </button>
-              <button onClick={copy} className="p-1 text-emerald-700 dark:text-emerald-400" title="Copy password">
+              <button
+                onClick={copy}
+                className="p-1 text-emerald-700 dark:text-emerald-400"
+                title="Copy password"
+              >
                 <Copy className="h-4 w-4" />
               </button>
             </div>
-            <p className="mt-1.5 text-xs text-muted-foreground">This password is shown only once. Share it securely.</p>
-            {copied && <p className="mt-1 text-xs text-emerald-600">Copied to clipboard.</p>}
+            <p className="mt-1.5 text-xs text-muted-foreground">
+              This password is shown only once. Share it securely.
+            </p>
+            {copied && (
+              <p className="mt-1 text-xs text-emerald-600">
+                Copied to clipboard.
+              </p>
+            )}
           </div>
-          <Button size="sm" variant="ghost" className="h-6 w-6 p-0" onClick={onDismiss}>✕</Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-6 w-6 p-0"
+            onClick={onDismiss}
+          >
+            ✕
+          </Button>
         </div>
       </CardContent>
     </Card>
@@ -116,26 +181,40 @@ function PasswordBanner({ result, onDismiss }: { result: PasswordResult; onDismi
 }
 
 function InviteUserDialog({
-  open, onClose, tenantId,
-}: { open: boolean; onClose: () => void; tenantId?: string }) {
+  open,
+  onClose,
+  tenantId,
+}: {
+  open: boolean;
+  onClose: () => void;
+  tenantId?: string;
+}) {
   const { token, role, user } = useAuth();
   const { toast } = useToast();
   const qc = useQueryClient();
-  const authTenantId = ((user as any)?.organization_id ?? (user as any)?.tenant_id)
-    ? String((user as any)?.organization_id ?? (user as any)?.tenant_id)
-    : '';
-  const effectiveTenantId = tenantId ?? (role === 'tenant_admin' ? authTenantId : '');
+  const authTenantId =
+    ((user as any)?.organization_id ?? (user as any)?.tenant_id)
+      ? String((user as any)?.organization_id ?? (user as any)?.tenant_id)
+      : "";
+  const effectiveTenantId =
+    tenantId ?? (role === "tenant_admin" ? authTenantId : "");
 
   const [form, setForm] = useState({
-    first_name: '', last_name: '', email: '', username: '',
-    role_group: '', branch_id: '', job_title: '', password: '',
+    first_name: "",
+    last_name: "",
+    email: "",
+    username: "",
+    role_group: "",
+    branch_id: "",
+    job_title: "",
+    password: "",
   });
   const [showPassword, setShowPassword] = useState(false);
 
   const { data: tenantsData } = useQuery({
-    queryKey: ['tenants-mini'],
-    queryFn: () => api(token!, '/tenants/?page_size=100'),
-    enabled: open && role === 'superadmin',
+    queryKey: ["tenants-mini"],
+    queryFn: () => api(token!, "/tenants/?page_size=100"),
+    enabled: open && role === "superadmin",
   });
   const [selectedTenantId, setSelectedTenantId] = useState(effectiveTenantId);
 
@@ -143,72 +222,98 @@ function InviteUserDialog({
     if (!open) return;
     setSelectedTenantId(effectiveTenantId);
     setForm({
-      first_name: '', last_name: '', email: '', username: '',
-      role_group: '', branch_id: '', job_title: '', password: '',
+      first_name: "",
+      last_name: "",
+      email: "",
+      username: "",
+      role_group: "",
+      branch_id: "",
+      job_title: "",
+      password: "",
     });
   }, [open, effectiveTenantId]);
 
   useEffect(() => {
-    setForm(p => ({ ...p, branch_id: '' }));
+    setForm((p) => ({ ...p, branch_id: "" }));
   }, [selectedTenantId]);
 
   const { data: branchData } = useQuery({
-    queryKey: ['branches-for-invite', selectedTenantId],
+    queryKey: ["branches-for-invite", selectedTenantId],
     queryFn: () => api(token!, `/tenants/${selectedTenantId}/branches/`),
     enabled: open && !!selectedTenantId,
   });
   const branches = branchData?.data?.branches ?? branchData?.results ?? [];
 
   const { data: rolesData } = useQuery({
-    queryKey: ['invite-roles', selectedTenantId || effectiveTenantId],
-    queryFn: () => api(token!, '/roles/?page_size=200'),
+    queryKey: ["invite-roles", selectedTenantId || effectiveTenantId],
+    queryFn: () => api(token!, "/roles/?page_size=200"),
     enabled: open && !!token && !!(selectedTenantId || effectiveTenantId),
   });
   const apiRoles: AssignableRole[] = rolesData?.results ?? [];
   const roleTenantId = selectedTenantId || effectiveTenantId;
   const roleChoices: AssignableRole[] = [
-    ...ROLE_GROUPS.map(option => ({ name: option.value, display_name: option.label, is_assignable: true })),
-    ...apiRoles.filter(candidate =>
-      candidate.is_assignable !== false
-      && !ROLE_GROUPS.some(option => option.value === candidate.name)
-      && (!candidate.name.startsWith('tenant:') || candidate.name.startsWith(`tenant:${roleTenantId}:`)),
+    ...ROLE_GROUPS.map((option) => ({
+      name: option.value,
+      display_name: option.label,
+      is_assignable: true,
+    })),
+    ...apiRoles.filter(
+      (candidate) =>
+        candidate.is_assignable !== false &&
+        !ROLE_GROUPS.some((option) => option.value === candidate.name) &&
+        (!candidate.name.startsWith("tenant:") ||
+          candidate.name.startsWith(`tenant:${roleTenantId}:`)),
     ),
   ];
 
   const mutation = useMutation({
     mutationFn: () => {
       const tid = effectiveTenantId || selectedTenantId;
-      return api(token!, `/tenants/${tid}/users/invite/`, 'POST', {
+      return api(token!, `/tenants/${tid}/users/invite/`, "POST", {
         ...form,
-        username: form.username || form.email.split('@')[0],
+        username: form.username || form.email.split("@")[0],
       });
     },
     onSuccess: () => {
-      toast({ title: 'User invited', description: `${form.first_name} ${form.last_name} has been added.` });
-      qc.invalidateQueries({ queryKey: ['platform-users'] });
-      qc.invalidateQueries({ queryKey: ['tenant-users'] });
+      toast({
+        title: "User invited",
+        description: `${form.first_name} ${form.last_name} has been added.`,
+      });
+      qc.invalidateQueries({ queryKey: ["platform-users"] });
+      qc.invalidateQueries({ queryKey: ["tenant-users"] });
       onClose();
     },
-    onError: (e: any) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
+    onError: (e: any) =>
+      toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
-  const f = (k: string) => (e: React.ChangeEvent<HTMLInputElement>) => setForm(p => ({ ...p, [k]: e.target.value }));
+  const f = (k: string) => (e: React.ChangeEvent<HTMLInputElement>) =>
+    setForm((p) => ({ ...p, [k]: e.target.value }));
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2"><UsersIcon className="h-5 w-5" /> Invite User</DialogTitle>
+          <DialogTitle className="flex items-center gap-2">
+            <UsersIcon className="h-5 w-5" /> Invite User
+          </DialogTitle>
         </DialogHeader>
         <div className="space-y-3 py-2">
-          {role === 'superadmin' && !tenantId && (
+          {role === "superadmin" && !tenantId && (
             <div className="space-y-1.5">
               <Label>Organization *</Label>
-              <Select value={selectedTenantId} onValueChange={setSelectedTenantId}>
-                <SelectTrigger><SelectValue placeholder="Select organization…" /></SelectTrigger>
+              <Select
+                value={selectedTenantId}
+                onValueChange={setSelectedTenantId}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select organization…" />
+                </SelectTrigger>
                 <SelectContent>
                   {(tenantsData?.results ?? []).map((t: any) => (
-                    <SelectItem key={t.id} value={String(t.id)}>{t.name}</SelectItem>
+                    <SelectItem key={t.id} value={String(t.id)}>
+                      {t.name}
+                    </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -217,64 +322,92 @@ function InviteUserDialog({
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label>First Name *</Label>
-              <Input value={form.first_name} onChange={f('first_name')} />
+              <Input value={form.first_name} onChange={f("first_name")} />
             </div>
             <div className="space-y-1.5">
               <Label>Last Name *</Label>
-              <Input value={form.last_name} onChange={f('last_name')} />
+              <Input value={form.last_name} onChange={f("last_name")} />
             </div>
           </div>
           <div className="space-y-1.5">
             <Label>Email *</Label>
-            <Input value={form.email} onChange={f('email')} type="email" />
+            <Input value={form.email} onChange={f("email")} type="email" />
           </div>
           <div className="space-y-1.5">
             <Label>Username</Label>
-            <Input value={form.username} onChange={f('username')} placeholder="Auto-generated from email" />
+            <Input
+              value={form.username}
+              onChange={f("username")}
+              placeholder="Auto-generated from email"
+            />
           </div>
           <div className="space-y-1.5">
             <Label>Job Title</Label>
-            <Input value={form.job_title} onChange={f('job_title')} placeholder="e.g. Weighbridge Operator" />
+            <Input
+              value={form.job_title}
+              onChange={f("job_title")}
+              placeholder="e.g. Weighbridge Operator"
+            />
           </div>
           <div className="space-y-1.5">
             <Label>Password</Label>
             <div className="flex items-center gap-2">
               <Input
                 value={form.password}
-                onChange={f('password')}
-                type={showPassword ? 'text' : 'password'}
+                onChange={f("password")}
+                type={showPassword ? "text" : "password"}
                 placeholder="Leave blank to auto-generate"
               />
               <button
                 type="button"
-                onClick={() => setShowPassword(v => !v)}
+                onClick={() => setShowPassword((v) => !v)}
                 className="p-1 text-muted-foreground"
-                title={showPassword ? 'Hide password' : 'Show password'}
+                title={showPassword ? "Hide password" : "Show password"}
               >
-                {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                {showPassword ? (
+                  <EyeOff className="h-4 w-4" />
+                ) : (
+                  <Eye className="h-4 w-4" />
+                )}
               </button>
             </div>
-            <p className="text-xs text-muted-foreground">Leave blank to generate a temporary password automatically.</p>
+            <p className="text-xs text-muted-foreground">
+              Leave blank to generate a temporary password automatically.
+            </p>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label>Role *</Label>
-              <Select value={form.role_group} onValueChange={v => setForm(p => ({ ...p, role_group: v }))}>
-                <SelectTrigger><SelectValue placeholder="Select role…" /></SelectTrigger>
+              <Select
+                value={form.role_group}
+                onValueChange={(v) => setForm((p) => ({ ...p, role_group: v }))}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select role…" />
+                </SelectTrigger>
                 <SelectContent>
-                  {roleChoices.map(r => (
-                    <SelectItem key={r.name} value={r.name}>{r.display_name || r.name}</SelectItem>
+                  {roleChoices.map((r) => (
+                    <SelectItem key={r.name} value={r.name}>
+                      {r.display_name || r.name}
+                    </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
             <div className="space-y-1.5">
               <Label>Branch</Label>
-              <Select value={form.branch_id} onValueChange={v => setForm(p => ({ ...p, branch_id: v }))}>
-                <SelectTrigger><SelectValue placeholder="Select branch…" /></SelectTrigger>
+              <Select
+                value={form.branch_id}
+                onValueChange={(v) => setForm((p) => ({ ...p, branch_id: v }))}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select branch…" />
+                </SelectTrigger>
                 <SelectContent>
                   {branches.map((b: any) => (
-                    <SelectItem key={b.id} value={String(b.id)}>{b.name}</SelectItem>
+                    <SelectItem key={b.id} value={String(b.id)}>
+                      {b.name}
+                    </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -282,12 +415,20 @@ function InviteUserDialog({
           </div>
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button variant="outline" onClick={onClose}>
+            Cancel
+          </Button>
           <Button
             onClick={() => mutation.mutate()}
-            disabled={mutation.isPending || !form.first_name || !form.email || !form.role_group || (!!form.password && form.password.length < 8)}
+            disabled={
+              mutation.isPending ||
+              !form.first_name ||
+              !form.email ||
+              !form.role_group ||
+              (!!form.password && form.password.length < 8)
+            }
           >
-            {mutation.isPending ? 'Inviting…' : 'Send Invite'}
+            {mutation.isPending ? "Inviting…" : "Send Invite"}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -296,7 +437,11 @@ function InviteUserDialog({
 }
 
 function EditUserDialog({
-  open, onClose, user, branches, onSaved,
+  open,
+  onClose,
+  user,
+  branches,
+  onSaved,
 }: {
   open: boolean;
   onClose: () => void;
@@ -304,17 +449,17 @@ function EditUserDialog({
   branches: any[];
   onSaved: (updatedUser: any, generatedPassword?: string) => void;
 }) {
-  const { token, role } = useAuth();
+  const { token, role, user: currentUser } = useAuth();
   const { toast } = useToast();
   const qc = useQueryClient();
   const [form, setForm] = useState({
-    first_name: '',
-    last_name: '',
-    email: '',
-    username: '',
-    password: '',
-    job_title: '',
-    branch_id: '',
+    first_name: "",
+    last_name: "",
+    email: "",
+    username: "",
+    password: "",
+    job_title: "",
+    branch_id: "",
     branch_ids: [] as string[],
     is_active: true,
     is_tenant_admin: false,
@@ -324,131 +469,239 @@ function EditUserDialog({
   useEffect(() => {
     if (!user) return;
     setForm({
-      first_name: user.first_name ?? '',
-      last_name: user.last_name ?? '',
-      email: user.email ?? '',
-      username: user.username ?? '',
-      password: '',
-      job_title: user.job_title ?? '',
-      branch_id: user.branch_id ? String(user.branch_id) : '',
-      branch_ids: Array.isArray(user.branch_ids) ? user.branch_ids.map(String) : (user.branch_id ? [String(user.branch_id)] : []),
+      first_name: user.first_name ?? "",
+      last_name: user.last_name ?? "",
+      email: user.email ?? "",
+      username: user.username ?? "",
+      password: "",
+      job_title: user.job_title ?? "",
+      branch_id: user.branch_id ? String(user.branch_id) : "",
+      branch_ids: Array.isArray(user.branch_ids)
+        ? user.branch_ids.map(String)
+        : user.branch_id
+          ? [String(user.branch_id)]
+          : [],
       is_active: Boolean(user.is_active),
-      is_tenant_admin: Boolean((user as any).is_org_admin ?? user.is_tenant_admin),
+      is_tenant_admin: Boolean(
+        (user as any).is_org_admin ?? user.is_tenant_admin,
+      ),
     });
-    setSelectedRoleIds(Array.isArray(user.groups) ? user.groups.map((group: any) => String(group.id)) : []);
+    setSelectedRoleIds(
+      Array.isArray(user.groups)
+        ? user.groups.map((group: any) => String(group.id))
+        : [],
+    );
   }, [user]);
 
   const { data: assignableRolesData } = useQuery({
-    queryKey: ['edit-user-roles', user?.organization_id ?? user?.tenant_id],
-    queryFn: () => api(token!, '/roles/?page_size=200'),
+    queryKey: ["edit-user-roles", user?.organization_id ?? user?.tenant_id],
+    queryFn: () => api(token!, "/roles/?page_size=200"),
     enabled: open && !!token && !!user,
   });
-  const editedUserTenantId = String(user?.organization_id ?? user?.tenant_id ?? '');
-  const allAssignableRoles: AssignableRole[] = (assignableRolesData?.results ?? []).filter(
-    (candidate: AssignableRole) => candidate.is_assignable !== false,
+  const editedUserTenantId = String(
+    role === "superadmin"
+      ? (user?.organization_id ?? user?.tenant_id ?? "")
+      : ((currentUser as any)?.organization_id ??
+          (currentUser as any)?.tenant_id ??
+          ""),
   );
+  const allAssignableRoles: AssignableRole[] = (
+    assignableRolesData?.results ?? []
+  ).filter((candidate: AssignableRole) => candidate.is_assignable !== false);
   const assignableRoles = allAssignableRoles.filter(
-    (candidate) => !candidate.name.startsWith('tenant:') || candidate.name.startsWith(`tenant:${editedUserTenantId}:`),
+    (candidate) =>
+      !candidate.name.startsWith("tenant:") ||
+      candidate.name.startsWith(`tenant:${editedUserTenantId}:`),
   );
 
   const [membershipForm, setMembershipForm] = useState({
-    tenant_id: '',
+    tenant_id: "",
     is_default: false,
+    branch_id: "",
+    role_group_name: "",
   });
-  const [branchRoleAssignments, setBranchRoleAssignments] = useState<Record<string, string>>({});
+  const [branchRoleAssignments, setBranchRoleAssignments] = useState<
+    Record<string, string>
+  >({});
 
   useEffect(() => {
-    setMembershipForm({ tenant_id: '', is_default: false });
+    setMembershipForm({
+      tenant_id: "",
+      is_default: false,
+      branch_id: "",
+      role_group_name: "",
+    });
     setBranchRoleAssignments({});
   }, [user?.id]);
 
   const { data: accessibleTenantsData } = useQuery({
-    queryKey: ['membership-tenants', user?.id],
-    queryFn: () => api(token!, '/tenants/?page_size=100'),
+    queryKey: ["membership-tenants", user?.id],
+    queryFn: () => api(token!, "/tenants/?page_size=100"),
     enabled: open && !!token && !!user,
   });
-  const accessibleTenants = accessibleTenantsData?.results ?? [];
+  const adminOrganizationIds = new Set(
+    ((currentUser as any)?.memberships ?? [])
+      .filter((m: any) => m.is_org_admin)
+      .map((m: any) => String(m.tenant)),
+  );
+  if (
+    (currentUser as any)?.is_org_admin ||
+    (currentUser as any)?.is_tenant_admin
+  )
+    adminOrganizationIds.add(
+      String(
+        (currentUser as any)?.organization_id ??
+          (currentUser as any)?.tenant_id,
+      ),
+    );
+  const accessibleTenants = (accessibleTenantsData?.results ?? []).filter(
+    (tenant: any) =>
+      role === "superadmin" || adminOrganizationIds.has(String(tenant.id)),
+  );
 
   const { data: membershipsData } = useQuery({
-    queryKey: ['user-memberships', user?.id],
+    queryKey: ["user-memberships", user?.id],
     queryFn: () => api(token!, `/users/${user.id}/memberships/`),
     enabled: open && !!token && !!user?.id,
   });
-  const memberships = membershipsData?.data?.memberships ?? membershipsData?.memberships ?? [];
+  const memberships =
+    membershipsData?.data?.memberships ?? membershipsData?.memberships ?? [];
 
-  const selectedMembership = memberships.find((entry: any) => String(entry.tenant) === membershipForm.tenant_id);
-  const membershipRoles = allAssignableRoles.filter(
-    (candidate) => !candidate.name.startsWith('tenant:') || candidate.name.startsWith(`tenant:${membershipForm.tenant_id}:`),
+  const selectedMembership = memberships.find(
+    (entry: any) => String(entry.tenant) === membershipForm.tenant_id,
   );
+  const { data: membershipRoleData } = useQuery({
+    queryKey: ["membership-roles", token, membershipForm.tenant_id],
+    enabled: open && !!token && !!membershipForm.tenant_id,
+    queryFn: () =>
+      api(
+        token!,
+        `/roles/?page_size=200&tenant_id=${membershipForm.tenant_id}`,
+      ),
+  });
+  const membershipRoles = (
+    (membershipRoleData?.results ?? []) as AssignableRole[]
+  )
+    .filter((candidate) => candidate.is_assignable !== false)
+    .filter(
+      (candidate) =>
+        !candidate.name.startsWith("tenant:") ||
+        candidate.name.startsWith(`tenant:${membershipForm.tenant_id}:`),
+    );
 
   useEffect(() => {
     if (!selectedMembership) return;
     setMembershipForm({
       tenant_id: String(selectedMembership.tenant),
       is_default: Boolean(selectedMembership.is_default),
+      branch_id: selectedMembership.branch
+        ? String(selectedMembership.branch)
+        : "",
+      role_group_name: selectedMembership.role_group_name ?? "",
     });
-    setBranchRoleAssignments(Object.fromEntries(
-      (selectedMembership.branch_role_assignments ?? []).map((assignment: any) => [
-        String(assignment.branch_id), assignment.role_group_name,
-      ]),
-    ));
+    setBranchRoleAssignments(
+      Object.fromEntries(
+        (selectedMembership.branch_role_assignments ?? []).map(
+          (assignment: any) => [
+            String(assignment.branch_id),
+            assignment.role_group_name,
+          ],
+        ),
+      ),
+    );
   }, [selectedMembership?.id]);
 
   const { data: membershipBranchesData } = useQuery({
-    queryKey: ['membership-branches', membershipForm.tenant_id],
-    queryFn: () => api(token!, `/tenants/${membershipForm.tenant_id}/branches/`),
+    queryKey: ["membership-branches", membershipForm.tenant_id],
+    queryFn: () =>
+      api(token!, `/tenants/${membershipForm.tenant_id}/branches/`),
     enabled: open && !!token && !!membershipForm.tenant_id,
   });
-  const membershipBranches = membershipBranchesData?.data?.branches ?? membershipBranchesData?.results ?? [];
+  const membershipBranches =
+    membershipBranchesData?.data?.branches ??
+    membershipBranchesData?.results ??
+    [];
 
   const membershipMutation = useMutation({
     mutationFn: async () => {
       const payload: any = {
         tenant_id: Number(membershipForm.tenant_id),
-        is_org_admin: false,
+        is_org_admin: Boolean(selectedMembership?.is_org_admin),
         is_default: membershipForm.is_default,
-        branch_id: form.branch_id || null,
+        branch_id: membershipForm.branch_id
+          ? Number(membershipForm.branch_id)
+          : null,
+        role_group_name: membershipForm.role_group_name,
         branch_role_assignments: Object.entries(branchRoleAssignments)
           .filter(([, roleGroupName]) => Boolean(roleGroupName))
-          .map(([branchId, role_group_name]) => ({ branch_id: Number(branchId), role_group_name })),
+          .map(([branchId, role_group_name]) => ({
+            branch_id: Number(branchId),
+            role_group_name,
+          })),
         job_title: form.job_title,
       };
+      if (
+        !payload.branch_role_assignments.length &&
+        !selectedMembership?.branch_role_assignments?.length
+      )
+        delete payload.branch_role_assignments;
       if (selectedMembership) {
-        return api(token!, `/memberships/${selectedMembership.id}/`, 'PATCH', payload);
+        return api(
+          token!,
+          `/memberships/${selectedMembership.id}/`,
+          "PATCH",
+          payload,
+        );
       }
-      return api(token!, `/users/${user.id}/memberships/`, 'POST', payload);
+      return api(token!, `/users/${user.id}/memberships/`, "POST", payload);
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['user-memberships', user?.id] });
-      qc.invalidateQueries({ queryKey: ['platform-users'] });
-      qc.invalidateQueries({ queryKey: ['platform-auth-me'] });
-      toast({ title: selectedMembership ? 'Organization membership updated' : 'Organization membership added' });
+      qc.invalidateQueries({ queryKey: ["user-memberships", user?.id] });
+      qc.invalidateQueries({ queryKey: ["platform-users"] });
+      qc.invalidateQueries({ queryKey: ["platform-auth-me"] });
+      toast({
+        title: selectedMembership
+          ? "Organization membership updated"
+          : "Organization membership added",
+      });
     },
-    onError: (e: any) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
+    onError: (e: any) =>
+      toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
   const removeMembershipMutation = useMutation({
-    mutationFn: (membershipId: number) => api(token!, `/memberships/${membershipId}/`, 'DELETE'),
+    mutationFn: (membershipId: number) =>
+      api(token!, `/memberships/${membershipId}/`, "DELETE"),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['user-memberships', user?.id] });
-      qc.invalidateQueries({ queryKey: ['platform-users'] });
-      qc.invalidateQueries({ queryKey: ['platform-auth-me'] });
-      toast({ title: 'Organization membership removed' });
-      setMembershipForm({ tenant_id: '', is_default: false });
+      qc.invalidateQueries({ queryKey: ["user-memberships", user?.id] });
+      qc.invalidateQueries({ queryKey: ["platform-users"] });
+      qc.invalidateQueries({ queryKey: ["platform-auth-me"] });
+      toast({ title: "Organization membership removed" });
+      setMembershipForm({
+        tenant_id: "",
+        is_default: false,
+        branch_id: "",
+        role_group_name: "",
+      });
       setBranchRoleAssignments({});
     },
-    onError: (e: any) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
+    onError: (e: any) =>
+      toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
   const makeDefaultMembershipMutation = useMutation({
-    mutationFn: (membershipId: number) => api(token!, `/memberships/${membershipId}/`, 'PATCH', { is_default: true }),
+    mutationFn: (membershipId: number) =>
+      api(token!, `/memberships/${membershipId}/`, "PATCH", {
+        is_default: true,
+      }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['user-memberships', user?.id] });
-      qc.invalidateQueries({ queryKey: ['platform-users'] });
-      qc.invalidateQueries({ queryKey: ['platform-auth-me'] });
-      toast({ title: 'Default organization updated' });
+      qc.invalidateQueries({ queryKey: ["user-memberships", user?.id] });
+      qc.invalidateQueries({ queryKey: ["platform-users"] });
+      qc.invalidateQueries({ queryKey: ["platform-auth-me"] });
+      toast({ title: "Default organization updated" });
     },
-    onError: (e: any) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
+    onError: (e: any) =>
+      toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
   const mutation = useMutation({
@@ -462,32 +715,46 @@ function EditUserDialog({
         is_active: form.is_active,
       };
       if (form.password.trim()) payload.password = form.password;
-      const activeOrganizationId = (user as any)?.organization_id ?? user?.tenant_id;
+      const activeOrganizationId =
+        (user as any)?.organization_id ?? user?.tenant_id;
       if (activeOrganizationId) payload.branch_id = form.branch_id || null;
-      if (role === 'superadmin' && activeOrganizationId) payload.is_tenant_admin = form.is_tenant_admin;
-      const updated = await api(token!, `/users/${user.id}/update/`, 'PATCH', payload);
+      if (role === "superadmin" && activeOrganizationId)
+        payload.is_tenant_admin = form.is_tenant_admin;
+      const updated = await api(
+        token!,
+        `/users/${user.id}/update/`,
+        "PATCH",
+        payload,
+      );
       if (selectedRoleIds.length) {
-        await api(token!, `/users/${user.id}/assign-roles/`, 'POST', {
-          group_ids: selectedRoleIds.map(Number),
+        await api(token!, `/users/${user.id}/assign-roles/`, "POST", {
+          group_ids: selectedRoleIds
+            .filter((id) =>
+              assignableRoles.some((candidate) => String(candidate.id) === id),
+            )
+            .map(Number),
           replace_existing: true,
         });
       }
       return updated;
     },
     onSuccess: (res) => {
-      qc.invalidateQueries({ queryKey: ['platform-users'] });
-      qc.invalidateQueries({ queryKey: ['tenant-users'] });
-      toast({ title: 'User updated' });
+      qc.invalidateQueries({ queryKey: ["platform-users"] });
+      qc.invalidateQueries({ queryKey: ["tenant-users"] });
+      toast({ title: "User updated" });
       onSaved(res?.data ?? res, form.password.trim() || undefined);
       onClose();
     },
-    onError: (e: any) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
+    onError: (e: any) =>
+      toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
-  const f = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
-    setForm(p => ({ ...p, [k]: value }));
-  };
+  const f =
+    (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement>) => {
+      const value =
+        e.target.type === "checkbox" ? e.target.checked : e.target.value;
+      setForm((p) => ({ ...p, [k]: value }));
+    };
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
@@ -499,57 +766,92 @@ function EditUserDialog({
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label>First Name</Label>
-              <Input value={form.first_name} onChange={f('first_name')} />
+              <Input value={form.first_name} onChange={f("first_name")} />
             </div>
             <div className="space-y-1.5">
               <Label>Last Name</Label>
-              <Input value={form.last_name} onChange={f('last_name')} />
+              <Input value={form.last_name} onChange={f("last_name")} />
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label>Email</Label>
-              <Input value={form.email} onChange={f('email')} type="email" />
+              <Input value={form.email} onChange={f("email")} type="email" />
             </div>
             <div className="space-y-1.5">
               <Label>Username</Label>
-              <Input value={form.username} onChange={f('username')} />
+              <Input value={form.username} onChange={f("username")} />
             </div>
           </div>
           <div className="space-y-1.5">
             <Label>New Password</Label>
-            <Input value={form.password} onChange={f('password')} type="password" placeholder="Leave blank to keep current password" />
+            <Input
+              value={form.password}
+              onChange={f("password")}
+              type="password"
+              placeholder="Leave blank to keep current password"
+            />
           </div>
           {!form.is_tenant_admin && (
             <div className="space-y-1.5">
               <Label>Roles</Label>
               <div className="max-h-44 space-y-2 overflow-y-auto rounded-md border p-3">
-                {assignableRoles.map(candidate => {
+                {assignableRoles.map((candidate) => {
                   const roleId = String(candidate.id);
-                  return <label key={candidate.id} className="flex cursor-pointer items-center gap-2 text-sm">
-                    <input type="checkbox" checked={selectedRoleIds.includes(roleId)} onChange={(event) => setSelectedRoleIds((current) => event.target.checked ? [...current, roleId] : current.filter((id) => id !== roleId))} />
-                    {candidate.display_name || candidate.name}
-                  </label>;
+                  return (
+                    <label
+                      key={candidate.id}
+                      className="flex cursor-pointer items-center gap-2 text-sm"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selectedRoleIds.includes(roleId)}
+                        onChange={(event) =>
+                          setSelectedRoleIds((current) =>
+                            event.target.checked
+                              ? [...current, roleId]
+                              : current.filter((id) => id !== roleId),
+                          )
+                        }
+                      />
+                      {candidate.display_name || candidate.name}
+                    </label>
+                  );
                 })}
               </div>
-              <p className="text-xs text-muted-foreground">Assign one or more roles. The user chooses their active role at sign-in or from their profile.</p>
+              <p className="text-xs text-muted-foreground">
+                Assign one or more roles. The user chooses their active role at
+                sign-in or from their profile.
+              </p>
             </div>
           )}
           {((user as any)?.organization_id ?? user?.tenant_id) && (
             <>
               <div className="space-y-1.5">
                 <Label>Job Title</Label>
-                <Input value={form.job_title} onChange={f('job_title')} />
+                <Input value={form.job_title} onChange={f("job_title")} />
               </div>
               {branches.length > 0 && (
                 <div className="space-y-1.5">
                   <Label>Branch</Label>
-                  <Select value={form.branch_id || '__none__'} onValueChange={v => setForm(p => ({ ...p, branch_id: v === '__none__' ? '' : v }))}>
-                    <SelectTrigger><SelectValue placeholder="No branch" /></SelectTrigger>
+                  <Select
+                    value={form.branch_id || "__none__"}
+                    onValueChange={(v) =>
+                      setForm((p) => ({
+                        ...p,
+                        branch_id: v === "__none__" ? "" : v,
+                      }))
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="No branch" />
+                    </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="__none__">No branch</SelectItem>
                       {branches.map((branch: any) => (
-                        <SelectItem key={branch.id} value={String(branch.id)}>{branch.name}</SelectItem>
+                        <SelectItem key={branch.id} value={String(branch.id)}>
+                          {branch.name}
+                        </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
@@ -559,77 +861,182 @@ function EditUserDialog({
           )}
           <div className="flex items-center justify-between rounded border px-3 py-2 text-sm">
             <span>Active user</span>
-            <input type="checkbox" checked={form.is_active} onChange={f('is_active')} />
+            <input
+              type="checkbox"
+              checked={form.is_active}
+              onChange={f("is_active")}
+            />
           </div>
-          {role === 'superadmin' && ((user as any)?.organization_id ?? user?.tenant_id) && (
-            <div className="flex items-center justify-between rounded border px-3 py-2 text-sm">
-              <span>Organization admin</span>
-              <input type="checkbox" checked={form.is_tenant_admin} onChange={f('is_tenant_admin')} />
-            </div>
-          )}
+          {role === "superadmin" &&
+            ((user as any)?.organization_id ?? user?.tenant_id) && (
+              <div className="flex items-center justify-between rounded border px-3 py-2 text-sm">
+                <span>Organization admin</span>
+                <input
+                  type="checkbox"
+                  checked={form.is_tenant_admin}
+                  onChange={f("is_tenant_admin")}
+                />
+              </div>
+            )}
           <div className="space-y-3 rounded border p-3">
             <div>
               <p className="text-sm font-medium">Organizations</p>
-              <p className="text-xs text-muted-foreground">Link this user to one or more organizations and choose the default active one.</p>
+              <p className="text-xs text-muted-foreground">
+                Link this user to one or more organizations and choose the
+                default active one.
+              </p>
             </div>
             <div className="space-y-2">
               {memberships.length === 0 ? (
-                <p className="text-xs text-muted-foreground">No organization memberships yet.</p>
-              ) : memberships.map((membership: any) => (
-                <div key={membership.id} className="flex flex-wrap items-center justify-between gap-2 rounded border px-3 py-2 text-sm">
-                  <div>
-                    <p className="font-medium">{membership.organization_name ?? membership.tenant_name}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {membership.role_display || membership.role}{membership.branch_name ? ` · ${membership.branch_name}` : ''}{membership.is_default ? ' · Default' : ''}
-                    </p>
-                  </div>
-                  <div className="flex gap-2">
-                    {!membership.is_default && (
-                      <Button type="button" variant="outline" size="sm" onClick={() => makeDefaultMembershipMutation.mutate(membership.id)}>
-                        Make Default
+                <p className="text-xs text-muted-foreground">
+                  No organization memberships yet.
+                </p>
+              ) : (
+                memberships.map((membership: any) => (
+                  <div
+                    key={membership.id}
+                    className="flex flex-wrap items-center justify-between gap-2 rounded border px-3 py-2 text-sm"
+                  >
+                    <div>
+                      <p className="font-medium">
+                        {membership.organization_name ?? membership.tenant_name}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {membership.role_display || membership.role}
+                        {membership.branch_name
+                          ? ` · ${membership.branch_name}`
+                          : ""}
+                        {membership.is_default ? " · Default" : ""}
+                      </p>
+                    </div>
+                    <div className="flex gap-2">
+                      {!membership.is_default && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() =>
+                            makeDefaultMembershipMutation.mutate(membership.id)
+                          }
+                        >
+                          Make Default
+                        </Button>
+                      )}
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() =>
+                          setMembershipForm({
+                            tenant_id: String(membership.tenant),
+                            is_default: Boolean(membership.is_default),
+                            branch_id: membership.branch
+                              ? String(membership.branch)
+                              : "",
+                            role_group_name: membership.role_group_name ?? "",
+                          })
+                        }
+                      >
+                        Edit
                       </Button>
-                    )}
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setMembershipForm({
-                        tenant_id: String(membership.tenant),
-                        is_default: Boolean(membership.is_default),
-                      })}
-                    >
-                      Edit
-                    </Button>
-                    <Button type="button" variant="ghost" size="sm" onClick={() => removeMembershipMutation.mutate(membership.id)}>
-                      Remove
-                    </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() =>
+                          removeMembershipMutation.mutate(membership.id)
+                        }
+                      >
+                        Remove
+                      </Button>
+                    </div>
                   </div>
-                </div>
-              ))}
+                ))
+              )}
             </div>
             <div className="space-y-1.5">
               <Label>Organization</Label>
-              <Select value={membershipForm.tenant_id} onValueChange={value => {
-                setMembershipForm(p => ({ ...p, tenant_id: value }));
-                setBranchRoleAssignments({});
-              }}>
-                <SelectTrigger><SelectValue placeholder="Select organization" /></SelectTrigger>
+              <Select
+                value={membershipForm.tenant_id}
+                onValueChange={(value) => {
+                  setMembershipForm((p) => ({
+                    ...p,
+                    tenant_id: value,
+                    branch_id: "",
+                    role_group_name: "",
+                  }));
+                  setBranchRoleAssignments({});
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select organization" />
+                </SelectTrigger>
                 <SelectContent>
                   {accessibleTenants.map((tenant: any) => (
-                    <SelectItem key={tenant.id} value={String(tenant.id)}>{tenant.name}</SelectItem>
+                    <SelectItem key={tenant.id} value={String(tenant.id)}>
+                      {tenant.name}
+                    </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
+            {membershipForm.tenant_id ? (
+              <div className="space-y-1.5">
+                <Label>Default organization role</Label>
+                <Select
+                  value={membershipForm.role_group_name || "__none__"}
+                  onValueChange={(value) =>
+                    setMembershipForm((p) => ({
+                      ...p,
+                      role_group_name: value === "__none__" ? "" : value,
+                    }))
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Choose a role" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">No default role</SelectItem>
+                    {selectedMembership?.is_org_admin &&
+                    membershipForm.role_group_name === "Tenant Admin" ? (
+                      <SelectItem value="Tenant Admin">
+                        Organization administrator
+                      </SelectItem>
+                    ) : null}
+                    {membershipRoles.map((role) => (
+                      <SelectItem key={role.id} value={role.name}>
+                        {role.display_name || role.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Choose a role for this organization. Branch-specific roles
+                  below take priority when configured.
+                </p>
+              </div>
+            ) : null}
             {membershipForm.tenant_id && membershipBranches.length > 0 && (
               <div className="space-y-1.5">
                 <Label>Active branch on sign-in</Label>
-                <Select value={form.branch_id || '__none__'} onValueChange={v => setForm(p => ({ ...p, branch_id: v === '__none__' ? '' : v }))}>
-                  <SelectTrigger><SelectValue placeholder="No branch" /></SelectTrigger>
+                <Select
+                  value={membershipForm.branch_id || "__none__"}
+                  onValueChange={(v) =>
+                    setMembershipForm((p) => ({
+                      ...p,
+                      branch_id: v === "__none__" ? "" : v,
+                    }))
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="No branch" />
+                  </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="__none__">No branch</SelectItem>
-              {membershipBranches.map((branch: any) => (
-                      <SelectItem key={branch.id} value={String(branch.id)}>{branch.name}</SelectItem>
+                    {membershipBranches.map((branch: any) => (
+                      <SelectItem key={branch.id} value={String(branch.id)}>
+                        {branch.name}
+                      </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
@@ -642,20 +1049,32 @@ function EditUserDialog({
                   {membershipBranches.map((branch: any) => {
                     const branchValue = String(branch.id);
                     return (
-                      <div key={branch.id} className="grid grid-cols-2 items-center gap-3 text-sm">
+                      <div
+                        key={branch.id}
+                        className="grid grid-cols-2 items-center gap-3 text-sm"
+                      >
                         <span className="font-medium">{branch.name}</span>
                         <Select
-                          value={branchRoleAssignments[branchValue] || '__none__'}
-                          onValueChange={(value) => setBranchRoleAssignments(current => ({
-                            ...current,
-                            [branchValue]: value === '__none__' ? '' : value,
-                          }))}
+                          value={
+                            branchRoleAssignments[branchValue] || "__none__"
+                          }
+                          onValueChange={(value) =>
+                            setBranchRoleAssignments((current) => ({
+                              ...current,
+                              [branchValue]: value === "__none__" ? "" : value,
+                            }))
+                          }
                         >
-                          <SelectTrigger><SelectValue placeholder="No access" /></SelectTrigger>
+                          <SelectTrigger>
+                            <SelectValue placeholder="No access" />
+                          </SelectTrigger>
                           <SelectContent>
                             <SelectItem value="__none__">No access</SelectItem>
-                            {membershipRoles.map(option => (
-                              <SelectItem key={option.id} value={option.name}>{option.display_name || displayGroupName(option)}</SelectItem>
+                            {membershipRoles.map((option) => (
+                              <SelectItem key={option.id} value={option.name}>
+                                {option.display_name ||
+                                  displayGroupName(option)}
+                              </SelectItem>
                             ))}
                           </SelectContent>
                         </Select>
@@ -663,7 +1082,11 @@ function EditUserDialog({
                     );
                   })}
                 </div>
-                <p className="text-xs text-muted-foreground">Assign one role to each branch the user can work in. Their selected workspace branch controls the role, menus, permissions, and records they can access.</p>
+                <p className="text-xs text-muted-foreground">
+                  Assign one role to each branch the user can work in. Their
+                  selected workspace branch controls the role, menus,
+                  permissions, and records they can access.
+                </p>
               </div>
             )}
             <div className="flex items-center justify-between rounded border px-3 py-2 text-sm">
@@ -671,7 +1094,12 @@ function EditUserDialog({
               <input
                 type="checkbox"
                 checked={membershipForm.is_default}
-                onChange={(e) => setMembershipForm(p => ({ ...p, is_default: e.target.checked }))}
+                onChange={(e) =>
+                  setMembershipForm((p) => ({
+                    ...p,
+                    is_default: e.target.checked,
+                  }))
+                }
               />
             </div>
             <div className="flex justify-end">
@@ -679,17 +1107,28 @@ function EditUserDialog({
                 type="button"
                 variant="outline"
                 onClick={() => membershipMutation.mutate()}
-                disabled={membershipMutation.isPending || !membershipForm.tenant_id}
+                disabled={
+                  membershipMutation.isPending || !membershipForm.tenant_id
+                }
               >
-                {membershipMutation.isPending ? 'Saving org link…' : selectedMembership ? 'Update Org Link' : 'Add Org Link'}
+                {membershipMutation.isPending
+                  ? "Saving org link…"
+                  : selectedMembership
+                    ? "Update Org Link"
+                    : "Add Org Link"}
               </Button>
             </div>
           </div>
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Cancel</Button>
-          <Button onClick={() => mutation.mutate()} disabled={mutation.isPending || !form.username.trim()}>
-            {mutation.isPending ? 'Saving…' : 'Save Changes'}
+          <Button variant="outline" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            onClick={() => mutation.mutate()}
+            disabled={mutation.isPending || !form.username.trim()}
+          >
+            {mutation.isPending ? "Saving…" : "Save Changes"}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -701,45 +1140,67 @@ export default function Users() {
   const { token, role, user } = useAuth();
   const { toast } = useToast();
   const qc = useQueryClient();
-  const [search, setSearch] = useState('');
-  const [tenantFilter, setTenantFilter] = useState('all');
+  const [search, setSearch] = useState("");
+  const [tenantFilter, setTenantFilter] = useState("all");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [showInvite, setShowInvite] = useState(false);
   const [editingUser, setEditingUser] = useState<any | null>(null);
-  const [passwordResult, setPasswordResult] = useState<PasswordResult | null>(null);
-  const activeInviteTenantId = role === 'tenant_admin'
-    ? (((user as any)?.organization_id ?? (user as any)?.tenant_id) ? String((user as any)?.organization_id ?? (user as any)?.tenant_id) : undefined)
-    : (tenantFilter !== 'all' ? tenantFilter : undefined);
+  const [passwordResult, setPasswordResult] = useState<PasswordResult | null>(
+    null,
+  );
+  const activeInviteTenantId =
+    role === "tenant_admin"
+      ? ((user as any)?.organization_id ?? (user as any)?.tenant_id)
+        ? String((user as any)?.organization_id ?? (user as any)?.tenant_id)
+        : undefined
+      : tenantFilter !== "all"
+        ? tenantFilter
+        : undefined;
 
   const { data, isLoading, refetch } = useQuery({
-    queryKey: ['platform-users', search, tenantFilter, page, pageSize],
+    queryKey: ["platform-users", search, tenantFilter, page, pageSize],
     queryFn: () => {
-      const p = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
-      if (search) p.set('search', search);
-      if (tenantFilter !== 'all') p.set('tenant_id', tenantFilter);
+      const p = new URLSearchParams({
+        page: String(page),
+        page_size: String(pageSize),
+      });
+      if (search) p.set("search", search);
+      if (tenantFilter !== "all") p.set("tenant_id", tenantFilter);
       return api(token!, `/users/?${p}`);
     },
     enabled: !!token,
   });
 
   const { data: tenantsData } = useQuery({
-    queryKey: ['tenants-filter'],
-    queryFn: () => api(token!, '/tenants/?page_size=100'),
-    enabled: role === 'superadmin',
+    queryKey: ["tenants-filter"],
+    queryFn: () => api(token!, "/tenants/?page_size=100"),
+    enabled: role === "superadmin",
   });
 
   const { data: branchesData } = useQuery({
-    queryKey: ['user-edit-branches', editingUser?.organization_id ?? editingUser?.tenant_id],
-    queryFn: () => api(token!, `/tenants/${editingUser.organization_id ?? editingUser.tenant_id}/branches/`),
-    enabled: !!token && !!(editingUser?.organization_id ?? editingUser?.tenant_id),
+    queryKey: [
+      "user-edit-branches",
+      editingUser?.organization_id ?? editingUser?.tenant_id,
+    ],
+    queryFn: () =>
+      api(
+        token!,
+        `/tenants/${editingUser.organization_id ?? editingUser.tenant_id}/branches/`,
+      ),
+    enabled:
+      !!token && !!(editingUser?.organization_id ?? editingUser?.tenant_id),
   });
   const branches = branchesData?.data?.branches ?? branchesData?.results ?? [];
 
   const toggleMutation = useMutation({
-    mutationFn: (u: any) => api(token!, `/users/${u.id}/update/`, 'PATCH', { is_active: !u.is_active }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['platform-users'] }),
-    onError: (e: any) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
+    mutationFn: (u: any) =>
+      api(token!, `/users/${u.id}/update/`, "PATCH", {
+        is_active: !u.is_active,
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["platform-users"] }),
+    onError: (e: any) =>
+      toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
   const users: any[] = data?.results ?? [];
@@ -748,17 +1209,28 @@ export default function Users() {
   return (
     <div className="space-y-6">
       {passwordResult && (
-        <PasswordBanner result={passwordResult} onDismiss={() => setPasswordResult(null)} />
+        <PasswordBanner
+          result={passwordResult}
+          onDismiss={() => setPasswordResult(null)}
+        />
       )}
 
       <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-4">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Users</h1>
-          <p className="text-xs text-muted-foreground mt-0.5">Manage platform users and organization access</p>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Manage platform users and organization access
+          </p>
         </div>
         <div className="flex gap-2">
-          <Button size="sm" variant="outline" onClick={() => refetch()}><RefreshCw className="h-3.5 w-3.5" /></Button>
-          <Button size="sm" onClick={() => setShowInvite(true)} className="gap-1.5">
+          <Button size="sm" variant="outline" onClick={() => refetch()}>
+            <RefreshCw className="h-3.5 w-3.5" />
+          </Button>
+          <Button
+            size="sm"
+            onClick={() => setShowInvite(true)}
+            className="gap-1.5"
+          >
             <Plus className="h-3.5 w-3.5" /> Invite User
           </Button>
         </div>
@@ -768,15 +1240,33 @@ export default function Users() {
       <div className="flex flex-wrap gap-3">
         <div className="relative flex-1 min-w-[200px]">
           <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-          <Input className="pl-8" placeholder="Search users…" value={search} onChange={e => { setSearch(e.target.value); setPage(1); }} />
+          <Input
+            className="pl-8"
+            placeholder="Search users…"
+            value={search}
+            onChange={(e) => {
+              setSearch(e.target.value);
+              setPage(1);
+            }}
+          />
         </div>
-        {role === 'superadmin' && (
-          <Select value={tenantFilter} onValueChange={(value) => { setTenantFilter(value); setPage(1); }}>
-            <SelectTrigger className="w-48"><SelectValue placeholder="All Organizations" /></SelectTrigger>
+        {role === "superadmin" && (
+          <Select
+            value={tenantFilter}
+            onValueChange={(value) => {
+              setTenantFilter(value);
+              setPage(1);
+            }}
+          >
+            <SelectTrigger className="w-48">
+              <SelectValue placeholder="All Organizations" />
+            </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All Organizations</SelectItem>
               {(tenantsData?.results ?? []).map((t: any) => (
-                <SelectItem key={t.id} value={String(t.id)}>{t.name}</SelectItem>
+                <SelectItem key={t.id} value={String(t.id)}>
+                  {t.name}
+                </SelectItem>
               ))}
             </SelectContent>
           </Select>
@@ -787,51 +1277,79 @@ export default function Users() {
         <CardHeader className="bg-muted/20 border-b py-3 px-4">
           <CardTitle className="text-xs font-bold uppercase tracking-widest flex items-center justify-between">
             <span>User Directory</span>
-            <span className="text-muted-foreground font-normal normal-case">{totalUsers.toLocaleString()} users</span>
+            <span className="text-muted-foreground font-normal normal-case">
+              {totalUsers.toLocaleString()} users
+            </span>
           </CardTitle>
         </CardHeader>
         <CardContent className="p-0">
           {isLoading ? (
-            <p className="p-8 text-center text-muted-foreground text-sm font-mono animate-pulse">Loading…</p>
+            <p className="p-8 text-center text-muted-foreground text-sm font-mono animate-pulse">
+              Loading…
+            </p>
           ) : users.length === 0 ? (
-            <p className="p-8 text-center text-muted-foreground text-sm">No users found.</p>
+            <p className="p-8 text-center text-muted-foreground text-sm">
+              No users found.
+            </p>
           ) : (
             <div className="divide-y">
               {users.map((u: any) => {
                 const appRole = detectRole(u) as AppRole;
                 return (
-                  <div key={u.id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+                  <div
+                    key={u.id}
+                    className="flex flex-wrap items-center justify-between gap-3 px-4 py-3"
+                  >
                     <div className="flex items-center gap-3 min-w-0">
                       <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center text-xs font-bold text-primary shrink-0">
-                        {(u.first_name?.[0] ?? u.username?.[0] ?? '?').toUpperCase()}
+                        {(
+                          u.first_name?.[0] ??
+                          u.username?.[0] ??
+                          "?"
+                        ).toUpperCase()}
                       </div>
                       <div className="min-w-0">
                         <p className="font-medium text-sm">
-                          {u.first_name || u.last_name ? `${u.first_name} ${u.last_name}`.trim() : u.username}
+                          {u.first_name || u.last_name
+                            ? `${u.first_name} ${u.last_name}`.trim()
+                            : u.username}
                           {u.is_superuser && (
                             <span className="ml-2 inline-flex items-center gap-0.5 text-[10px] text-amber-600">
                               <ShieldCheck className="h-3 w-3" /> Super Admin
                             </span>
                           )}
                         </p>
-                        <p className="text-xs text-muted-foreground">{u.email || u.username}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {u.email || u.username}
+                        </p>
                       </div>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
                       {(u.organization_name ?? u.tenant_name) && (
-                        <span className="text-xs text-muted-foreground hidden sm:block">{u.organization_name ?? u.tenant_name}</span>
-                      )}
-                      {(u.groups ?? []).length > 0 ? (u.groups ?? []).map((group: any) => (
-                        <span key={group.id ?? group.name} className={`px-2 py-0.5 rounded text-[10px] font-bold border ${ROLE_COLORS[appRole]}`}>
-                          {displayGroupName(group)}
+                        <span className="text-xs text-muted-foreground hidden sm:block">
+                          {u.organization_name ?? u.tenant_name}
                         </span>
-                      )) : (
-                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${ROLE_COLORS[appRole]}`}>
+                      )}
+                      {(u.groups ?? []).length > 0 ? (
+                        (u.groups ?? []).map((group: any) => (
+                          <span
+                            key={group.id ?? group.name}
+                            className={`px-2 py-0.5 rounded text-[10px] font-bold border ${ROLE_COLORS[appRole]}`}
+                          >
+                            {displayGroupName(group)}
+                          </span>
+                        ))
+                      ) : (
+                        <span
+                          className={`px-2 py-0.5 rounded text-[10px] font-bold border ${ROLE_COLORS[appRole]}`}
+                        >
                           {ROLE_LABELS[appRole]}
                         </span>
                       )}
-                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${u.is_active ? 'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-900/30 dark:text-emerald-400' : 'bg-gray-100 text-gray-500 border-gray-300'}`}>
-                        {u.is_active ? 'Active' : 'Inactive'}
+                      <span
+                        className={`px-2 py-0.5 rounded text-[10px] font-bold border ${u.is_active ? "bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-900/30 dark:text-emerald-400" : "bg-gray-100 text-gray-500 border-gray-300"}`}
+                      >
+                        {u.is_active ? "Active" : "Inactive"}
                       </span>
                       {!u.is_superuser && u.id !== (user as any)?.id && (
                         <Button
@@ -849,10 +1367,14 @@ export default function Users() {
                           size="sm"
                           variant="ghost"
                           className="h-7 w-7 p-0"
-                          title={u.is_active ? 'Deactivate' : 'Reactivate'}
+                          title={u.is_active ? "Deactivate" : "Reactivate"}
                           onClick={() => toggleMutation.mutate(u)}
                         >
-                          {u.is_active ? <UserX className="h-3.5 w-3.5 text-muted-foreground" /> : <UserCheck className="h-3.5 w-3.5 text-emerald-600" />}
+                          {u.is_active ? (
+                            <UserX className="h-3.5 w-3.5 text-muted-foreground" />
+                          ) : (
+                            <UserCheck className="h-3.5 w-3.5 text-emerald-600" />
+                          )}
                         </Button>
                       )}
                     </div>
@@ -871,7 +1393,11 @@ export default function Users() {
         />
       </Card>
 
-      <InviteUserDialog open={showInvite} onClose={() => setShowInvite(false)} tenantId={activeInviteTenantId} />
+      <InviteUserDialog
+        open={showInvite}
+        onClose={() => setShowInvite(false)}
+        tenantId={activeInviteTenantId}
+      />
       {editingUser && (
         <EditUserDialog
           open={!!editingUser}
@@ -881,7 +1407,7 @@ export default function Users() {
           onSaved={(updatedUser, generatedPassword) => {
             if (generatedPassword) {
               setPasswordResult({
-                title: 'User password updated',
+                title: "User password updated",
                 username: updatedUser.username,
                 email: updatedUser.email,
                 temp_password: generatedPassword,

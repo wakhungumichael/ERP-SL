@@ -587,6 +587,15 @@ class SystemNotification(TimeStampedModel):
 
     class Meta:
         ordering = ["is_read", "-created_at"]
+        constraints = [
+            # Reminder sweeps are idempotent per (tenant, recipient, source event);
+            # this unique constraint makes the check-then-create in reminders.py race-proof.
+            models.UniqueConstraint(
+                fields=["tenant", "recipient", "source_type", "source_id"],
+                condition=models.Q(source_type__gt=""),
+                name="uniq_notification_per_source_event",
+            ),
+        ]
         indexes = [
             models.Index(fields=["tenant", "recipient", "is_read"]),
             models.Index(fields=["source_type", "source_id"]),
@@ -1936,3 +1945,17 @@ class BankStatementLine(TimeStampedModel):
 
     def __str__(self):
         return f"{self.session.code} - {self.line_date} - {self.amount}"
+
+
+class OrganizationSetupImport(models.Model):
+    """Tenant-local history and fingerprints for optional starter examples."""
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name='setup_imports')
+    imported_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
+    selections = models.JSONField(default=list)
+    report = models.JSONField(default=dict)
+    demo_records = models.JSONField(default=list)
+    created_at = models.DateTimeField(auto_now_add=True)
+    examples_removed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-created_at']

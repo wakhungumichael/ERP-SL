@@ -7,6 +7,7 @@ from threading import local
 from django.apps import apps
 from django.contrib.auth.signals import user_logged_in, user_logged_out
 from django.core.serializers.json import DjangoJSONEncoder
+from django.db.models import BinaryField
 from django.db.models.signals import m2m_changed, post_delete, post_save, pre_delete, pre_save
 from django.db.utils import OperationalError, ProgrammingError
 from django.http import HttpRequest
@@ -121,7 +122,7 @@ def _instance_snapshot(instance):
         # Audit evidence must never become a second store of credentials.  Timestamps
         # and surrogate IDs are available on the event itself and add no business value.
         name = field.name.lower()
-        if name in _NOISY_FIELD_NAMES or any(marker in name for marker in _SENSITIVE_FIELD_MARKERS):
+        if isinstance(field, BinaryField) or name in _NOISY_FIELD_NAMES or any(marker in name for marker in _SENSITIVE_FIELD_MARKERS):
             continue
         data[field.name] = field.value_from_object(instance)
     return data
@@ -154,7 +155,7 @@ def _diff_snapshots(before, after):
 def _resolve_instance_tenant(instance):
     if hasattr(instance, "tenant_id"):
         return getattr(instance, "tenant", None)
-    for candidate in ("financial_year", "period", "entry", "estimate", "sales_order", "budget", "purchase_order", "invoice", "transaction"):
+    for candidate in ("employee", "financial_year", "period", "entry", "estimate", "sales_order", "budget", "purchase_order", "invoice", "transaction"):
         related = getattr(instance, candidate, None)
         if related is not None and hasattr(related, "tenant"):
             return getattr(related, "tenant", None)

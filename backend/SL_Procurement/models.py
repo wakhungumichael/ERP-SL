@@ -3,6 +3,7 @@ from django.conf import settings
 from django.db import models
 from django.utils import timezone
 from django.contrib.auth.models import Group
+from uuid import uuid4
 from Platform_Core.models import AuditMetadataMixin
 
 
@@ -15,6 +16,7 @@ class Requisition(AuditMetadataMixin, models.Model):
         ("rejected", "Rejected"),
         ("cancelled", "Cancelled"),
         ("po_created", "PO Created"),
+        ("consolidated", "Consolidated into departmental request"),
     ]
     BUDGET_STATUS_CHOICES = [
         ("pending", "Pending"),
@@ -36,6 +38,15 @@ class Requisition(AuditMetadataMixin, models.Model):
         on_delete=models.PROTECT,
         related_name="requisitions",
     )
+    department = models.ForeignKey('SL_Procurement.Department', on_delete=models.PROTECT, null=True, blank=True, related_name='requisitions')
+    request_kind = models.CharField(max_length=16, choices=[('standard', 'Standard'), ('individual', 'Individual'), ('departmental', 'Departmental')], default='standard')
+    department_status = models.CharField(max_length=20, choices=[('draft', 'Draft'), ('pending', 'Awaiting department head'), ('approved', 'Approved by department head'), ('rejected', 'Rejected'), ('consolidated', 'Consolidated')], default='draft')
+    department_decided_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='department_requisition_decisions')
+    department_decision_notes = models.TextField(blank=True)
+    department_decided_at = models.DateTimeField(null=True, blank=True)
+    parent_requisition = models.ForeignKey('self', on_delete=models.PROTECT, null=True, blank=True, related_name='individual_requests')
+    sales_order = models.ForeignKey('SL_Sales.SalesOrder', on_delete=models.PROTECT, null=True, blank=True, related_name='requisitions')
+    budget_line = models.ForeignKey('SL_Budgeting.BudgetLine', on_delete=models.PROTECT, null=True, blank=True, related_name='requisitions')
     request_number = models.CharField(max_length=50, blank=True)
     title = models.CharField(max_length=200)
     description = models.TextField(blank=True)
@@ -62,11 +73,12 @@ class Requisition(AuditMetadataMixin, models.Model):
 
     class Meta:
         ordering = ["-created_at"]
+        permissions = [("view_all_requisition", "Can view all organization requisitions"), ("approve_requisition", "Can approve requisitions")]
 
     def save(self, *args, **kwargs):
         if not self.request_number:
             ts = timezone.now().strftime("%Y%m%d%H%M%S")
-            self.request_number = f"REQ-{ts}-{self.tenant_id or 'X'}"
+            self.request_number = f"REQ-{ts}-{self.tenant_id or 'X'}-{uuid4().hex[:8]}"
         super().save(*args, **kwargs)
 
     def recalculate_total(self):
@@ -556,3 +568,23 @@ class PaymentQueueItem(AuditMetadataMixin, models.Model):
 
     def __str__(self):
         return f"{self.bill.bill_number} - {self.status}"
+
+
+class ProcurementPolicy(models.Model):
+    tenant = models.OneToOneField('Platform_Core.Tenant', on_delete=models.CASCADE, related_name='procurement_policy')
+    approval_source = models.CharField(max_length=12, choices=[('workflow', 'Workflow Center'), ('matrix', 'Approval rules')], default='workflow')
+
+
+class Department(models.Model):
+    tenant = models.ForeignKey('Platform_Core.Tenant', on_delete=models.CASCADE, related_name='departments')
+    name = models.CharField(max_length=120)
+    code = models.CharField(max_length=40)
+    head = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='headed_departments')
+    deputy = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True, related_name='deputy_departments')
+    members = models.ManyToManyField(settings.AUTH_USER_MODEL, related_name='erp_departments', blank=True)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        unique_together = [('tenant', 'code')]
+        ordering = ['name']
+        permissions = [('consolidate_requisitions', 'Can consolidate departmental requisitions')]

@@ -25,7 +25,7 @@ from Platform_API.modules.mixins import (
 from Platform_Core.audit import log_business_event
 from Platform_Core.models import OrganizationBranchRoleAssignment, OrganizationMembership, SystemNotification, TenantBranch, WorkflowEntityBinding
 from Platform_Core.platform import get_active_tenant_module_slugs
-from SL_Projects.models import Project, ProjectBranchAccess, ProjectDocument, ProjectMember, ProjectMilestone, ProjectTask, TaskAttachment, TaskCollaborator, TaskComment, TaskDependency, TaskFollowUp, TaskUpdate, TicketTaskStatusSyncPolicy
+from SL_Projects.models import Project, ProjectBranchAccess, ProjectDocument, ProjectMember, ProjectMilestone, ProjectTask, TaskAttachment, TaskChecklistItem, TaskCollaborator, TaskComment, TaskDependency, TaskFollowUp, TaskUpdate, TicketTaskStatusSyncPolicy
 from SL_Ticketing.models import Ticket
 
 
@@ -79,6 +79,8 @@ def _has_permission(user, codename):
     if membership and membership.is_org_admin:
         return True
     role = _active_role_name(user, tenant) if tenant not in (None, NO_TENANT_ACCESS) else ""
+    if role.startswith('tenant:') and not role.startswith(f'tenant:{tenant.id}:'):
+        return False
     if role and role not in {"Tenant Admin", "Platform Admin", "Super Admin"} and not user.is_superuser:
         group = user.groups.filter(name=role).first()
         if group:
@@ -142,7 +144,7 @@ def _ensure_active_tenant_user(tenant, user, label, branch=None):
         tenant=tenant, user=user, is_active=True
     )
     if branch is not None:
-        memberships = memberships.filter(Q(branch=branch) | Q(branches=branch) | Q(branch_role_assignments__branch=branch, branch_role_assignments__is_active=True) | Q(is_org_admin=True))
+        memberships = memberships.filter(Q(branch=branch) | Q(branches=branch) | Q(branch_role_assignments__branch=branch, branch_role_assignments__is_active=True) | Q(is_org_admin=True) | Q(branch__isnull=True, branches__isnull=True, branch_role_assignments__isnull=True))
     if not memberships.exists():
         scope = " in this branch" if branch is not None else ""
         raise serializers.ValidationError({
@@ -245,6 +247,21 @@ def _sync_parent_task_progress(task):
         ProjectTask.objects.filter(pk=parent.pk).exclude(progress_percentage=progress).update(progress_percentage=progress)
         parent.progress_percentage = progress
         current = parent
+
+
+def _sync_task_checklist_progress(task):
+    """Derive progress from completed deliverables instead of a typed percentage."""
+    totals = task.checklist_items.aggregate(
+        total=Count("id"), completed=Count("id", filter=Q(is_completed=True))
+    )
+    if not totals["total"]:
+        return task.progress_percentage
+    progress = round((totals["completed"] / totals["total"]) * 100)
+    ProjectTask.objects.filter(pk=task.pk).update(progress_percentage=progress)
+    task.progress_percentage = progress
+    _sync_parent_task_progress(task)
+    _sync_project_progress(task)
+    return progress
 
 
 def _notify_project_user(*, recipient, actor, tenant, title, message, route_path, source_type, source_id):
@@ -406,11 +423,29 @@ class TaskCollaboratorSerializer(serializers.ModelSerializer):
         return obj.user.get_full_name() or obj.user.username
 
 
+class TaskChecklistItemSerializer(serializers.ModelSerializer):
+    completed_by_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = TaskChecklistItem
+        fields = "__all__"
+        read_only_fields = ("task", "completed_by", "completed_at", "created_by", "created_at", "updated_at")
+
+    def get_completed_by_name(self, obj):
+        return obj.completed_by.get_full_name() or obj.completed_by.username if obj.completed_by else ""
+
+    def validate_title(self, value):
+        value = value.strip()
+        if not value:
+            raise serializers.ValidationError("Enter a deliverable or checklist item.")
+        return value
+
+
 class TaskUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = TaskUpdate
         fields = "__all__"
-        read_only_fields = ("task", "updated_by", "created_at")
+        read_only_fields = ("task", "updated_by", "progress_percentage", "created_at")
 
     def validate_progress_percentage(self, value):
         if not 0 <= value <= 100:
@@ -533,18 +568,43 @@ class ProjectMemberSerializer(serializers.ModelSerializer):
         return obj.user.get_full_name() or obj.user.username
 
 
+def _can_manage_samples(user):
+    tenant = resolve_user_tenant(user)
+    return bool(tenant not in (None, NO_TENANT_ACCESS) and (user.is_superuser or OrganizationMembership.objects.filter(user=user, tenant=tenant, is_active=True, is_org_admin=True).exists()) and _has_permission(user, 'delete_projecttask') and _has_permission(user, 'delete_project'))
+
+
+class ProjectSampleDataAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request):
+        tenant = _tenant_and_activation(request)
+        if not _can_manage_samples(request.user):
+            raise PermissionDenied('Only an organization administrator can remove sample data.')
+        from django.core.management import call_command
+        from django.core.management.base import CommandError
+        from io import StringIO
+        output = StringIO()
+        try:
+            call_command('seed_project_samples', tenant=tenant.code, clear=True, stdout=output)
+        except CommandError as exc:
+            raise serializers.ValidationError({'samples': str(exc)})
+        log_business_event(event_group='data_lifecycle', event_type='delete', tenant=tenant, actor=request.user, obj=tenant, note='Untouched project sample data removed.')
+        return Response({'detail': output.getvalue().strip()})
+
+
 class ProjectsDashboardAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
         _tenant_and_activation(request)
-        _require(request.user, "view_projecttask")
+        if not _has_permission(request.user, "view_project_dashboard"):
+            _require(request.user, "view_projecttask")
         tasks = _task_scope(request.user)
         projects = _project_scope(request.user)
         today = timezone.localdate()
         open_tasks = tasks.exclude(status__in=["completed", "cancelled"])
         return Response({
-            "access": {"view_all_tasks": _can_view_all_tasks(request.user), "role": _active_role_name(request.user, resolve_user_tenant(request.user)), "can_create_task": _has_permission(request.user, "add_projecttask"), "can_create_project": _has_permission(request.user, "add_project"), "can_export": _has_permission(request.user, "export_projecttask")},
+            "access": {"view_all_tasks": _can_view_all_tasks(request.user), "role": _active_role_name(request.user, resolve_user_tenant(request.user)), "can_create_task": _has_permission(request.user, "add_projecttask"), "can_create_project": _has_permission(request.user, "add_project"), "can_export": _has_permission(request.user, "export_projecttask"), "can_manage_samples": _can_manage_samples(request.user), "has_samples": ProjectTask.objects.filter(tenant=resolve_user_tenant(request.user), number__startswith="DEMO-V1-").exists()},
             "counts": {
                 "active_projects": projects.filter(status="active").count(),
                 "open_tasks": open_tasks.count(),
@@ -664,7 +724,7 @@ class ProjectCalendarAPIView(APIView):
 
     def get(self, request):
         _tenant_and_activation(request)
-        _require(request.user, "view_project")
+        _require(request.user, "view_projecttask")
         try:
             start = date.fromisoformat(str(request.query_params.get("start") or ""))
             end = date.fromisoformat(str(request.query_params.get("end") or ""))
@@ -683,7 +743,7 @@ class ProjectCalendarAPIView(APIView):
         milestone_owner_id = None
         if assignee_id := request.query_params.get("assignee"):
             if assignee_id == "mine":
-                tasks = tasks.filter(primary_assignee=request.user)
+                tasks = tasks.filter(_personal_tasks(request.user)).distinct()
                 milestone_owner_id = request.user.id
             else:
                 try:
@@ -867,14 +927,18 @@ class ActiveBranchTaskAssigneeListAPIView(APIView):
 
     def get(self, request):
         tenant = _tenant_and_activation(request)
-        _require(request.user, "view_projecttask")
+        if not (_has_permission(request.user, "view_project") or _has_permission(request.user, "add_project")):
+            _require(request.user, "view_projecttask")
         branch_id = _active_branch_id(request.user)
+        if not branch_id:
+            branch_ids = list(TenantBranch.objects.filter(tenant=tenant, is_active=True).values_list("pk", flat=True)[:2])
+            branch_id = branch_ids[0] if len(branch_ids) == 1 else None
         if not branch_id:
             raise PermissionDenied("Select an active branch before creating a task.")
         memberships = OrganizationMembership.objects.filter(
             tenant=tenant, is_active=True
         ).filter(
-            Q(branch_id=branch_id) | Q(branches__id=branch_id)
+            Q(branch_id=branch_id) | Q(branches__id=branch_id) | Q(branch_role_assignments__branch_id=branch_id, branch_role_assignments__is_active=True) | Q(is_org_admin=True) | Q(branch__isnull=True, branches__isnull=True, branch_role_assignments__isnull=True)
         ).select_related("user").distinct().order_by("user__first_name", "user__last_name", "user__username")
         return Response([
             {"id": membership.user_id, "name": membership.user.get_full_name() or membership.user.username}
@@ -1112,6 +1176,22 @@ class TaskStructureAPIView(APIView):
         raise serializers.ValidationError({"action": "Use subtask or dependency."})
 
 
+class TaskProjectOptionsAPIView(APIView):
+    """Minimal project labels for task filters; full project records stay protected."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        _tenant_and_activation(request)
+        if not _has_permission(request.user, 'view_project'):
+            _require(request.user, 'view_projecttask')
+        projects = _project_scope(request.user).order_by('name', 'pk')
+        if value := request.query_params.get('search'):
+            projects = projects.filter(Q(code__icontains=value) | Q(name__icontains=value))
+        paginator = ProjectsPagination()
+        page = paginator.paginate_queryset(projects, request)
+        return paginator.get_paginated_response([{'id': project.pk, 'code': project.code, 'name': project.name} for project in page])
+
+
 class ProjectListCreateAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -1129,7 +1209,9 @@ class ProjectListCreateAPIView(APIView):
             qs = qs.order_by(ordering)
         paginator = ProjectsPagination()
         page = paginator.paginate_queryset(qs, request)
-        return paginator.get_paginated_response(ProjectSerializer(page, many=True).data)
+        response = paginator.get_paginated_response(ProjectSerializer(page, many=True).data)
+        response.data['access'] = {'can_create': _has_permission(request.user, 'add_project'), 'can_export': _has_permission(request.user, 'export_project')}
+        return response
 
     @transaction.atomic
     def post(self, request):
@@ -1600,7 +1682,7 @@ class TaskListCreateAPIView(APIView):
         paginator = ProjectsPagination()
         page = paginator.paginate_queryset(qs, request)
         response = paginator.get_paginated_response(TaskSerializer(page, many=True).data)
-        response.data["access"] = {"view_all_tasks": _can_view_all_tasks(request.user), "can_create": _has_permission(request.user, "add_projecttask")}
+        response.data["access"] = {"view_all_tasks": _can_view_all_tasks(request.user), "can_create": _has_permission(request.user, "add_projecttask"), "can_export": _has_permission(request.user, "export_projecttask")}
         return response
 
     @transaction.atomic

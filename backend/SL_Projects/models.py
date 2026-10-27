@@ -204,12 +204,28 @@ class ProjectTask(AuditMetadataMixin, models.Model):
 
 
 class TaskCollaborator(models.Model):
+    ROLE_CHOICES = (("accountable", "Accountable assignee"), ("supporting", "Supporting participant"))
     task = models.ForeignKey(ProjectTask, on_delete=models.CASCADE, related_name="collaborators")
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="collaborating_project_tasks")
+    participation_role = models.CharField(max_length=20, choices=ROLE_CHOICES, default="supporting")
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         unique_together = ("task", "user")
+
+
+class TaskChecklistItem(AuditMetadataMixin, models.Model):
+    task = models.ForeignKey(ProjectTask, on_delete=models.CASCADE, related_name="checklist_items")
+    title = models.CharField(max_length=255)
+    is_completed = models.BooleanField(default=False)
+    completed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="completed_project_checklist_items")
+    completed_at = models.DateTimeField(null=True, blank=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name="created_project_checklist_items")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("id",)
 
 
 class TaskDependency(models.Model):

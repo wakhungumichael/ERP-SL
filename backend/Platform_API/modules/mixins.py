@@ -5,6 +5,7 @@ Shared DRF mixins for Platform_API module views.
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.exceptions import PermissionDenied
 from Platform_Core.models import OrganizationMembership
+from django.db.models import Q
 
 
 class ModuleAPIViewMixin:
@@ -73,21 +74,20 @@ def tenant_or_403(user, message="No organization linked to this account."):
 
 
 def has_active_permission(user, permission):
-    """Check one permission against the selected branch-role workspace."""
-    if getattr(user, "is_superuser", False):
+    """Check permissions in the active organization and selected role."""
+    if getattr(user, 'is_superuser', False):
         return True
-    membership = OrganizationMembership.objects.filter(user=user, is_active=True).order_by(
-        "-is_default", "tenant__name"
-    ).first()
+    membership = OrganizationMembership.objects.filter(user=user, is_active=True).order_by('-is_default', 'tenant__name').first()
     if membership and membership.is_org_admin:
         return True
-    if membership and membership.branch_role_assignments.filter(is_active=True).exists():
-        role_name = membership.effective_role_group_name()
-        group = user.groups.filter(name=role_name).first()
-        return bool(group and group.permissions.filter(
-            content_type__app_label=permission.split(".", 1)[0],
-            codename=permission.split(".", 1)[-1],
-        ).exists())
+    app, codename = permission.split('.', 1)
+    if membership:
+        prefix = f'tenant:{membership.tenant_id}:'
+        groups = user.groups.filter(Q(name__startswith=prefix) | ~Q(name__startswith='tenant:')).exclude(name__in=['Tenant Admin', 'Platform Admin', 'Superadmin', 'Super Admin'])
+        role = membership.effective_role_group_name()
+        if role:
+            return groups.filter(name=role, permissions__content_type__app_label=app, permissions__codename=codename).exists()
+        return groups.filter(permissions__content_type__app_label=app, permissions__codename=codename).exists() or user.user_permissions.filter(content_type__app_label=app, codename=codename).exists()
     return user.has_perm(permission)
 
 

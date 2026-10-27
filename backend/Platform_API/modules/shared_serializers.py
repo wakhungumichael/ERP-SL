@@ -1261,24 +1261,18 @@ class UserProfileSerializer(serializers.ModelSerializer):
     def get_available_roles(self, obj):
         membership = self._active_membership(obj)
         tenant_id = self.get_tenant_id(obj)
+        roles = []
         if membership:
-            assignments = membership.branch_role_assignments.filter(is_active=True).select_related("branch", "role_group")
+            assignments = membership.branch_role_assignments.filter(is_active=True).select_related('branch', 'role_group')
             if assignments.exists():
-                return [
-                    {
-                        "id": assignment.role_group_id,
-                        "assignment_id": assignment.id,
-                        "name": assignment.role_group.name,
-                        "display_name": display_role_name(assignment.role_group.name, tenant_id),
-                        "branch_id": assignment.branch_id,
-                        "branch_name": assignment.branch.name,
-                    }
-                    for assignment in assignments
-                ]
-        return [
-            {"id": group.id, "name": group.name, "display_name": display_role_name(group.name, tenant_id)}
-            for group in self._workspace_groups(obj).order_by("name")
-        ]
+                roles = [{'id': a.role_group_id, 'assignment_id': a.id, 'name': a.role_group.name, 'display_name': display_role_name(a.role_group.name, tenant_id), 'branch_id': a.branch_id, 'branch_name': a.branch.name} for a in assignments]
+        if not roles:
+            roles = [{'id': group.pk, 'name': group.name, 'display_name': display_role_name(group.name, tenant_id)} for group in self._workspace_groups(obj).order_by('name')]
+        if membership and membership.is_org_admin:
+            admin = Group.objects.filter(name='Tenant Admin').first()
+            if admin and not any(role['id'] == admin.pk for role in roles):
+                roles.append({'id': admin.pk, 'name': admin.name, 'display_name': 'Organization Administrator'})
+        return roles
 
     def get_session_timeout_minutes(self, obj):
         tenant_id = self.get_tenant_id(obj)

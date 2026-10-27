@@ -1,8 +1,13 @@
 # Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu.
 from django.urls import path
-from . import views
+from . import views, requisition_flow
 
 urlpatterns = [
+    path('setup/', requisition_flow.RequisitionSetupView.as_view(), name='procurement-setup'),
+    path('departments/', requisition_flow.DepartmentListView.as_view(), name='procurement-departments'),
+    path('departments/<int:pk>/', requisition_flow.DepartmentDetailView.as_view(), name='procurement-department'),
+    path('requisitions/<int:pk>/department-review/', requisition_flow.DepartmentDecisionView.as_view(), name='procurement-department-review'),
+    path('requisitions/consolidate/', requisition_flow.DepartmentConsolidateView.as_view(), name='procurement-consolidate'),
     path("dashboard/",             views.ProcurementDashboardView.as_view(),    name="procurement-dashboard"),
     path("approval-matrix/",       views.ApprovalMatrixListCreateView.as_view(), name="procurement-approval-matrix"),
     path("approval-matrix/<int:pk>/", views.ApprovalMatrixDetailView.as_view(), name="procurement-approval-matrix-detail"),

@@ -5,6 +5,8 @@ from . import views
 
 
 urlpatterns = [
+    path("project-options/", views.TaskProjectOptionsAPIView.as_view(), name="project-task-project-options"),
+    path("sample-data/", views.ProjectSampleDataAPIView.as_view(), name="project-sample-data"),
     path("task-alerts/", views.ProjectTaskAlertsAPIView.as_view(), name="project-task-alerts"),
     path("dashboard/", views.ProjectsDashboardAPIView.as_view(), name="projects-dashboard"),
     path("reports/", views.ProjectsReportsAPIView.as_view(), name="projects-reports"),
@@ -38,6 +40,8 @@ urlpatterns = [
     path("tasks/<int:pk>/assign/", views.TaskAssignmentAPIView.as_view(), name="project-task-assign"),
     path("tasks/<int:pk>/collaborators/", views.TaskCollaboratorListCreateAPIView.as_view(), name="project-task-collaborator-list"),
     path("tasks/<int:pk>/collaborators/<int:collaborator_id>/", views.TaskCollaboratorDetailAPIView.as_view(), name="project-task-collaborator-detail"),
+    path("tasks/<int:pk>/checklist/", views.TaskChecklistAPIView.as_view(), name="project-task-checklist"),
+    path("tasks/<int:pk>/checklist/<int:item_id>/", views.TaskChecklistDetailAPIView.as_view(), name="project-task-checklist-detail"),
     path("tasks/<int:pk>/structure/", views.TaskStructureAPIView.as_view(), name="project-task-structure"),
     path("tickets/<int:ticket_id>/tasks/", views.TicketTaskListCreateAPIView.as_view(), name="project-ticket-task-list"),
 ]

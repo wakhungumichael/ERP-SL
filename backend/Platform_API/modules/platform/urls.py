@@ -1,5 +1,6 @@
 # Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu.
 from django.urls import path
+from .setup_import import SetupImportView
 
 from .views import (
     ActiveRoleAPIView,
@@ -113,6 +114,7 @@ from .views import (
 
 
 urlpatterns = [
+    path("tenants/<int:pk>/setup-import/", SetupImportView.as_view(), name="platform-setup-import"),
     path("", platform_overview, name="platform-module-overview"),
     # Auth
     path("auth/status/", AuthStatusAPIView.as_view(), name="platform-auth-status"),

@@ -58,7 +58,9 @@ class ProjectWorkspaceTests(TestCase):
         reports = self.client.get('/api/projects/reports/').data
         self.assertEqual(reports['count'], 3)
         self.assertEqual(reports['summary']['open_tasks'], 3)
-        self.assertNotIn('hidden', str(self.client.get('/api/projects/calendar/').data))
+        calendar = self.client.get('/api/projects/calendar/?start=2026-01-01&end=2027-12-31')
+        self.assertEqual(calendar.status_code, 200)
+        self.assertNotIn('hidden', str(calendar.data))
         alerts = self.client.get('/api/projects/task-alerts/').data
         self.assertEqual(alerts['count'], 3)
 
@@ -125,3 +127,24 @@ class SampleProjectTests(TestCase):
         with self.assertRaises(CommandError):
             self.seed(clear=True)
         self.assertEqual(ProjectTask.objects.count(), 3)
+
+    def test_unscoped_members_and_organizations_without_branches_receive_samples(self):
+        other = Tenant.objects.create(name='New org', code='new-sample-org', is_active=True)
+        OrganizationMembership.objects.create(tenant=other, user=self.user)
+        self.seed()
+        self.assertEqual(ProjectTask.objects.filter(tenant=other, primary_assignee=self.user).count(), 3)
+        self.assertTrue(other.branches.filter(name='[SAMPLE] Demo workspace').exists())
+        self.seed(clear=True)
+        self.assertFalse(other.branches.exists())
+
+    def test_sample_cleanup_endpoint_requires_admin_and_is_tenant_scoped(self):
+        self.seed()
+        client = APIClient()
+        client.force_authenticate(self.user)
+        with patch('Platform_API.modules.projects.views.get_active_tenant_module_slugs', return_value={'projects-tasks'}):
+            self.assertEqual(client.delete('/api/projects/sample-data/').status_code, 403)
+            membership = OrganizationMembership.objects.get(tenant=self.tenant, user=self.user)
+            membership.is_org_admin = True
+            membership.save()
+            self.assertEqual(client.delete('/api/projects/sample-data/').status_code, 200)
+        self.assertFalse(ProjectTask.objects.filter(tenant=self.tenant).exists())

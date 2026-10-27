@@ -1,5 +1,6 @@
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { useState, useEffect } from 'react';
+import OrganizationSetupImport from '@/pages/platform/setup-import';
 import { useAuth } from '@/context/use-auth';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -502,6 +503,8 @@ function OrganizationDialog({ open, onClose }: { open: boolean; onClose: () => v
   const { token, refreshUser } = useAuth();
   const { toast } = useToast();
   const qc = useQueryClient();
+  const [openImporter, setOpenImporter] = useState(true);
+  const [createdOrganizationId, setCreatedOrganizationId] = useState<number | null>(null);
   const [form, setForm] = useState({
     name: '',
     legal_name: '',
@@ -520,6 +523,7 @@ function OrganizationDialog({ open, onClose }: { open: boolean; onClose: () => v
 
   useEffect(() => {
     if (!open) return;
+    setCreatedOrganizationId(null);
     setForm({
       name: '',
       legal_name: '',
@@ -536,17 +540,20 @@ function OrganizationDialog({ open, onClose }: { open: boolean; onClose: () => v
       ...form,
       industry_id: form.industry_id ? Number(form.industry_id) : undefined,
     }),
-    onSuccess: async () => {
+    onSuccess: async (response: any) => {
       toast({ title: 'Organization created' });
       qc.invalidateQueries({ queryKey: ['my-organizations'] });
       qc.invalidateQueries({ queryKey: ['my-tenant'] });
       await refreshUser();
-      onClose();
+      const created = response?.data ?? response;
+      if (openImporter && created?.id) setCreatedOrganizationId(Number(created.id)); else onClose();
     },
     onError: (e: any) => toast({ title: 'Create failed', description: e.message, variant: 'destructive' }),
   });
 
   const f = (k: string) => (e: React.ChangeEvent<HTMLInputElement>) => setForm(p => ({ ...p, [k]: e.target.value }));
+
+  if (createdOrganizationId) return <Dialog open={open} onOpenChange={onClose}><DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-3xl"><DialogHeader><DialogTitle>Set up {form.name}</DialogTitle></DialogHeader><OrganizationSetupImport tenantId={createdOrganizationId} /><Button variant="outline" onClick={onClose}>Done</Button></DialogContent></Dialog>;
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
@@ -597,6 +604,7 @@ function OrganizationDialog({ open, onClose }: { open: boolean; onClose: () => v
             </div>
           </div>
         </div>
+        <label className="flex items-start gap-2 text-sm"><input type="checkbox" className="mt-1" checked={openImporter} onChange={event => setOpenImporter(event.target.checked)} /><span>Open setup importer after creation<span className="block text-xs text-muted-foreground">Choose workflows, approval rules and optional starter/demo master data.</span></span></label>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Cancel</Button>
           <Button onClick={() => mutation.mutate()} disabled={mutation.isPending || !form.name.trim()}>
@@ -2458,6 +2466,7 @@ export default function OrganizationSettings() {
           <TabsTrigger value="security" className="gap-1.5"><UserCheck className="h-3.5 w-3.5" /> Security</TabsTrigger>
           <TabsTrigger value="templates" className="gap-1.5"><LayoutTemplate className="h-3.5 w-3.5" /> Templates</TabsTrigger>
           <TabsTrigger value="users" className="gap-1.5"><Users className="h-3.5 w-3.5" /> Users</TabsTrigger>
+          <TabsTrigger value="setup-import" className="gap-1.5"><Copy className="h-3.5 w-3.5" /> Setup & Demo</TabsTrigger>
           <TabsTrigger value="branches" className="gap-1.5"><GitBranch className="h-3.5 w-3.5" /> Branches</TabsTrigger>
         </TabsList>
 
@@ -3381,6 +3390,7 @@ export default function OrganizationSettings() {
         </TabsContent>
 
         {/* ── Branches Tab ──────────────────────────────────────────────── */}
+        <TabsContent value="setup-import" className="mt-6"><OrganizationSetupImport tenantId={Number(organizationId)} /></TabsContent>
         <TabsContent value="branches" className="mt-6 space-y-4">
           <div className="flex justify-between items-center">
             <p className="text-sm text-muted-foreground">{branches.length} branch{branches.length !== 1 ? 'es' : ''}</p>

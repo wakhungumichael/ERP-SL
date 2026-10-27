@@ -10,24 +10,19 @@ def _create_once(*, tenant, recipient, title, message, route_path, source_type, 
     """Create an unread reminder only once for a concrete project event."""
     if not recipient:
         return False
-    if SystemNotification.objects.filter(
+    _, created = SystemNotification.objects.get_or_create(
         tenant=tenant,
         recipient=recipient,
         source_type=source_type,
         source_id=source_id,
-    ).exists():
-        return False
-    SystemNotification.objects.create(
-        tenant=tenant,
-        recipient=recipient,
-        category="reminder",
-        title=title[:200],
-        message=message,
-        route_path=route_path,
-        source_type=source_type,
-        source_id=source_id,
+        defaults={
+            "category": "reminder",
+            "title": title[:200],
+            "message": message,
+            "route_path": route_path,
+        },
     )
-    return True
+    return created
 
 
 def run_project_reminders(*, as_of: date | None = None):

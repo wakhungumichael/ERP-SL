@@ -86,6 +86,17 @@ class Command(BaseCommand):
                 if name != preferred:
                     self.stdout.write(f'  {tenant.code}: {preferred} has no eligible members; using Tenant Admin')
                 return group
+        # An organization owner may be an employee in another organization.
+        # Use a tenant-scoped approver group without granting a global admin role.
+        admins = User.objects.filter(is_active=True).filter(
+            Q(organization_memberships__tenant=tenant, organization_memberships__is_active=True, organization_memberships__is_org_admin=True) |
+            Q(tenant_profile__tenant=tenant, tenant_profile__is_tenant_admin=True)
+        ).distinct()
+        if admins.exists():
+            Group.objects.get_or_create(name='Tenant Admin')
+            group, _ = Group.objects.get_or_create(name=f'tenant:{tenant.pk}:Organization Approvers')
+            group.user_set.add(*admins)
+            return group
         raise CommandError(f'{tenant.code}: no active approver belongs to {preferred} or Tenant Admin. No workflows were seeded.')
 
     def _transition(self, workflow, source, target, key, **kwargs):

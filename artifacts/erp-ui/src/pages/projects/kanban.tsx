@@ -73,7 +73,7 @@ export default function ProjectKanban() {
     queryKey: ["projects-kanban-options", token, (user as any)?.organization_id, (user as any)?.branch_id, (user as any)?.active_role_group_name],
     enabled: !!token,
     queryFn: async () => {
-      const response = await fetch("/api/projects/projects/?page_size=100", {
+      const response = await fetch("/api/projects/project-options/?page_size=100", {
         headers: { Authorization: `Token ${token}` },
       });
       if (!response.ok)
@@ -127,7 +127,7 @@ export default function ProjectKanban() {
       </div>
       {tasks.isError && <p role="alert" className="mb-4 text-sm text-destructive">{tasks.error.message}</p>}
       <p className="mb-3 text-xs text-muted-foreground">{tasks.isLoading ? 'Loading tasks…' : `${tasks.data?.count ?? 0} accessible tasks · ${tasks.data?.access.view_all_tasks ? 'Workspace view' : 'Your work and role assignments'}`}</p>
-      <div className="overflow-x-auto pb-3"><div className="grid min-w-max grid-cols-5 gap-4">
+      <div className="overflow-x-auto pb-3"><div className="grid min-w-max grid-flow-col auto-cols-[18rem] gap-4">
         {columns.map(([status, title, tone]) => {
           const columnTasks = list.filter((task) => task.status === status);
           return (

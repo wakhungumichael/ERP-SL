@@ -10,6 +10,8 @@ Covers:
 from decimal import Decimal
 
 from django.utils import timezone
+from django.db import transaction
+from rest_framework.exceptions import ValidationError
 
 from rest_framework import serializers, status
 from rest_framework.permissions import IsAuthenticated
@@ -26,7 +28,7 @@ from Platform_API.modules.mixins import (
 )
 from SL_Procurement.models import Bill, BillLineItem, MatchException, PaymentQueueItem
 from SL_Sales.models import Product
-from SL_Budgeting.models import BudgetCommitment
+from SL_Budgeting.models import BudgetCommitment, BudgetLine
 
 
 def _get_tenant_default_tax_rate(tenant):
@@ -258,33 +260,41 @@ def _run_three_way_match(bill, *, tolerance_percent=Decimal("2.00")):
     return {"status": status_value, "exceptions": list(bill.match_exceptions.values("id", "exception_type", "message", "variance_percent"))}
 
 
+@transaction.atomic
 def _actualize_budget_from_bill(bill):
+    """Move only the billed amount from obligation to actual, once per bill."""
     po = bill.purchase_order
     if not po:
         return False
-    commitment = BudgetCommitment.objects.filter(
-        tenant=bill.tenant,
-        source_type="purchase_order",
-        source_reference=po.reference,
-        state="obligated",
-    ).select_related("budget_line").first()
-    if not commitment:
+    reference = f'bill:{bill.pk}'
+    existing = BudgetCommitment.objects.filter(tenant=bill.tenant, source_type='bill', source_reference=reference, state='actual').first()
+    # Retain compatibility with bills actualized before per-bill references.
+    if not existing and not Bill.objects.filter(tenant=bill.tenant, bill_number=bill.bill_number).exclude(pk=bill.pk).exists():
+        existing = BudgetCommitment.objects.filter(tenant=bill.tenant, source_type='bill', source_reference=bill.bill_number, state='actual').first()
+    obligation = BudgetCommitment.objects.filter(tenant=bill.tenant, source_type='purchase_order', source_reference=po.reference, state='obligated').first()
+    if not obligation and not existing:
         return False
-
-    budget_line = commitment.budget_line
-    amount = Decimal(str(bill.total or commitment.amount or 0))
-    previous_amount = Decimal(str(commitment.amount or 0))
-
-    budget_line.obligated_amount = max(Decimal("0.00"), Decimal(str(budget_line.obligated_amount or 0)) - previous_amount)
-    budget_line.actual_amount = Decimal(str(budget_line.actual_amount or 0)) + amount
-    budget_line.save(update_fields=["obligated_amount", "actual_amount", "updated_at"])
-
-    commitment.state = "actual"
-    commitment.source_type = "bill"
-    commitment.source_reference = bill.bill_number or f"bill:{bill.pk}"
-    commitment.amount = amount
-    commitment.released_at = timezone.now()
-    commitment.save(update_fields=["state", "source_type", "source_reference", "amount", "released_at", "updated_at"])
+    line = BudgetLine.objects.select_for_update().select_related('budget').get(pk=(obligation or existing).budget_line_id)
+    existing = BudgetCommitment.objects.select_for_update().filter(pk=existing.pk).first() if existing else None
+    obligation = BudgetCommitment.objects.select_for_update().filter(pk=obligation.pk).first() if obligation else None
+    amount = Decimal(str(bill.total or 0))
+    delta = amount - (existing.amount if existing else Decimal('0'))
+    if delta == 0:
+        return True
+    released = min(max(delta, Decimal('0')), obligation.amount) if obligation else Decimal('0')
+    if delta > line.available_amount + released and line.budget.control_mode == 'hard':
+        raise ValidationError({'budget': 'The supplier bill exceeds the remaining budget and purchase-order obligation.'})
+    line.obligated_amount = max(Decimal('0'), line.obligated_amount-released)
+    line.actual_amount += delta
+    line.save(update_fields=['obligated_amount', 'actual_amount', 'updated_at'])
+    if obligation:
+        obligation.amount -= released
+        obligation.save(update_fields=['amount', 'updated_at'])
+    if existing:
+        existing.amount = amount
+        existing.save(update_fields=['amount', 'updated_at'])
+    else:
+        BudgetCommitment.objects.create(tenant=bill.tenant, budget_line=line, source_type='bill', source_reference=reference, state='actual', amount=amount, created_by=bill.created_by, metadata={'bill_id': bill.pk, 'purchase_order_id': po.pk})
     return True
 
 
@@ -342,6 +352,7 @@ class BillListCreateView(APIView):
             qs = qs.filter(issue_date__lte=dt)
         return Response(BillSerializer(qs, many=True).data)
 
+    @transaction.atomic
     def post(self, request):
         tenant = _tenant_or_403(request.user)
         ser = BillWriteSerializer(data=request.data)
@@ -388,6 +399,7 @@ class BillDetailView(APIView):
             return Response({"error": "Not found."}, status=status.HTTP_404_NOT_FOUND)
         return Response(BillSerializer(obj).data)
 
+    @transaction.atomic
     def patch(self, request, pk):
         obj = self._get(pk, request.user)
         if not obj:
@@ -403,6 +415,9 @@ class BillDetailView(APIView):
         )
         if period_error:
             return period_error
+        if obj.status in {'approved', 'paid'}:
+            if any(key not in {'notes', 'status'} for key in request.data) or request.data.get('status', obj.status) not in {'approved', 'paid'} or obj.status == 'paid' and request.data.get('status', 'paid') != 'paid':
+                raise ValidationError({'status': 'Approved or paid supplier bills are locked. Only notes and forward payment status may change.'})
         updated = ser.save()
         try:
             sync_bill_posting(updated)
@@ -416,6 +431,8 @@ class BillDetailView(APIView):
         obj = self._get(pk, request.user)
         if not obj:
             return Response({"error": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        if obj.status != "draft":
+            raise ValidationError({"status": "Only draft supplier bills may be deleted."})
         obj.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 

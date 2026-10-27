@@ -75,8 +75,10 @@ import WeighbridgeSettings from "@/pages/weighbridge/settings";
 import OverweightLog from "@/pages/weighbridge/overweight-log";
 import Discrepancies from "@/pages/weighbridge/discrepancies";
 import ReportsDashboard from "@/pages/reports/dashboard";
+import HRWorkforce from "@/pages/hr/workforce";
 import HRStaff from "@/pages/hr/staff";
 import PurchaseOrders from "@/pages/procurement/purchase-orders";
+import Departments from "@/pages/procurement/departments";
 import ProcurementRequisitions from "@/pages/procurement/requisitions";
 import ProcurementApprovalRules from "@/pages/procurement/approval-rules";
 import GoodsReceiptsPage from "@/pages/procurement/receipts";
@@ -652,6 +654,7 @@ function Router() {
       </Route>
 
       {/* HR */}
+      {(['employees', 'leave', 'requests', 'settings', 'my-payslips'] as const).map(mode => <Route key={mode} path={`/hr/${mode}`}><Shell><HRWorkforce mode={mode} /></Shell></Route>)}
       <Route path="/hr/staff">
         <Shell>
           <HRStaff />
@@ -659,6 +662,7 @@ function Router() {
       </Route>
 
       {/* Procurement */}
+      <Route path="/procurement/departments"><Shell><Departments /></Shell></Route>
       <Route path="/procurement/approval-rules">
         <Shell>
           <ProcurementApprovalRules />

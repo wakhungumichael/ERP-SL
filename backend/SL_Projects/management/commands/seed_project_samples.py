@@ -6,7 +6,7 @@ from django.db import transaction
 from django.db.models import Q, F
 from django.utils import timezone
 
-from Platform_Core.models import OrganizationMembership, Tenant
+from Platform_Core.models import OrganizationMembership, SystemNotification, Tenant, TenantBranch
 from SL_Projects.models import Project, ProjectMilestone, ProjectTask, TaskFollowUp
 
 MARKER = '[ERP SAMPLE v1]'
@@ -42,13 +42,15 @@ class Command(BaseCommand):
 
     def seed(self, tenant):
         today = timezone.localdate()
+        if not tenant.branches.filter(is_active=True).exists():
+            TenantBranch.objects.get_or_create(tenant=tenant, name='[SAMPLE] Demo workspace', defaults={'is_active': True})
         branches = tenant.branches.filter(is_active=True).order_by('pk')
         created_projects = created_tasks = 0
         for branch in branches:
             members = list(OrganizationMembership.objects.filter(
                 tenant=tenant, is_active=True, user__is_active=True,
             ).filter(Q(branch=branch) | Q(branches=branch) | Q(is_org_admin=True) |
-                     Q(branch_role_assignments__branch=branch, branch_role_assignments__is_active=True))
+                     Q(branch_role_assignments__branch=branch, branch_role_assignments__is_active=True) | Q(branch__isnull=True, branches__isnull=True, branch_role_assignments__isnull=True))
                 .select_related('user').distinct().order_by('pk'))
             # No fake accounts, branch assignments, privileges, or module activations.
             if not members:
@@ -56,7 +58,7 @@ class Command(BaseCommand):
             project, made = Project.objects.get_or_create(
                 tenant=tenant, code=f'{PREFIX}PRJ-{branch.pk}',
                 defaults=dict(branch=branch, name='[SAMPLE] Customer delivery project', description=MARKER,
-                              status='active', start_date=today-timedelta(days=7), target_end_date=today+timedelta(days=21)),
+                              status='active', progress_percentage=40, start_date=today-timedelta(days=7), target_end_date=today+timedelta(days=21)),
             )
             created_projects += int(made)
             if project.description != MARKER:
@@ -89,8 +91,8 @@ class Command(BaseCommand):
         self.stdout.write(f'{tenant.code}: created {created_projects} sample projects, {created_tasks} sample tasks.')
 
     def clear(self, tenant):
-        projects = Project.objects.select_for_update().filter(tenant=tenant, code__startswith=PREFIX, description=MARKER)
-        tasks = ProjectTask.objects.select_for_update().filter(tenant=tenant, number__startswith=PREFIX, description=MARKER)
+        projects = Project.objects.filter(tenant=tenant, code__startswith=PREFIX, description=MARKER)
+        tasks = ProjectTask.objects.filter(tenant=tenant, number__startswith=PREFIX, description=MARKER)
         # Refuse cascading deletion of real work added to a sample, or edited samples.
         changed = tasks.filter(updated_at__gt=F('created_at') + timedelta(seconds=1)).exists()
         changed |= projects.filter(updated_at__gt=F('created_at') + timedelta(seconds=1)).exists()
@@ -107,6 +109,16 @@ class Command(BaseCommand):
         if changed:
             raise CommandError(f'{tenant.code}: sample records have been edited or contain real work; review and delete those records individually.')
         count = tasks.count()
+        SystemNotification.objects.filter(tenant=tenant, source_type='project_task_overdue', source_id__in=tasks.values('pk')).delete()
+        SystemNotification.objects.filter(tenant=tenant, source_type='project_task_follow_up_due', source_id__in=TaskFollowUp.objects.filter(task__in=tasks).values('pk')).delete()
         tasks.delete()
         projects.delete()
+        for branch in tenant.branches.filter(name='[SAMPLE] Demo workspace'):
+            if branch.owned_projects.exists() or branch.project_tasks.exists() or branch.organization_memberships.exists() or branch.organization_member_assignments.exists() or branch.member_role_assignments.exists():
+                continue
+            from django.db.models.deletion import ProtectedError
+            try:
+                branch.delete()
+            except ProtectedError:
+                raise CommandError(f'{tenant.code}: sample branch is now used by real records; remove it manually after review.')
         self.stdout.write(f'{tenant.code}: removed {count} untouched sample tasks and their sample projects.')

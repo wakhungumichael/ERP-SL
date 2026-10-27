@@ -4,6 +4,7 @@ from django.utils import timezone
 from rest_framework import serializers, status
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import BasePermission
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -39,6 +40,14 @@ def _user_belongs_to_tenant(user_obj, tenant):
     ).exists()
 
 
+class PayrollPermission(BasePermission):
+    def has_permission(self, request, view):
+        from .workforce import can
+        model = 'payrecord' if isinstance(view, (PayRecordListCreateView, PayRecordDetailView)) else 'payperiod'
+        action = {'GET': 'view', 'POST': 'add', 'PATCH': 'change', 'DELETE': 'delete'}.get(request.method, 'view')
+        return can(request.user, f'{action}_{model}')
+
+
 # ── Serializers ────────────────────────────────────────────────────────────────
 
 class PayRecordSerializer(serializers.ModelSerializer):
@@ -49,6 +58,14 @@ class PayRecordSerializer(serializers.ModelSerializer):
     def get_employee_name(self, obj):
         return obj.employee.get_full_name() or obj.employee.username
 
+    def validate(self, data):
+        from decimal import Decimal
+        values = {name: data.get(name, getattr(self.instance, name, Decimal('0'))) for name in ['basic_pay', 'allowances', 'deductions']}
+        if any(value < 0 for value in values.values()) or values['deductions'] > values['basic_pay'] + values['allowances']:
+            raise ValidationError({'pay': 'Use non-negative pay values; deductions cannot exceed gross pay.'})
+        data['net_pay'] = values['basic_pay'] + values['allowances'] - values['deductions']
+        return data
+
     class Meta:
         model  = PayRecord
         fields = [
@@ -56,7 +73,7 @@ class PayRecordSerializer(serializers.ModelSerializer):
             "basic_pay", "allowances", "deductions", "net_pay", "notes",
             "created_at", "updated_at",
         ]
-        read_only_fields = ["id", "created_at", "updated_at"]
+        read_only_fields = ["id", "net_pay", "created_at", "updated_at"]
 
 
 class PayPeriodSerializer(serializers.ModelSerializer):
@@ -68,6 +85,15 @@ class PayPeriodSerializer(serializers.ModelSerializer):
 
     def get_total_net(self, obj):
         return float(sum(r.net_pay for r in obj.records.all()))
+
+    def validate(self, data):
+        start = data.get('period_start', getattr(self.instance, 'period_start', None))
+        end = data.get('period_end', getattr(self.instance, 'period_end', None))
+        if start and end and end < start:
+            raise ValidationError({'period_end': 'Period end must not precede the start.'})
+        if self.instance and self.instance.status == 'Completed':
+            raise ValidationError({'status': 'Completed payroll periods are locked.'})
+        return data
 
     class Meta:
         model  = PayPeriod
@@ -81,7 +107,7 @@ class PayPeriodSerializer(serializers.ModelSerializer):
 # ── Views ──────────────────────────────────────────────────────────────────────
 
 class PayPeriodListCreateView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, PayrollPermission]
 
     def get(self, request):
         if not HAS_HR_MODELS:
@@ -111,7 +137,7 @@ class PayPeriodListCreateView(APIView):
 
 
 class PayPeriodDetailView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, PayrollPermission]
 
     def _get(self, pk):
         tenant = _resolved_tenant_or_403(self.request.user)
@@ -147,13 +173,15 @@ class PayPeriodDetailView(APIView):
         period = self._get(pk)
         if not period:
             return Response({"error": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        if period.status != "Draft":
+            raise ValidationError({"status": "Only draft payroll periods may be deleted."})
         period.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class PayRecordListCreateView(APIView):
     """List / create pay records for a given pay period."""
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, PayrollPermission]
 
     def get(self, request, period_pk):
         if not HAS_HR_MODELS:
@@ -171,6 +199,8 @@ class PayRecordListCreateView(APIView):
             period = PayPeriod.objects.get(pk=period_pk, tenant=tenant)
         except PayPeriod.DoesNotExist:
             return Response({"error": "Period not found."}, status=status.HTTP_404_NOT_FOUND)
+        if period.status == "Completed":
+            raise ValidationError({"status": "Completed payroll records are locked."})
         employee_id = request.data.get("employee")
         if employee_id:
             employee = User.objects.filter(pk=employee_id).first()
@@ -178,15 +208,17 @@ class PayRecordListCreateView(APIView):
                 return Response({"error": "Employee not found."}, status=status.HTTP_404_NOT_FOUND)
             if not _user_belongs_to_tenant(employee, tenant):
                 raise ValidationError({"employee": "Employee must belong to the same organization."})
-        data = {**request.data, "period": period.pk}
+        data = request.data.copy()
         ser = PayRecordSerializer(data=data)
         ser.is_valid(raise_exception=True)
-        record = ser.save()
+        if period.records.filter(employee=ser.validated_data["employee"]).exists():
+            raise ValidationError({"employee": "This employee already has a record in this period."})
+        record = ser.save(period=period)
         return Response(PayRecordSerializer(record).data, status=status.HTTP_201_CREATED)
 
 
 class PayRecordDetailView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, PayrollPermission]
 
     def patch(self, request, period_pk, pk):
         if not HAS_HR_MODELS:
@@ -196,6 +228,8 @@ class PayRecordDetailView(APIView):
             record = PayRecord.objects.get(pk=pk, period_id=period_pk, period__tenant=tenant)
         except PayRecord.DoesNotExist:
             return Response({"error": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        if record.period.status == "Completed":
+            raise ValidationError({"status": "Completed payroll records are locked."})
         employee_id = request.data.get("employee")
         if employee_id:
             employee = User.objects.filter(pk=employee_id).first()

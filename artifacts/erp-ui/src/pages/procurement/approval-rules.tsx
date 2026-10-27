@@ -1,17 +1,38 @@
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
-import { useMemo, useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Plus, ShieldCheck } from 'lucide-react';
+import { useMemo, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Plus, ShieldCheck } from "lucide-react";
 
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { useAuth } from '@/context/use-auth';
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { useToast } from "@/hooks/use-toast";
+import { apiErrorFromResponse } from "@/lib/api-errors";
+import { useAuth } from "@/context/use-auth";
 
 type GroupRow = { id: number; name: string };
 type RuleRow = {
@@ -27,48 +48,59 @@ type RuleRow = {
 };
 
 function currency(value: string | number | null | undefined) {
-  return new Intl.NumberFormat('en-KE', {
-    style: 'currency',
-    currency: 'KES',
+  return new Intl.NumberFormat("en-KE", {
+    style: "currency",
+    currency: "KES",
     maximumFractionDigits: 2,
   }).format(Number(value ?? 0));
 }
 
 export default function ProcurementApprovalRules() {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
+  const { toast } = useToast();
+  const [editing, setEditing] = useState<RuleRow | null>(null);
+  const [deleting, setDeleting] = useState<RuleRow | null>(null);
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState('10');
+  const [pageSize, setPageSize] = useState("10");
   const [form, setForm] = useState({
-    name: '',
-    cost_center: '',
-    min_amount: '0',
-    max_amount: '',
-    step_order: '1',
-    approval_group: '',
+    name: "",
+    cost_center: "",
+    min_amount: "0",
+    max_amount: "",
+    step_order: "1",
+    approval_group: "",
   });
 
   const rulesQuery = useQuery({
-    queryKey: ['procurement-approval-matrix'],
+    queryKey: [
+      "procurement-approval-matrix",
+      token,
+      (user as any)?.organization_id,
+    ],
     enabled: !!token,
     queryFn: async () => {
-      const res = await fetch('/api/procurement/approval-matrix/', {
+      const res = await fetch("/api/procurement/approval-matrix/", {
         headers: { Authorization: `Token ${token}` },
       });
-      if (!res.ok) throw new Error('Failed to load approval rules');
+      if (!res.ok) throw new Error("Failed to load approval rules");
       return res.json();
     },
   });
 
   const groupsQuery = useQuery({
-    queryKey: ['procurement-approval-groups'],
+    queryKey: [
+      "procurement-approval-groups",
+      token,
+      (user as any)?.organization_id,
+    ],
     enabled: !!token,
     queryFn: async () => {
-      const res = await fetch('/api/procurement/approval-groups/', {
+      const res = await fetch("/api/procurement/approval-groups/", {
         headers: { Authorization: `Token ${token}` },
       });
-      if (!res.ok) throw new Error('Failed to load groups');
+      if (!res.ok) throw new Error("Failed to load groups");
       return res.json();
     },
   });
@@ -82,30 +114,88 @@ export default function ProcurementApprovalRules() {
         step_order: Number(form.step_order),
         approval_group: Number(form.approval_group),
       };
-      const res = await fetch('/api/procurement/approval-matrix/', {
-        method: 'POST',
-        headers: {
-          Authorization: `Token ${token}`,
-          'Content-Type': 'application/json',
+      const res = await fetch(
+        editing
+          ? `/api/procurement/approval-matrix/${editing.id}/`
+          : "/api/procurement/approval-matrix/",
+        {
+          method: editing ? "PATCH" : "POST",
+          headers: {
+            Authorization: `Token ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(payload),
         },
-        body: JSON.stringify(payload),
-      });
-      if (!res.ok) throw new Error('Failed to save approval rule');
+      );
+      if (!res.ok)
+        throw await apiErrorFromResponse(res, "Failed to save approval rule");
       return res.json();
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['procurement-approval-matrix'] });
+      qc.invalidateQueries({ queryKey: ["procurement-approval-matrix"] });
       setOpen(false);
+      setEditing(null);
+      toast({ title: "Approval route saved" });
       setForm({
-        name: '',
-        cost_center: '',
-        min_amount: '0',
-        max_amount: '',
-        step_order: '1',
-        approval_group: '',
+        name: "",
+        cost_center: "",
+        min_amount: "0",
+        max_amount: "",
+        step_order: "1",
+        approval_group: "",
       });
     },
   });
+
+  const actionMutation = useMutation({
+    mutationFn: async ({
+      rule,
+      remove,
+    }: {
+      rule: RuleRow;
+      remove?: boolean;
+    }) => {
+      const res = await fetch(`/api/procurement/approval-matrix/${rule.id}/`, {
+        method: remove ? "DELETE" : "PATCH",
+        headers: {
+          Authorization: `Token ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: remove
+          ? undefined
+          : JSON.stringify({ is_active: !rule.is_active }),
+      });
+      if (!res.ok)
+        throw await apiErrorFromResponse(
+          res,
+          "Could not update approval route.",
+        );
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["procurement-approval-matrix"] });
+      setDeleting(null);
+      toast({ title: "Approval routing updated" });
+    },
+    onError: (error: Error) =>
+      toast({
+        title: "Approval route",
+        description: error.message,
+        variant: "destructive",
+      }),
+  });
+  const access = rulesQuery.data?.access ?? {};
+  const editRule = (rule: RuleRow) => {
+    setEditing(rule);
+    setForm({
+      name: rule.name,
+      cost_center: rule.cost_center,
+      min_amount: rule.min_amount,
+      max_amount: rule.max_amount ?? "",
+      step_order: String(rule.step_order),
+      approval_group: String(rule.approval_group),
+    });
+    setOpen(true);
+  };
 
   const rules: RuleRow[] = rulesQuery.data?.results ?? [];
   const groups: GroupRow[] = groupsQuery.data?.results ?? [];
@@ -113,7 +203,7 @@ export default function ProcurementApprovalRules() {
   const grouped = useMemo(() => {
     const map = new Map<string, RuleRow[]>();
     for (const rule of rules) {
-      const key = rule.cost_center || 'All Cost Centers';
+      const key = rule.cost_center || "All Cost Centers";
       const current = map.get(key) ?? [];
       current.push(rule);
       map.set(key, current);
@@ -129,7 +219,7 @@ export default function ProcurementApprovalRules() {
   const pagedGrouped = useMemo(() => {
     const map = new Map<string, RuleRow[]>();
     for (const rule of pagedRules) {
-      const key = rule.cost_center || 'All cost centers';
+      const key = rule.cost_center || "All cost centers";
       const current = map.get(key) ?? [];
       current.push(rule);
       map.set(key, current);
@@ -143,53 +233,120 @@ export default function ProcurementApprovalRules() {
     <div className="space-y-6 p-6">
       <div className="flex items-end justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-semibold tracking-tight">Approval routing</h1>
+          <h1 className="text-3xl font-semibold tracking-tight">
+            Approval routing
+          </h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Decide who approves spending by amount band and, if needed, by cost center.
+            Decide who approves spending by amount band and, if needed, by cost
+            center.
           </p>
         </div>
         <Dialog open={open} onOpenChange={setOpen}>
           <DialogTrigger asChild>
-            <Button><Plus className="mr-2 h-4 w-4" />Add route</Button>
+            <Button
+              disabled={!access.add}
+              onClick={() => {
+                setEditing(null);
+                setForm({
+                  name: "",
+                  cost_center: "",
+                  min_amount: "0",
+                  max_amount: "",
+                  step_order: "1",
+                  approval_group: "",
+                });
+              }}
+            >
+              <Plus className="mr-2 h-4 w-4" />
+              Add route
+            </Button>
           </DialogTrigger>
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>New approval route</DialogTitle>
+              <DialogTitle>
+                {editing ? "Edit approval route" : "New approval route"}
+              </DialogTitle>
             </DialogHeader>
             <div className="grid gap-4 md:grid-cols-2">
               <div className="space-y-2">
                 <Label>Route name</Label>
-                <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+                <Input
+                  value={form.name}
+                  onChange={(e) => setForm({ ...form, name: e.target.value })}
+                />
               </div>
               <div className="space-y-2">
                 <Label>Cost center</Label>
-                <Input value={form.cost_center} onChange={(e) => setForm({ ...form, cost_center: e.target.value })} placeholder="Leave blank to use this everywhere" />
+                <Input
+                  value={form.cost_center}
+                  onChange={(e) =>
+                    setForm({ ...form, cost_center: e.target.value })
+                  }
+                  placeholder="Leave blank to use this everywhere"
+                />
               </div>
               <div className="space-y-2">
                 <Label>Minimum amount</Label>
-                <Input value={form.min_amount} onChange={(e) => setForm({ ...form, min_amount: e.target.value })} />
+                <Input
+                  value={form.min_amount}
+                  onChange={(e) =>
+                    setForm({ ...form, min_amount: e.target.value })
+                  }
+                />
               </div>
               <div className="space-y-2">
                 <Label>Maximum amount</Label>
-                <Input value={form.max_amount} onChange={(e) => setForm({ ...form, max_amount: e.target.value })} placeholder="Leave blank if there is no cap" />
+                <Input
+                  value={form.max_amount}
+                  onChange={(e) =>
+                    setForm({ ...form, max_amount: e.target.value })
+                  }
+                  placeholder="Leave blank if there is no cap"
+                />
               </div>
               <div className="space-y-2">
                 <Label>Approval step</Label>
-                <Input value={form.step_order} onChange={(e) => setForm({ ...form, step_order: e.target.value })} />
+                <Input
+                  value={form.step_order}
+                  onChange={(e) =>
+                    setForm({ ...form, step_order: e.target.value })
+                  }
+                />
               </div>
               <div className="space-y-2">
                 <Label>Approver group</Label>
-                <Select value={form.approval_group} onValueChange={(value) => setForm({ ...form, approval_group: value })}>
-                  <SelectTrigger><SelectValue placeholder="Choose a group" /></SelectTrigger>
+                <Select
+                  value={form.approval_group}
+                  onValueChange={(value) =>
+                    setForm({ ...form, approval_group: value })
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Choose a group" />
+                  </SelectTrigger>
                   <SelectContent>
                     {groups.map((group) => (
-                      <SelectItem key={group.id} value={String(group.id)}>{group.name}</SelectItem>
+                      <SelectItem key={group.id} value={String(group.id)}>
+                        {group.name}
+                      </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               </div>
+              {createMutation.error ? (
+                <p className="text-destructive md:col-span-2">
+                  {createMutation.error.message}
+                </p>
+              ) : null}
+              <p className="text-sm text-muted-foreground md:col-span-2">
+                Saving changes makes approval rules govern new requisitions.
+                Requests already in approval keep their recorded steps.
+              </p>
               <div className="md:col-span-2 flex justify-end">
-                <Button onClick={() => createMutation.mutate()} disabled={createMutation.isPending || !form.approval_group}>
+                <Button
+                  onClick={() => createMutation.mutate()}
+                  disabled={createMutation.isPending || !form.approval_group}
+                >
                   Save route
                 </Button>
               </div>
@@ -198,18 +355,69 @@ export default function ProcurementApprovalRules() {
         </Dialog>
       </div>
 
+      <p className="text-sm text-muted-foreground">
+        Current routing source:{" "}
+        {rulesQuery.data?.routing_source === "matrix"
+          ? "Approval rules"
+          : "Workflow Center"}
+        . Changes here apply to future submissions; existing approval decisions
+        are retained.
+      </p>
+      <Dialog
+        open={!!deleting}
+        onOpenChange={(value) => {
+          if (!value) setDeleting(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete approval route?</DialogTitle>
+          </DialogHeader>
+          <p>
+            Delete {deleting?.name}? Its past approval decisions will be
+            retained. New requisitions will use the remaining active rules.
+          </p>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setDeleting(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={actionMutation.isPending}
+              onClick={() =>
+                deleting &&
+                actionMutation.mutate({ rule: deleting, remove: true })
+              }
+            >
+              Delete route
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
       <div className="grid gap-4 md:grid-cols-3">
         <Card>
-          <CardHeader><CardTitle className="text-base">Rules</CardTitle></CardHeader>
-          <CardContent className="text-3xl font-semibold">{rules.length}</CardContent>
+          <CardHeader>
+            <CardTitle className="text-base">Rules</CardTitle>
+          </CardHeader>
+          <CardContent className="text-3xl font-semibold">
+            {rules.length}
+          </CardContent>
         </Card>
         <Card>
-          <CardHeader><CardTitle className="text-base">Active</CardTitle></CardHeader>
-          <CardContent className="text-3xl font-semibold">{rules.filter((rule) => rule.is_active).length}</CardContent>
+          <CardHeader>
+            <CardTitle className="text-base">Active</CardTitle>
+          </CardHeader>
+          <CardContent className="text-3xl font-semibold">
+            {rules.filter((rule) => rule.is_active).length}
+          </CardContent>
         </Card>
         <Card>
-          <CardHeader><CardTitle className="text-base">Groups Used</CardTitle></CardHeader>
-          <CardContent className="text-3xl font-semibold">{new Set(rules.map((rule) => rule.approval_group_name)).size}</CardContent>
+          <CardHeader>
+            <CardTitle className="text-base">Groups Used</CardTitle>
+          </CardHeader>
+          <CardContent className="text-3xl font-semibold">
+            {new Set(rules.map((rule) => rule.approval_group_name)).size}
+          </CardContent>
         </Card>
       </div>
 
@@ -228,25 +436,71 @@ export default function ProcurementApprovalRules() {
                   <TableHead>Step</TableHead>
                   <TableHead>Group</TableHead>
                   <TableHead>Status</TableHead>
+                  <TableHead>Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {items.sort((a, b) => a.step_order - b.step_order).map((rule) => (
-                  <TableRow key={rule.id}>
-                    <TableCell className="font-medium">{rule.name}</TableCell>
-                    <TableCell>
-                      {currency(rule.min_amount)} to {rule.max_amount ? currency(rule.max_amount) : 'No limit'}
-                    </TableCell>
-                    <TableCell>{rule.step_order}</TableCell>
-                    <TableCell>{rule.approval_group_name}</TableCell>
-                    <TableCell>
-                      <Badge className={rule.is_active ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-700'}>
-                        <ShieldCheck className="mr-1 h-3 w-3" />
-                        {rule.is_active ? 'Active' : 'Inactive'}
-                      </Badge>
-                    </TableCell>
-                  </TableRow>
-                ))}
+                {items
+                  .sort((a, b) => a.step_order - b.step_order)
+                  .map((rule) => (
+                    <TableRow key={rule.id}>
+                      <TableCell className="font-medium">{rule.name}</TableCell>
+                      <TableCell>
+                        {currency(rule.min_amount)} to{" "}
+                        {rule.max_amount
+                          ? currency(rule.max_amount)
+                          : "No limit"}
+                      </TableCell>
+                      <TableCell>{rule.step_order}</TableCell>
+                      <TableCell>{rule.approval_group_name}</TableCell>
+                      <TableCell>
+                        <Badge
+                          className={
+                            rule.is_active
+                              ? "bg-emerald-100 text-emerald-700"
+                              : "bg-slate-100 text-slate-700"
+                          }
+                        >
+                          <ShieldCheck className="mr-1 h-3 w-3" />
+                          {rule.is_active ? "Active" : "Inactive"}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex flex-wrap gap-2">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={
+                              !access.change || actionMutation.isPending
+                            }
+                            onClick={() => editRule(rule)}
+                          >
+                            Edit
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={
+                              !access.change || actionMutation.isPending
+                            }
+                            onClick={() => actionMutation.mutate({ rule })}
+                          >
+                            {rule.is_active ? "Deactivate" : "Activate"}
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="destructive"
+                            disabled={
+                              !access.delete || actionMutation.isPending
+                            }
+                            onClick={() => setDeleting(rule)}
+                          >
+                            Delete
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
               </TableBody>
             </Table>
           </CardContent>
@@ -256,11 +510,18 @@ export default function ProcurementApprovalRules() {
       {rules.length > 0 ? (
         <div className="flex flex-col gap-3 rounded-lg border p-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="text-sm text-muted-foreground">
-            Showing page {page} of {totalPages} with {rules.length} approval routes
+            Showing page {page} of {totalPages} with {rules.length} approval
+            routes
           </div>
           <div className="flex items-center gap-3">
             <span className="text-sm text-muted-foreground">Rows</span>
-            <Select value={pageSize} onValueChange={(value) => { setPageSize(value); setPage(1); }}>
+            <Select
+              value={pageSize}
+              onValueChange={(value) => {
+                setPageSize(value);
+                setPage(1);
+              }}
+            >
               <SelectTrigger className="w-24">
                 <SelectValue />
               </SelectTrigger>
@@ -270,8 +531,22 @@ export default function ProcurementApprovalRules() {
                 <SelectItem value="50">50</SelectItem>
               </SelectContent>
             </Select>
-            <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage(page - 1)}>Previous</Button>
-            <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage(page + 1)}>Next</Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={page <= 1}
+              onClick={() => setPage(page - 1)}
+            >
+              Previous
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={page >= totalPages}
+              onClick={() => setPage(page + 1)}
+            >
+              Next
+            </Button>
           </div>
         </div>
       ) : null}
