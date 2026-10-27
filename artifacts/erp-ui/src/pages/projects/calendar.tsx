@@ -81,9 +81,12 @@ export default function ProjectCalendar() {
     queryKey: ["projects-calendar-options"],
     enabled: !!token,
     queryFn: async () => {
-      const response = await fetch("/api/projects/project-options/?page_size=100", {
-        headers: { Authorization: `Token ${token}` },
-      });
+      const response = await fetch(
+        "/api/projects/project-options/?page_size=100",
+        {
+          headers: { Authorization: `Token ${token}` },
+        },
+      );
       if (!response.ok)
         throw await apiErrorFromResponse(
           response,

@@ -10,7 +10,7 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 
 from Platform_Core.models import OrganizationMembership, Tenant, TenantBranch, TenantSettings
-from SL_Projects.models import ProjectTask, TaskCollaborator, TaskFollowUp
+from SL_Projects.models import ProjectTask, TaskChecklistItem, TaskCollaborator, TaskFollowUp
 
 
 class ProjectWorkspaceTests(TestCase):
@@ -22,8 +22,8 @@ class ProjectWorkspaceTests(TestCase):
         self.foreign_branch = TenantBranch.objects.create(tenant=self.foreign_tenant, name='Other')
         self.user = User.objects.create_user('task-worker')
         self.other = User.objects.create_user('task-other')
-        self.role = Group.objects.create(name='tenant:1:Task team')
-        self.manager = Group.objects.create(name='tenant:1:Project manager')
+        self.role = Group.objects.create(name=f'tenant:{self.tenant.pk}:Task team')
+        self.manager = Group.objects.create(name=f'tenant:{self.tenant.pk}:Project manager')
         for group, names in [(self.role, ['view_own_projecttask', 'add_taskfollowup', 'export_projecttask']), (self.manager, ['view_all_projecttask', 'export_projecttask'])]:
             group.permissions.set(Permission.objects.filter(content_type__app_label='SL_Projects', codename__in=names))
         self.user.groups.add(self.role, self.manager)
@@ -100,6 +100,42 @@ class ProjectWorkspaceTests(TestCase):
     def test_export_requires_permission_even_with_own_access(self):
         self.role.permissions.remove(Permission.objects.get(content_type__app_label='SL_Projects', codename='export_projecttask'))
         self.assertEqual(self.client.get('/api/projects/reports/?download=csv').status_code, 403)
+
+    def test_multiple_accountable_and_supporting_participants_are_scoped(self):
+        self.role.permissions.add(Permission.objects.get(content_type__app_label='SL_Projects', codename='assign_projecttask'))
+        third = User.objects.create_user('task-third')
+        OrganizationMembership.objects.create(user=third, tenant=self.tenant, branch=self.branch)
+        response = self.client.post(
+            f'/api/projects/tasks/{self.own.pk}/collaborators/',
+            {'user_ids': [self.other.pk, third.pk], 'participation_role': 'accountable'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(
+            set(self.own.collaborators.filter(participation_role='accountable').values_list('user_id', flat=True)),
+            {self.other.pk, third.pk},
+        )
+
+    def test_checklist_completion_derives_progress_and_updates_do_not_accept_percent(self):
+        self.role.permissions.add(Permission.objects.get(content_type__app_label='SL_Projects', codename='update_projecttask_progress'))
+        created = self.client.post(f'/api/projects/tasks/{self.own.pk}/checklist/', {'title': 'Signed acceptance'}, format='json')
+        second = self.client.post(f'/api/projects/tasks/{self.own.pk}/checklist/', {'title': 'Delivery evidence'}, format='json')
+        self.assertEqual(created.status_code, 201, created.data)
+        completed = self.client.patch(
+            f'/api/projects/tasks/{self.own.pk}/checklist/{created.data["id"]}/',
+            {'is_completed': True}, format='json',
+        )
+        self.assertEqual(completed.status_code, 200, completed.data)
+        self.own.refresh_from_db()
+        self.assertEqual(self.own.progress_percentage, 50)
+        update = self.client.post(
+            f'/api/projects/tasks/{self.own.pk}/updates/',
+            {'progress_percentage': 99, 'update_description': 'Work evidence recorded', 'time_spent_hours': 1},
+            format='json',
+        )
+        self.assertEqual(update.status_code, 201, update.data)
+        self.assertEqual(update.data['progress_percentage'], 50)
+        self.assertTrue(TaskChecklistItem.objects.filter(pk=second.data['id']).exists())
 
 
 class SampleProjectTests(TestCase):

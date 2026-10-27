@@ -2800,6 +2800,12 @@ class WorkflowForwardAPIView(APIView):
         binding = _binding_for_workflow_event(bindings, trigger_event)
         if not binding:
             raise ValidationError({"detail": "No active workflow is configured for this module record and trigger."})
+        if module_slug == "projects-tasks" and entity_type in {"project", "project_task"}:
+            from SL_Projects.models import Project, ProjectTask
+
+            model = Project if entity_type == "project" else ProjectTask
+            if not model.objects.filter(pk=entity_id, tenant=tenant).exists():
+                raise ValidationError({"entity_id": "This record does not belong to the active organization."})
 
         existing = WorkflowInboxItem.objects.filter(
             tenant=tenant,

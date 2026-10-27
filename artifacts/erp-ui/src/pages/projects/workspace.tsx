@@ -37,7 +37,11 @@ import { apiErrorFromResponse } from "@/lib/api-errors";
 import { useToast } from "@/hooks/use-toast";
 
 type PageMode = "overview" | "projects" | "tasks" | "mine" | "team";
-type PageResult<T> = { count: number; results: T[]; access?: { can_create: boolean; can_export: boolean } };
+type PageResult<T> = {
+  count: number;
+  results: T[];
+  access?: { can_create: boolean; can_export: boolean };
+};
 type Project = {
   id: number;
   code: string;
@@ -82,7 +86,14 @@ function useApi<T>(path: string, token: string | null, enabled = true) {
   const { user } = useAuth();
   const context = user as any;
   return useQuery<T>({
-    queryKey: ["projects", path, token, context?.organization_id, context?.branch_id, context?.active_role_group_name],
+    queryKey: [
+      "projects",
+      path,
+      token,
+      context?.organization_id,
+      context?.branch_id,
+      context?.active_role_group_name,
+    ],
     enabled: Boolean(token) && enabled,
     queryFn: async () => {
       const response = await fetch(path, {
@@ -217,12 +228,28 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
   };
   const clearSamples = useMutation({
     mutationFn: async () => {
-      const response = await fetch('/api/projects/sample-data/', { method: 'DELETE', headers: { Authorization: `Token ${token}` } });
-      if (!response.ok) throw await apiErrorFromResponse(response, 'Sample data could not be removed.');
+      const response = await fetch("/api/projects/sample-data/", {
+        method: "DELETE",
+        headers: { Authorization: `Token ${token}` },
+      });
+      if (!response.ok)
+        throw await apiErrorFromResponse(
+          response,
+          "Sample data could not be removed.",
+        );
       return response.json();
     },
-    onSuccess: () => { queryClient.invalidateQueries(); setClearSamplesOpen(false); toast({ title: 'Untouched sample data removed' }); },
-    onError: (error: Error) => toast({ title: 'Sample data retained', description: error.message, variant: 'destructive' }),
+    onSuccess: () => {
+      queryClient.invalidateQueries();
+      setClearSamplesOpen(false);
+      toast({ title: "Untouched sample data removed" });
+    },
+    onError: (error: Error) =>
+      toast({
+        title: "Sample data retained",
+        description: error.message,
+        variant: "destructive",
+      }),
   });
 
   const createRecord = useMutation({
@@ -316,7 +343,15 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
       }),
   });
   const metrics = useApi<{
-    access: { view_all_tasks: boolean; role: string; can_create_task: boolean; can_create_project: boolean; can_export: boolean; can_manage_samples: boolean; has_samples: boolean };
+    access: {
+      view_all_tasks: boolean;
+      role: string;
+      can_create_task: boolean;
+      can_create_project: boolean;
+      can_export: boolean;
+      can_manage_samples: boolean;
+      has_samples: boolean;
+    };
     counts: Record<string, number>;
     recent_tasks: Task[];
     upcoming_deadlines: Task[];
@@ -343,7 +378,9 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
   const endpoint = isProjects
     ? "/api/projects/projects/"
     : "/api/projects/tasks/";
-  const projectChoices = useApi<PageResult<Pick<Project, "id" | "code" | "name">>>(
+  const projectChoices = useApi<
+    PageResult<Pick<Project, "id" | "code" | "name">>
+  >(
     "/api/projects/project-options/?page_size=100",
     token,
     !isProjects && createOpen,
@@ -386,10 +423,45 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
     return (
       <ERPWorkspacePage
         title={title}
-        description={`${metrics.data?.access.role?.split(':').pop() || 'Your workspace'} · ${metrics.data?.access.view_all_tasks ? 'All permitted branch tasks' : 'Your assigned work, collaborations, and role tasks'}`}
+        description={`${metrics.data?.access.role?.split(":").pop() || "Your workspace"} · ${metrics.data?.access.view_all_tasks ? "All permitted branch tasks" : "Your assigned work, collaborations, and role tasks"}`}
       >
-        {metrics.data?.access.can_manage_samples && metrics.data?.access.has_samples ? <div className="mb-4 flex justify-end"><Button variant="outline" onClick={() => setClearSamplesOpen(true)}>Remove sample data</Button></div> : null}
-        <Dialog open={clearSamplesOpen} onOpenChange={setClearSamplesOpen}><DialogContent><DialogHeader><DialogTitle>Remove this organization's sample project data?</DialogTitle></DialogHeader><p>Removes untouched records marked [SAMPLE] across this organization. Cleanup stops if any sample contains edits or real work. Existing business records are preserved.</p><DialogFooter><Button variant="outline" onClick={() => setClearSamplesOpen(false)}>Cancel</Button><Button variant="destructive" disabled={clearSamples.isPending} onClick={() => clearSamples.mutate()}>Remove sample data</Button></DialogFooter></DialogContent></Dialog>
+        {metrics.data?.access.can_manage_samples &&
+        metrics.data?.access.has_samples ? (
+          <div className="mb-4 flex justify-end">
+            <Button variant="outline" onClick={() => setClearSamplesOpen(true)}>
+              Remove sample data
+            </Button>
+          </div>
+        ) : null}
+        <Dialog open={clearSamplesOpen} onOpenChange={setClearSamplesOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>
+                Remove this organization's sample project data?
+              </DialogTitle>
+            </DialogHeader>
+            <p>
+              Removes untouched records marked [SAMPLE] across this
+              organization. Cleanup stops if any sample contains edits or real
+              work. Existing business records are preserved.
+            </p>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => setClearSamplesOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                disabled={clearSamples.isPending}
+                onClick={() => clearSamples.mutate()}
+              >
+                Remove sample data
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <Metric
             label="Active projects"
@@ -581,14 +653,20 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
           </Button>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" onClick={() => void exportRegister()} disabled={!records.data?.access?.can_export}>
+          <Button
+            variant="outline"
+            onClick={() => void exportRegister()}
+            disabled={!records.data?.access?.can_export}
+          >
             <Download className="mr-2 h-4 w-4" />
             Export CSV
           </Button>
-          {records.data?.access?.can_create && <Button onClick={() => setCreateOpen(true)}>
-            <Plus className="mr-2 h-4 w-4" />
-            New {isProjects ? "Project" : "Task"}
-          </Button>}
+          {records.data?.access?.can_create && (
+            <Button onClick={() => setCreateOpen(true)}>
+              <Plus className="mr-2 h-4 w-4" />
+              New {isProjects ? "Project" : "Task"}
+            </Button>
+          )}
         </div>
       </div>
       {filtersOpen && (
@@ -815,7 +893,11 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
             })}
           </tbody>
         </table>
-        {records.isError && <p role="alert" className="p-4 text-sm text-destructive">{records.error.message}</p>}
+        {records.isError && (
+          <p role="alert" className="p-4 text-sm text-destructive">
+            {records.error.message}
+          </p>
+        )}
         {!records.isLoading && !records.isError && !items.length && (
           <div className="p-10 text-center text-sm text-muted-foreground">
             No records match the selected filters.

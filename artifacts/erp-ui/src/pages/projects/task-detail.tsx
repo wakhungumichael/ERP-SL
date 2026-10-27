@@ -78,7 +78,18 @@ type Attachment = {
   created_at: string;
 };
 type Assignee = { id: number; name: string };
-type Collaborator = { id: number; user: number; user_name: string };
+type Collaborator = {
+  id: number;
+  user: number;
+  user_name: string;
+  participation_role: "accountable" | "supporting";
+};
+type ChecklistItem = {
+  id: number;
+  title: string;
+  is_completed: boolean;
+  completed_by_name: string;
+};
 type Structure = {
   subtasks: Array<{
     id: number;
@@ -101,6 +112,7 @@ type WorkflowRequirement = {
     in_progress: boolean;
     current_stage: string | null;
     current_role: string | null;
+    binding: { id: number; workflow_id: number; workflow_name: string } | null;
   };
 };
 type WorkflowItem = {
@@ -166,6 +178,7 @@ export default function TaskDetail({ id }: { id: string }) {
   const attachmentsPath = `${taskPath}attachments/`;
   const assigneesPath = `${taskPath}assignees/`;
   const collaboratorsPath = `${taskPath}collaborators/`;
+  const checklistPath = `${taskPath}checklist/`;
   const rolesPath = `${taskPath}roles/`;
   const structurePath = `${taskPath}structure/`;
   const task = useProjectApi<Task>(taskPath, token);
@@ -175,6 +188,7 @@ export default function TaskDetail({ id }: { id: string }) {
   const attachments = useProjectApi<Attachment[]>(attachmentsPath, token);
   const assignees = useProjectApi<Assignee[]>(assigneesPath, token);
   const collaborators = useProjectApi<Collaborator[]>(collaboratorsPath, token);
+  const checklist = useProjectApi<ChecklistItem[]>(checklistPath, token);
   const roles = useProjectApi<Assignee[]>(rolesPath, token);
   const structure = useProjectApi<Structure>(structurePath, token);
   const workflow = useProjectApi<WorkflowRequirement>(
@@ -186,7 +200,6 @@ export default function TaskDetail({ id }: { id: string }) {
     historyPath,
     token,
   );
-  const [progress, setProgress] = useState("");
   const [note, setNote] = useState("");
   const [timeSpent, setTimeSpent] = useState("");
   const [followUpDate, setFollowUpDate] = useState("");
@@ -197,6 +210,10 @@ export default function TaskDetail({ id }: { id: string }) {
   const [isEvidence, setIsEvidence] = useState(false);
   const [assigneeId, setAssigneeId] = useState("");
   const [collaboratorId, setCollaboratorId] = useState("");
+  const [participantRole, setParticipantRole] = useState<
+    "accountable" | "supporting"
+  >("accountable");
+  const [checklistTitle, setChecklistTitle] = useState("");
   const [subtaskTitle, setSubtaskTitle] = useState("");
   const [subtaskDescription, setSubtaskDescription] = useState("");
   const [subtaskDueDate, setSubtaskDueDate] = useState("");
@@ -237,9 +254,6 @@ export default function TaskDetail({ id }: { id: string }) {
     );
   const addUpdate = useMutation({
     mutationFn: async () => {
-      const value = Number(progress);
-      if (!Number.isInteger(value) || value < 0 || value > 100)
-        throw new Error("Progress must be a whole number between 0 and 100.");
       const hours = Number(timeSpent || 0);
       if (!Number.isFinite(hours) || hours < 0)
         throw new Error("Hours worked must be zero or more.");
@@ -250,7 +264,6 @@ export default function TaskDetail({ id }: { id: string }) {
           Authorization: `Token ${token}`,
         },
         body: JSON.stringify({
-          progress_percentage: value,
           update_description: note,
           time_spent_hours: hours,
         }),
@@ -263,7 +276,6 @@ export default function TaskDetail({ id }: { id: string }) {
       return response.json();
     },
     onSuccess: () => {
-      setProgress("");
       setNote("");
       setTimeSpent("");
       refresh([taskPath, updatesPath]);
@@ -453,14 +465,17 @@ export default function TaskDetail({ id }: { id: string }) {
   });
   const addCollaborator = useMutation({
     mutationFn: async () => {
-      if (!collaboratorId) throw new Error("Choose a supporting participant.");
+      if (!collaboratorId) throw new Error("Choose a participant.");
       const response = await fetch(collaboratorsPath, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Token ${token}`,
         },
-        body: JSON.stringify({ user: Number(collaboratorId) }),
+        body: JSON.stringify({
+          user_ids: [Number(collaboratorId)],
+          participation_role: participantRole,
+        }),
       });
       if (!response.ok)
         throw await apiErrorFromResponse(
@@ -472,11 +487,64 @@ export default function TaskDetail({ id }: { id: string }) {
     onSuccess: () => {
       setCollaboratorId("");
       refresh([collaboratorsPath]);
-      toast({ title: "Supporting participant added" });
+      toast({ title: "Task participant added" });
     },
     onError: (error: Error) =>
       toast({
         title: "Could not add supporting participant",
+        description: error.message,
+        variant: "destructive",
+      }),
+  });
+  const addChecklistItem = useMutation({
+    mutationFn: async () => {
+      const response = await fetch(checklistPath, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Token ${token}`,
+        },
+        body: JSON.stringify({ title: checklistTitle.trim() }),
+      });
+      if (!response.ok)
+        throw await apiErrorFromResponse(
+          response,
+          "Deliverable could not be added.",
+        );
+      return response.json();
+    },
+    onSuccess: () => {
+      setChecklistTitle("");
+      refresh([checklistPath, taskPath]);
+      toast({ title: "Deliverable added" });
+    },
+    onError: (error: Error) =>
+      toast({
+        title: "Could not add deliverable",
+        description: error.message,
+        variant: "destructive",
+      }),
+  });
+  const toggleChecklistItem = useMutation({
+    mutationFn: async (item: ChecklistItem) => {
+      const response = await fetch(`${checklistPath}${item.id}/`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Token ${token}`,
+        },
+        body: JSON.stringify({ is_completed: !item.is_completed }),
+      });
+      if (!response.ok)
+        throw await apiErrorFromResponse(
+          response,
+          "Deliverable could not be updated.",
+        );
+    },
+    onSuccess: () => refresh([checklistPath, taskPath, structurePath]),
+    onError: (error: Error) =>
+      toast({
+        title: "Could not update deliverable",
         description: error.message,
         variant: "destructive",
       }),
@@ -1003,7 +1071,7 @@ export default function TaskDetail({ id }: { id: string }) {
                 </p>
                 <div className="mt-4 space-y-2">
                   <p className="text-xs font-medium text-muted-foreground">
-                    Assign task
+                    Lead assignee
                   </p>
                   <Select value={assigneeId} onValueChange={setAssigneeId}>
                     <SelectTrigger>
@@ -1031,9 +1099,29 @@ export default function TaskDetail({ id }: { id: string }) {
                 </div>
                 <div className="mt-4 space-y-2 border-t pt-4">
                   <p className="text-xs font-medium text-muted-foreground">
-                    Supporting participants
+                    Additional assignees and participants
                   </p>
-                  <div className="flex gap-2">
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <Select
+                      value={participantRole}
+                      onValueChange={(value) =>
+                        setParticipantRole(
+                          value as "accountable" | "supporting",
+                        )
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="accountable">
+                          Accountable assignee
+                        </SelectItem>
+                        <SelectItem value="supporting">
+                          Supporting participant
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
                     <Select
                       value={collaboratorId}
                       onValueChange={setCollaboratorId}
@@ -1069,14 +1157,17 @@ export default function TaskDetail({ id }: { id: string }) {
                       Add
                     </Button>
                   </div>
-                  <div className="flex flex-wrap gap-2">
+                  <div className="mt-2 flex flex-wrap gap-2">
                     {(collaborators.data ?? []).map((collaborator) => (
                       <Badge
                         className="flex items-center gap-1"
                         key={collaborator.id}
                         variant="secondary"
                       >
-                        {collaborator.user_name}
+                        {collaborator.user_name} ·{" "}
+                        {collaborator.participation_role === "accountable"
+                          ? "Accountable"
+                          : "Supporting"}
                         <button
                           aria-label={`Remove ${collaborator.user_name}`}
                           className="ml-1 text-muted-foreground hover:text-foreground"
@@ -1092,7 +1183,7 @@ export default function TaskDetail({ id }: { id: string }) {
                     ))}
                     {!collaborators.data?.length && (
                       <span className="text-xs text-muted-foreground">
-                        No supporting participants.
+                        No additional assignees or participants.
                       </span>
                     )}
                   </div>
@@ -1100,15 +1191,21 @@ export default function TaskDetail({ id }: { id: string }) {
                 {workflow.data?.data.required &&
                 !workflow.data.data.in_progress &&
                 workflow.data.data.can_forward ? (
-                  <Button
-                    className="mt-4 w-full"
-                    disabled={forward.isPending}
-                    onClick={() => forward.mutate()}
-                  >
-                    {forward.isPending
-                      ? "Forwarding..."
-                      : "Forward for Approval"}
-                  </Button>
+                  <div className="mt-4 rounded-md border p-3">
+                    <p className="mb-2 text-xs text-muted-foreground">
+                      Uses configured workflow:{" "}
+                      {workflow.data.data.binding?.workflow_name}
+                    </p>
+                    <Button
+                      className="w-full"
+                      disabled={forward.isPending}
+                      onClick={() => forward.mutate()}
+                    >
+                      {forward.isPending
+                        ? "Forwarding..."
+                        : "Forward through workflow"}
+                    </Button>
+                  </div>
                 ) : null}
                 {workflow.data?.data.required &&
                 workflow.data.data.in_progress ? (
@@ -1123,15 +1220,60 @@ export default function TaskDetail({ id }: { id: string }) {
             <div className="grid gap-5 lg:grid-cols-3">
               <section className="rounded-lg border bg-card p-5 lg:col-span-2">
                 <h2 className="font-semibold">Progress Updates</h2>
-                <div className="mt-3 grid gap-2 sm:grid-cols-[8rem_8rem_1fr_auto]">
-                  <Input
-                    type="number"
-                    min="0"
-                    max="100"
-                    value={progress}
-                    onChange={(event) => setProgress(event.target.value)}
-                    placeholder="Progress %"
-                  />
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Progress is calculated from completed deliverables; users do
+                  not type a percentage.
+                </p>
+                <div className="mt-3 rounded-md border p-3">
+                  <div className="flex gap-2">
+                    <Input
+                      value={checklistTitle}
+                      onChange={(event) =>
+                        setChecklistTitle(event.target.value)
+                      }
+                      placeholder="Add a measurable deliverable"
+                    />
+                    <Button
+                      variant="outline"
+                      disabled={
+                        !checklistTitle.trim() || addChecklistItem.isPending
+                      }
+                      onClick={() => addChecklistItem.mutate()}
+                    >
+                      Add
+                    </Button>
+                  </div>
+                  <div className="mt-3 space-y-2">
+                    {(checklist.data ?? []).map((item) => (
+                      <label
+                        className="flex cursor-pointer items-center gap-2 text-sm"
+                        key={item.id}
+                      >
+                        <input
+                          checked={item.is_completed}
+                          disabled={toggleChecklistItem.isPending}
+                          onChange={() => toggleChecklistItem.mutate(item)}
+                          type="checkbox"
+                        />
+                        <span
+                          className={
+                            item.is_completed
+                              ? "line-through text-muted-foreground"
+                              : ""
+                          }
+                        >
+                          {item.title}
+                        </span>
+                      </label>
+                    ))}
+                    {!checklist.data?.length ? (
+                      <p className="text-xs text-muted-foreground">
+                        Add deliverables to begin automatic progress tracking.
+                      </p>
+                    ) : null}
+                  </div>
+                </div>
+                <div className="mt-3 grid gap-2 sm:grid-cols-[8rem_1fr_auto]">
                   <Input
                     type="number"
                     min="0"
@@ -1146,7 +1288,7 @@ export default function TaskDetail({ id }: { id: string }) {
                     placeholder="Describe completed work, blockers, or next action"
                   />
                   <Button
-                    disabled={!progress || !note.trim() || addUpdate.isPending}
+                    disabled={!note.trim() || addUpdate.isPending}
                     onClick={() => addUpdate.mutate()}
                   >
                     Add update
