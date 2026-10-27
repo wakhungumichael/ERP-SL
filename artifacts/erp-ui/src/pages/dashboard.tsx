@@ -1,7 +1,7 @@
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Bell, CalendarDays, CheckSquare2, ChevronDown, LayoutGrid, RotateCcw, Settings2 } from 'lucide-react';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
@@ -11,6 +11,7 @@ import { useDashboardLayout } from '@/hooks/use-dashboard-layout';
 import { useDashboardAccess } from '@/hooks/use-dashboard-access';
 import { useTenantTheme } from '@/hooks/use-tenant-theme';
 import { useAuth } from '@/context/use-auth';
+import { useToast } from '@/hooks/use-toast';
 import { useLocation } from 'wouter';
 
 function greeting(timezone: string) {
@@ -28,7 +29,9 @@ const MODULE_ALIASES: Record<string, string[]> = {
 
 export default function Dashboard() {
   const [, setLocation] = useLocation();
-  const { token } = useAuth();
+  const { token, user } = useAuth();
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
   const { tenantContext, isLoading } = useTenantTheme({ applyTheme: false });
   const { hasPermission, hasWorkspacePermission, canViewSensitive } = useDashboardAccess();
   const canViewDashboard = hasPermission('view_dashboard');
@@ -49,7 +52,40 @@ export default function Dashboard() {
   }), [hasPermission, hasWorkspacePermission, visibleModuleKeys]);
 
   const storageScope = `${tenantContext.tenantId ?? 'global'}:${tenantContext.userId ?? 'anonymous'}:${tenantContext.role}`;
-  const dashboard = useDashboardLayout(widgets, storageScope);
+  const dashboardLayoutQuery = useQuery({
+    queryKey: ['workspace-dashboard-layout', tenantContext.tenantId, tenantContext.role, token],
+    enabled: !!token && !!tenantContext.tenantId && canViewDashboard,
+    retry: false,
+    queryFn: async () => {
+      const response = await fetch('/api/platform/workspace/dashboard-layout/', { headers: { Authorization: `Token ${token}` } });
+      if (!response.ok) throw new Error('Could not load your saved dashboard.');
+      const body = await response.json();
+      return body?.data ?? body;
+    },
+  });
+  const saveLayout = useMutation({
+    mutationFn: async ({ layout, scope = 'personal', reset = false }: { layout?: any[]; scope?: 'personal' | 'role'; reset?: boolean }) => {
+      const response = await fetch('/api/platform/workspace/dashboard-layout/', {
+        method: 'POST', headers: { Authorization: `Token ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ layout, scope, reset }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body?.message || 'Dashboard could not be saved.');
+      return body?.data ?? body;
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['workspace-dashboard-layout'] }),
+  });
+  const persistPersonalLayout = useCallback((layout: any[]) => {
+    saveLayout.mutate({ layout });
+  }, [saveLayout.mutate]);
+  const dashboard = useDashboardLayout(
+    widgets,
+    storageScope,
+    dashboardLayoutQuery.data?.layout ?? null,
+    Boolean(dashboardLayoutQuery.isSuccess),
+    persistPersonalLayout,
+  );
+  const canManageRoleDashboard = Boolean(dashboardLayoutQuery.data?.can_manage_role_layout || (user as any)?.is_superuser);
   const today = new Intl.DateTimeFormat(tenantContext.branding.locale || 'en-KE', {
     weekday: 'long', day: '2-digit', month: 'short', year: 'numeric', timeZone: tenantContext.branding.timezone,
   }).format(new Date());
@@ -134,7 +170,8 @@ export default function Dashboard() {
       <div className="flex items-center gap-3">
         <div className="hidden items-center gap-2 rounded-lg border bg-card px-3 py-2 text-xs text-muted-foreground shadow-sm sm:inline-flex"><CalendarDays className="h-3.5 w-3.5 text-primary" />{today}</div>
         <Button variant={dashboard.customizeMode ? 'default' : 'outline'} size="sm" className="gap-2" onClick={() => dashboard.setCustomizeMode(!dashboard.customizeMode)}><Settings2 className="h-4 w-4" />{dashboard.customizeMode ? 'Done' : 'Configure'}</Button>
-        <Button variant="ghost" size="icon" title="Reset dashboard" onClick={dashboard.resetLayout}><RotateCcw className="h-4 w-4" /></Button>
+        {dashboard.customizeMode && canManageRoleDashboard ? <Button variant="outline" size="sm" disabled={saveLayout.isPending} onClick={() => saveLayout.mutate({ layout: dashboard.serializedPayload, scope: 'role' }, { onSuccess: () => toast({ title: `Standard ${dashboardLayoutQuery.data?.role_name || 'role'} dashboard saved`, description: 'Members of this role will use this arrangement unless they personalize it.' }), onError: (error) => toast({ title: 'Could not save role dashboard', description: error.message, variant: 'destructive' }) })}>Save as role standard</Button> : null}
+        <Button variant="ghost" size="icon" title="Use the role dashboard" onClick={() => saveLayout.mutate({ scope: 'personal', reset: true }, { onSuccess: () => toast({ title: 'Personal layout cleared', description: 'You are now using the standard dashboard for this role.' }), onError: (error) => toast({ title: 'Could not reset dashboard', description: error.message, variant: 'destructive' }) })}><RotateCcw className="h-4 w-4" /></Button>
       </div>
     </header>
 

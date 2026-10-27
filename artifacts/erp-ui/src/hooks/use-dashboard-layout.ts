@@ -1,5 +1,5 @@
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { DashboardLayoutItem, DashboardWidgetDefinition, DashboardWidgetId } from '@/components/dashboard/types';
 
 const STORAGE_VERSION = 'v3';
@@ -26,10 +26,16 @@ function sortLayout(items: DashboardLayoutItem[]) {
 export function useDashboardLayout(
   widgets: DashboardWidgetDefinition[],
   storageScope: string,
+  remoteLayout?: DashboardLayoutItem[] | null,
+  remoteLoaded = false,
+  onPersist?: (layout: DashboardLayoutItem[]) => void,
 ) {
   const storageKey = `sl-erp-dashboard-layout:${STORAGE_VERSION}:${storageScope}`;
   const [customizeMode, setCustomizeMode] = useState(false);
   const [activeStorageKey, setActiveStorageKey] = useState(storageKey);
+  const [remoteHydrated, setRemoteHydrated] = useState(false);
+  const [hasLocalChanges, setHasLocalChanges] = useState(false);
+  const lastRemotePayload = useRef<string | null>(null);
   const [layout, setLayout] = useState<DashboardLayoutItem[]>(() => {
     try {
       const raw = localStorage.getItem(storageKey);
@@ -43,6 +49,9 @@ export function useDashboardLayout(
   // A user can switch tenant or active role without remounting this page.
   // Reload the corresponding saved layout instead of carrying the previous scope.
   useEffect(() => {
+    lastRemotePayload.current = null;
+    setRemoteHydrated(false);
+    setHasLocalChanges(false);
     try {
       const raw = localStorage.getItem(storageKey);
       setLayout(normalizeLayout(widgets, raw ? (JSON.parse(raw) as DashboardLayoutItem[]) : null));
@@ -52,6 +61,20 @@ export function useDashboardLayout(
       setActiveStorageKey(storageKey);
     }
   }, [storageKey]);
+
+  // The browser copy gives an instant first paint.  The server copy is the
+  // durable source of truth and survives logout, a new device, and role changes.
+  useEffect(() => {
+    if (!remoteLoaded) return;
+    const serialized = JSON.stringify(remoteLayout ?? []);
+    if (lastRemotePayload.current === serialized) {
+      setRemoteHydrated(true);
+      return;
+    }
+    lastRemotePayload.current = serialized;
+    setLayout(normalizeLayout(widgets, remoteLayout ?? null));
+    setRemoteHydrated(true);
+  }, [remoteLayout, remoteLoaded, storageKey, widgets]);
 
   useEffect(() => {
     setLayout((current) => normalizeLayout(widgets, current));
@@ -64,13 +87,21 @@ export function useDashboardLayout(
     } catch {}
   }, [activeStorageKey, layout, storageKey]);
 
+  useEffect(() => {
+    if (!remoteHydrated || !hasLocalChanges || !onPersist) return;
+    const timer = window.setTimeout(() => onPersist(sortLayout(layout).map((item) => ({ ...item }))), 500);
+    return () => window.clearTimeout(timer);
+  }, [hasLocalChanges, layout, onPersist, remoteHydrated]);
+
   const updateItem = (widgetId: DashboardWidgetId, patch: Partial<DashboardLayoutItem>) => {
+    setHasLocalChanges(true);
     setLayout((current) =>
       current.map((item) => (item.widgetId === widgetId ? { ...item, ...patch } : item)),
     );
   };
 
   const moveItem = (widgetId: DashboardWidgetId, direction: 'left' | 'right' | 'up' | 'down') => {
+    setHasLocalChanges(true);
     setLayout((current) =>
       current.map((item) => {
         if (item.widgetId !== widgetId) return item;
@@ -83,6 +114,7 @@ export function useDashboardLayout(
   };
 
   const swapItems = (sourceId: DashboardWidgetId, targetId: DashboardWidgetId) => {
+    setHasLocalChanges(true);
     setLayout((current) => {
       const source = current.find((item) => item.widgetId === sourceId);
       const target = current.find((item) => item.widgetId === targetId);
@@ -100,6 +132,7 @@ export function useDashboardLayout(
   };
 
   const cycleWidgetWidth = (widgetId: DashboardWidgetId) => {
+    setHasLocalChanges(true);
     setLayout((current) =>
       current.map((item) => {
         if (item.widgetId !== widgetId) return item;
@@ -109,7 +142,10 @@ export function useDashboardLayout(
     );
   };
 
-  const resetLayout = () => setLayout(normalizeLayout(widgets, null));
+  const resetLayout = () => {
+    setHasLocalChanges(true);
+    setLayout(normalizeLayout(widgets, null));
+  };
 
   const serializedPayload = useMemo(
     () => sortLayout(layout).map((item) => ({ ...item })),

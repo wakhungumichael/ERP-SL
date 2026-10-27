@@ -1020,6 +1020,9 @@ class TenantSettings(TimeStampedModel):
     # Standard workflow state codes are stable across modules. Tenants may
     # tailor their display labels without breaking reusable workflow adapters.
     document_status_policy = models.JSONField(blank=True, default=dict)
+    # Dashboard layouts are tenant-owned. Role layouts are the shared starting
+    # point for a role, while user layouts preserve a member's personal view.
+    dashboard_layouts = models.JSONField(blank=True, default=dict)
 
     class Meta:
         ordering = ["tenant__name"]

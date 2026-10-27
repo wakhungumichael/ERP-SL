@@ -13,6 +13,7 @@ from .views import (
     BackupPolicyDownloadAPIView,
     BackupPolicyRunAPIView,
     ChangePasswordAPIView,
+    DashboardLayoutAPIView,
     CurrentUserAPIView,
     DocumentTemplateDetailAPIView,
     DocumentTemplateListCreateAPIView,
@@ -130,6 +131,7 @@ urlpatterns = [
     path("auth/logout/", TokenLogoutAPIView.as_view(), name="platform-auth-logout"),
     # Workspace / nav
     path("workspace/navigation/", WorkspaceNavigationAPIView.as_view(), name="platform-workspace-navigation"),
+    path("workspace/dashboard-layout/", DashboardLayoutAPIView.as_view(), name="platform-dashboard-layout"),
     path("workspace/menu-sections/", WorkspaceMenuSectionListCreateAPIView.as_view(), name="workspace-menu-section-list"),
     path("workspace/menu-sections/<int:pk>/", WorkspaceMenuSectionDetailAPIView.as_view(), name="workspace-menu-section-detail"),
     path("workspace/menu-items/", WorkspaceMenuItemListCreateAPIView.as_view(), name="workspace-menu-item-list"),

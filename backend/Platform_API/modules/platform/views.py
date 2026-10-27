@@ -4215,6 +4215,100 @@ class TenantSettingsAPIView(APIView):
         return self.put(request, pk)
 
 
+class DashboardLayoutAPIView(APIView):
+    """Persist tenant dashboard layouts without relying on browser storage."""
+
+    permission_classes = [IsAuthenticated]
+    _allowed_widget_ids = {
+        "hero", "company-health", "actionable-insights", "audit-trail",
+        "workflow-inbox", "module-map", "finance-pulse", "operations-pulse",
+        "shortcut-stack", "inventory-pulse", "crm-pipeline", "procurement-pulse",
+        "support-pulse", "people-pulse", "budget-pulse", "sales-pulse",
+    }
+
+    def _context(self, request):
+        tenant = _request_tenant_or_none(request.user)
+        if tenant is None:
+            return None, None, ""
+        settings_obj, _ = TenantSettings.objects.get_or_create(tenant=tenant)
+        membership = OrganizationMembership.objects.filter(
+            user=request.user, tenant=tenant, is_active=True
+        ).select_related("branch").first()
+        role_name = membership.effective_role_group_name() if membership else ""
+        if not role_name:
+            role_name = "Tenant Admin" if _user_has_tenant_access(request.user, tenant, require_admin=True) else "Member"
+        return tenant, settings_obj, role_name
+
+    @staticmethod
+    def _key(value):
+        return str(value or "").strip().lower()
+
+    def _validate_layout(self, value):
+        if not isinstance(value, list):
+            raise ValidationError({"layout": "Dashboard layout must be a list of cards."})
+        if len(value) > len(self._allowed_widget_ids):
+            raise ValidationError({"layout": "Dashboard layout contains too many cards."})
+        cleaned, seen = [], set()
+        for item in value:
+            if not isinstance(item, dict):
+                raise ValidationError({"layout": "Each dashboard card must be an object."})
+            widget_id = str(item.get("widgetId") or "").strip()
+            if widget_id not in self._allowed_widget_ids or widget_id in seen:
+                raise ValidationError({"layout": "Dashboard contains an invalid or duplicate card."})
+            seen.add(widget_id)
+            try:
+                x, y = max(0, int(item.get("x", 0))), max(0, int(item.get("y", 0)))
+                w, h = min(12, max(1, int(item.get("w", 6)))), max(1, int(item.get("h", 1)))
+            except (TypeError, ValueError):
+                raise ValidationError({"layout": "Dashboard card positions must be valid numbers."})
+            cleaned.append({
+                "widgetId": widget_id, "x": x, "y": y, "w": w, "h": h,
+                "isCollapsed": bool(item.get("isCollapsed", False)),
+                "isEnabled": bool(item.get("isEnabled", True)),
+            })
+        return cleaned
+
+    def get(self, request):
+        tenant, settings_obj, role_name = self._context(request)
+        if tenant is None:
+            return error_response("Your account is not linked to an organization.", status_code=status.HTTP_400_BAD_REQUEST)
+        stored = dict(settings_obj.dashboard_layouts or {})
+        role_key = self._key(role_name)
+        user_key = f"{request.user.pk}:{role_key}"
+        role_layouts = stored.get("role_layouts") if isinstance(stored.get("role_layouts"), dict) else {}
+        user_layouts = stored.get("user_layouts") if isinstance(stored.get("user_layouts"), dict) else {}
+        layout = user_layouts.get(user_key) or role_layouts.get(role_key) or []
+        return success_response("Dashboard layout loaded.", data={
+            "layout": layout,
+            "role_name": role_name,
+            "source": "personal" if user_key in user_layouts else ("role" if role_key in role_layouts else "default"),
+            "can_manage_role_layout": bool(_is_superadmin(request.user) or _user_has_tenant_access(request.user, tenant, require_admin=True)),
+        })
+
+    def post(self, request):
+        tenant, settings_obj, role_name = self._context(request)
+        if tenant is None:
+            return error_response("Your account is not linked to an organization.", status_code=status.HTTP_400_BAD_REQUEST)
+        scope = str(request.data.get("scope") or "personal").strip().lower()
+        if scope not in {"personal", "role"}:
+            return error_response("Choose either a personal or role dashboard layout.", status_code=status.HTTP_400_BAD_REQUEST)
+        if scope == "role" and not (_is_superadmin(request.user) or _user_has_tenant_access(request.user, tenant, require_admin=True)):
+            return error_response("Only an organization administrator can set the role dashboard.", status_code=status.HTTP_403_FORBIDDEN)
+        stored = dict(settings_obj.dashboard_layouts or {})
+        role_layouts = dict(stored.get("role_layouts") or {})
+        user_layouts = dict(stored.get("user_layouts") or {})
+        role_key = self._key(role_name)
+        user_key = f"{request.user.pk}:{role_key}"
+        if bool(request.data.get("reset")):
+            (role_layouts if scope == "role" else user_layouts).pop(role_key if scope == "role" else user_key, None)
+        else:
+            layout = self._validate_layout(request.data.get("layout"))
+            (role_layouts if scope == "role" else user_layouts)[role_key if scope == "role" else user_key] = layout
+        settings_obj.dashboard_layouts = {"role_layouts": role_layouts, "user_layouts": user_layouts}
+        settings_obj.save(update_fields=["dashboard_layouts", "updated_at"])
+        return success_response("Role dashboard saved." if scope == "role" else "Your dashboard saved.", data={"role_name": role_name})
+
+
 @api_view(["POST"])
 def test_tenant_smtp(request, pk):
     try:
