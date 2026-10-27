@@ -1038,23 +1038,40 @@ class TaskCollaboratorListCreateAPIView(APIView):
         task = self._task(request.user, pk)
         if not task:
             return Response({"detail": "Task not found."}, status=status.HTTP_404_NOT_FOUND)
-        user_id = request.data.get("user")
-        if not user_id:
-            raise serializers.ValidationError({"user": "Choose a supporting participant."})
-        membership = OrganizationMembership.objects.filter(
-            tenant=tenant, user_id=user_id, is_active=True
+        role = request.data.get("participation_role", "supporting")
+        if role not in {"accountable", "supporting"}:
+            raise serializers.ValidationError({"participation_role": "Choose accountable or supporting."})
+        user_ids = request.data.get("user_ids")
+        if user_ids is None:
+            user_ids = [request.data.get("user")] if request.data.get("user") else []
+        if not isinstance(user_ids, list) or not user_ids:
+            raise serializers.ValidationError({"user_ids": "Choose at least one participant."})
+        try:
+            user_ids = {int(value) for value in user_ids}
+        except (TypeError, ValueError):
+            raise serializers.ValidationError({"user_ids": "Choose valid organization users."})
+        memberships = OrganizationMembership.objects.filter(
+            tenant=tenant, user_id__in=user_ids, is_active=True
         ).filter(
-            Q(branch=task.branch) | Q(branches=task.branch)
-        ).select_related("user").first()
-        if not membership:
-            raise serializers.ValidationError({"user": "Choose an active organization user in this task branch."})
-        if task.primary_assignee_id == membership.user_id:
-            raise serializers.ValidationError({"user": "This user is already the primary assignee."})
-        collaborator, created = TaskCollaborator.objects.get_or_create(
-            task=task, user=membership.user
-        )
-        if created:
+            Q(branch=task.branch) | Q(branches=task.branch) |
+            Q(branch_role_assignments__branch=task.branch, branch_role_assignments__is_active=True) |
+            Q(is_org_admin=True) |
+            Q(branch__isnull=True, branches__isnull=True, branch_role_assignments__isnull=True)
+        ).select_related("user").distinct()
+        found_ids = {membership.user_id for membership in memberships}
+        if found_ids != user_ids:
+            raise serializers.ValidationError({"user_ids": "Every participant must be active in this task branch."})
+        if task.primary_assignee_id in user_ids:
+            raise serializers.ValidationError({"user_ids": "The lead assignee is already accountable for this task."})
+        if request.data.get("replace") is True:
+            task.collaborators.filter(participation_role=role).exclude(user_id__in=user_ids).delete()
+        for membership in memberships:
+            collaborator, created = TaskCollaborator.objects.update_or_create(
+                task=task, user=membership.user, defaults={"participation_role": role}
+            )
             name = membership.user.get_full_name() or membership.user.username
+            if not created:
+                continue
             log_business_event(
                 event_group="data_lifecycle",
                 event_type="task_collaborator_added",
@@ -1062,22 +1079,20 @@ class TaskCollaboratorListCreateAPIView(APIView):
                 actor=request.user,
                 obj=task,
                 branch=task.branch,
-                note=f"Supporting participant added: {name}.",
+                note=f"{collaborator.get_participation_role_display()} added: {name}.",
             )
             _notify_project_user(
                 recipient=membership.user,
                 actor=request.user,
                 tenant=tenant,
                 title=f"Added to task: {task.number}",
-                message=f"You are supporting {task.title}.",
+                message=f"You were added as {collaborator.get_participation_role_display().lower()} for {task.title}.",
                 route_path=f"/projects/tasks/{task.pk}",
                 source_type="project_task_collaborator",
                 source_id=task.pk,
             )
-        return Response(
-            TaskCollaboratorSerializer(collaborator).data,
-            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
-        )
+        current = task.collaborators.select_related("user").order_by("participation_role", "user__first_name", "user__username")
+        return Response(TaskCollaboratorSerializer(current, many=True).data)
 
 
 class TaskCollaboratorDetailAPIView(APIView):
@@ -1104,6 +1119,71 @@ class TaskCollaboratorDetailAPIView(APIView):
             branch=task.branch,
             note=f"Supporting participant removed: {name}.",
         )
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class TaskChecklistAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+        _tenant_and_activation(request)
+        _require(request.user, "view_projecttask")
+        task = _task_scope(request.user).filter(pk=pk).first()
+        if not task:
+            return Response({"detail": "Task not found."}, status=status.HTTP_404_NOT_FOUND)
+        return Response(TaskChecklistItemSerializer(task.checklist_items.select_related("completed_by"), many=True).data)
+
+    @transaction.atomic
+    def post(self, request, pk):
+        _tenant_and_activation(request)
+        _require(request.user, "update_projecttask_progress")
+        task = _task_scope(request.user).filter(pk=pk).first()
+        if not task:
+            return Response({"detail": "Task not found."}, status=status.HTTP_404_NOT_FOUND)
+        serializer = TaskChecklistItemSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        item = serializer.save(task=task, created_by=request.user)
+        _sync_task_checklist_progress(task)
+        return Response(TaskChecklistItemSerializer(item).data, status=status.HTTP_201_CREATED)
+
+
+class TaskChecklistDetailAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @transaction.atomic
+    def patch(self, request, pk, item_id):
+        _tenant_and_activation(request)
+        _require(request.user, "update_projecttask_progress")
+        task = _task_scope(request.user).filter(pk=pk).first()
+        if not task:
+            return Response({"detail": "Task not found."}, status=status.HTTP_404_NOT_FOUND)
+        item = task.checklist_items.filter(pk=item_id).first()
+        if not item:
+            return Response({"detail": "Checklist item not found."}, status=status.HTTP_404_NOT_FOUND)
+        if "title" in request.data:
+            title = str(request.data.get("title") or "").strip()
+            if not title:
+                raise serializers.ValidationError({"title": "Enter a deliverable or checklist item."})
+            item.title = title
+        if "is_completed" in request.data:
+            item.is_completed = bool(request.data.get("is_completed"))
+            item.completed_by = request.user if item.is_completed else None
+            item.completed_at = timezone.now() if item.is_completed else None
+        item.save()
+        _sync_task_checklist_progress(task)
+        return Response(TaskChecklistItemSerializer(item).data)
+
+    @transaction.atomic
+    def delete(self, request, pk, item_id):
+        _tenant_and_activation(request)
+        _require(request.user, "update_projecttask_progress")
+        task = _task_scope(request.user).filter(pk=pk).first()
+        if not task:
+            return Response({"detail": "Task not found."}, status=status.HTTP_404_NOT_FOUND)
+        deleted, _ = task.checklist_items.filter(pk=item_id).delete()
+        if not deleted:
+            return Response({"detail": "Checklist item not found."}, status=status.HTTP_404_NOT_FOUND)
+        _sync_task_checklist_progress(task)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -1832,13 +1912,10 @@ class TaskUpdateListCreateAPIView(APIView):
             return Response({"detail": "Task not found."}, status=status.HTTP_404_NOT_FOUND)
         serializer = TaskUpdateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        update = serializer.save(task=task, updated_by=request.user)
-        task.progress_percentage = update.progress_percentage
+        update = serializer.save(task=task, updated_by=request.user, progress_percentage=task.progress_percentage)
         task.actual_hours = (task.actual_hours or 0) + update.time_spent_hours
         task.updated_by = request.user
-        task.save(update_fields=["progress_percentage", "actual_hours", "updated_by", "updated_at"])
-        _sync_parent_task_progress(task)
-        _sync_project_progress(task)
+        task.save(update_fields=["actual_hours", "updated_by", "updated_at"])
         log_business_event(event_group="data_lifecycle", event_type="progress_update", tenant=task.tenant, actor=request.user, obj=task, branch=task.branch, note=f"Task progress updated; {update.time_spent_hours} hour(s) recorded.")
         return Response(TaskUpdateSerializer(update).data, status=status.HTTP_201_CREATED)
 
