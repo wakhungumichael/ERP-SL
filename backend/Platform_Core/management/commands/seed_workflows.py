@@ -13,6 +13,9 @@ from Platform_Core.models import (
 
 # module, document type, name, route, preferred existing role, trigger
 WORKFLOW_CATALOG = [
+    ('budgeting', 'department_budget', 'Department Budget', '/finance/budgets', 'Finance', 'submit'),
+    ('budgeting', 'annual_budget', 'Annual Budget', '/finance/budgets', 'Finance', 'submit'),
+    ('procurement', 'procurement_plan', 'Procurement Plan', '/procurement/plans', 'Finance', 'submit'),
     ('weighbridge', 'weighbridge_transaction', 'Weighment Transaction', '/weighbridge/transactions', 'Finance', 'submit'),
     ('procurement', 'procurement_requisition', 'Procurement Requisition', '/procurement/requisitions', 'Finance', 'submit'),
     ('purchases', 'purchase_order', 'Purchase Order', '/procurement/purchase-orders', 'Finance', 'submit'),

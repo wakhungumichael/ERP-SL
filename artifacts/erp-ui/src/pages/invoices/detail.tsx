@@ -1,9 +1,11 @@
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { downloadDocumentPdf } from '@/lib/document-download';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { InvoiceFormDialog } from '@/components/invoices/invoice-form-dialog';
+import { InvoicePreviewDialog } from '@/components/invoices/invoice-preview-dialog';
 import { useLocation } from 'wouter';
 import {
-  useGetInvoice, getGetInvoiceQueryKey,
+  getGetInvoiceQueryKey, getGetPaymentSummaryQueryKey,
   useReceivePayment, useIssueInvoice,
   useListPaymentMethods, getListPaymentMethodsQueryKey,
 } from '@workspace/api-client-react';
@@ -28,7 +30,7 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import {
   ArrowLeft, CheckCircle2, DollarSign, Send, FileText,
-  Building2, Hash, Calendar, AlertCircle, Download, Tag, Mail, MailX,
+  Building2, Hash, Calendar, AlertCircle, Download, Tag, Mail, MailX, Pencil, Eye,
 } from 'lucide-react';
 
 /* ─────────────────────────────────────────── helpers ── */
@@ -63,8 +65,12 @@ function ReceivePaymentDialog({
 }) {
   const { toast } = useToast();
   const receivePayment = useReceivePayment();
-  const { data: methods } = useListPaymentMethods({ query: { queryKey: getListPaymentMethodsQueryKey() } });
+  const { data: methods } = useListPaymentMethods({ query: { queryKey: getListPaymentMethodsQueryKey(), enabled: open } });
   const [form, setForm] = useState({ amount, method: 1, payment_mode: 'Cash', reference: '' });
+
+  useEffect(() => {
+    if (open) setForm(current => ({ ...current, amount }));
+  }, [open, amount]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -173,10 +179,13 @@ export default function InvoiceDetail({ id }: { id: string }) {
   const { toast } = useToast();
   const numericId = parseInt(id, 10);
   const [payOpen, setPayOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [downloading, setDownloading] = useState(false);
 
   /* Full detail via raw fetch so we get transactions + lines */
   const { data, isLoading, refetch } = useQuery({
-    queryKey: ['invoice-detail-full', numericId],
+    queryKey: ['invoice-detail-full', token, numericId],
     queryFn: async () => {
       const res = await fetch(`/api/payments/invoices/${numericId}/`, {
         headers: { Authorization: `Token ${token}` },
@@ -191,7 +200,8 @@ export default function InvoiceDetail({ id }: { id: string }) {
   const issueInvoice = useIssueInvoice();
 
   const openInvoiceDocument = async () => {
-    if (!token || Number.isNaN(numericId)) return;
+    if (!token || Number.isNaN(numericId) || downloading) return;
+    setDownloading(true);
     try {
       const res = await fetch(`/api/payments/invoices/${numericId}/document/?download=pdf`, {
         headers: { Authorization: `Token ${token}` },
@@ -204,6 +214,8 @@ export default function InvoiceDetail({ id }: { id: string }) {
         description: err?.message ?? 'Request failed',
         variant: 'destructive',
       });
+    } finally {
+      setDownloading(false);
     }
   };
 
@@ -239,16 +251,16 @@ export default function InvoiceDetail({ id }: { id: string }) {
   const isPaid     = inv.status === 'paid' || inv.status === 'Paid';
 
   return (
-    <div className="space-y-6 max-w-5xl mx-auto">
+    <div className="min-w-0 space-y-6 max-w-5xl mx-auto">
       {/* Header */}
       <div className="flex items-center justify-between border-b pb-4 gap-4 flex-wrap">
-        <div className="flex items-center gap-3">
+        <div className="flex min-w-0 items-start gap-3">
           <Button variant="outline" size="icon" onClick={() => navigate('/payments/invoices')}>
             <ArrowLeft className="h-4 w-4" />
           </Button>
           <div>
             <div className="flex items-center gap-2 flex-wrap">
-              <h1 className="text-2xl font-bold tracking-tight font-mono">{inv.invoice_number}</h1>
+              <h1 className="break-all text-xl font-bold tracking-tight font-mono sm:text-2xl">{inv.invoice_number}</h1>
               <StatusBadge s={displayStatus} />
               <SourceBadge module={inv.source_module} />
               {isOverdue && (
@@ -262,7 +274,9 @@ export default function InvoiceDetail({ id }: { id: string }) {
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto [&_button]:min-h-11 sm:[&_button]:min-h-9">
+          <Button variant="outline" className="gap-1.5" onClick={() => setPreviewOpen(true)}><Eye className="h-4 w-4" /> Preview</Button>
+          {inv.can_edit && <Button variant="outline" className="min-h-11 gap-1.5 sm:min-h-9" onClick={() => setEditOpen(true)}><Pencil className="h-4 w-4" /> Edit invoice</Button>}
           {canIssue && (
             <Button
               variant="outline"
@@ -287,7 +301,7 @@ export default function InvoiceDetail({ id }: { id: string }) {
               <CheckCircle2 className="h-3.5 w-3.5" /> Fully Paid
             </Badge>
           )}
-          <Button variant="ghost" size="icon" title="Download invoice PDF" aria-label="Download invoice PDF" onClick={openInvoiceDocument}>
+          <Button variant="ghost" size="icon" title="Download invoice PDF" aria-label="Download invoice PDF" disabled={downloading} onClick={openInvoiceDocument}>
             <Download className="h-4 w-4" />
           </Button>
         </div>
@@ -304,8 +318,12 @@ export default function InvoiceDetail({ id }: { id: string }) {
           </CardHeader>
           <CardContent className="p-4 space-y-1.5">
             <div className="font-bold text-base">{inv.customer_name || '—'}</div>
-            {inv.customer_email && <div className="text-sm text-muted-foreground">{inv.customer_email}</div>}
-            {inv.customer_phone && <div className="text-sm text-muted-foreground">{inv.customer_phone}</div>}
+            {inv.billing_address && <div className="whitespace-pre-line break-words text-sm text-muted-foreground">{inv.billing_address}</div>}
+            {inv.billing_contact_name && <div className="text-sm">Attention: {inv.billing_contact_name}</div>}
+            {(inv.billing_email || inv.customer_email) && <div className="break-all text-sm text-muted-foreground">{inv.billing_email || inv.customer_email}</div>}
+            {(inv.billing_phone || inv.customer_phone) && <div className="text-sm text-muted-foreground">{inv.billing_phone || inv.customer_phone}</div>}
+            {inv.customer_tax_number && <div className="text-sm text-muted-foreground">Tax ID / PIN: {inv.customer_tax_number}</div>}
+            {inv.customer_reference && <div className="text-sm">Reference: {inv.customer_reference}</div>}
           </CardContent>
         </Card>
 
@@ -336,6 +354,10 @@ export default function InvoiceDetail({ id }: { id: string }) {
             </CardTitle>
           </CardHeader>
           <CardContent className="p-4 space-y-2">
+            <div>
+              <div className="text-[10px] text-muted-foreground uppercase tracking-wide">Invoice date</div>
+              <div className="text-sm font-mono font-semibold">{inv.invoice_date ? new Date(`${inv.invoice_date}T00:00:00`).toLocaleDateString('en-KE') : '?'}</div>
+            </div>
             <div>
               <div className="text-[10px] text-muted-foreground uppercase tracking-wide">Created</div>
               <div className="text-sm font-mono">{inv.created_at ? new Date(inv.created_at).toLocaleDateString('en-KE') : '—'}</div>
@@ -497,6 +519,8 @@ export default function InvoiceDetail({ id }: { id: string }) {
       )}
 
       {/* Notes */}
+      {inv.prepared_by_name && <p className="text-sm text-muted-foreground">Prepared by {inv.prepared_by_name}{inv.prepared_by_email ? ` · ${inv.prepared_by_email}` : ''}</p>}
+
       {inv.notes && (
         <Card>
           <CardHeader className="pb-2">
@@ -507,6 +531,16 @@ export default function InvoiceDetail({ id }: { id: string }) {
       )}
 
       <RecordAuditTrail modelLabel="SL_Weighbridge.Invoice" objectPk={numericId} />
+
+      {inv.can_edit && <InvoiceFormDialog invoice={inv} open={editOpen} onOpenChange={setEditOpen} token={token} onSuccess={() => {
+        void refetch();
+        void qc.invalidateQueries({ queryKey: ['invoices'] });
+        void qc.invalidateQueries({ queryKey: getGetInvoiceQueryKey(numericId) });
+        void qc.invalidateQueries({ queryKey: getGetPaymentSummaryQueryKey() });
+        void qc.invalidateQueries({ queryKey: ['record-audit-trail', 'SL_Weighbridge.Invoice', String(numericId)] });
+      }} />}
+
+      <InvoicePreviewDialog invoiceId={numericId} invoiceNumber={inv.invoice_number} token={token} open={previewOpen} onOpenChange={setPreviewOpen} onDownload={() => void openInvoiceDocument()} downloading={downloading} />
 
       {/* Payment dialog */}
       <ReceivePaymentDialog

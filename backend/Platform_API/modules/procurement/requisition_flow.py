@@ -15,9 +15,9 @@ from rest_framework.views import APIView
 
 from Platform_API.modules.mixins import has_active_permission, tenant_or_403
 from Platform_Core.audit import log_business_event
-from Platform_Core.models import OrganizationMembership, SystemNotification
+from Platform_Core.models import Department, OrganizationMembership, SystemNotification
 from SL_Budgeting.models import BudgetCommitment, BudgetLine
-from SL_Procurement.models import ApprovalMatrix, Department, ProcurementPolicy, Requisition, RequisitionLine
+from SL_Procurement.models import ApprovalMatrix, ProcurementPolicy, Requisition, RequisitionLine
 from SL_Sales.models import SalesOrder
 
 
@@ -26,6 +26,8 @@ def is_department_lead(department, user):
 
 
 def procurement_can(user, name):
+    if name in {'view_department', 'add_department', 'change_department', 'delete_department'}:
+        return has_active_permission(user, f'Platform_Core.{name}')
     if name in {'view_department', 'view_requisition', 'change_requisition', 'add_requisition', 'consolidate_requisitions'}:
         from Platform_API.modules.mixins import resolve_user_tenant, NO_TENANT_ACCESS
         tenant = resolve_user_tenant(user)
@@ -68,6 +70,8 @@ def active_approval_groups(user):
 
 
 def scope_requisitions(user, qs):
+    from .configuration import restrict_records
+    qs = restrict_records(user, qs)
     if procurement_can(user, 'view_all_requisition') or user.is_superuser:
         return qs
     return qs.filter(Q(requested_by=user) | Q(department__head=user) | Q(department__deputy=user) | Q(approvals__assigned_user=user) | Q(approvals__approval_group__in=active_approval_groups(user))).distinct()
@@ -101,6 +105,17 @@ def validate_requisition_data(serializer, data):
         raise ValidationError({'request_kind': 'Request kind cannot be changed after creation.'})
     if department and (department.tenant_id != tenant.pk or not department.is_active):
         raise ValidationError({'department': 'Choose an active department in this organization.'})
+    if user:
+        from .configuration import validate_scope
+        from Platform_Core.organization import platform_branch
+        from Platform_Core.branch_sync import sync_tenant_branch_to_operational
+        operational = data.get('branch', getattr(instance, 'branch', None))
+        if operational and (operational.tenant_id or operational.company.tenant_id) != tenant.pk:
+            from .views import _validate_requisition_payload
+            raise ValidationError(_validate_requisition_payload(tenant=tenant, branch=operational, gl_account=data.get('gl_account'), lines=data.get('lines')))
+        branch = validate_scope(user, tenant, operational, department)
+        if operational is None and branch:
+            data['branch'] = sync_tenant_branch_to_operational(branch)
     if kind == 'standard' and user and not procurement_can(user, 'view_all_requisition') and not is_department_lead(department, user):
         raise PermissionDenied('Individual staff requests must go through their department head. Choose Individual request.')
     if kind == 'individual':
@@ -154,6 +169,11 @@ def change_requisition_status(request, pk):
     elif target in {'submitted', 'pending_approval'}:
         if obj.status != 'draft' or obj.parent_requisition_id:
             raise ValidationError({'status': 'Only draft requisitions can be submitted.'})
+        from .configuration import validate_scope
+        branch = validate_scope(request.user, obj.tenant, obj.branch, obj.department)
+        if obj.branch_id is None and branch:
+            from Platform_Core.branch_sync import sync_tenant_branch_to_operational
+            obj.branch = sync_tenant_branch_to_operational(branch)
         if not obj.lines.exists() or obj.estimated_total <= 0:
             raise ValidationError({'lines': 'Add positive requisition line amounts before submitting.'})
         obj.budget_status, obj.budget_message = _run_budget_check(obj)
@@ -165,9 +185,13 @@ def change_requisition_status(request, pk):
         if obj.request_kind == 'individual':
             if not obj.department_id or not obj.department.is_active:
                 raise ValidationError({'department': 'An active department with a named head is required.'})
+            from Platform_Core.organization import branch_allowed_for_user
+            reviewers = [recipient for recipient in [obj.department.head, obj.department.deputy] if recipient and recipient.is_active and recipient.pk != obj.requested_by_id and (not branch or branch_allowed_for_user(recipient, branch))]
+            if branch and not reviewers:
+                raise ValidationError({'department': 'No department head or deputy can review this request in the selected branch. Update their organization branch access.'})
             obj.status, obj.department_status = 'submitted', 'pending'
-            for recipient in [obj.department.head, obj.department.deputy]:
-                if recipient and recipient.pk != obj.requested_by_id:
+            for recipient in reviewers:
+                if recipient:
                     SystemNotification.objects.create(tenant=obj.tenant, recipient=recipient, category='reminder', title='Department requisition awaiting review', message=f'{obj.request_number}: {obj.title}', route_path='/procurement/requisitions', source_type='department_requisition', source_id=obj.pk)
         else:
             if obj.request_kind == 'departmental' and not obj.individual_requests.exists():
@@ -183,71 +207,11 @@ def change_requisition_status(request, pk):
     return Response(RequisitionSerializer(obj).data)
 
 
-class DepartmentSerializer(serializers.ModelSerializer):
-    head_name = serializers.SerializerMethodField()
-    deputy_name = serializers.SerializerMethodField()
-    class Meta:
-        model = Department
-        exclude = ['tenant']
-
-    def get_head_name(self, obj):
-        return obj.head.get_full_name() or obj.head.username
-
-    def get_deputy_name(self, obj):
-        return (obj.deputy.get_full_name() or obj.deputy.username) if obj.deputy_id else ''
-
-    def validate(self, data):
-        tenant = self.context['tenant']
-        head = data.get('head', getattr(self.instance, 'head', None))
-        deputy = data.get('deputy', getattr(self.instance, 'deputy', None))
-        if head and deputy and head.pk == deputy.pk:
-            raise ValidationError({'deputy': 'Choose different users for head and deputy.'})
-        selected = list(data.get('members', []))
-        for name in ['head', 'deputy']:
-            if data.get(name):
-                selected.append(data[name])
-        for user in selected:
-            if not OrganizationMembership.objects.filter(user=user, tenant=tenant, is_active=True, user__is_active=True).exists():
-                raise ValidationError({'members': 'Choose active organization members for the head and department staff.'})
-        code = data.get('code', getattr(self.instance, 'code', ''))
-        if Department.objects.filter(tenant=tenant, code=code).exclude(pk=getattr(self.instance, 'pk', None)).exists():
-            raise ValidationError({'code': 'Department code is already in use.'})
-        return data
-
-
-class DepartmentListView(APIView):
-    permission_classes = [IsAuthenticated]
-    def get(self, request):
-        qs = Department.objects.filter(tenant=active_tenant(request.user)).select_related('head', 'deputy').prefetch_related('members')
-        return Response({'results': DepartmentSerializer(qs, many=True).data})
-
-    def post(self, request):
-        procurement_require(request.user, 'add_department')
-        tenant = active_tenant(request.user)
-        ser = DepartmentSerializer(data=request.data, context={'tenant': tenant})
-        ser.is_valid(raise_exception=True)
-        ser.save(tenant=tenant)
-        return Response(ser.data, status=201)
-
-
-class DepartmentDetailView(APIView):
-    permission_classes = [IsAuthenticated]
-    def patch(self, request, pk):
-        procurement_require(request.user, 'change_department')
-        tenant = active_tenant(request.user)
-        obj = get_object_or_404(Department.objects.filter(tenant=tenant), pk=pk)
-        ser = DepartmentSerializer(obj, data=request.data, partial=True, context={'tenant': tenant})
-        ser.is_valid(raise_exception=True)
-        ser.save()
-        return Response(ser.data)
-
-    def delete(self, request, pk):
-        procurement_require(request.user, 'delete_department')
-        obj = get_object_or_404(Department.objects.filter(tenant=active_tenant(request.user)), pk=pk)
-        if obj.requisitions.exists() or obj.employees.exists():
-            raise ValidationError({'department': 'This department has history. Deactivate it instead.'})
-        obj.delete()
-        return Response(status=204)
+from Platform_API.modules.platform.organization import (
+    OrganizationUnitSerializer as DepartmentSerializer,
+    OrganizationUnitListView as DepartmentListView,
+    OrganizationUnitDetailView as DepartmentDetailView,
+)
 
 
 class RequisitionSetupView(APIView):
@@ -261,16 +225,25 @@ class RequisitionSetupView(APIView):
         members = OrganizationMembership.objects.filter(tenant=tenant, is_active=True, user__is_active=True).select_related('user')
         users_allowed = procurement_can(request.user, 'change_department') or has_active_permission(request.user, 'SL_HR.change_employee') or has_active_permission(request.user, 'SL_HR.add_employee')
         config, _ = ProcurementPolicy.objects.get_or_create(tenant=tenant)
+        from .configuration import configuration_allowed
         return Response({
             'budget_lines': [{'id': line.pk, 'name': f'{line.budget.code} / {line.cost_center} / {line.account.code}', 'available': line.available_amount, 'currency': line.budget.currency, 'cost_center': line.cost_center, 'account': line.account_id, 'project_code': line.project_code} for line in lines],
             'sales_orders': [{'id': order.pk, 'number': order.order_number} for order in orders.order_by('-created_at')[:200]],
             'approval_groups': [{'id': g.pk, 'name': g.name.split(':', 2)[-1]} for g in Group.objects.filter(Q(name__startswith=f'tenant:{tenant.pk}:') | ~Q(name__startswith='tenant:')).order_by('name')] if users_allowed else [],
             'users': [{'id': m.user_id, 'name': m.user.get_full_name() or m.user.username} for m in members] if users_allowed else [],
-            'departments': DepartmentSerializer(Department.objects.filter(tenant=tenant, is_active=True), many=True).data,
+            'departments': DepartmentSerializer(self.available_departments(request.user, tenant), many=True).data,
             'approval_source': config.approval_source,
             'can_manage_departments': procurement_can(request.user, 'change_department'),
+            'can_configure_procurement': configuration_allowed(request.user),
             'current_user': request.user.pk,
         })
+
+    @staticmethod
+    def available_departments(user, tenant):
+        from Platform_Core.organization import visible_units
+        config = ProcurementPolicy.objects.filter(tenant=tenant).first()
+        units = visible_units(user, tenant).filter(unit_type='department', is_active=True)
+        return units.filter(pk__in=config.departments.values('pk')) if config and config.department_scope == 'selected' else units
 
     def patch(self, request):
         procurement_require(request.user, 'change_approvalmatrix')

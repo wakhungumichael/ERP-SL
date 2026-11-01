@@ -1,7 +1,7 @@
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import { Link, useLocation } from "wouter";
+import { Link } from "wouter";
 import { useAuth } from "@/context/use-auth";
 import { ERPWorkspacePage } from "@/components/erp/workspace/workspace-page";
 import { Badge } from "@/components/ui/badge";
@@ -14,6 +14,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  ProjectSelect,
+  MilestoneSelect,
+  TaskTypeSelect,
+  AssigneeSelect,
+} from "@/components/projects/task-fields";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
@@ -28,7 +35,23 @@ import { apiErrorFromResponse } from "@/lib/api-errors";
 import { hasPermission } from "@/lib/permissions";
 import { RecordAuditTrail } from "@/components/audit/record-audit-trail";
 
+import {
+  TaskStatusSelect,
+  TASK_STATUSES,
+  type TaskStatusOption,
+} from "@/components/projects/task-status";
+
+import { TaskRelatedRegister } from "@/components/projects/related-register";
+import { TaskActivityPanel } from "@/components/projects/task-activity-panel";
+
 type Task = {
+  access?: Record<string, boolean>;
+  is_active: boolean;
+  deactivated_at?: string | null;
+  status_options?: TaskStatusOption[];
+  project: number;
+  milestone: number | null;
+  milestone_name?: string;
   number: string;
   title: string;
   description: string;
@@ -132,9 +155,25 @@ type WorkflowItem = {
   };
 };
 
+function projectDetailKey(
+  path: string,
+  token: string | null,
+  user: Record<string, unknown> | null,
+) {
+  return [
+    "project-detail",
+    path,
+    token,
+    user?.organization_id,
+    user?.branch_id,
+    user?.active_branch_id,
+    user?.active_role_group_name,
+  ];
+}
 function useProjectApi<T>(path: string, token: string | null) {
+  const { user } = useAuth();
   return useQuery<T>({
-    queryKey: ["project-detail", path],
+    queryKey: projectDetailKey(path, token, user),
     enabled: !!token,
     queryFn: async () => {
       const response = await fetch(path, {
@@ -168,7 +207,6 @@ function formatDateTime(value?: string | null) {
 
 export default function TaskDetail({ id }: { id: string }) {
   const { token, user } = useAuth();
-  const [, navigate] = useLocation();
   const { toast } = useToast();
   const client = useQueryClient();
   const taskPath = `/api/projects/tasks/${id}/`;
@@ -179,18 +217,14 @@ export default function TaskDetail({ id }: { id: string }) {
   const assigneesPath = `${taskPath}assignees/`;
   const collaboratorsPath = `${taskPath}collaborators/`;
   const checklistPath = `${taskPath}checklist/`;
-  const rolesPath = `${taskPath}roles/`;
   const structurePath = `${taskPath}structure/`;
   const task = useProjectApi<Task>(taskPath, token);
-  const updates = useProjectApi<Update[]>(updatesPath, token);
-  const followUps = useProjectApi<FollowUp[]>(followUpsPath, token);
-  const comments = useProjectApi<Comment[]>(commentsPath, token);
-  const attachments = useProjectApi<Attachment[]>(attachmentsPath, token);
   const assignees = useProjectApi<Assignee[]>(assigneesPath, token);
   const collaborators = useProjectApi<Collaborator[]>(collaboratorsPath, token);
-  const checklist = useProjectApi<ChecklistItem[]>(checklistPath, token);
-  const roles = useProjectApi<Assignee[]>(rolesPath, token);
-  const structure = useProjectApi<Structure>(structurePath, token);
+  const structure = useProjectApi<Structure>(
+    structurePath + "?kind=options",
+    token,
+  );
   const workflow = useProjectApi<WorkflowRequirement>(
     `/api/platform/workflows/requirement/?module_slug=projects-tasks&entity_type=project_task&entity_id=${id}&trigger_event=submit`,
     token,
@@ -200,34 +234,33 @@ export default function TaskDetail({ id }: { id: string }) {
     historyPath,
     token,
   );
-  const [note, setNote] = useState("");
-  const [timeSpent, setTimeSpent] = useState("");
-  const [followUpDate, setFollowUpDate] = useState("");
-  const [followUpNotes, setFollowUpNotes] = useState("");
   const [comment, setComment] = useState("");
   const [mentionedUserIds, setMentionedUserIds] = useState<number[]>([]);
   const [attachment, setAttachment] = useState<File | null>(null);
   const [isEvidence, setIsEvidence] = useState(false);
-  const [assigneeId, setAssigneeId] = useState("");
+  const [assigneeId, setAssigneeId] = useState("unassigned");
+  useEffect(() => {
+    if (task.data)
+      setAssigneeId(
+        task.data.primary_assignee
+          ? String(task.data.primary_assignee)
+          : "unassigned",
+      );
+  }, [id, task.data?.primary_assignee]);
   const [collaboratorId, setCollaboratorId] = useState("");
   const [participantRole, setParticipantRole] = useState<
     "accountable" | "supporting"
   >("accountable");
-  const [checklistTitle, setChecklistTitle] = useState("");
   const [subtaskTitle, setSubtaskTitle] = useState("");
   const [subtaskDescription, setSubtaskDescription] = useState("");
   const [subtaskDueDate, setSubtaskDueDate] = useState("");
   const [subtaskPriority, setSubtaskPriority] = useState("medium");
   const [subtaskEstimatedHours, setSubtaskEstimatedHours] = useState("");
   const [subtaskOpen, setSubtaskOpen] = useState(false);
-  const [roleAssignmentOpen, setRoleAssignmentOpen] = useState(false);
-  const [assignedRoleId, setAssignedRoleId] = useState("none");
-  useEffect(() => {
-    setAssignedRoleId(
-      task.data?.assigned_role ? String(task.data.assigned_role) : "none",
-    );
-  }, [task.data?.assigned_role]);
   const [dependencyId, setDependencyId] = useState("");
+  const [editProject, setEditProject] = useState("");
+  const [editMilestone, setEditMilestone] = useState("none");
+  const [editAssignee, setEditAssignee] = useState("unassigned");
   const [editTitle, setEditTitle] = useState("");
   const [editDescription, setEditDescription] = useState("");
   const [editTaskType, setEditTaskType] = useState("");
@@ -245,15 +278,44 @@ export default function TaskDetail({ id }: { id: string }) {
     setEditDueDate(task.data.due_date || "");
     setEditEstimatedHours(task.data.estimated_hours || "");
     setEditPriority(task.data.priority);
-    setEditStatus(task.data.status);
   }, [task.data?.number]);
-  const refresh = (paths: string[]) =>
-    paths.forEach(
-      (path) =>
-        void client.invalidateQueries({ queryKey: ["project-detail", path] }),
+  useEffect(() => {
+    if (!task.data) return;
+    setEditProject(String(task.data.project || ""));
+    setEditMilestone(
+      task.data.milestone ? String(task.data.milestone) : "none",
     );
+    setEditAssignee(
+      task.data.primary_assignee
+        ? String(task.data.primary_assignee)
+        : "unassigned",
+    );
+  }, [
+    task.data?.number,
+    task.data?.project,
+    task.data?.milestone,
+    task.data?.primary_assignee,
+  ]);
+  useEffect(() => {
+    if (task.data) setEditStatus(task.data.status);
+  }, [task.data?.number, task.data?.status]);
+  const refresh = (paths: string[]) =>
+    paths.forEach((path) => {
+      void client.invalidateQueries({ queryKey: ["project-related", path] });
+      void client.invalidateQueries({
+        predicate: (query) =>
+          query.queryKey[0] === "project-detail" &&
+          String(query.queryKey[1]).split("?")[0] === path,
+      });
+    });
   const addUpdate = useMutation({
-    mutationFn: async () => {
+    mutationFn: async ({
+      note,
+      timeSpent,
+    }: {
+      note: string;
+      timeSpent: string;
+    }) => {
       const hours = Number(timeSpent || 0);
       if (!Number.isFinite(hours) || hours < 0)
         throw new Error("Hours worked must be zero or more.");
@@ -276,8 +338,6 @@ export default function TaskDetail({ id }: { id: string }) {
       return response.json();
     },
     onSuccess: () => {
-      setNote("");
-      setTimeSpent("");
       refresh([taskPath, updatesPath]);
       toast({ title: "Progress update saved" });
     },
@@ -289,7 +349,7 @@ export default function TaskDetail({ id }: { id: string }) {
       }),
   });
   const addFollowUp = useMutation({
-    mutationFn: async () => {
+    mutationFn: async ({ date, notes }: { date: string; notes: string }) => {
       const response = await fetch(followUpsPath, {
         method: "POST",
         headers: {
@@ -297,8 +357,8 @@ export default function TaskDetail({ id }: { id: string }) {
           Authorization: `Token ${token}`,
         },
         body: JSON.stringify({
-          follow_up_date: followUpDate,
-          notes: followUpNotes,
+          follow_up_date: date,
+          notes,
         }),
       });
       if (!response.ok)
@@ -309,8 +369,6 @@ export default function TaskDetail({ id }: { id: string }) {
       return response.json();
     },
     onSuccess: () => {
-      setFollowUpDate("");
-      setFollowUpNotes("");
       refresh([followUpsPath]);
       toast({ title: "Follow-up scheduled" });
     },
@@ -434,6 +492,8 @@ export default function TaskDetail({ id }: { id: string }) {
   });
   const assign = useMutation({
     mutationFn: async () => {
+      if (!task.data || !assigneeId)
+        throw new Error("Choose an assignee or explicitly select Unassigned.");
       const response = await fetch(`${taskPath}assign/`, {
         method: "POST",
         headers: {
@@ -442,7 +502,7 @@ export default function TaskDetail({ id }: { id: string }) {
         },
         body: JSON.stringify({
           primary_assignee:
-            assigneeId === "unassigned" ? null : assigneeId || null,
+            assigneeId === "unassigned" ? null : Number(assigneeId),
         }),
       });
       if (!response.ok)
@@ -452,8 +512,19 @@ export default function TaskDetail({ id }: { id: string }) {
         );
       return response.json();
     },
-    onSuccess: () => {
-      refresh([taskPath]);
+    onSuccess: (data: Task) => {
+      client.setQueryData(projectDetailKey(taskPath, token, user), data);
+      setAssigneeId(
+        data.primary_assignee ? String(data.primary_assignee) : "unassigned",
+      );
+      refresh([taskPath, assigneesPath, collaboratorsPath]);
+      for (const key of [
+        "projects",
+        "project-record",
+        "projects-kanban",
+        "project-task-alerts",
+      ])
+        void client.invalidateQueries({ queryKey: [key] });
       toast({ title: "Task assignment updated" });
     },
     onError: (error: Error) =>
@@ -497,14 +568,14 @@ export default function TaskDetail({ id }: { id: string }) {
       }),
   });
   const addChecklistItem = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (title: string) => {
       const response = await fetch(checklistPath, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Token ${token}`,
         },
-        body: JSON.stringify({ title: checklistTitle.trim() }),
+        body: JSON.stringify({ title: title.trim() }),
       });
       if (!response.ok)
         throw await apiErrorFromResponse(
@@ -514,7 +585,6 @@ export default function TaskDetail({ id }: { id: string }) {
       return response.json();
     },
     onSuccess: () => {
-      setChecklistTitle("");
       refresh([checklistPath, taskPath]);
       toast({ title: "Deliverable added" });
     },
@@ -572,38 +642,6 @@ export default function TaskDetail({ id }: { id: string }) {
         variant: "destructive",
       }),
   });
-  const assignRole = useMutation({
-    mutationFn: async () => {
-      const response = await fetch(`${taskPath}assign/`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Token ${token}`,
-        },
-        body: JSON.stringify({
-          assigned_role:
-            assignedRoleId === "none" ? null : Number(assignedRoleId),
-        }),
-      });
-      if (!response.ok)
-        throw await apiErrorFromResponse(
-          response,
-          "Task role could not be saved.",
-        );
-      return response.json();
-    },
-    onSuccess: () => {
-      setRoleAssignmentOpen(false);
-      refresh([taskPath]);
-      toast({ title: "Task role assignment updated" });
-    },
-    onError: (error: Error) =>
-      toast({
-        title: "Could not update task role",
-        description: error.message,
-        variant: "destructive",
-      }),
-  });
   const addStructure = useMutation({
     mutationFn: async (payload: Record<string, string>) => {
       const response = await fetch(structurePath, {
@@ -642,6 +680,9 @@ export default function TaskDetail({ id }: { id: string }) {
   const saveTask = useMutation({
     mutationFn: async () => {
       if (!editTitle.trim()) throw new Error("Enter a task title.");
+      if (!editProject) throw new Error("Choose a project.");
+      if (!editTaskType.trim() || editTaskType === "other")
+        throw new Error("Choose a task type or enter a name for Other.");
       if (editStartDate && editDueDate && editDueDate < editStartDate) {
         throw new Error("Due date cannot be before the task start date.");
       }
@@ -660,13 +701,23 @@ export default function TaskDetail({ id }: { id: string }) {
         },
         body: JSON.stringify({
           title: editTitle.trim(),
+          ...(task.data?.access?.can_move_project
+            ? { project: Number(editProject) }
+            : {}),
+          milestone: editMilestone === "none" ? null : Number(editMilestone),
+          ...(!!task.data?.access?.can_assign
+            ? {
+                primary_assignee:
+                  editAssignee === "unassigned" ? null : Number(editAssignee),
+              }
+            : {}),
           description: editDescription,
-          task_type: editTaskType,
+          task_type: editTaskType || "general",
           start_date: editStartDate || null,
           due_date: editDueDate || null,
           estimated_hours: editEstimatedHours || null,
           priority: editPriority,
-          status: editStatus,
+          ...(editStatus !== task.data?.status ? { status: editStatus } : {}),
         }),
       });
       if (!response.ok)
@@ -676,13 +727,66 @@ export default function TaskDetail({ id }: { id: string }) {
         );
       return response.json();
     },
-    onSuccess: () => {
-      refresh([taskPath]);
+    onSuccess: (data: Task) => {
+      client.setQueryData(projectDetailKey(taskPath, token, user), data);
+      refresh([
+        taskPath,
+        updatesPath,
+        assigneesPath,
+        collaboratorsPath,
+        structurePath,
+      ]);
+      for (const key of [
+        "project-record",
+        "projects",
+        "projects-kanban",
+        "project-task-alerts",
+      ])
+        void client.invalidateQueries({ queryKey: [key] });
       toast({ title: "Task details updated" });
     },
     onError: (error: Error) =>
       toast({
         title: "Could not update task",
+        description: error.message,
+        variant: "destructive",
+      }),
+  });
+  const changeStatus = useMutation({
+    mutationFn: async (status: string) => {
+      const response = await fetch(taskPath, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Token ${token}`,
+        },
+        body: JSON.stringify({ status }),
+      });
+      if (!response.ok)
+        throw await apiErrorFromResponse(
+          response,
+          "Status could not be changed.",
+        );
+      return response.json() as Promise<Task>;
+    },
+    onSuccess: (data) => {
+      client.setQueryData(projectDetailKey(taskPath, token, user), data);
+      refresh([taskPath, updatesPath, historyPath]);
+      for (const key of [
+        "project-record",
+        "projects",
+        "projects-kanban",
+        "projects-dashboard",
+        "project-task-alerts",
+      ])
+        void client.invalidateQueries({ queryKey: [key] });
+      toast({
+        title: `Task moved to ${TASK_STATUSES.find((option) => option.value === data.status)?.label || data.status}`,
+      });
+    },
+    onError: (error: Error) =>
+      toast({
+        title: "Could not change status",
         description: error.message,
         variant: "destructive",
       }),
@@ -728,30 +832,76 @@ export default function TaskDetail({ id }: { id: string }) {
         variant: "destructive",
       }),
   });
-  const deleteTask = useMutation({
+  const toggleActive = useMutation({
     mutationFn: async () => {
-      const response = await fetch(taskPath, {
-        method: "DELETE",
-        headers: { Authorization: `Token ${token}` },
+      const response = await fetch(`${taskPath}activation/`, {
+        method: "POST",
+        headers: {
+          Authorization: `Token ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ is_active: task.data?.is_active === false }),
       });
       if (!response.ok)
         throw await apiErrorFromResponse(
           response,
-          "Draft task could not be deleted.",
+          "Task activation could not be updated.",
         );
+      return response.json() as Promise<Task>;
     },
-    onSuccess: () => {
-      toast({ title: "Draft task deleted" });
-      navigate("/projects/tasks");
+    onSuccess: (data) => {
+      client.setQueryData(projectDetailKey(taskPath, token, user), data);
+      refresh([taskPath, updatesPath]);
+      for (const key of [
+        "projects",
+        "project-record",
+        "project-related",
+        "projects-kanban",
+        "project-task-alerts",
+        "project-followups",
+        "projects-follow-ups",
+      ])
+        void client.invalidateQueries({ queryKey: [key] });
+      toast({
+        title: data.is_active ? "Task reactivated" : "Task deactivated",
+        description: "Assignment, files, and history are retained.",
+      });
     },
     onError: (error: Error) =>
       toast({
-        title: "Could not delete draft task",
+        title: "Could not update task activity",
         description: error.message,
         variant: "destructive",
       }),
   });
   const record = task.data;
+  const inactive = record?.is_active === false;
+  const access = record?.access ?? {};
+  const statusOptions: TaskStatusOption[] =
+    record?.status_options || TASK_STATUSES;
+  const alternativeStatuses = statusOptions.filter(
+    (option) => option.value !== record?.status,
+  );
+  const statusUnavailableReason = alternativeStatuses.every(
+    (option) => option.disabled,
+  )
+    ? alternativeStatuses.find((option) => option.reason)?.reason
+    : "";
+  const showApprovals = Boolean(
+    workflow.data?.data.required ||
+    workflow.data?.data.in_progress ||
+    workflow.data?.data.binding ||
+    workflowHistory.data?.data?.length,
+  );
+  const availableParticipants = (assignees.data ?? []).filter(
+    (person) =>
+      Number(person.id) !== Number(record?.primary_assignee) &&
+      !(collaborators.data ?? []).some(
+        (collaborator) =>
+          Number(collaborator.user) === Number(person.id) &&
+          collaborator.participation_role === participantRole,
+      ),
+  );
   return (
     <ERPWorkspacePage
       title={record ? `${record.number} - ${record.title}` : "Task"}
@@ -763,27 +913,34 @@ export default function TaskDetail({ id }: { id: string }) {
             modelLabel="SL_Projects.ProjectTask"
             objectPk={id}
           />
-          {record.status === "draft" &&
-            hasPermission(user, "SL_Projects.delete_projecttask") && (
-              <Button
-                variant="destructive"
-                disabled={deleteTask.isPending}
-                onClick={() => {
-                  if (
-                    window.confirm(
-                      "Delete this draft task? This cannot be undone.",
-                    )
-                  )
-                    deleteTask.mutate();
-                }}
-              >
-                {deleteTask.isPending ? "Deleting..." : "Delete draft"}
-              </Button>
-            )}
-          <Button variant="outline" onClick={() => setRoleAssignmentOpen(true)}>
-            Assign team role
+          {access.can_deactivate && (
+            <Button
+              variant="outline"
+              disabled={toggleActive.isPending}
+              onClick={() => toggleActive.mutate()}
+            >
+              {toggleActive.isPending
+                ? "Saving..."
+                : inactive
+                  ? "Reactivate task"
+                  : "Deactivate task"}
+            </Button>
+          )}
+          <Button
+            disabled={!access.can_create_subtask}
+            onClick={() => setSubtaskOpen(true)}
+          >
+            Create subtask
           </Button>
-          <Button onClick={() => setSubtaskOpen(true)}>Create subtask</Button>
+        </div>
+      )}
+      {inactive && (
+        <div
+          role="status"
+          className="mb-4 rounded-lg border bg-muted/40 p-4 text-sm"
+        >
+          <strong>Inactive task.</strong> Assignment and history are retained.
+          Reactivate this task to make changes.
         </div>
       )}
       <Dialog open={subtaskOpen} onOpenChange={setSubtaskOpen}>
@@ -846,7 +1003,11 @@ export default function TaskDetail({ id }: { id: string }) {
               Cancel
             </Button>
             <Button
-              disabled={!subtaskTitle.trim() || addStructure.isPending}
+              disabled={
+                !access.can_create_subtask ||
+                !subtaskTitle.trim() ||
+                addStructure.isPending
+              }
               onClick={() => {
                 const hours = Number(subtaskEstimatedHours || 0);
                 if (!Number.isFinite(hours) || hours < 0) {
@@ -871,62 +1032,25 @@ export default function TaskDetail({ id }: { id: string }) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-      <Dialog open={roleAssignmentOpen} onOpenChange={setRoleAssignmentOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Assign team role</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-2">
-            <Select value={assignedRoleId} onValueChange={setAssignedRoleId}>
-              <SelectTrigger>
-                <SelectValue placeholder="Choose a branch role" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="none">No team role</SelectItem>
-                {(roles.data ?? []).map((role) => (
-                  <SelectItem key={role.id} value={String(role.id)}>
-                    {role.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <p className="text-sm text-muted-foreground">
-              Only active roles configured for this task’s branch can be
-              selected. The selected role will see this work in Team Tasks.
-            </p>
-          </div>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setRoleAssignmentOpen(false)}
-            >
-              Cancel
-            </Button>
-            <Button
-              disabled={assignRole.isPending}
-              onClick={() => assignRole.mutate()}
-            >
-              {assignRole.isPending ? "Saving..." : "Save team role"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
       {!record ? (
         <div className="rounded-lg border bg-card p-8 text-sm text-muted-foreground">
           Loading task details...
         </div>
       ) : (
         <Tabs defaultValue="overview">
-          <TabsList className="h-auto w-full justify-start overflow-x-auto">
+          <TabsList className="h-auto w-full flex-wrap justify-start gap-1">
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="activity">Activity & follow-ups</TabsTrigger>
-            <TabsTrigger value="discussion">Discussion & files</TabsTrigger>
+            <TabsTrigger value="discussion">Discussions</TabsTrigger>
+            <TabsTrigger value="files">Files</TabsTrigger>
             <TabsTrigger value="structure">Subtasks & dependencies</TabsTrigger>
-            <TabsTrigger value="workflow">Workflow history</TabsTrigger>
+            {showApprovals && (
+              <TabsTrigger value="workflow">Approvals</TabsTrigger>
+            )}
           </TabsList>
           <TabsContent value="overview">
             <div className="grid gap-5 lg:grid-cols-3">
-              <section className="rounded-lg border bg-card p-5 lg:col-span-2">
+              <section className="min-w-0 rounded-lg border bg-card p-5 lg:col-span-2">
                 <h2 className="font-semibold">Task Summary</h2>
                 <p className="mt-3 whitespace-pre-wrap text-sm text-muted-foreground">
                   {record.description || "No task description provided."}
@@ -935,7 +1059,7 @@ export default function TaskDetail({ id }: { id: string }) {
                   <div>
                     <dt className="text-muted-foreground">Project</dt>
                     <dd className="font-medium">
-                      {record.project_name || "Standalone task"}
+                      {record.project_name || "General"}
                     </dd>
                   </div>
                   <div>
@@ -968,119 +1092,234 @@ export default function TaskDetail({ id }: { id: string }) {
                     </dd>
                   </div>
                 </dl>
-                <details className="mt-5 rounded border p-3">
-                  <summary className="cursor-pointer font-medium">
-                    Edit task planning
-                  </summary>
-                  <div className="mt-3 grid gap-3">
-                    <Input
-                      value={editTitle}
-                      onChange={(event) => setEditTitle(event.target.value)}
-                      placeholder="Task title"
-                    />
-                    <Textarea
-                      value={editDescription}
-                      onChange={(event) =>
-                        setEditDescription(event.target.value)
-                      }
-                      placeholder="Task description"
-                    />
-                    <div className="grid gap-2 sm:grid-cols-2">
+                {access.can_edit && (
+                  <details className="mt-5 rounded border p-3">
+                    <summary className="cursor-pointer font-medium">
+                      Edit task planning
+                    </summary>
+                    <div className="mt-3 grid gap-3">
+                      <div className="grid gap-4 sm:grid-cols-2">
+                        <div className="space-y-2">
+                          <Label htmlFor="edit-task-project" required>
+                            Project
+                          </Label>
+                          <ProjectSelect
+                            id="edit-task-project"
+                            disabled={!access.can_move_project}
+                            value={editProject}
+                            current={{
+                              id: record.project,
+                              name: record.project_name,
+                            }}
+                            onChange={(value) => {
+                              setEditProject(value);
+                              setEditMilestone("none");
+                            }}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="edit-task-milestone">Milestone</Label>
+                          <MilestoneSelect
+                            id="edit-task-milestone"
+                            projectId={editProject}
+                            value={editMilestone}
+                            onChange={setEditMilestone}
+                          />
+                        </div>
+                        {!!task.data?.access?.can_assign && (
+                          <div className="space-y-2">
+                            <Label htmlFor="edit-task-assignee">
+                              Lead assignee
+                            </Label>
+                            <AssigneeSelect
+                              id="edit-task-assignee"
+                              taskId={id}
+                              projectId={editProject}
+                              value={editAssignee}
+                              currentLabel={record.assignee_name}
+                              onChange={setEditAssignee}
+                            />
+                          </div>
+                        )}
+                      </div>
+                      <Label htmlFor="edit-task-title" required>
+                        Task title
+                      </Label>
+
                       <Input
-                        value={editTaskType}
+                        id="edit-task-title"
+                        value={editTitle}
+                        onChange={(event) => setEditTitle(event.target.value)}
+                        placeholder="Task title"
+                      />
+                      <Label htmlFor="edit-task-description">Description</Label>
+                      <Textarea
+                        id="edit-task-description"
+                        value={editDescription}
                         onChange={(event) =>
-                          setEditTaskType(event.target.value)
+                          setEditDescription(event.target.value)
                         }
-                        placeholder="Task type"
+                        placeholder="Task description"
                       />
-                      <Input
-                        value={editEstimatedHours}
-                        min="0"
-                        step="0.25"
-                        type="number"
-                        onChange={(event) =>
-                          setEditEstimatedHours(event.target.value)
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        <div className="space-y-2">
+                          <Label htmlFor="edit-task-type">Task type</Label>
+                          <TaskTypeSelect
+                            id="edit-task-type"
+                            value={editTaskType || "general"}
+                            onChange={setEditTaskType}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="edit-task-hours">
+                            Estimated hours
+                          </Label>
+                          <Input
+                            id="edit-task-hours"
+                            value={editEstimatedHours}
+                            min="0"
+                            step="0.25"
+                            type="number"
+                            onChange={(event) =>
+                              setEditEstimatedHours(event.target.value)
+                            }
+                            placeholder="Estimated hours"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="edit-task-start">Start date</Label>
+                          <Input
+                            id="edit-task-start"
+                            value={editStartDate}
+                            type="date"
+                            onChange={(event) =>
+                              setEditStartDate(event.target.value)
+                            }
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="edit-task-due">Due date</Label>
+                          <Input
+                            id="edit-task-due"
+                            value={editDueDate}
+                            min={editStartDate || undefined}
+                            type="date"
+                            onChange={(event) =>
+                              setEditDueDate(event.target.value)
+                            }
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="edit-task-priority">Priority</Label>
+                          <Select
+                            value={editPriority}
+                            onValueChange={setEditPriority}
+                          >
+                            <SelectTrigger id="edit-task-priority">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="low">Low</SelectItem>
+                              <SelectItem value="medium">Medium</SelectItem>
+                              <SelectItem value="high">High</SelectItem>
+                              <SelectItem value="critical">Critical</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="edit-task-status">Status</Label>
+                          <TaskStatusSelect
+                            id="edit-task-status"
+                            value={editStatus}
+                            options={statusOptions}
+                            onChange={setEditStatus}
+                            disabled={
+                              inactive ||
+                              changeStatus.isPending ||
+                              saveTask.isPending
+                            }
+                          />
+                        </div>
+                      </div>
+                      <Button
+                        className="w-fit"
+                        disabled={
+                          inactive || saveTask.isPending || !editProject
                         }
-                        placeholder="Estimated hours"
-                      />
-                      <Input
-                        value={editStartDate}
-                        type="date"
-                        onChange={(event) =>
-                          setEditStartDate(event.target.value)
-                        }
-                      />
-                      <Input
-                        value={editDueDate}
-                        min={editStartDate || undefined}
-                        type="date"
-                        onChange={(event) => setEditDueDate(event.target.value)}
-                      />
-                      <Select
-                        value={editPriority}
-                        onValueChange={setEditPriority}
+                        onClick={() => saveTask.mutate()}
                       >
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="low">Low</SelectItem>
-                          <SelectItem value="medium">Medium</SelectItem>
-                          <SelectItem value="high">High</SelectItem>
-                          <SelectItem value="critical">Critical</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      <Select value={editStatus} onValueChange={setEditStatus}>
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="draft">Draft</SelectItem>
-                          <SelectItem value="todo">To do</SelectItem>
-                          <SelectItem value="in_progress">
-                            In progress
-                          </SelectItem>
-                          <SelectItem value="blocked">Blocked</SelectItem>
-                        </SelectContent>
-                      </Select>
+                        {saveTask.isPending ? "Saving..." : "Save task details"}
+                      </Button>
                     </div>
-                    <Button
-                      className="w-fit"
-                      disabled={saveTask.isPending}
-                      onClick={() => saveTask.mutate()}
-                    >
-                      {saveTask.isPending ? "Saving..." : "Save task details"}
-                    </Button>
-                  </div>
-                </details>
+                  </details>
+                )}
               </section>
-              <aside className="rounded-lg border bg-card p-5">
-                <h2 className="font-semibold">Current State</h2>
-                <Badge className="mt-3" variant="outline">
-                  {record.status.replaceAll("_", " ")}
-                </Badge>
+              <aside className="min-w-0 rounded-lg border bg-card p-5">
+                <h2 className="font-semibold">Status and progress</h2>
+                <div className="mt-3 space-y-2">
+                  <Label htmlFor="task-status">Task status</Label>
+                  <TaskStatusSelect
+                    id="task-status"
+                    value={record.status}
+                    options={statusOptions}
+                    onChange={(value) => changeStatus.mutate(value)}
+                    disabled={
+                      !access.can_edit ||
+                      changeStatus.isPending ||
+                      saveTask.isPending ||
+                      forward.isPending
+                    }
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    {changeStatus.isPending
+                      ? "Updating status..."
+                      : statusUnavailableReason ||
+                        "Choose a status to update this task immediately. Reopen closed work when more action is needed."}
+                  </p>
+                </div>
                 <div className="mt-5 text-3xl font-bold">
                   {record.progress_percentage}%
                 </div>
                 <p className="mt-1 text-sm text-muted-foreground">
                   {workflow.data?.data.current_stage
                     ? `Approval stage: ${workflow.data.data.current_stage}${workflow.data.data.current_role ? ` - ${workflow.data.data.current_role}` : ""}`
-                    : record.workflow_stage
-                      ? `Approval stage: ${record.workflow_stage}`
-                      : "No approval stage active."}
+                    : workflow.data?.data.required
+                      ? workflow.data.data.can_forward
+                        ? "Completion requires approval. Use Send for approval below."
+                        : "Completion requires approval. Ask your project lead to send this task for approval."
+                      : "Mark Completed when the work is done. Completion sets progress to 100%."}
                 </p>
                 <div className="mt-4 space-y-2">
                   <p className="text-xs font-medium text-muted-foreground">
                     Lead assignee
                   </p>
-                  <Select value={assigneeId} onValueChange={setAssigneeId}>
-                    <SelectTrigger>
+                  <Select
+                    value={assigneeId}
+                    onValueChange={setAssigneeId}
+                    disabled={
+                      inactive ||
+                      assign.isPending ||
+                      !!!task.data?.access?.can_assign
+                    }
+                  >
+                    <SelectTrigger
+                      id="task-lead-assignee"
+                      aria-label="Lead assignee"
+                    >
                       <SelectValue
                         placeholder={record.assignee_name || "Unassigned"}
                       />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="unassigned">Unassigned</SelectItem>
+                      {record.primary_assignee &&
+                        !assignees.data?.some(
+                          (person) => person.id === record.primary_assignee,
+                        ) && (
+                          <SelectItem value={String(record.primary_assignee)}>
+                            {record.assignee_name || "Current assignee"}
+                          </SelectItem>
+                        )}
                       {(assignees.data ?? []).map((person) => (
                         <SelectItem key={person.id} value={String(person.id)}>
                           {person.name}
@@ -1091,7 +1330,14 @@ export default function TaskDetail({ id }: { id: string }) {
                   <Button
                     className="w-full"
                     variant="outline"
-                    disabled={assign.isPending}
+                    disabled={
+                      inactive ||
+                      assign.isPending ||
+                      !task.data ||
+                      !!!task.data?.access?.can_assign ||
+                      assigneeId ===
+                        String(record.primary_assignee || "unassigned")
+                    }
                     onClick={() => assign.mutate()}
                   >
                     Save assignment
@@ -1104,13 +1350,17 @@ export default function TaskDetail({ id }: { id: string }) {
                   <div className="grid gap-2 sm:grid-cols-2">
                     <Select
                       value={participantRole}
-                      onValueChange={(value) =>
+                      onValueChange={(value) => {
                         setParticipantRole(
                           value as "accountable" | "supporting",
-                        )
-                      }
+                        );
+                        setCollaboratorId("");
+                      }}
                     >
-                      <SelectTrigger>
+                      <SelectTrigger
+                        id="task-participant-role"
+                        aria-label="Participant role"
+                      >
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -1126,32 +1376,33 @@ export default function TaskDetail({ id }: { id: string }) {
                       value={collaboratorId}
                       onValueChange={setCollaboratorId}
                     >
-                      <SelectTrigger>
+                      <SelectTrigger
+                        id="task-participant-user"
+                        aria-label="Add participant"
+                      >
                         <SelectValue placeholder="Add participant" />
                       </SelectTrigger>
                       <SelectContent>
-                        {(assignees.data ?? [])
-                          .filter(
-                            (person) =>
-                              person.id !== record.primary_assignee &&
-                              !(collaborators.data ?? []).some(
-                                (collaborator) =>
-                                  collaborator.user === person.id,
-                              ),
-                          )
-                          .map((person) => (
-                            <SelectItem
-                              key={person.id}
-                              value={String(person.id)}
-                            >
-                              {person.name}
-                            </SelectItem>
-                          ))}
+                        {availableParticipants.map((person) => (
+                          <SelectItem key={person.id} value={String(person.id)}>
+                            {person.name}
+                          </SelectItem>
+                        ))}
+                        {!availableParticipants.length && (
+                          <SelectItem value="no-eligible-participants" disabled>
+                            All eligible teammates already have this role
+                          </SelectItem>
+                        )}
                       </SelectContent>
                     </Select>
                     <Button
                       variant="outline"
-                      disabled={!collaboratorId || addCollaborator.isPending}
+                      aria-label="Add task participant"
+                      disabled={
+                        !access.can_assign ||
+                        !collaboratorId ||
+                        addCollaborator.isPending
+                      }
                       onClick={() => addCollaborator.mutate()}
                     >
                       Add
@@ -1171,7 +1422,9 @@ export default function TaskDetail({ id }: { id: string }) {
                         <button
                           aria-label={`Remove ${collaborator.user_name}`}
                           className="ml-1 text-muted-foreground hover:text-foreground"
-                          disabled={removeCollaborator.isPending}
+                          disabled={
+                            !access.can_assign || removeCollaborator.isPending
+                          }
                           onClick={() =>
                             removeCollaborator.mutate(collaborator)
                           }
@@ -1198,12 +1451,12 @@ export default function TaskDetail({ id }: { id: string }) {
                     </p>
                     <Button
                       className="w-full"
-                      disabled={forward.isPending}
+                      disabled={inactive || forward.isPending}
                       onClick={() => forward.mutate()}
                     >
                       {forward.isPending
                         ? "Forwarding..."
-                        : "Forward through workflow"}
+                        : "Send for approval"}
                     </Button>
                   </div>
                 ) : null}
@@ -1216,178 +1469,37 @@ export default function TaskDetail({ id }: { id: string }) {
               </aside>
             </div>
           </TabsContent>
-          <TabsContent value="activity">
-            <div className="grid gap-5 lg:grid-cols-3">
-              <section className="rounded-lg border bg-card p-5 lg:col-span-2">
-                <h2 className="font-semibold">Progress Updates</h2>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  Progress is calculated from completed deliverables; users do
-                  not type a percentage.
-                </p>
-                <div className="mt-3 rounded-md border p-3">
-                  <div className="flex gap-2">
-                    <Input
-                      value={checklistTitle}
-                      onChange={(event) =>
-                        setChecklistTitle(event.target.value)
-                      }
-                      placeholder="Add a measurable deliverable"
-                    />
-                    <Button
-                      variant="outline"
-                      disabled={
-                        !checklistTitle.trim() || addChecklistItem.isPending
-                      }
-                      onClick={() => addChecklistItem.mutate()}
-                    >
-                      Add
-                    </Button>
-                  </div>
-                  <div className="mt-3 space-y-2">
-                    {(checklist.data ?? []).map((item) => (
-                      <label
-                        className="flex cursor-pointer items-center gap-2 text-sm"
-                        key={item.id}
-                      >
-                        <input
-                          checked={item.is_completed}
-                          disabled={toggleChecklistItem.isPending}
-                          onChange={() => toggleChecklistItem.mutate(item)}
-                          type="checkbox"
-                        />
-                        <span
-                          className={
-                            item.is_completed
-                              ? "line-through text-muted-foreground"
-                              : ""
-                          }
-                        >
-                          {item.title}
-                        </span>
-                      </label>
-                    ))}
-                    {!checklist.data?.length ? (
-                      <p className="text-xs text-muted-foreground">
-                        Add deliverables to begin automatic progress tracking.
-                      </p>
-                    ) : null}
-                  </div>
-                </div>
-                <div className="mt-3 grid gap-2 sm:grid-cols-[8rem_1fr_auto]">
-                  <Input
-                    type="number"
-                    min="0"
-                    step="0.25"
-                    value={timeSpent}
-                    onChange={(event) => setTimeSpent(event.target.value)}
-                    placeholder="Hours worked"
-                  />
-                  <Textarea
-                    value={note}
-                    onChange={(event) => setNote(event.target.value)}
-                    placeholder="Describe completed work, blockers, or next action"
-                  />
-                  <Button
-                    disabled={!note.trim() || addUpdate.isPending}
-                    onClick={() => addUpdate.mutate()}
-                  >
-                    Add update
-                  </Button>
-                </div>
-                <div className="mt-4 space-y-3">
-                  {(updates.data ?? []).map((update) => (
-                    <div className="rounded border p-3 text-sm" key={update.id}>
-                      <div className="flex justify-between gap-3">
-                        <span className="font-medium">
-                          {update.progress_percentage}% progress
-                          {Number(update.time_spent_hours) > 0
-                            ? ` · ${update.time_spent_hours} h logged`
-                            : ""}
-                        </span>
-                        <span className="text-muted-foreground">
-                          {formatDate(update.created_at)}
-                        </span>
-                      </div>
-                      <p className="mt-1 text-muted-foreground">
-                        {update.update_description}
-                      </p>
-                    </div>
-                  ))}
-                  {!updates.data?.length && (
-                    <p className="text-sm text-muted-foreground">
-                      No progress updates recorded yet.
-                    </p>
-                  )}
-                </div>
-              </section>
-              <section className="rounded-lg border bg-card p-5">
-                <h2 className="font-semibold">Follow-ups</h2>
-                <div className="mt-3 space-y-2">
-                  <Input
-                    type="date"
-                    value={followUpDate}
-                    onChange={(event) => setFollowUpDate(event.target.value)}
-                  />
-                  <Textarea
-                    value={followUpNotes}
-                    onChange={(event) => setFollowUpNotes(event.target.value)}
-                    placeholder="What needs to happen?"
-                  />
-                  <Button
-                    className="w-full"
-                    variant="outline"
-                    disabled={!followUpDate || addFollowUp.isPending}
-                    onClick={() => addFollowUp.mutate()}
-                  >
-                    Schedule follow-up
-                  </Button>
-                </div>
-                <div className="mt-4 space-y-2">
-                  {(followUps.data ?? []).map((followUp) => (
-                    <div
-                      className="rounded border p-3 text-sm"
-                      key={followUp.id}
-                    >
-                      <div className="flex justify-between gap-2">
-                        <span className="font-medium">
-                          {formatDate(followUp.follow_up_date)}
-                        </span>
-                        <Badge variant="outline">{followUp.status}</Badge>
-                      </div>
-                      <p className="mt-1 text-muted-foreground">
-                        {followUp.notes || "No notes"}
-                      </p>
-                      <div className="mt-2 flex items-center justify-between gap-2">
-                        <p className="text-xs text-muted-foreground">
-                          Owner: {followUp.owner_name}
-                        </p>
-                        {!["completed", "cancelled"].includes(
-                          followUp.status,
-                        ) ? (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            disabled={completeFollowUp.isPending}
-                            onClick={() => completeFollowUp.mutate(followUp.id)}
-                          >
-                            Complete
-                          </Button>
-                        ) : null}
-                      </div>
-                    </div>
-                  ))}
-                  {!followUps.data?.length && (
-                    <p className="text-sm text-muted-foreground">
-                      No follow-ups are scheduled yet.
-                    </p>
-                  )}
-                </div>
-              </section>
-            </div>
+          <TabsContent value="activity" className="min-w-0">
+            <TaskActivityPanel
+              key={id}
+              taskId={id}
+              projectId={record.project}
+              progress={record.progress_percentage}
+              inactive={inactive}
+              canProgress={!!access.can_update_progress}
+              canAddFollowUp={!!access.can_add_followup}
+              canCompleteFollowUp={!!access.can_complete_followup}
+              saving={
+                addUpdate.isPending ||
+                addFollowUp.isPending ||
+                addChecklistItem.isPending
+              }
+              checklistBusy={toggleChecklistItem.isPending}
+              followUpBusy={completeFollowUp.isPending}
+              onAddDeliverable={(title) => addChecklistItem.mutateAsync(title)}
+              onAddUpdate={(values) => addUpdate.mutateAsync(values)}
+              onAddFollowUp={(values) => addFollowUp.mutateAsync(values)}
+              onToggleDeliverable={(item) =>
+                toggleChecklistItem.mutate(item as ChecklistItem)
+              }
+              onCompleteFollowUp={(followUpId) =>
+                completeFollowUp.mutate(followUpId)
+              }
+            />
           </TabsContent>
           <TabsContent value="discussion">
             <div className="grid gap-5 lg:grid-cols-3">
-              <section className="rounded-lg border bg-card p-5 lg:col-span-3">
+              <section className="min-w-0 rounded-lg border bg-card p-5 lg:col-span-3">
                 <h2 className="font-semibold">Discussion</h2>
                 <div className="mt-3 flex gap-2">
                   <Textarea
@@ -1396,7 +1508,11 @@ export default function TaskDetail({ id }: { id: string }) {
                     placeholder="Add a task comment"
                   />
                   <Button
-                    disabled={!comment.trim() || addComment.isPending}
+                    disabled={
+                      !access.can_comment ||
+                      !comment.trim() ||
+                      addComment.isPending
+                    }
                     onClick={() => addComment.mutate()}
                   >
                     Comment
@@ -1431,38 +1547,23 @@ export default function TaskDetail({ id }: { id: string }) {
                     })}
                   </div>
                 )}
-                <div className="mt-4 space-y-3">
-                  {(comments.data ?? []).map((entry) => (
-                    <div className="rounded border p-3 text-sm" key={entry.id}>
-                      <div className="flex justify-between gap-3">
-                        <span className="font-medium">{entry.author_name}</span>
-                        <span className="text-muted-foreground">
-                          {formatDate(entry.created_at)}
-                        </span>
-                      </div>
-                      <p className="mt-1 whitespace-pre-wrap text-muted-foreground">
-                        {entry.body}
-                      </p>
-                      {entry.mention_names.length > 0 && (
-                        <p className="mt-2 text-xs text-muted-foreground">
-                          Notified: {entry.mention_names.join(", ")}
-                        </p>
-                      )}
-                    </div>
-                  ))}
-                  {!comments.data?.length && (
-                    <p className="text-sm text-muted-foreground">
-                      No discussion entries yet.
-                    </p>
-                  )}
-                </div>
+                <TaskRelatedRegister
+                  taskId={id}
+                  projectId={record.project}
+                  kind="comments"
+                />
               </section>
-              <section className="rounded-lg border bg-card p-5 lg:col-span-3">
+            </div>
+          </TabsContent>
+          <TabsContent value="files">
+            <div className="grid gap-5 lg:grid-cols-3">
+              <section className="min-w-0 rounded-lg border bg-card p-5 lg:col-span-3">
                 <h2 className="font-semibold">Attachments & Evidence</h2>
                 <div className="mt-3 flex flex-wrap items-center gap-2">
                   <Input
                     className="max-w-md"
                     type="file"
+                    disabled={!access.can_attach}
                     onChange={(event) =>
                       setAttachment(event.target.files?.[0] ?? null)
                     }
@@ -1476,7 +1577,11 @@ export default function TaskDetail({ id }: { id: string }) {
                     Approval evidence
                   </label>
                   <Button
-                    disabled={!attachment || uploadAttachment.isPending}
+                    disabled={
+                      !access.can_attach ||
+                      !attachment ||
+                      uploadAttachment.isPending
+                    }
                     onClick={() => uploadAttachment.mutate()}
                   >
                     {uploadAttachment.isPending ? "Uploading..." : "Upload"}
@@ -1486,81 +1591,37 @@ export default function TaskDetail({ id }: { id: string }) {
                   Up to 10 MB per file. Mark evidence so reviewers can identify
                   supporting material quickly.
                 </p>
-                <div className="mt-4 space-y-2">
-                  {(attachments.data ?? []).map((file) => (
-                    <div
-                      className="flex items-center justify-between rounded border p-3 text-sm hover:bg-muted/40"
-                      key={file.id}
-                    >
-                      <a href={file.file} rel="noreferrer" target="_blank">
-                        <span>
-                          {file.original_name}
-                          {file.is_evidence ? " (evidence)" : ""}
-                        </span>
-                      </a>
-                      <div className="flex items-center gap-3">
-                        <span className="text-muted-foreground">
-                          {file.uploaded_by_name}
-                        </span>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          disabled={removeAttachment.isPending}
-                          onClick={() => {
-                            if (
-                              window.confirm(`Remove “${file.original_name}”?`)
-                            )
-                              removeAttachment.mutate(file.id);
-                          }}
-                        >
-                          Remove
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
-                  {!attachments.data?.length && (
-                    <p className="text-sm text-muted-foreground">
-                      No files attached to this task.
-                    </p>
-                  )}
-                </div>
+                <TaskRelatedRegister
+                  taskId={id}
+                  projectId={record.project}
+                  kind="attachments"
+                  onRemove={(fileId) => removeAttachment.mutate(fileId)}
+                  busy={inactive || removeAttachment.isPending}
+                  canRemove={!!access.can_remove_attachment}
+                />
               </section>
             </div>
           </TabsContent>
           <TabsContent value="structure">
             <div className="grid gap-5 lg:grid-cols-3">
-              <section className="rounded-lg border bg-card p-5 lg:col-span-3">
+              <section className="min-w-0 rounded-lg border bg-card p-5 lg:col-span-3">
                 <h2 className="font-semibold">Subtasks & Dependencies</h2>
                 <div className="mt-3 grid gap-5 lg:grid-cols-2">
-                  <div>
+                  <div className="min-w-0">
                     <Button
                       variant="outline"
+                      disabled={!access.can_create_subtask}
                       onClick={() => setSubtaskOpen(true)}
                     >
                       Create planned subtask
                     </Button>
-                    <div className="mt-3 space-y-2">
-                      {(structure.data?.subtasks ?? []).map((subtask) => (
-                        <Link
-                          href={`/projects/tasks/${subtask.id}`}
-                          key={subtask.id}
-                        >
-                          <div className="cursor-pointer rounded border p-3 text-sm hover:bg-muted/40">
-                            {subtask.number} - {subtask.title}{" "}
-                            <Badge className="ml-2" variant="outline">
-                              {subtask.status}
-                            </Badge>
-                          </div>
-                        </Link>
-                      ))}
-                      {!structure.data?.subtasks.length && (
-                        <p className="text-sm text-muted-foreground">
-                          No subtasks yet.
-                        </p>
-                      )}
-                    </div>
+                    <TaskRelatedRegister
+                      taskId={id}
+                      projectId={record.project}
+                      kind="subtasks"
+                    />
                   </div>
-                  <div>
+                  <div className="min-w-0">
                     <div className="flex gap-2">
                       <Select
                         value={dependencyId}
@@ -1583,7 +1644,11 @@ export default function TaskDetail({ id }: { id: string }) {
                         </SelectContent>
                       </Select>
                       <Button
-                        disabled={!dependencyId || addStructure.isPending}
+                        disabled={
+                          !access.can_edit ||
+                          !dependencyId ||
+                          addStructure.isPending
+                        }
                         onClick={() =>
                           addStructure.mutate({
                             action: "dependency",
@@ -1594,80 +1659,66 @@ export default function TaskDetail({ id }: { id: string }) {
                         Add dependency
                       </Button>
                     </div>
-                    <div className="mt-3 space-y-2">
-                      {(structure.data?.dependencies ?? []).map(
-                        (dependency) => (
-                          <Link
-                            href={`/projects/tasks/${dependency.id}`}
-                            key={dependency.id}
-                          >
-                            <div className="cursor-pointer rounded border p-3 text-sm hover:bg-muted/40">
-                              {dependency.number} - {dependency.title}{" "}
-                              <Badge className="ml-2" variant="outline">
-                                {dependency.status}
-                              </Badge>
-                            </div>
-                          </Link>
-                        ),
-                      )}
-                      {!structure.data?.dependencies.length && (
-                        <p className="text-sm text-muted-foreground">
-                          No dependencies recorded.
-                        </p>
-                      )}
-                    </div>
+                    <TaskRelatedRegister
+                      taskId={id}
+                      projectId={record.project}
+                      kind="dependencies"
+                    />
                   </div>
                 </div>
               </section>
             </div>
           </TabsContent>
-          <TabsContent value="workflow">
-            <div className="grid gap-5 lg:grid-cols-3">
-              <section className="rounded-lg border bg-card p-5 lg:col-span-3">
-                <h2 className="font-semibold">Workflow History</h2>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  Every submission, decision, and reviewer comment for this
-                  task.
-                </p>
-                <div className="mt-4 space-y-3">
-                  {(workflowHistory.data?.data ?? []).map((item) => (
-                    <div className="rounded border p-3 text-sm" key={item.id}>
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <strong>{item.title}</strong>
-                        <Badge variant="outline">{item.status}</Badge>
+          {showApprovals && (
+            <TabsContent value="workflow">
+              <div className="grid gap-5 lg:grid-cols-3">
+                <section className="min-w-0 rounded-lg border bg-card p-5 lg:col-span-3">
+                  <h2 className="font-semibold">Workflow History</h2>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Every submission, decision, and reviewer comment for this
+                    task.
+                  </p>
+                  <div className="mt-4 space-y-3">
+                    {(workflowHistory.data?.data ?? []).map((item) => (
+                      <div className="rounded border p-3 text-sm" key={item.id}>
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <strong>{item.title}</strong>
+                          <Badge variant="outline">{item.status}</Badge>
+                        </div>
+                        <p className="mt-1 text-muted-foreground">
+                          {item.detail}
+                        </p>
+                        <p className="mt-2 text-xs text-muted-foreground">
+                          Assigned to{" "}
+                          {item.assigned_group_name || "an approver"} ·{" "}
+                          {formatDateTime(item.created_at)}
+                        </p>
+                        {(item.metadata?.workflow_history ?? []).map(
+                          (event, index) => (
+                            <div
+                              className="mt-2 border-l-2 pl-3 text-xs text-muted-foreground"
+                              key={`${item.id}-${index}`}
+                            >
+                              <span className="font-medium text-foreground">
+                                {event.action}
+                              </span>{" "}
+                              by {event.actor_name} · {formatDateTime(event.at)}
+                              {event.comment ? ` — ${event.comment}` : ""}
+                            </div>
+                          ),
+                        )}
                       </div>
-                      <p className="mt-1 text-muted-foreground">
-                        {item.detail}
+                    ))}
+                    {!workflowHistory.data?.data.length && (
+                      <p className="py-6 text-center text-sm text-muted-foreground">
+                        This task has not entered a workflow yet.
                       </p>
-                      <p className="mt-2 text-xs text-muted-foreground">
-                        Assigned to {item.assigned_group_name || "an approver"}{" "}
-                        · {formatDateTime(item.created_at)}
-                      </p>
-                      {(item.metadata?.workflow_history ?? []).map(
-                        (event, index) => (
-                          <div
-                            className="mt-2 border-l-2 pl-3 text-xs text-muted-foreground"
-                            key={`${item.id}-${index}`}
-                          >
-                            <span className="font-medium text-foreground">
-                              {event.action}
-                            </span>{" "}
-                            by {event.actor_name} · {formatDateTime(event.at)}
-                            {event.comment ? ` — ${event.comment}` : ""}
-                          </div>
-                        ),
-                      )}
-                    </div>
-                  ))}
-                  {!workflowHistory.data?.data.length && (
-                    <p className="py-6 text-center text-sm text-muted-foreground">
-                      This task has not entered a workflow yet.
-                    </p>
-                  )}
-                </div>
-              </section>
-            </div>
-          </TabsContent>
+                    )}
+                  </div>
+                </section>
+              </div>
+            </TabsContent>
+          )}
         </Tabs>
       )}
     </ERPWorkspacePage>

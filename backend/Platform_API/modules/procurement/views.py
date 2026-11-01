@@ -28,7 +28,6 @@ try:
     from SL_Procurement.models import (
         ApprovalMatrix,
         ProcurementPolicy,
-        Department,
         GoodsReceiptLine,
         GoodsReceiptNote,
         PurchaseOrder,
@@ -48,6 +47,7 @@ except ImportError:
     HAS_BUDGETING_MODELS = False
 
 from Platform_Core.models import (
+    Department,
     WorkflowDefinition,
     WorkflowInboxItem,
     WorkflowNodeDefinition,
@@ -512,7 +512,16 @@ def _matching_approval_rules(requisition):
 
 
 def _workflow_context_for_requisition(requisition):
+    from Platform_Core.organization import platform_branch
+    branch = platform_branch(requisition.tenant, requisition.branch)
     return {
+        "organization_id": requisition.tenant_id,
+        "tenant_id": requisition.tenant_id,
+        "branch_id": branch.pk if branch else None,
+        "branch_name": branch.name if branch else "",
+        "department_id": requisition.department_id,
+        "department_code": requisition.department.code if requisition.department_id else "",
+        "department_name": requisition.department.name if requisition.department_id else "",
         "amount": requisition.estimated_total or Decimal("0"),
         "estimated_total": requisition.estimated_total or Decimal("0"),
         "cost_center": requisition.cost_center or "",
@@ -572,10 +581,15 @@ def _node_matches_requisition(node, requisition):
     return True
 
 
-def _tenant_group_members(group, tenant):
+def _tenant_group_members(group, tenant, requisition=None):
     members = []
     for user in group.user_set.filter(is_active=True).distinct():
         if user_belongs_to_tenant(user, tenant):
+            if requisition:
+                from Platform_Core.organization import branch_allowed_for_user, platform_branch
+                branch = platform_branch(tenant, requisition.branch)
+                if branch and not branch_allowed_for_user(user, branch):
+                    continue
             members.append(user)
     return members
 
@@ -590,11 +604,13 @@ def _committee_requirement(node):
 
 
 def _matching_central_workflow_path(requisition):
-    workflow = WorkflowDefinition.objects.filter(
-        tenant=requisition.tenant,
-        entity_type="procurement_requisition",
-        is_active=True,
-    ).select_related("module").prefetch_related(
+    policy = ProcurementPolicy.objects.filter(tenant=requisition.tenant).first()
+    available = WorkflowDefinition.objects.filter(
+        tenant=requisition.tenant, entity_type="procurement_requisition", is_active=True,
+    )
+    if policy and policy.workflow_id:
+        available = available.filter(pk=policy.workflow_id, status="published")
+    workflow = available.select_related("module").prefetch_related(
         "nodes__approval_group",
         "nodes__assigned_user",
         "transitions__from_node",
@@ -650,11 +666,13 @@ def _matching_central_workflow_steps(requisition):
     workflow, nodes = _matching_central_workflow_path(requisition)
     if nodes:
         return workflow, nodes
-    workflow = WorkflowDefinition.objects.filter(
-        tenant=requisition.tenant,
-        entity_type="procurement_requisition",
-        is_active=True,
-    ).select_related("module").prefetch_related("steps__approval_group").order_by("id").first()
+    policy = ProcurementPolicy.objects.filter(tenant=requisition.tenant).first()
+    available = WorkflowDefinition.objects.filter(
+        tenant=requisition.tenant, entity_type="procurement_requisition", is_active=True,
+    )
+    if policy and policy.workflow_id:
+        available = available.filter(pk=policy.workflow_id, status="published")
+    workflow = available.select_related("module").prefetch_related("steps__approval_group").order_by("id").first()
     if not workflow:
         return None, []
     matched = []
@@ -704,6 +722,7 @@ def _build_workflow_inbox_item(requisition, approval, workflow=None, step_defini
         assigned_group=approval.approval_group,
         quick_actions=["approve", "reject"],
         metadata={
+            **{key: str(value) if isinstance(value, Decimal) else value for key, value in _workflow_context_for_requisition(requisition).items()},
             "cost_center": requisition.cost_center,
             "step_order": approval.step_order,
             "budget_status": requisition.budget_status,
@@ -735,7 +754,9 @@ def _sync_requisition_approvals(requisition):
     if steps:
         for step in steps:
             if isinstance(step, WorkflowNodeDefinition) and step.approval_group_id and step.approval_mode in {"any_one", "all_members", "quorum"}:
-                members = _tenant_group_members(step.approval_group, requisition.tenant)
+                members = _tenant_group_members(step.approval_group, requisition.tenant, requisition)
+                if not members:
+                    raise ValidationError({"approvals": "The approval group has no active organization members with access to the request branch."})
                 if members:
                     for member in members:
                         RequisitionApproval.objects.create(
@@ -765,6 +786,9 @@ def _sync_requisition_approvals(requisition):
             )
         return steps
 
+    policy = ProcurementPolicy.objects.filter(tenant=requisition.tenant).first()
+    if not use_matrix and policy and policy.workflow_id:
+        raise ValidationError({"approvals": "The selected central workflow has no available approval steps. Publish an active route in Workflow Center."})
     rules = _matching_approval_rules(requisition)
     if not rules:
         raise ValidationError({"approvals": "No active approval route matches this request. Configure approval rules before submitting."})
@@ -809,7 +833,7 @@ def _is_committee_step_complete(requisition, node):
             return True
         return False
     if node.approval_mode == "all_members":
-        return pending_count == 0 and approved_count >= _committee_requirement(node)
+        return pending_count == 0 and approved_count >= 1
     if node.approval_mode == "quorum":
         if approved_count >= _committee_requirement(node):
             pending_qs.update(status="skipped", updated_at=timezone.now())
@@ -913,7 +937,7 @@ class ApprovalMatrixListCreateView(APIView):
         serializer.is_valid(raise_exception=True)
         validate_approval_rule(serializer, tenant)
         obj = serializer.save(tenant=tenant)
-        ProcurementPolicy.objects.update_or_create(tenant=tenant, defaults={"approval_source": "matrix"})
+        # Routing source is selected explicitly in Procurement Configuration.
         return Response(ApprovalMatrixSerializer(obj).data, status=status.HTTP_201_CREATED)
 
 
@@ -939,7 +963,7 @@ class ApprovalMatrixDetailView(APIView):
         serializer.is_valid(raise_exception=True)
         validate_approval_rule(serializer, obj.tenant)
         obj = serializer.save()
-        ProcurementPolicy.objects.update_or_create(tenant=obj.tenant, defaults={"approval_source": "matrix"})
+        # Routing source is selected explicitly in Procurement Configuration.
         return Response(ApprovalMatrixSerializer(obj).data)
 
     def delete(self, request, pk):
@@ -948,7 +972,7 @@ class ApprovalMatrixDetailView(APIView):
             return Response({"error": "Not found."}, status=status.HTTP_404_NOT_FOUND)
         from .requisition_flow import procurement_require
         procurement_require(request.user, "delete_approvalmatrix")
-        ProcurementPolicy.objects.update_or_create(tenant=obj.tenant, defaults={"approval_source": "matrix"})
+        # Routing source is selected explicitly in Procurement Configuration.
         obj.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 

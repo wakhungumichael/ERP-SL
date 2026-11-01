@@ -1,6 +1,8 @@
+from .public_documents import PublicPrintedDocumentAPIView
 # Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu.
 from django.urls import path
 from .setup_import import SetupImportView
+from .organization import OrganizationUnitOptionsView, OrganizationUnitListView, OrganizationUnitDetailView
 
 from .views import (
     ActiveRoleAPIView,
@@ -98,6 +100,7 @@ from .views import (
     PlatformUserRoleAssignmentAPIView,
     PublicSiteConfigurationAPIView,
     PublicWebManifestAPIView,
+    PublicAppIconAPIView,
     activate_license_action,
     activate_tenant,
     generate_license_action,
@@ -115,11 +118,16 @@ from .views import (
 
 
 urlpatterns = [
+    path("public/documents/<str:token>/", PublicPrintedDocumentAPIView.as_view(), name="public-printed-document"),
+    path("organization-units/options/", OrganizationUnitOptionsView.as_view()),
+    path("organization-units/", OrganizationUnitListView.as_view()),
+    path("organization-units/<int:pk>/", OrganizationUnitDetailView.as_view()),
     path("tenants/<int:pk>/setup-import/", SetupImportView.as_view(), name="platform-setup-import"),
     path("", platform_overview, name="platform-module-overview"),
     # Auth
     path("auth/status/", AuthStatusAPIView.as_view(), name="platform-auth-status"),
     path("public/site/", PublicSiteConfigurationAPIView.as_view(), name="platform-public-site"),
+    path("public/app-icon/", PublicAppIconAPIView.as_view(), name="platform-public-app-icon"),
     path("public/manifest/", PublicWebManifestAPIView.as_view(), name="platform-public-manifest"),
     path("auth/register/", PublicRegistrationAPIView.as_view(), name="platform-auth-register"),
     path("auth/token/", TokenLoginAPIView.as_view(), name="platform-auth-token"),

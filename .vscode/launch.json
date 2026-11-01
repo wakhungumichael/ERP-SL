@@ -3,7 +3,7 @@
   "configurations": [
     {
       "name": "Django: backend",
-      "type": "python",
+      "type": "debugpy",
       "request": "launch",
       "program": "${workspaceFolder}/backend/manage.py",
       "args": ["runserver", "0.0.0.0:8080"],

@@ -17,10 +17,8 @@ class Command(BaseCommand):
             section, _ = WorkspaceMenuSection.objects.get_or_create(key='hr', defaults={'title': 'HR', 'icon': 'users', 'module': hr, 'sort_order': 60, 'is_active': True})
             for index, (key, title) in enumerate([('employees', 'Employees & Onboarding'), ('leave', 'Leave Requests'), ('requests', 'Employee Requests'), ('my-payslips', 'My Payslips'), ('settings', 'HR Settings')], 1):
                 WorkspaceMenuItem.objects.get_or_create(section=section, key=key, defaults={'title': title, 'route_path': f'/hr/{key}', 'api_path': f'/api/hr/{key}/', 'required_module': hr, 'sort_order': index, 'icon': 'users'})
-        procurement = ModuleDefinition.objects.filter(slug='procurement').first()
-        if procurement:
-            section, _ = WorkspaceMenuSection.objects.get_or_create(key='procurement', defaults={'title': 'Procurement', 'icon': 'shopping-cart', 'module': procurement, 'sort_order': 50})
-            WorkspaceMenuItem.objects.get_or_create(section=section, key='departments', defaults={'title': 'Departments & Heads', 'route_path': '/procurement/departments', 'api_path': '/api/procurement/departments/', 'required_module': procurement, 'sort_order': 3, 'icon': 'users'})
+        from Platform_Core.organization import ensure_structure_menu
+        ensure_structure_menu()
         permission_names = {
             'SL_HR': ['view_employee', 'request_own_leave', 'add_employeedocument', 'view_employeedocument', 'add_employeeservicerequest', 'view_employeeservicerequest'],
             'SL_Procurement': ['add_requisition', 'change_requisition', 'view_requisition'],

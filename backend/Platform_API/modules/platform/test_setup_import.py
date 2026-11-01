@@ -2,6 +2,7 @@ from django.contrib.auth.models import Group, User
 from django.test import TestCase
 from rest_framework.test import APIClient
 from Platform_Core.models import Account, JournalEntry, OrganizationMembership, OrganizationSetupImport, Tenant
+from Platform_Core.management.commands.seed_workflows import WORKFLOW_CATALOG
 from SL_CRM.models import Supplier
 from SL_Procurement.models import Requisition, RequisitionLine
 from SL_Sales.models import Product
@@ -28,7 +29,7 @@ class OrganizationSetupImportTests(TestCase):
     def test_new_organization_can_import_selected_setup_idempotently(self):
         first = self.run_import()
         self.assertEqual(first.status_code, 200, first.data)
-        self.assertEqual(self.tenant.workflow_definitions.count(), 16)
+        self.assertEqual(self.tenant.workflow_definitions.count(), len(WORKFLOW_CATALOG))
         self.assertEqual(Product.objects.filter(tenant=self.tenant).count(), 2)
         self.assertEqual(Customer.objects.filter(tenant=self.tenant).count(), 2)
         self.assertEqual(Supplier.objects.filter(tenant=self.tenant).count(), 2)
@@ -37,6 +38,9 @@ class OrganizationSetupImportTests(TestCase):
         self.assertEqual(second.status_code, 200, second.data)
         self.assertEqual(Product.objects.filter(tenant=self.tenant).count(), 2)
         self.assertEqual(second.data['report']['workflows']['created'], 0)
+        self.assertTrue(second.data['no_changes'])
+        self.assertEqual(second.data['created_count'], 0)
+        self.assertGreater(first.data['created_count'], 0)
         self.assertFalse(Account.objects.filter(tenant=self.other).exists())
         self.assertFalse(JournalEntry.objects.exists())
         self.assertEqual(User.objects.count(), 2)
@@ -66,7 +70,7 @@ class OrganizationSetupImportTests(TestCase):
         self.assertFalse(Customer.objects.exists())
         self.assertFalse(self.tenant.project_tasks.exists())
         self.assertTrue(Account.objects.filter(tenant=self.tenant).exists())
-        self.assertEqual(self.tenant.workflow_definitions.count(), 16)
+        self.assertEqual(self.tenant.workflow_definitions.count(), len(WORKFLOW_CATALOG))
 
     def test_used_or_edited_master_examples_block_cleanup_atomically(self):
         self.assertEqual(self.run_import(selections=['demo_masters']).status_code, 200)

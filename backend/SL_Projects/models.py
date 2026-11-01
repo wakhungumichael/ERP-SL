@@ -22,6 +22,7 @@ class Project(AuditMetadataMixin, models.Model):
     name = models.CharField(max_length=180)
     description = models.TextField(blank=True)
     project_type = models.CharField(max_length=100, blank=True)
+    is_general = models.BooleanField(default=False, editable=False)
     manager = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="managed_projects")
     owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="owned_projects")
     start_date = models.DateField(null=True, blank=True)
@@ -42,6 +43,7 @@ class Project(AuditMetadataMixin, models.Model):
     class Meta:
         ordering = ["-created_at", "name"]
         unique_together = ("tenant", "code")
+        constraints = [models.UniqueConstraint(fields=("tenant", "branch"), condition=models.Q(is_general=True), name="projects_one_general_per_branch")]
         permissions = [
             ("view_project_dashboard", "Can view projects dashboard"),
             ("assign_project_manager", "Can assign project manager"),
@@ -119,7 +121,7 @@ class ProjectMilestone(AuditMetadataMixin, models.Model):
 class ProjectTask(AuditMetadataMixin, models.Model):
     STATUS_CHOICES = [
         ("draft", "Draft"), ("todo", "To do"), ("in_progress", "In progress"),
-        ("blocked", "Blocked"), ("in_review", "In review"), ("completed", "Completed"), ("cancelled", "Cancelled"),
+        ("blocked", "Blocked"), ("reopened", "Reopened"), ("in_review", "In review"), ("completed", "Completed"), ("cancelled", "Cancelled"),
     ]
     PRIORITY_CHOICES = Project.PRIORITY_CHOICES
 
@@ -129,12 +131,15 @@ class ProjectTask(AuditMetadataMixin, models.Model):
     title = models.CharField(max_length=255)
     description = models.TextField(blank=True)
     task_type = models.CharField(max_length=100, blank=True)
-    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="tasks", null=True, blank=True)
+    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="tasks")
     milestone = models.ForeignKey(ProjectMilestone, on_delete=models.SET_NULL, related_name="tasks", null=True, blank=True)
     parent_task = models.ForeignKey("self", on_delete=models.SET_NULL, related_name="subtasks", null=True, blank=True)
     source_ticket = models.ForeignKey("SL_Ticketing.Ticket", on_delete=models.SET_NULL, related_name="project_tasks", null=True, blank=True)
     priority = models.CharField(max_length=20, choices=PRIORITY_CHOICES, default="medium")
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="draft")
+    is_active = models.BooleanField(default=True)
+    deactivated_at = models.DateTimeField(null=True, blank=True, editable=False)
+    deactivated_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, editable=False, related_name="deactivated_project_tasks")
     progress_percentage = models.PositiveSmallIntegerField(default=0)
     start_date = models.DateField(null=True, blank=True)
     due_date = models.DateField(null=True, blank=True)
@@ -158,6 +163,7 @@ class ProjectTask(AuditMetadataMixin, models.Model):
             ("view_own_projecttask", "Can view own and role-assigned project tasks"),
             ("view_all_projecttask", "Can view all project tasks in the active workspace"),
             ("assign_projecttask", "Can assign project tasks"),
+            ("deactivate_projecttask", "Can deactivate and reactivate project tasks"),
             ("update_projecttask_progress", "Can update project task progress"),
             ("complete_projecttask", "Can complete project tasks"),
             ("reopen_projecttask", "Can reopen project tasks"),
@@ -198,6 +204,22 @@ class ProjectTask(AuditMetadataMixin, models.Model):
             errors["actual_hours"] = "Actual hours cannot be negative."
         if errors:
             raise ValidationError(errors)
+
+    def _default_project(self):
+        if not self.project_id and self.tenant_id and self.branch_id:
+            from .general import get_general_project
+            self.project = get_general_project(self.tenant_id, self.branch_id)
+
+    def full_clean(self, *args, **kwargs):
+        self._default_project()
+        return super().full_clean(*args, **kwargs)
+
+    def save(self, *args, **kwargs):
+        missing = not self.project_id
+        self._default_project()
+        if missing and kwargs.get("update_fields") is not None:
+            kwargs["update_fields"] = set(kwargs["update_fields"]) | {"project"}
+        return super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.number} - {self.title}"
@@ -330,4 +352,20 @@ class TicketTaskStatusSyncPolicy(models.Model):
     target_ticket_status = models.CharField(
         max_length=20, choices=TARGET_STATUS_CHOICES, default="resolved"
     )
+    updated_at = models.DateTimeField(auto_now=True)
+
+
+class ProjectModuleSettings(models.Model):
+    from .configuration import default_task_types, default_task_statuses
+    tenant = models.OneToOneField("Platform_Core.Tenant", on_delete=models.CASCADE, related_name="project_module_settings")
+    task_types = models.JSONField(default=default_task_types)
+    allow_custom_task_types = models.BooleanField(default=True)
+    default_task_type = models.CharField(max_length=100, default="general")
+    default_priority = models.CharField(max_length=20, choices=Project.PRIORITY_CHOICES, default="medium")
+    default_task_status = models.CharField(max_length=20, choices=ProjectTask.STATUS_CHOICES, default="draft")
+    enabled_task_statuses = models.JSONField(default=default_task_statuses)
+    default_due_days = models.PositiveSmallIntegerField(null=True, blank=True)
+    default_follow_up_days = models.PositiveSmallIntegerField(default=7)
+    default_page_size = models.PositiveSmallIntegerField(default=25)
+    updated_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
     updated_at = models.DateTimeField(auto_now=True)

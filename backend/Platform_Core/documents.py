@@ -728,7 +728,20 @@ def _invoice_context(invoice, settings_obj, request=None):
             )
 
     total = Decimal(invoice.total_amount or 0)
-    tax = max(total - subtotal, Decimal("0.00"))
+    tax = Decimal(invoice.tax_total or 0)
+    charge_total = Decimal(invoice.charge_total or 0)
+    charges = [{"name": charge.name, "amount_display": _money(charge.amount, invoice.currency or "KES")} for charge in invoice.charges.all()]
+    # Older transaction invoices predate separate tax/charge columns.
+    if not tax and not charge_total:
+        tax = max(total - subtotal, Decimal("0.00"))
+    itemized_charges = sum((Decimal(charge.amount) for charge in invoice.charges.all()), Decimal("0"))
+    unitemized_charge = max(charge_total - itemized_charges, Decimal("0"))
+    tax_name = invoice.combined_tax_name or getattr(settings_obj, "default_tax_name", "") or "Tax"
+    rates = {Decimal(line.tax_rate) for line in invoice.lines.all() if line.tax_amount}
+    tax_rate = invoice.combined_tax_rate if invoice.tax_mode == "combined" else (next(iter(rates)) if len(rates) == 1 else None)
+    tax_label = f"{tax_name} ({Decimal(str(tax_rate)).normalize():f}%)" if tax_rate else tax_name
+    creator = invoice.created_by
+
     tenant = getattr(invoice, "tenant", None)
     note_parts = []
     if invoice.notes:
@@ -755,29 +768,43 @@ def _invoice_context(invoice, settings_obj, request=None):
             "email": getattr(tenant, "contact_email", "") or getattr(settings_obj, "support_email", ""),
             "phone": getattr(tenant, "contact_phone", ""),
             "currency": getattr(tenant, "default_currency", "KES"),
+            "address": getattr(settings_obj, "invoice_address", "") or "",
+            "tax_number": getattr(settings_obj, "invoice_tax_number", "") or "",
+            "website": getattr(settings_obj, "invoice_website", "") or "",
+            "prepared_by": (creator.get_full_name() or creator.get_username()) if creator else "",
+            "prepared_by_email": creator.email if creator else "",
         },
         "customer": {
             "name": getattr(customer, "name", "") or "Walk-in Customer",
-            "email": getattr(customer, "email", "") or "",
-            "phone": getattr(customer, "phone_number", "") or "",
+            "email": invoice.billing_email or getattr(customer, "email", "") or "",
+            "phone": invoice.billing_phone or getattr(customer, "phone_number", "") or "",
+            "address": invoice.billing_address or getattr(customer, "address", "") or "",
+            "contact_name": invoice.billing_contact_name,
+            "tax_number": invoice.customer_tax_number,
         },
         "document": {
             "number": invoice.invoice_number or f"INV-{invoice.pk:04d}",
             "status": invoice.status,
-            "issue_date": date_filter(getattr(invoice, "issued_at", None) or invoice.issued_date, "d M Y"),
+            "issue_date": date_filter(getattr(invoice, "invoice_date", None) or getattr(invoice, "issued_at", None) or invoice.issued_date, "d M Y"),
             "due_date": date_filter(invoice.due_date, "d M Y") if invoice.due_date else "",
             "currency": invoice.currency or "KES",
             "notes": "\n".join(note_parts),
             "terms": "",
             "source_module": getattr(invoice, "source_module", "manual"),
+            "customer_reference": invoice.customer_reference,
+            "payment_instructions": getattr(settings_obj, "invoice_payment_instructions", "") or "",
         },
         "lines": lines,
+        "charges": charges,
         "transaction_highlights": transaction_highlights,
         "totals": {
             "subtotal": subtotal,
             "subtotal_display": _money(subtotal, invoice.currency or "KES"),
             "tax": tax,
             "tax_display": _money(tax, invoice.currency or "KES"),
+            "tax_label": tax_label,
+            "unitemized_charge": unitemized_charge,
+            "unitemized_charge_display": _money(unitemized_charge, invoice.currency or "KES"),
             "discount": Decimal("0.00"),
             "discount_display": _money(Decimal("0.00"), invoice.currency or "KES"),
             "total": total,
@@ -1066,6 +1093,11 @@ def render_business_document(*, tenant, document_type, context, request=None, pd
             context,
         )
 
+    from Platform_Core.printing import append_document_qr
+    rendered_body = append_document_qr(rendered_body, tenant=tenant, kind=document_type,
+        number=context.get("document", {}).get("number", ""),
+        path=context.get("document", {}).get("qr_path"), request=request)
+
     html = f"""<!DOCTYPE html>
 <html lang="en">
   <head>
@@ -1233,9 +1265,14 @@ def render_document_template_preview(template, *, tenant=None, request=None):
             "currency": currency,
             "branch_name": "Head Office",
             "prepared_by": "Tenant Admin",
+            "address": getattr(settings_obj, "invoice_address", "") or "",
+            "tax_number": getattr(settings_obj, "invoice_tax_number", "") or "",
+            "website": getattr(settings_obj, "invoice_website", "") or "",
         },
         "customer": {
             "name": "Preview Customer Ltd",
+            "address": "Example Business Centre\nP.O. Box 12345, Nairobi, Kenya",
+            "contact_name": "Accounts Department",
             "email": "accounts@preview-customer.test",
             "phone": "+254 711 222 333",
         },
@@ -1247,6 +1284,8 @@ def render_document_template_preview(template, *, tenant=None, request=None):
             "currency": currency,
             "notes": notes_map.get(template.document_type, "Preview document."),
             "terms": "Payment due within 30 days.",
+            "customer_reference": "PO-PREVIEW-001",
+            "payment_instructions": getattr(settings_obj, "invoice_payment_instructions", "") or "",
         },
         "lines": sample_lines,
         "report": report_context,
@@ -1255,6 +1294,7 @@ def render_document_template_preview(template, *, tenant=None, request=None):
             "subtotal_display": _money(Decimal("12000.00"), currency),
             "tax": Decimal("1920.00"),
             "tax_display": _money(Decimal("1920.00"), currency),
+            "tax_label": "Tax (16%)",
             "discount": Decimal("0.00"),
             "discount_display": _money(Decimal("0.00"), currency),
             "total": Decimal("13920.00") if template.document_type != "receipt" else Decimal("1800.00"),
@@ -1268,6 +1308,9 @@ def render_document_template_preview(template, *, tenant=None, request=None):
     stylesheet = template.stylesheet or _default_stylesheet(primary_color)
     stylesheet = _render_template_string(stylesheet, context)
     rendered_body = _render_template_string(template_body, context)
+    from Platform_Core.printing import append_document_qr
+    rendered_body = append_document_qr(rendered_body, tenant=tenant, kind=template.document_type,
+        number=context["document"]["number"], request=request)
     html = f"""<!DOCTYPE html>
 <html lang="en">
   <head>
@@ -1284,6 +1327,7 @@ def render_document_template_preview(template, *, tenant=None, request=None):
 def render_invoice_document(invoice, request=None):
     template, settings_obj = resolve_document_template(tenant=getattr(invoice, "tenant", None), document_type="invoice")
     context = _invoice_context(invoice, settings_obj, request=request)
+    context["document"]["qr_path"] = f"/payments/invoices/{invoice.pk}"
     return render_business_document(
         tenant=getattr(invoice, "tenant", None),
         document_type="invoice",
@@ -1295,6 +1339,7 @@ def render_invoice_document(invoice, request=None):
 def render_estimate_document(estimate, request=None):
     template, settings_obj = resolve_document_template(tenant=getattr(estimate, "tenant", None), document_type="quotation")
     context = _estimate_context(estimate, settings_obj, request=request)
+    context["document"]["qr_path"] = f"/sales/estimates/{estimate.pk}"
     return render_business_document(
         tenant=getattr(estimate, "tenant", None),
         document_type="quotation",
@@ -1306,6 +1351,7 @@ def render_estimate_document(estimate, request=None):
 def render_transaction_receipt(transaction, request=None, pdf_optimized=False):
     template, settings_obj = resolve_document_template(tenant=getattr(transaction, "tenant", None), document_type="receipt")
     context = _receipt_context(transaction, settings_obj, request=request)
+    context["document"]["qr_path"] = f"/weighbridge/transactions/{transaction.pk}"
     return render_business_document(
         tenant=getattr(transaction, "tenant", None),
         document_type="receipt",
@@ -1319,6 +1365,7 @@ def render_purchase_order_document(purchase_order, request=None, tenant=None):
     resolved_tenant = tenant or getattr(getattr(getattr(purchase_order, "created_by", None), "tenant_profile", None), "tenant", None)
     _, settings_obj = resolve_document_template(tenant=resolved_tenant, document_type="purchase_order")
     context = _purchase_order_context(purchase_order, settings_obj, request=request)
+    context["document"]["qr_path"] = f"/procurement/purchase-orders/{purchase_order.pk}"
     return render_business_document(
         tenant=resolved_tenant,
         document_type="purchase_order",

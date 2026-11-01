@@ -13,6 +13,7 @@ import { Switch } from '@/components/ui/switch';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/use-auth';
 import { getWorkspaceHomePath } from '@/lib/workspace-home';
+import { rememberAppOrganization } from '@/lib/app-branding';
 import { DEFAULT_PUBLIC_SITE, fetchPublicSiteConfig, getCachedPublicSiteConfig, type PublicSiteConfig } from '@/lib/public-site';
 import {
   Dialog,
@@ -555,6 +556,21 @@ export default function Login() {
                 {login.isPending ? 'Authenticating…' : 'Sign In'}
               </Button>
             </form>
+
+            <div className="mt-5 border-t border-slate-100 pt-5 text-center">
+              <button
+                type="button"
+                onClick={() => {
+                  rememberAppOrganization();
+                  window.location.assign('/login');
+                }}
+                disabled={login.isPending}
+                className="rounded-sm text-sm font-semibold underline-offset-4 transition hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 focus-visible:ring-offset-4 disabled:opacity-50"
+                style={{ color: brand }}
+              >
+                Sign in to another organization
+              </button>
+            </div>
 
             {!isOrganizationLogin && showPublicRegistration ? <div className="mt-5 flex items-center justify-between gap-3 text-sm">
               <span className="text-slate-500">No account yet?</span>

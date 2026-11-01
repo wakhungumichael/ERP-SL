@@ -162,7 +162,8 @@ function useWorkspaceNav(token: string | null, activeRole: string): NavSection[]
       return json?.data ?? json;
     },
     enabled: !!token,
-    staleTime: 5 * 60_000,
+    staleTime: 30_000,
+    refetchOnWindowFocus: 'always',
     retry: false,
   });
 
@@ -820,7 +821,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
           <Link href={workspaceHomePath} className="flex min-w-0 flex-1 items-center justify-center">
             <div
               className={sidebarCollapsed ? 'flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-lg' : 'flex h-20 w-full items-center justify-center overflow-hidden'}
-              style={{ backgroundColor: appLogoUrl ? 'transparent' : appPrimaryColor }}
+              style={{ backgroundColor: appLogoUrl ? '#ffffff' : appPrimaryColor }}
             >
               {appLogoUrl ? (
                 <img src={appLogoUrl} alt={`${appTitle} logo`} className="h-full w-full object-contain" />
@@ -1099,7 +1100,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
               <Link href={workspaceHomePath} className="flex min-w-0 flex-1 items-center justify-center" onClick={() => setMobileNavOpen(false)}>
                 <div
                   className="flex h-20 w-full shrink-0 items-center justify-center overflow-hidden"
-                  style={{ backgroundColor: appLogoUrl ? 'transparent' : appPrimaryColor }}
+                  style={{ backgroundColor: appLogoUrl ? '#ffffff' : appPrimaryColor }}
                 >
                   {appLogoUrl ? (
                     <img src={appLogoUrl} alt={`${appTitle} logo`} className="h-full w-full object-contain" />

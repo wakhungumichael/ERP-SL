@@ -952,19 +952,22 @@ class TransactionAdmin(UnfoldModelAdmin) :
             Net Weight (kg): {transaction.net_weight}
         """
 
-        # QR Code generation
-        qr_data = f"Transaction ID: {transaction.id}\nNet Weight: {transaction.net_weight}"
-        qr = qrcode.QRCode(version=1, error_correction=qrcode.constants.ERROR_CORRECT_L, box_size=5, border=4)
-        qr.add_data(qr_data)
-        qr.make(fit=True)
-        qr_img = qr.make_image(fill='black', back_color='white')
-
+        from Platform_Core.printing import print_qr_codes_enabled, document_reference
         qr_io = BytesIO()
-        qr_img.save(qr_io, 'PNG')
-        qr_code_path = f"qrcodes/transaction_{transaction.id}.png"
-        FileSystemStorage().save(qr_code_path, qr_io)
+        if print_qr_codes_enabled():
+            # QR Code generation
+            qr_data = document_reference(tenant=getattr(transaction, "tenant", None), kind="receipt", number=f"TX-{transaction.pk:05d}", path=f"/weighbridge/transactions/{transaction.pk}")
+            qr = qrcode.QRCode(version=1, error_correction=qrcode.constants.ERROR_CORRECT_L, box_size=5, border=4)
+            qr.add_data(qr_data)
+            qr.make(fit=True)
+            qr_img = qr.make_image(fill='black', back_color='white')
 
-        receipt_data += f"\nQR Code: {qr_code_path}"
+            qr_io = BytesIO()
+            qr_img.save(qr_io, 'PNG')
+            qr_code_path = f"qrcodes/transaction_{transaction.id}.png"
+            FileSystemStorage().save(qr_code_path, qr_io)
+
+            receipt_data += f"\nQR Code: {qr_code_path}"
 
         return receipt_data, qr_io
 
@@ -1081,17 +1084,19 @@ class TransactionAdmin(UnfoldModelAdmin) :
 
             elements.append(table)
 
-            # Generate QR code based on transaction details
-            qr_data = f"Customer: {customer_name}, Vehicle: {vehicle_no}, Gross: {gross_weight}, Net: {net_weight}, Date: {date_str}"
-            qr = qrcode.make(qr_data)
-            qr_buffer = BytesIO()
-            qr.save(qr_buffer, format="PNG")
-            qr_buffer.seek(0)
+            from Platform_Core.printing import print_qr_codes_enabled, document_reference
+            if print_qr_codes_enabled():
+                # Generate QR code based on transaction details
+                qr_data = document_reference(tenant=getattr(transaction, "tenant", None), kind="receipt", number=f"TX-{transaction.pk:05d}", path=f"/weighbridge/transactions/{transaction.pk}")
+                qr = qrcode.make(qr_data)
+                qr_buffer = BytesIO()
+                qr.save(qr_buffer, format="PNG")
+                qr_buffer.seek(0)
 
-            # Add QR code below the table
-            qr_img = Image(qr_buffer, 1.2 * inch, 1.2 * inch)  # This should now work
-            qr_img.hAlign = 'CENTER'
-            elements.append(qr_img)
+                # Add QR code below the table
+                qr_img = Image(qr_buffer, 1.2 * inch, 1.2 * inch)  # This should now work
+                qr_img.hAlign = 'CENTER'
+                elements.append(qr_img)
 
         # Build the PDF document
         doc.build(elements)
@@ -1178,14 +1183,16 @@ class TransactionAdmin(UnfoldModelAdmin) :
             draw.line((x_offset, y_pos, img_width - 10, y_pos), fill="black", width=1)
             y_pos += 10
 
-            # Generate QR code
-            qr_data = f"Customer: {customer_name}, Vehicle: {vehicle_no}, Gross: {gross_weight}, Net: {net_weight}, Date: {date_str}"
-            qr = qrcode.make(qr_data)
+            from Platform_Core.printing import print_qr_codes_enabled, document_reference
+            if print_qr_codes_enabled():
+                # Generate QR code
+                qr_data = document_reference(tenant=getattr(transaction, "tenant", None), kind="receipt", number=f"TX-{transaction.pk:05d}", path=f"/weighbridge/transactions/{transaction.pk}")
+                qr = qrcode.make(qr_data)
 
-            # Resize QR code and paste it onto the image, keeping it horizontally centered
-            qr_size = 100
-            qr = qr.resize((qr_size, qr_size))
-            img.paste(qr, (int((img_width - qr_size) / 2), y_pos))
+                # Resize QR code and paste it onto the image, keeping it horizontally centered
+                qr_size = 100
+                qr = qr.resize((qr_size, qr_size))
+                img.paste(qr, (int((img_width - qr_size) / 2), y_pos))
 
             # Save the image to a BytesIO object for downloading
             buffer = BytesIO()

@@ -2,9 +2,13 @@
 from django.urls import path
 
 from . import views
+from .public_forms import PublicTicketFormAPIView, TicketFormPublishAPIView, TicketFormConfigurationOptionsAPIView
 
 
 urlpatterns = [
+    path("public/forms/<str:tenant_code>/<slug:form_slug>/", PublicTicketFormAPIView.as_view(), name="ticketing-public-form"),
+    path("forms/options/", TicketFormConfigurationOptionsAPIView.as_view(), name="ticketing-form-options"),
+    path("forms/<int:pk>/publish/", TicketFormPublishAPIView.as_view(), name="ticketing-form-publish"),
     path("dashboard/", views.TicketingDashboardView.as_view(), name="ticketing-dashboard"),
     path("config/", views.TicketingConfigAPIView.as_view(), name="ticketing-config"),
     path("keys/", views.TicketingApiKeyListCreateView.as_view(), name="ticketing-keys"),
@@ -15,6 +19,7 @@ urlpatterns = [
     path("routing-rules/<int:pk>/", views.TicketRoutingRuleDetailView.as_view(), name="ticketing-routing-rule-detail"),
     path("webhooks/", views.TicketWebhookEndpointListCreateView.as_view(), name="ticketing-webhooks"),
     path("webhooks/<int:pk>/", views.TicketWebhookEndpointDetailView.as_view(), name="ticketing-webhook-detail"),
+    path("tickets/options/", views.AgentTicketOptionsAPIView.as_view(), name="ticketing-ticket-options"),
     path("tickets/", views.AgentTicketListCreateView.as_view(), name="ticketing-tickets"),
     path("tickets/<int:pk>/", views.AgentTicketDetailView.as_view(), name="ticketing-ticket-detail"),
     path("tickets/<int:pk>/reply/", views.AgentTicketReplyAPIView.as_view(), name="ticketing-ticket-reply"),

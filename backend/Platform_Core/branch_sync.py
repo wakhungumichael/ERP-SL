@@ -1,5 +1,5 @@
 # Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu.
-from Platform_Core.models import Tenant, TenantBranch
+from Platform_Core.models import Tenant, TenantBranch, OrganizationBranchLink
 from SL_Weighbridge.models import Branch, Company
 
 
@@ -42,8 +42,10 @@ def ensure_operational_company_for_tenant(tenant: Tenant):
 
 def sync_tenant_branch_to_operational(tenant_branch: TenantBranch):
     company = ensure_operational_company_for_tenant(tenant_branch.tenant)
+    link = OrganizationBranchLink.objects.filter(branch=tenant_branch).select_related('operational_branch').order_by('pk').first()
     branch = (
-        Branch.objects.filter(tenant=tenant_branch.tenant, name=tenant_branch.name).order_by("id").first()
+        (link.operational_branch if link else None)
+        or Branch.objects.filter(tenant=tenant_branch.tenant, name=tenant_branch.name).order_by("id").first()
         or Branch.objects.filter(company=company, name=tenant_branch.name).order_by("id").first()
     )
     if branch is None:
@@ -56,7 +58,11 @@ def sync_tenant_branch_to_operational(tenant_branch: TenantBranch):
             phone=tenant_branch.phone or company.phone,
         )
 
+    OrganizationBranchLink.objects.update_or_create(operational_branch=branch, defaults={'branch': tenant_branch})
     changed = []
+    if branch.name != tenant_branch.name:
+        branch.name = tenant_branch.name
+        changed.append('name')
     if branch.tenant_id != tenant_branch.tenant_id:
         branch.tenant = tenant_branch.tenant
         changed.append("tenant")

@@ -37,7 +37,7 @@ def run_project_reminders(*, as_of: date | None = None):
     follow_up_reminders = 0
 
     overdue_tasks = (
-        ProjectTask.objects.filter(due_date__lt=today)
+        ProjectTask.objects.filter(due_date__lt=today, is_active=True)
         .exclude(status__in=["completed", "cancelled"])
         .select_related("tenant", "primary_assignee")
         .prefetch_related("collaborators__user")
@@ -58,7 +58,7 @@ def run_project_reminders(*, as_of: date | None = None):
                 task_reminders += 1
 
     due_follow_ups = (
-        TaskFollowUp.objects.filter(follow_up_date__lte=today)
+        TaskFollowUp.objects.filter(follow_up_date__lte=today, task__is_active=True)
         .filter(status__in=["scheduled", "pending", "overdue"])
         .select_related("task", "task__tenant", "owner")
     )

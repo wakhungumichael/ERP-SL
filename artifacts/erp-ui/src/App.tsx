@@ -1,4 +1,9 @@
+import PlanningWorkspace from "@/pages/budgeting/planning";
+import SharedDocument from "@/pages/public/shared-document";
+import MyPayslips from "@/pages/hr/my-payslips";
+import ProjectSettingsPage from "@/pages/projects/settings";
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
+import { useAppBranding } from '@/hooks/use-app-branding';
 import {
   QueryCache,
   QueryClient,
@@ -9,7 +14,7 @@ import { toast } from "@/hooks/use-toast";
 import { getUserFacingError } from "@/lib/api-errors";
 import { ERPErrorBoundary } from "@/components/erp/error-boundary";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { Route, Switch, Router as WouterRouter } from "wouter";
+import { Route, Switch, Redirect, Router as WouterRouter } from "wouter";
 import { Shell } from "@/components/shell";
 import { AuthProvider } from "@/context/auth-context";
 
@@ -78,7 +83,8 @@ import ReportsDashboard from "@/pages/reports/dashboard";
 import HRWorkforce from "@/pages/hr/workforce";
 import HRStaff from "@/pages/hr/staff";
 import PurchaseOrders from "@/pages/procurement/purchase-orders";
-import Departments from "@/pages/procurement/departments";
+import OrganizationUnits from "@/components/organization/organization-units";
+import ProcurementConfiguration from "@/pages/procurement/configuration";
 import ProcurementRequisitions from "@/pages/procurement/requisitions";
 import ProcurementApprovalRules from "@/pages/procurement/approval-rules";
 import GoodsReceiptsPage from "@/pages/procurement/receipts";
@@ -166,6 +172,7 @@ function RoleGuard({
 }
 
 function Router() {
+  useAppBranding();
   const { token, user, role, isLoading } = useAuth();
 
   const homeContent = (() => {
@@ -199,6 +206,7 @@ function Router() {
 
   return (
     <Switch>
+      <Route path="/documents/scan/:token">{params => <SharedDocument token={params.token} />}</Route>
       <Route path="/landing/apps">
         <MarketingAppsPage />
       </Route>
@@ -311,6 +319,7 @@ function Router() {
           <ProjectsWorkspace mode="projects" />
         </Shell>
       </Route>
+      <Route path="/projects/settings"><Shell><ProjectSettingsPage /></Shell></Route>
       <Route path="/projects/:id">
         {(params) => (
           <Shell>
@@ -548,9 +557,10 @@ function Router() {
           <PaymentMethods />
         </Shell>
       </Route>
+      <Route path="/procurement/plans"><Shell><PlanningWorkspace plans /></Shell></Route>
       <Route path="/finance/budgets">
         <Shell>
-          <BudgetingOverview />
+          <PlanningWorkspace />
         </Shell>
       </Route>
 
@@ -654,7 +664,8 @@ function Router() {
       </Route>
 
       {/* HR */}
-      {(['employees', 'leave', 'requests', 'settings', 'my-payslips'] as const).map(mode => <Route key={mode} path={`/hr/${mode}`}><Shell><HRWorkforce mode={mode} /></Shell></Route>)}
+      <Route path="/hr/my-payslips"><Shell><MyPayslips /></Shell></Route>
+      {(['employees', 'leave', 'requests', 'settings'] as const).map(mode => <Route key={mode} path={`/hr/${mode}`}><Shell><HRWorkforce mode={mode} /></Shell></Route>)}
       <Route path="/hr/staff">
         <Shell>
           <HRStaff />
@@ -662,7 +673,9 @@ function Router() {
       </Route>
 
       {/* Procurement */}
-      <Route path="/procurement/departments"><Shell><Departments /></Shell></Route>
+      <Route path="/platform/organization-structure"><Shell><OrganizationUnits /></Shell></Route>
+      <Route path="/procurement/departments"><Redirect to="/platform/organization-structure" /></Route>
+      <Route path="/procurement/configuration"><Shell><ProcurementConfiguration /></Shell></Route>
       <Route path="/procurement/approval-rules">
         <Shell>
           <ProcurementApprovalRules />

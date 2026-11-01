@@ -201,7 +201,7 @@ export default function ProjectsReports() {
           <Input aria-label="Search report" placeholder="Search report records" value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} />
           <Input aria-label="From date" type="date" value={dateFrom} onChange={(event) => { setDateFrom(event.target.value); setPage(1); }} />
           <Input aria-label="To date" type="date" value={dateTo} onChange={(event) => { setDateTo(event.target.value); setPage(1); }} />
-          {kind === 'tasks' && <Select value={status} onValueChange={(value) => { setStatus(value); setPage(1); }}><SelectTrigger aria-label="Task status"><SelectValue /></SelectTrigger><SelectContent>{['all','draft','todo','in_progress','blocked','in_review','completed','cancelled'].map(value => <SelectItem key={value} value={value}>{value === 'all' ? 'All statuses' : label(value)}</SelectItem>)}</SelectContent></Select>}
+          {kind === 'tasks' && <Select value={status} onValueChange={(value) => { setStatus(value); setPage(1); }}><SelectTrigger aria-label="Task status"><SelectValue /></SelectTrigger><SelectContent>{['all','draft','todo','in_progress','blocked','reopened','in_review','completed','cancelled'].map(value => <SelectItem key={value} value={value}>{value === 'all' ? 'All statuses' : label(value)}</SelectItem>)}</SelectContent></Select>}
         </div>
       </div>
       {report.isError && <p role="alert" className="mb-4 text-sm text-destructive">{report.error.message}</p>}

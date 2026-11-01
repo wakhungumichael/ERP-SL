@@ -587,7 +587,10 @@ class Transaction(models.Model):
 
 
     def generate_qr_code(self):
-        qr_data = f"Transaction: {self.id}\nCustomer: {self.customer.name}\nVehicle: {self.vehicle.number_plate}\nWeight: {self.net_weight}"
+        from Platform_Core.printing import print_qr_codes_enabled, document_reference
+        if not print_qr_codes_enabled():
+            return None
+        qr_data = document_reference(tenant=getattr(self, "tenant", None), kind="receipt", number=f"TX-{self.pk:05d}", path=f"/weighbridge/transactions/{self.pk}")
         qr = qrcode.make(qr_data)
         qr_io = BytesIO()
         qr.save(qr_io, 'PNG')
@@ -901,9 +904,18 @@ class Invoice(models.Model):
     combined_tax_name = models.CharField(max_length=100, blank=True)
     combined_tax_rate = models.DecimalField(max_digits=5, decimal_places=2, default=0)
     currency       = models.CharField(max_length=10, default='KES')
+    invoice_date   = models.DateField(default=timezone.localdate, null=True, blank=True)
     issued_date    = models.DateTimeField(auto_now_add=True)          # creation timestamp
     issued_at      = models.DateTimeField(null=True, blank=True)       # set when formally issued
     customer       = models.ForeignKey('Customer', on_delete=models.CASCADE)
+    billing_address = models.TextField(blank=True)
+    billing_contact_name = models.CharField(max_length=150, blank=True)
+    billing_email = models.EmailField(max_length=255, blank=True)
+    billing_phone = models.CharField(max_length=50, blank=True)
+    customer_tax_number = models.CharField(max_length=80, blank=True)
+    customer_reference = models.CharField(max_length=150, blank=True)
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name="prepared_invoices")
+
     due_date       = models.DateField(null=True, blank=True)
     status         = models.CharField(max_length=20, choices=STATUS_CHOICES, default='draft')
     notes          = models.TextField(blank=True, null=True)
@@ -922,6 +934,11 @@ class Invoice(models.Model):
         return f"INV-{year}-{seq:04d}"
 
     def save(self, *args, **kwargs):
+        if self._state.adding and self.customer_id:
+            # Keep invoice contact details when the customer's master data changes.
+            self.billing_address = self.billing_address or self.customer.address or ""
+            self.billing_email = self.billing_email or self.customer.email or ""
+            self.billing_phone = self.billing_phone or self.customer.phone_number or ""
         if not self.invoice_number:
             self.invoice_number = self._next_invoice_number()
         super().save(*args, **kwargs)

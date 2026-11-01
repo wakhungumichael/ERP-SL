@@ -26,7 +26,42 @@ git clone https://github.com/wakhungumichael/ERP-SL.git ~/sl-erp
 cd ~/sl-erp
 ```
 
-## 3. Start a Docker development instance
+## 3. Start both development servers
+
+Follow [LOCAL_SETUP.md](LOCAL_SETUP.md) for initial dependency, environment,
+and database setup inside WSL. Keep existing local `.env` files when resuming work.
+
+From the repository root in Windows PowerShell, run:
+
+```powershell
+.\start
+```
+
+This automatically enters the repository's WSL distribution and starts Django
+on port 8080 and Vite on port 5173. Open http://localhost:5173 and keep the
+terminal open. Press **Ctrl+C** to stop the servers started by the launcher.
+
+The launcher loads nvm if needed, checks database connectivity and migrations,
+and reuses recognized servers already running on those ports. Keep your local
+database service running before starting. The launcher does not apply migrations.
+
+The VS Code task **Tasks: Run Task > SL-ERP: start** runs the same command in
+both Windows and WSL windows.
+
+For Linux terminals and Python debugging, install the VS Code WSL extension and
+use **WSL: Reopen Folder in WSL**, or open the repository from Ubuntu:
+
+```bash
+cd ~/sl-erp
+code .
+```
+
+Inside WSL, start both servers with `./start.sh` or `pnpm start`.
+Confirm that VS Code shows **WSL: Ubuntu** and uses `.venv/bin/python` as its
+Python interpreter. The **Full stack dev** debug configuration starts Vite and
+launches Django with breakpoints; stop existing servers before using it.
+
+## 4. Start a Docker development instance (alternative)
 
 ```bash
 cp .env.production.docker.example .env.production
@@ -55,7 +90,7 @@ bash scripts/deploy-docker.sh
 Open `http://localhost`. The deployment script runs `migrate`, `seed_platform`,
 and `bootstrap_saas_owner` after the containers become ready.
 
-## 4. Run migrations manually
+## 5. Run migrations manually
 
 ```bash
 docker compose --env-file .env.production -f docker-compose.production.yml \
@@ -69,7 +104,7 @@ docker compose --env-file .env.production -f docker-compose.production.yml \
   exec backend sh -c "cd /app/backend && python manage.py makemigrations --check --dry-run"
 ```
 
-## 5. Transfer an existing database
+## 6. Transfer an existing database
 
 On the source Docker server:
 

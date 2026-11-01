@@ -1,8 +1,13 @@
 # Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu.
 from django.urls import path
-from . import views, requisition_flow
+from . import views, requisition_flow, plans
+from .configuration import ProcurementConfigurationView
 
 urlpatterns = [
+    path('plans/options/', plans.PlanOptionsView.as_view()),
+    path('plans/', plans.PlanListView.as_view()),
+    path('plans/<int:pk>/', plans.PlanDetailView.as_view()),
+    path("configuration/", ProcurementConfigurationView.as_view(), name="procurement-configuration"),
     path('setup/', requisition_flow.RequisitionSetupView.as_view(), name='procurement-setup'),
     path('departments/', requisition_flow.DepartmentListView.as_view(), name='procurement-departments'),
     path('departments/<int:pk>/', requisition_flow.DepartmentDetailView.as_view(), name='procurement-department'),

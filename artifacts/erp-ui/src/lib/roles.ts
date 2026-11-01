@@ -152,7 +152,7 @@ export const STATIC_NAV: NavSection[] = [
     roles: ERP_USERS,
     items: [
       { key: 'ticketing-overview', title: 'Overview', path: '/ticketing/overview', roles: ERP_USERS },
-      { key: 'ticketing-queue', title: 'Agent Queue', path: '/ticketing/queue', roles: ERP_USERS },
+      { key: 'ticketing-queue', title: 'Support Tickets', path: '/ticketing/queue', roles: ERP_USERS },
       { key: 'ticketing-forms', title: 'Forms & Schema', path: '/ticketing/forms', roles: ADMIN_UP },
       { key: 'ticketing-automation', title: 'Automation', path: '/ticketing/automation', roles: ADMIN_UP },
       { key: 'ticketing-settings', title: 'Settings', path: '/ticketing/settings', roles: ADMIN_UP },

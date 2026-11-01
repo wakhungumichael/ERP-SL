@@ -1,3 +1,4 @@
+from decimal import Decimal
 # Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu.
 import csv
 from datetime import timedelta
@@ -6,6 +7,7 @@ import logging
 import secrets
 import string
 from pathlib import Path
+from urllib.parse import unquote
 from types import SimpleNamespace
 from xml.sax.saxutils import escape
 
@@ -40,6 +42,7 @@ from rest_framework.exceptions import PermissionDenied, ValidationError
 from Platform_Core.integrations import build_integration_health_snapshot, indicator_source_registry
 from Platform_Core.email import get_tenant_smtp_connection
 from Platform_Core.branch_sync import sync_tenant_branch_to_operational
+from Platform_Core.pwa import APP_TENANT_COOKIE, ICON_SIZES, app_name, app_icon_url, app_icon_bytes, manifest_icons
 from Platform_Core.platform import (
     activate_license,
     build_workspace_navigation,
@@ -175,14 +178,36 @@ def _smtp_delivery_error(exc):
 
     if isinstance(exc, smtplib.SMTPAuthenticationError):
         return "SMTP authentication failed. Check the mailbox username and password."
+    # SMTP exceptions inherit OSError, so classify server rejections before
+    # the network-error fallback below.
+    if isinstance(exc, smtplib.SMTPRecipientsRefused):
+        replies = [reply.decode("utf-8", errors="replace") if isinstance(reply, bytes) else str(reply) for _, reply in exc.recipients.values()]
+        if any("disabled recipient" in reply.lower() or "5.7.13" in reply for reply in replies):
+            return "The recipient mailbox has incoming email disabled. Choose another test recipient, or ask your email provider to enable incoming mail for that mailbox."
+        return "The SMTP server rejected the recipient address. Check that the recipient exists and accepts incoming email."
+    if isinstance(exc, smtplib.SMTPSenderRefused):
+        return "The SMTP server rejected the From address. Use a sender address permitted for the configured mailbox."
+    if isinstance(exc, smtplib.SMTPDataError):
+        return "The SMTP server rejected the message after connecting. Check your mail provider's sending limits and message policy."
     if isinstance(exc, socket.gaierror):
         return "The SMTP hostname could not be resolved. Check the hostname and DNS settings."
     if isinstance(exc, (TimeoutError, socket.timeout)):
         return "The SMTP server did not respond in time. Check the port and server firewall."
     if isinstance(exc, (ConnectionRefusedError, smtplib.SMTPConnectError, smtplib.SMTPServerDisconnected)):
         return "The SMTP server refused or closed the connection. Check the host, port, and encryption setting."
+    if isinstance(exc, ssl.SSLCertVerificationError):
+        reason = str(getattr(exc, "verify_message", "") or exc).lower()
+        if "self-signed" in reason:
+            return "The SMTP server uses a self-signed certificate. Use a hostname with a trusted certificate, or ask your mail provider to install one."
+        if "hostname mismatch" in reason or "ip address mismatch" in reason:
+            return "The SMTP certificate does not match this hostname. Use the hostname covered by your mail provider's certificate."
+        if "expired" in reason or "not yet valid" in reason:
+            return "The SMTP certificate has expired or is not yet valid. Ask your mail provider to renew or correct it."
+        return "The SMTP certificate could not be verified. Check the SMTP hostname and ask your mail provider to verify its certificate chain."
     if isinstance(exc, ssl.SSLError):
-        return "The SMTP server rejected the selected encryption or certificate settings."
+        return "The SMTP TLS connection failed. Check the port and encryption mode with your mail provider: SSL/TLS commonly uses port 465 and STARTTLS uses port 587."
+    if isinstance(exc, smtplib.SMTPException):
+        return "The SMTP server rejected the request. Check your mailbox and mail-provider settings."
     if isinstance(exc, (ConnectionError, OSError)):
         return "The SMTP server could not be reached. Check its host, port, and firewall."
     return "The SMTP server rejected the message."
@@ -1009,6 +1034,8 @@ class PublicSiteConfigurationAPIView(APIView):
                 "tenant": TenantSerializer(resolved_tenant).data if resolved_tenant else None,
                 "branding": {
                     "logo_url": serialized_settings.get("logo_url") or "",
+                    "app_name": app_name(resolved_tenant, settings_obj),
+                    "app_icon_url": app_icon_url(resolved_tenant, settings_obj),
                     "primary_color": serialized_settings.get("primary_color") or "#E85D26",
                     "footer_text": serialized_settings.get("footer_text")
                     or "Built for small businesses, growing companies, and large enterprises that need one reliable business system.",
@@ -1025,35 +1052,56 @@ class PublicSiteConfigurationAPIView(APIView):
         )
 
 
+def _public_app_branding(request):
+    explicit_code = "tenant_code" in request.GET
+    code = request.GET.get("tenant_code", "") if explicit_code else unquote(request.COOKIES.get(APP_TENANT_COOKIE, ""))
+    tenant = Tenant.objects.filter(code=code.strip(), is_active=True).first() if code.strip() else None
+    if explicit_code and code.strip() and tenant is None:
+        from django.http import Http404
+        raise Http404("Organization not found.")
+    return _public_branding_source(tenant=tenant, explicit_tenant=tenant is not None)
+
+
 class PublicWebManifestAPIView(APIView):
-    """Serve a tenant-branded install manifest without requiring sign-in."""
+    """One installed app follows the currently selected public company brand."""
     permission_classes = (AllowAny,)
     authentication_classes = ()
 
     def get(self, request):
-        tenant_code = request.GET.get("tenant_code", "").strip()
-        tenant = Tenant.objects.filter(code=tenant_code, is_active=True).first() if tenant_code else None
-        resolved_tenant, settings_obj, _ = _public_branding_source(
-            tenant=tenant,
-            explicit_tenant=bool(tenant_code),
-        )
-        name = (
-            getattr(settings_obj, "workspace_name", "")
-            or getattr(settings_obj, "platform_name", "")
-            or getattr(resolved_tenant, "name", "")
-            or "Business Workspace"
-        )
-        logo_url = _safe_logo_url(settings_obj, request) if settings_obj else ""
-        payload = {
+        tenant, profile, _ = _public_app_branding(request)
+        name = app_name(tenant, profile)
+        response = JsonResponse({
+            "id": "/",
             "name": name,
             "short_name": name[:32],
             "start_url": "/",
+            "scope": "/",
             "display": "standalone",
             "background_color": "#fffaf5",
-            "theme_color": getattr(settings_obj, "primary_color", "") or "#e85d26",
-            "icons": [{"src": logo_url or "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable"}],
-        }
-        return JsonResponse(payload, content_type="application/manifest+json")
+            "theme_color": getattr(profile, "primary_color", "") or "#e85d26",
+            "icons": manifest_icons(tenant, profile),
+        }, content_type="application/manifest+json")
+        response["Cache-Control"] = "private, no-store"
+        response["Vary"] = "Cookie"
+        return response
+
+
+class PublicAppIconAPIView(APIView):
+    permission_classes = (AllowAny,)
+    authentication_classes = ()
+
+    def get(self, request):
+        try:
+            size = int(request.GET.get("size", 192))
+        except (TypeError, ValueError):
+            size = 0
+        if size not in ICON_SIZES:
+            return error_response("Unsupported app icon size.", status_code=status.HTTP_400_BAD_REQUEST)
+        tenant, profile, _ = _public_app_branding(request)
+        response = HttpResponse(app_icon_bytes(tenant, profile, size), content_type="image/png")
+        response["Cache-Control"] = "private, no-cache"
+        response["Vary"] = "Cookie"
+        return response
 
 
 @method_decorator(csrf_exempt, name="dispatch")
@@ -2387,6 +2435,10 @@ class WorkflowInboxAPIView(APIView):
             qs = qs.filter(metadata__submitted_by=request.user.id)
         elif scope == "decided":
             qs = qs.filter(acted_by=request.user)
+        from Platform_API.modules.procurement.configuration import restrict_workflow_items
+        qs = restrict_workflow_items(qs, request.user)
+        from Platform_API.modules.budgeting.planning import restrict_planning_items
+        qs = restrict_planning_items(qs, request.user)
         status_value = request.query_params.get("status")
         if status_value and status_value != "all":
             qs = qs.filter(status=status_value)
@@ -2450,6 +2502,10 @@ class WorkflowRecordHistoryAPIView(APIView):
                 qs = qs.filter(tenant=tenant).filter(
                     Q(metadata__submitted_by=request.user.id) | Q(assigned_user=request.user) | Q(assigned_group_id__in=group_ids) | Q(acted_by=request.user)
                 )
+        from Platform_API.modules.procurement.configuration import restrict_workflow_items
+        qs = restrict_workflow_items(qs, request.user)
+        from Platform_API.modules.budgeting.planning import restrict_planning_items
+        qs = restrict_planning_items(qs, request.user)
         return success_response("Workflow history loaded successfully.", data=WorkflowInboxItemSerializer(qs.order_by("created_at"), many=True).data)
 
 
@@ -2494,11 +2550,15 @@ class WorkflowRequirementAPIView(APIView):
                 ).order_by("-created_at").first()
             except (TypeError, ValueError):
                 pass
+        can_forward = _workflow_forward_allowed(request.user)
+        if module_slug == 'projects-tasks' and entity_type == 'project_task':
+            from Platform_API.modules.projects.views import task_participant_can_forward
+            can_forward = can_forward or task_participant_can_forward(request.user, entity_id)
         return success_response(
             "Workflow requirement resolved.",
             data={
                 "required": bool(binding),
-                "can_forward": _workflow_forward_allowed(request.user),
+                "can_forward": can_forward,
                 "in_progress": bool(active_item),
                 "current_stage": active_item.node_definition.name if active_item and active_item.node_definition_id else None,
                 "current_role": (
@@ -2512,8 +2572,15 @@ class WorkflowRequirementAPIView(APIView):
 
 
 def _workflow_actor_can_action(item, user):
+    from Platform_API.modules.budgeting.planning import planning_can_review
+    if not planning_can_review(item, user):
+        return False
     if _is_superadmin(user):
         return True
+    if item.entity_type == "procurement_requisition":
+        from Platform_API.modules.procurement.configuration import restrict_workflow_items
+        if not restrict_workflow_items(WorkflowInboxItem.objects.filter(pk=item.pk), user).exists():
+            return False
     if item.assigned_user_id:
         return item.assigned_user_id == user.id
     return item.assigned_group_id in _active_workflow_group_ids(user)
@@ -2521,7 +2588,16 @@ def _workflow_actor_can_action(item, user):
 
 def _workflow_actor_can_view(item, user):
     """Workflow roles may inspect their assigned document without module list access."""
-    if _is_superadmin(user) or _workflow_actor_can_action(item, user):
+    from Platform_API.modules.budgeting.planning import planning_can_view
+    if not planning_can_view(item, user):
+        return False
+    if _is_superadmin(user):
+        return True
+    if item.entity_type == "procurement_requisition":
+        from Platform_API.modules.procurement.configuration import restrict_workflow_items
+        if not restrict_workflow_items(WorkflowInboxItem.objects.filter(pk=item.pk), user).exists():
+            return False
+    if _workflow_actor_can_action(item, user):
         return True
     if (item.metadata or {}).get("submitted_by") == user.id:
         return True
@@ -2531,6 +2607,19 @@ def _workflow_actor_can_view(item, user):
 def _workflow_subject_summary(item):
     """Provide a module-neutral review payload, with adapters for live ERP records."""
     saved_snapshot = ((item.metadata or {}).get("context") or {}).get("record_snapshot")
+    if item.entity_type in {'department_budget', 'annual_budget', 'procurement_plan'}:
+        if item.entity_type == 'procurement_plan':
+            from SL_Procurement.models import ProcurementPlan
+            obj = ProcurementPlan.objects.filter(tenant=item.tenant, pk=item.entity_id).select_related('annual_budget').first()
+            if obj:
+                return {'reference': obj.code, 'fields': {'Name': obj.name, 'Annual budget': obj.annual_budget.name, 'Currency': obj.annual_budget.currency, 'Estimated amount': str(sum((line.estimated_amount for line in obj.lines.all()), Decimal('0'))), 'Items': obj.lines.count()}, 'attachments': []}
+        else:
+            from SL_Budgeting.models import Budget
+            from Platform_API.modules.budgeting.planning import total
+            obj = Budget.objects.filter(tenant=item.tenant, pk=item.entity_id).select_related('department').first()
+            if obj:
+                return {'reference': obj.code, 'fields': {'Name': obj.name, 'Department': obj.department.name if obj.department_id else 'Organization annual budget', 'Period': f'{obj.start_date} to {obj.end_date}', 'Currency': obj.currency, 'Allocated amount': str(total(obj)), 'Department submissions': obj.department_budgets.count()}, 'attachments': []}
+
     if item.module_slug == "weighbridge" and item.entity_type == "weighbridge_transaction":
         from SL_Weighbridge.models import Transaction
 
@@ -2605,6 +2694,10 @@ def _workflow_subject_summary(item):
 
 def _workflow_entity_route(binding, entity_id):
     """Return the most useful record route for inbox users, not just a module list."""
+    if binding.entity_type in {"department_budget", "annual_budget"}:
+        return f"/finance/budgets?budget={entity_id}"
+    if binding.entity_type == "procurement_plan":
+        return f"/procurement/plans?plan={entity_id}"
     if binding.module_slug == "weighbridge" and binding.entity_type == "weighbridge_transaction":
         return f"/weighbridge/transactions/{entity_id}"
     if binding.module_slug == "projects-tasks":
@@ -2617,6 +2710,10 @@ def _workflow_entity_route(binding, entity_id):
 
 def _sync_workflow_entity_state(item, decision, actor):
     """Apply final generic workflow decisions to ERP records with supported lifecycle hooks."""
+    from Platform_API.modules.budgeting.planning import PLANNING_ENTITIES, apply_decision
+    if item.entity_type in PLANNING_ENTITIES:
+        apply_decision(item, decision, actor)
+        return
     if item.module_slug == "projects-tasks" and item.entity_type in {"project", "project_task"}:
         from SL_Projects.models import Project, ProjectTask
 
@@ -2628,7 +2725,7 @@ def _sync_workflow_entity_state(item, decision, actor):
         if decision == "in_progress":
             record.workflow_status = "in_progress"
             record.workflow_stage = item.node_definition.name if item.node_definition_id else "Workflow review"
-            if item.entity_type == "project_task" and record.status == "draft":
+            if item.entity_type == "project_task":
                 record.status = "in_review"
         elif decision == "reject":
             record.workflow_status = "rejected"
@@ -2643,7 +2740,7 @@ def _sync_workflow_entity_state(item, decision, actor):
                 record.completion_date = timezone.localdate()
         record.save()
         if item.entity_type == "project_task" and record.project_id:
-            aggregate = ProjectTask.objects.filter(project_id=record.project_id).exclude(status="cancelled").aggregate(
+            aggregate = ProjectTask.objects.filter(project_id=record.project_id, is_active=True).exclude(status="cancelled").aggregate(
                 progress=Avg("progress_percentage")
             )
             Project.objects.filter(pk=record.project_id).update(progress_percentage=round(aggregate["progress"] or 0))
@@ -2820,15 +2917,26 @@ class WorkflowForwardAPIView(APIView):
 
     permission_classes = (IsAuthenticated,)
 
+    @transaction.atomic
     def post(self, request):
         tenant = _request_tenant_or_none(request.user)
         if tenant is None:
             raise PermissionDenied("Your account is not linked to an organization.")
-        if not _workflow_forward_allowed(request.user):
-            raise PermissionDenied("Your active role is not allowed to forward records for approval.")
 
         module_slug = str(request.data.get("module_slug") or "").strip()
         entity_type = str(request.data.get("entity_type") or "").strip()
+        from Platform_API.modules.budgeting.planning import PLANNING_ENTITIES, planning_can_submit, submission_record, submission_metadata, budgets_for
+        is_planning = entity_type in PLANNING_ENTITIES
+        participant_forward = False
+        if module_slug == 'projects-tasks' and entity_type == 'project_task':
+            from Platform_API.modules.projects.views import task_participant_can_forward
+            participant_forward = task_participant_can_forward(request.user, request.data.get('entity_id'))
+        if is_planning:
+            if not planning_can_submit(request.user, module_slug, entity_type):
+                raise PermissionDenied('Your active role cannot submit this planning record.')
+            Tenant.objects.select_for_update().get(pk=tenant.pk)
+        elif not _workflow_forward_allowed(request.user) and not participant_forward:
+            raise PermissionDenied('Your active role is not allowed to forward records for approval.')
         entity_id = request.data.get("entity_id")
         trigger_event = str(request.data.get("trigger_event") or "submit").strip()
         if not module_slug or not entity_type or not entity_id:
@@ -2857,18 +2965,29 @@ class WorkflowForwardAPIView(APIView):
             model = Project if entity_type == "project" else ProjectTask
             if not model.objects.filter(pk=entity_id, tenant=tenant).exists():
                 raise ValidationError({"entity_id": "This record does not belong to the active organization."})
+            if entity_type == "project_task" and not model.objects.filter(pk=entity_id, tenant=tenant, is_active=True).exists():
+                raise ValidationError({"entity_id": "This task is inactive. Reactivate it before sending it for approval."})
 
+        if is_planning:
+            if entity_type == 'procurement_plan':
+                from Platform_API.modules.procurement.plans import plans_for
+                visible = plans_for(request.user).filter(pk=entity_id).exists()
+            else:
+                visible = budgets_for(request.user).filter(pk=entity_id).exists()
+            if not visible:
+                raise PermissionDenied('This planning record is not available in your organization.')
         existing = WorkflowInboxItem.objects.filter(
             tenant=tenant,
             workflow=binding.workflow,
             module_slug=module_slug,
             entity_type=entity_type,
             entity_id=entity_id,
-            status="pending",
+            status__in=["pending", "deferred"],
         ).first()
         if existing:
             return success_response("This record is already in the approval queue.", data=WorkflowInboxItemSerializer(existing).data)
 
+        planning_record = submission_record(request.user, entity_type, entity_id) if is_planning else None
         node = _workflow_first_actionable_node(binding.workflow)
         if node is None or (node.node_type == "approval" and not node.approval_group_id and not node.assigned_user_id):
             raise ValidationError({"detail": "The configured workflow needs an active routed approval, review, or task node."})
@@ -2877,6 +2996,10 @@ class WorkflowForwardAPIView(APIView):
         title = str(request.data.get("title") or f"Approval required: {binding.entity_label}")[:200]
         detail = str(request.data.get("detail") or f"{binding.entity_label} {reference} was forwarded for {node.name}.")
         metadata = request.data.get("metadata") if isinstance(request.data.get("metadata"), dict) else {}
+        if planning_record is not None:
+            metadata.update(submission_metadata(planning_record, entity_type))
+            reference = planning_record.code
+            title = planning_record.name
         metadata.update({
             "submitted_by": request.user.id,
             "submitted_role": _active_workflow_role_name(request.user),
@@ -2960,9 +3083,10 @@ class WorkflowInboxActionAPIView(APIView):
 
     permission_classes = (IsAuthenticated,)
 
+    @transaction.atomic
     def post(self, request, pk):
         item = get_object_or_404(
-            WorkflowInboxItem.objects.select_related("tenant", "workflow", "node_definition", "assigned_group", "assigned_user"),
+            WorkflowInboxItem.objects.select_for_update(of=('self',)).select_related("tenant", "workflow", "node_definition", "assigned_group", "assigned_user"),
             pk=pk,
         )
         if not _is_superadmin(request.user) and item.tenant_id != getattr(_request_tenant_or_none(request.user), "id", None):
@@ -3357,7 +3481,7 @@ class AuditExportAPIView(APIView):
         try:
             buffer = BytesIO()
             page_size = landscape(A4)
-            document = SimpleDocTemplate(buffer, pagesize=page_size, rightMargin=22, leftMargin=22, topMargin=28, bottomMargin=28)
+            document = SimpleDocTemplate(buffer, pagesize=page_size, rightMargin=22, leftMargin=22, topMargin=28, bottomMargin=70)
             styles = getSampleStyleSheet()
             cell_style = styles["BodyText"].clone("AuditExportCell", fontSize=5.5, leading=6.5, spaceAfter=0, splitLongWords=1)
 
@@ -3381,7 +3505,10 @@ class AuditExportAPIView(APIView):
                 ("LEFTPADDING", (0, 0), (-1, -1), 3), ("RIGHTPADDING", (0, 0), (-1, -1), 3), ("TOPPADDING", (0, 0), (-1, -1), 3), ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
             ]))
             body.append(table)
-            document.build(body)
+            from Platform_Core.printing import document_reference, draw_print_qr
+            def print_footer(canvas, doc):
+                draw_print_qr(canvas, document_reference(tenant=_request_tenant_or_none(user), kind="audit", number=dataset, path="/platform/audit", request=request), x=page_size[0]-72, y=10, size=48)
+            document.build(body, onFirstPage=print_footer, onLaterPages=print_footer)
             response = HttpResponse(buffer.getvalue(), content_type="application/pdf")
             response["Content-Disposition"] = f'attachment; filename="{filename}.pdf"'
             return response
@@ -4376,10 +4503,12 @@ def test_tenant_smtp(request, pk):
             "SMTP host, username, and password must be configured before sending a test email.",
             status_code=status.HTTP_400_BAD_REQUEST,
         )
-    recipient = (ts.support_email or ts.smtp_user or "").strip()
-    if not recipient:
+    from rest_framework.fields import EmailField
+    try:
+        recipient = EmailField().run_validation(request.data.get("recipient", ts.support_email or ts.smtp_user or ""))
+    except ValidationError:
         return error_response(
-            "Configure a support email or SMTP username to receive the test message.",
+            "Enter a valid test recipient email address.",
             status_code=status.HTTP_400_BAD_REQUEST,
         )
 

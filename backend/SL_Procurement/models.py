@@ -38,7 +38,7 @@ class Requisition(AuditMetadataMixin, models.Model):
         on_delete=models.PROTECT,
         related_name="requisitions",
     )
-    department = models.ForeignKey('SL_Procurement.Department', on_delete=models.PROTECT, null=True, blank=True, related_name='requisitions')
+    department = models.ForeignKey('Platform_Core.Department', on_delete=models.PROTECT, null=True, blank=True, related_name='requisitions')
     request_kind = models.CharField(max_length=16, choices=[('standard', 'Standard'), ('individual', 'Individual'), ('departmental', 'Departmental')], default='standard')
     department_status = models.CharField(max_length=20, choices=[('draft', 'Draft'), ('pending', 'Awaiting department head'), ('approved', 'Approved by department head'), ('rejected', 'Rejected'), ('consolidated', 'Consolidated')], default='draft')
     department_decided_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='department_requisition_decisions')
@@ -573,18 +573,53 @@ class PaymentQueueItem(AuditMetadataMixin, models.Model):
 class ProcurementPolicy(models.Model):
     tenant = models.OneToOneField('Platform_Core.Tenant', on_delete=models.CASCADE, related_name='procurement_policy')
     approval_source = models.CharField(max_length=12, choices=[('workflow', 'Workflow Center'), ('matrix', 'Approval rules')], default='workflow')
-
-
-class Department(models.Model):
-    tenant = models.ForeignKey('Platform_Core.Tenant', on_delete=models.CASCADE, related_name='departments')
-    name = models.CharField(max_length=120)
-    code = models.CharField(max_length=40)
-    head = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='headed_departments')
-    deputy = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True, related_name='deputy_departments')
-    members = models.ManyToManyField(settings.AUTH_USER_MODEL, related_name='erp_departments', blank=True)
-    is_active = models.BooleanField(default=True)
+    workflow = models.ForeignKey('Platform_Core.WorkflowDefinition', on_delete=models.PROTECT, null=True, blank=True, related_name='procurement_policies')
+    branch_scope = models.CharField(max_length=12, choices=[('all', 'All organization branches'), ('selected', 'Selected branches only')], default='all')
+    branches = models.ManyToManyField('Platform_Core.TenantBranch', blank=True, related_name='procurement_policies')
+    department_scope = models.CharField(max_length=12, choices=[('all', 'All departments'), ('selected', 'Selected departments only')], default='all')
+    departments = models.ManyToManyField('Platform_Core.Department', blank=True, related_name='procurement_policies')
+    require_department = models.BooleanField(default=False)
 
     class Meta:
-        unique_together = [('tenant', 'code')]
-        ordering = ['name']
         permissions = [('consolidate_requisitions', 'Can consolidate departmental requisitions')]
+
+
+
+# Compatibility import for integrations; the shared model belongs to Platform_Core.
+from Platform_Core.models import Department
+
+
+class ProcurementPlan(AuditMetadataMixin, models.Model):
+    tenant = models.ForeignKey('Platform_Core.Tenant', on_delete=models.CASCADE, related_name='procurement_plans')
+    annual_budget = models.ForeignKey('SL_Budgeting.Budget', on_delete=models.PROTECT, related_name='procurement_plans')
+    name = models.CharField(max_length=180)
+    code = models.CharField(max_length=50)
+    status = models.CharField(max_length=20, choices=[('draft','Draft'),('submitted','Submitted'),('approved','Approved'),('rejected','Rejected')], default='draft')
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name='created_procurement_plans')
+    submitted_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='submitted_procurement_plans')
+    approved_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='approved_procurement_plans')
+    approved_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = [('tenant','code')]
+        ordering = ['-created_at']
+        permissions = [('submit_procurementplan','Can submit procurement plans'),('approve_procurementplan','Can approve procurement plans')]
+        constraints = [models.UniqueConstraint(fields=['annual_budget'], name='procurement_one_plan_per_annual_budget')]
+
+
+class ProcurementPlanLine(models.Model):
+    plan = models.ForeignKey(ProcurementPlan, on_delete=models.CASCADE, related_name='lines')
+    budget_line = models.ForeignKey('SL_Budgeting.BudgetLine', on_delete=models.PROTECT, related_name='procurement_plan_lines')
+    description = models.CharField(max_length=300)
+    category = models.CharField(max_length=20, choices=[('goods','Goods'),('services','Services'),('works','Works'),('other','Other')], default='goods')
+    quantity = models.DecimalField(max_digits=14, decimal_places=3, default=1)
+    unit = models.CharField(max_length=40, default='item')
+    estimated_amount = models.DecimalField(max_digits=14, decimal_places=2)
+    procurement_method = models.CharField(max_length=30, choices=[('open_tender','Open tender'),('quotation','Request for quotations'),('framework','Framework agreement'),('direct','Direct procurement'),('other','Other')], default='quotation')
+    planned_date = models.DateField(null=True, blank=True)
+    notes = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ['id']

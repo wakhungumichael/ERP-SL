@@ -10,7 +10,7 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 
 from Platform_Core.models import OrganizationMembership, Tenant, TenantBranch, TenantSettings
-from SL_Projects.models import ProjectTask, TaskChecklistItem, TaskCollaborator, TaskFollowUp
+from SL_Projects.models import Project, ProjectMember, ProjectMilestone, ProjectTask, TaskChecklistItem, TaskCollaborator, TaskFollowUp
 
 
 class ProjectWorkspaceTests(TestCase):
@@ -24,7 +24,7 @@ class ProjectWorkspaceTests(TestCase):
         self.other = User.objects.create_user('task-other')
         self.role = Group.objects.create(name=f'tenant:{self.tenant.pk}:Task team')
         self.manager = Group.objects.create(name=f'tenant:{self.tenant.pk}:Project manager')
-        for group, names in [(self.role, ['view_own_projecttask', 'add_taskfollowup', 'export_projecttask']), (self.manager, ['view_all_projecttask', 'export_projecttask'])]:
+        for group, names in [(self.role, ['view_own_projecttask', 'view_project_dashboard', 'add_taskfollowup', 'export_projecttask']), (self.manager, ['view_all_projecttask', 'export_projecttask'])]:
             group.permissions.set(Permission.objects.filter(content_type__app_label='SL_Projects', codename__in=names))
         self.user.groups.add(self.role, self.manager)
         self.membership = OrganizationMembership.objects.create(user=self.user, tenant=self.tenant, branch=self.branch, is_default=True, active_role_group_name=self.role.name)
@@ -74,7 +74,44 @@ class ProjectWorkspaceTests(TestCase):
         mine = self.client.get('/api/projects/tasks/?scope=mine').data
         self.assertEqual({r['id'] for r in mine['results']}, {self.own.pk, self.collab.pk})
 
-    def test_standard_task_view_sees_all_branch_tasks_and_project_creator_can_open_register(self):
+    def test_project_team_shows_new_drafts_without_legacy_role_assignment(self):
+        self.membership.active_role_group_name = self.manager.name
+        self.membership.save(update_fields=['active_role_group_name'])
+        self.manager.permissions.add(Permission.objects.get(
+            content_type__app_label='SL_Projects', codename='add_projecttask',
+        ))
+        created = self.client.post('/api/projects/tasks/', {
+            'title': 'New project team work', 'project': self.own.project_id,
+            'primary_assignee': None,
+        }, format='json')
+        self.assertEqual(created.status_code, 201, created.data)
+        saved = ProjectTask.objects.get(pk=created.data['id'])
+        self.assertIsNone(saved.assigned_role_id)
+        self.assertIsNone(saved.primary_assignee_id)
+        team = self.client.get('/api/projects/tasks/?scope=team&ordering=-created_at&page_size=100')
+        self.assertEqual(team.status_code, 200, team.data)
+        self.assertEqual(team.data['results'][0]['id'], saved.pk)
+        self.assertEqual({row['id'] for row in team.data['results']}, {
+            saved.pk, self.own.pk, self.team.pk, self.collab.pk, self.hidden.pk,
+        })
+        filtered = self.client.get('/api/projects/tasks/?scope=team&status=draft&search=New%20project%20team')
+        self.assertEqual([row['id'] for row in filtered.data['results']], [saved.pk])
+
+    def test_project_team_uses_project_membership_without_expanding_access(self):
+        self.use_project_view_role()
+        project = self.joined_project()
+        unrelated = Project.objects.create(tenant=self.tenant, branch=self.branch, code='TEAM-OTHER', name='Other team')
+        outsider = self.task('other-project-team', project=unrelated, primary_assignee=self.other)
+        self.task('project-team-other-branch', project=project, branch=self.other_branch)
+        response = self.client.get('/api/projects/tasks/?scope=team&page_size=100')
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertFalse(response.data['access']['view_all_tasks'])
+        self.assertEqual({row['id'] for row in response.data['results']}, {
+            self.own.pk, self.collab.pk, self.hidden.pk,
+        })
+        self.assertNotIn(outsider.pk, {row['id'] for row in response.data['results']})
+
+    def use_project_view_role(self):
         standard = Group.objects.create(name=f'tenant:{self.tenant.pk}:Standard task viewer')
         standard.permissions.set(Permission.objects.filter(
             content_type__app_label='SL_Projects',
@@ -84,16 +121,129 @@ class ProjectWorkspaceTests(TestCase):
         self.membership.active_role_group_name = standard.name
         self.membership.save(update_fields=['active_role_group_name'])
 
+    def joined_project(self):
+        project = Project.objects.create(tenant=self.tenant, branch=self.branch, code='JOINED', name='Joined project')
+        ProjectMember.objects.create(project=project, user=self.user, branch=self.branch)
+        self.hidden.project = project
+        self.hidden.save(update_fields=['project'])
+        return project
+
+    def test_standard_view_sees_joined_projects_and_assigned_work(self):
+        self.use_project_view_role()
+        project = self.joined_project()
+        unrelated = Project.objects.create(tenant=self.tenant, branch=self.branch, code='OTHER', name='Unrelated project')
+        outsider = self.task('outsider', project=unrelated, primary_assignee=self.other)
+        # Membership in a project never removes active branch or tenant boundaries.
+        self.task('joined-other-branch', project=project, branch=self.other_branch, primary_assignee=self.other)
+
         tasks = self.client.get('/api/projects/tasks/?page_size=100')
         self.assertEqual(tasks.status_code, 200, tasks.data)
-        self.assertTrue(tasks.data['access']['view_all_tasks'])
+        self.assertFalse(tasks.data['access']['view_all_tasks'])
         self.assertEqual({row['id'] for row in tasks.data['results']}, {
-            self.own.pk, self.team.pk, self.collab.pk, self.hidden.pk,
+            self.own.pk, self.collab.pk, self.hidden.pk,
         })
         self.assertEqual(self.client.get(f'/api/projects/tasks/{self.hidden.pk}/').status_code, 200)
+        self.assertEqual(self.client.get(f'/api/projects/tasks/{outsider.pk}/').status_code, 404)
+        mine = self.client.get('/api/projects/tasks/?scope=mine').data
+        self.assertEqual({row['id'] for row in mine['results']}, {self.own.pk, self.collab.pk})
+        self.assertEqual(self.client.get('/api/projects/projects/').status_code, 403)
+        self.assertEqual(self.client.get(f'/api/projects/projects/{project.pk}/').status_code, 403)
+        standard = self.user.groups.get(name=self.membership.active_role_group_name)
+        standard.permissions.add(Permission.objects.get(content_type__app_label='SL_Projects', codename='view_project'))
         projects = self.client.get('/api/projects/projects/')
         self.assertEqual(projects.status_code, 200, projects.data)
         self.assertTrue(projects.data['access']['can_create'])
+        self.assertNotIn(unrelated.pk, {row['id'] for row in projects.data['results']})
+
+        ProjectMember.objects.filter(project=project, user=self.user).delete()
+        self.assertEqual(self.client.get(f'/api/projects/tasks/{self.hidden.pk}/').status_code, 404)
+
+    def test_project_owner_and_manager_can_view_project_tasks_with_standard_view(self):
+        self.use_project_view_role()
+        for relation in ['owner', 'manager']:
+            with self.subTest(relation=relation):
+                project = Project.objects.create(tenant=self.tenant, branch=self.branch, code=relation, name=relation, **{relation: self.user})
+                task = self.task(relation, project=project, primary_assignee=self.other)
+                self.assertEqual(self.client.get(f'/api/projects/tasks/{task.pk}/').status_code, 200)
+                mine = self.client.get('/api/projects/tasks/?scope=mine').data
+                self.assertNotIn(task.pk, {row['id'] for row in mine['results']})
+
+    def test_assigned_only_permission_does_not_grant_project_teammate_tasks(self):
+        self.joined_project()
+        tasks = self.client.get('/api/projects/tasks/').data
+        self.assertEqual({row['id'] for row in tasks['results']}, {self.own.pk, self.team.pk, self.collab.pk})
+        self.assertEqual(self.client.get(f'/api/projects/tasks/{self.hidden.pk}/').status_code, 404)
+
+    def test_task_permissions_do_not_grant_project_pages_or_dashboard(self):
+        self.use_project_view_role()
+        project = self.joined_project()
+        from SL_Projects.models import ProjectMilestone
+        milestone = ProjectMilestone.objects.create(project=project, name="Select this", description="Private project information")
+        for path in ['/api/projects/projects/', f'/api/projects/projects/{project.pk}/', '/api/projects/dashboard/', f'/api/projects/projects/{project.pk}/milestones/', f'/api/projects/projects/{project.pk}/members/', f'/api/projects/projects/{project.pk}/documents/']:
+            self.assertEqual(self.client.get(path).status_code, 403, path)
+        self.assertEqual(self.client.get('/api/projects/tasks/').status_code, 200)
+        options = self.client.get('/api/projects/project-options/').data['results']
+        self.assertIn(project.pk, {row['id'] for row in options})
+        self.assertNotIn('estimated_budget', options[0])
+        options = self.client.get(f'/api/projects/project-options/{project.pk}/milestones/')
+        self.assertEqual(options.status_code, 200)
+        self.assertEqual(options.data, [{'id': milestone.pk, 'name': milestone.name, 'status': milestone.status}])
+        inaccessible = Project.objects.create(tenant=self.tenant, branch=self.branch, code='NOACCESS', name='Other')
+        self.assertEqual(self.client.get(f'/api/projects/project-options/{inaccessible.pk}/milestones/').status_code, 404)
+
+    def test_project_and_dashboard_permissions_are_independent_of_tasks(self):
+        self.use_project_view_role()
+        project = self.joined_project()
+        group = self.user.groups.get(name=self.membership.active_role_group_name)
+        group.permissions.set(Permission.objects.filter(content_type__app_label='SL_Projects', codename='view_project'))
+        self.assertEqual(self.client.get('/api/projects/projects/').status_code, 200)
+        self.assertEqual(self.client.get(f'/api/projects/projects/{project.pk}/').status_code, 200)
+        self.assertEqual(self.client.get('/api/projects/tasks/').status_code, 403)
+        self.assertEqual(self.client.get('/api/projects/dashboard/').status_code, 403)
+        group.permissions.add(Permission.objects.get(content_type__app_label='SL_Projects', codename='view_project_dashboard'))
+        self.assertEqual(self.client.get('/api/projects/dashboard/').status_code, 200)
+
+    def test_calendar_project_events_require_project_view_and_stay_scoped(self):
+        self.use_project_view_role()
+        joined = self.joined_project()
+        today = timezone.localdate()
+        included = ProjectMilestone.objects.create(project=joined, name='Allowed project event', due_date=today, owner=self.user)
+        unrelated = Project.objects.create(tenant=self.tenant, branch=self.branch, code='CAL-OTHER', name='Unrelated')
+        excluded = ProjectMilestone.objects.create(project=unrelated, name='Unrelated project event', due_date=today)
+        other_branch = Project.objects.create(tenant=self.tenant, branch=self.other_branch, code='CAL-BRANCH', name='Other branch')
+        ProjectMember.objects.create(project=other_branch, user=self.user, branch=self.other_branch)
+        ProjectMilestone.objects.create(project=other_branch, name='Other branch event', due_date=today)
+        foreign = Project.objects.create(tenant=self.foreign_tenant, branch=self.foreign_branch, code='CAL-FOREIGN', name='Other organization')
+        ProjectMilestone.objects.create(project=foreign, name='Foreign event', due_date=today)
+        followup = TaskFollowUp.objects.create(task=self.own, owner=self.user, follow_up_date=today, notes='Assigned follow-up')
+        path = '/api/projects/calendar/'
+        params = {'start': str(today - timedelta(days=7)), 'end': str(today + timedelta(days=7))}
+        response = self.client.get(path, params)
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertFalse(any(event['kind'] == 'milestone' for event in response.data))
+        self.assertEqual({event['id'] for event in response.data if event['kind'] == 'task'}, {self.own.pk, self.collab.pk, self.hidden.pk})
+        self.assertIn(followup.pk, {event['id'] for event in response.data if event['kind'] == 'follow_up'})
+        self.assertFalse(any(event['url'] == f'/projects/{joined.pk}' for event in response.data))
+        standard = self.user.groups.get(name=self.membership.active_role_group_name)
+        view = Permission.objects.get(content_type__app_label='SL_Projects', codename='view_project')
+        # A second assigned role cannot lend Project View to the selected role.
+        self.manager.permissions.add(view)
+        response = self.client.get(path, params)
+        self.assertFalse(any(event['kind'] == 'milestone' for event in response.data))
+        standard.permissions.add(view)
+        response = self.client.get(path, params)
+        self.assertEqual({event['id'] for event in response.data if event['kind'] == 'milestone'}, {included.pk})
+        filtered = self.client.get(path, {**params, 'project': joined.pk, 'assignee': 'mine'})
+        self.assertEqual({event['id'] for event in filtered.data if event['kind'] == 'milestone'}, {included.pk})
+        self.assertEqual({event['id'] for event in filtered.data if event['kind'] == 'task'}, set())
+        self.assertEqual(self.client.get(path, {**params, 'project': unrelated.pk}).status_code, 400)
+        self.membership.active_role_group_name = self.manager.name
+        self.membership.save(update_fields=['active_role_group_name'])
+        response = self.client.get(path, params)
+        self.assertEqual({event['id'] for event in response.data if event['kind'] == 'milestone'}, {included.pk, excluded.pk})
+        self.manager.permissions.remove(view)
+        response = self.client.get(path, params)
+        self.assertFalse(any(event['kind'] == 'milestone' for event in response.data))
 
     def test_followups_can_be_created_only_for_visible_tasks(self):
         payload = dict(task=self.own.pk, follow_up_date=str(timezone.localdate()), notes='Call customer')
@@ -204,4 +354,5 @@ class SampleProjectTests(TestCase):
             membership.is_org_admin = True
             membership.save()
             self.assertEqual(client.delete('/api/projects/sample-data/').status_code, 200)
-        self.assertFalse(ProjectTask.objects.filter(tenant=self.tenant).exists())
+        self.assertEqual(ProjectTask.objects.filter(tenant=self.tenant).count(), 3)
+        self.assertFalse(ProjectTask.objects.filter(tenant=self.tenant, is_active=True).exists())

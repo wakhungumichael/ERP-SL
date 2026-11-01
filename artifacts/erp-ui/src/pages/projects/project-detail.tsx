@@ -13,6 +13,12 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  ProjectTaskRegister,
+  ProjectMilestoneRegister,
+  ProjectDocumentRegister,
+} from "@/components/projects/project-registers";
 import {
   Select,
   SelectContent,
@@ -28,7 +34,11 @@ import { apiErrorFromResponse } from "@/lib/api-errors";
 import { hasPermission } from "@/lib/permissions";
 import { RecordAuditTrail } from "@/components/audit/record-audit-trail";
 
+import { ProjectTeamRegister } from "@/components/projects/related-register";
+
 type Project = {
+  access?: Record<string, boolean>;
+  is_general?: boolean;
   code: string;
   name: string;
   description: string;
@@ -83,6 +93,7 @@ type WorkflowRequirement = {
     in_progress: boolean;
     current_stage: string | null;
     current_role: string | null;
+    binding?: unknown;
   };
 };
 type WorkflowItem = {
@@ -131,8 +142,18 @@ const dateTime = (value?: string | null) =>
       }).format(new Date(value))
     : "Not recorded";
 function useApi<T>(path: string, token: string | null) {
+  const { user } = useAuth();
   return useQuery<T>({
-    queryKey: ["project-record", path],
+    queryKey: [
+      "project-record",
+      path.split("?")[0],
+      path,
+      token,
+      user?.organization_id,
+      user?.branch_id,
+    user?.active_branch_id,
+      user?.active_role_group_name,
+    ],
     enabled: !!token,
     queryFn: async () => {
       const response = await fetch(path, {
@@ -160,15 +181,18 @@ export default function ProjectDetail({ id }: { id: string }) {
   const historyPath = `/api/platform/workflows/history/?module_slug=projects-tasks&entity_type=project&entity_id=${id}`;
   const documentsPath = `${projectPath}documents/`;
   const project = useApi<Project>(projectPath, token);
-  const milestones = useApi<Milestone[]>(milestonesPath, token);
-  const tasks = useApi<{ count: number; results: ProjectTask[] }>(
-    `/api/projects/tasks/?project=${id}&page_size=100`,
+  const milestones = useApi<{ count: number; results: Milestone[] }>(
+    milestonesPath + "?page_size=1",
     token,
   );
-  const members = useApi<Members>(membersPath, token);
+  const tasks = useApi<{
+    count: number;
+    results: ProjectTask[];
+    summary?: { completed: number };
+  }>(`/api/projects/tasks/?project=${id}&page_size=1`, token);
+  const members = useApi<Members>(membersPath + "?include_options=1", token);
   const workflow = useApi<WorkflowRequirement>(workflowPath, token);
   const history = useApi<{ data: WorkflowItem[] }>(historyPath, token);
-  const documents = useApi<ProjectDocument[]>(documentsPath, token);
   const [name, setName] = useState("");
   const [dueDate, setDueDate] = useState("");
   const [description, setDescription] = useState("");
@@ -197,7 +221,9 @@ export default function ProjectDetail({ id }: { id: string }) {
   const refresh = (...paths: string[]) =>
     paths.forEach(
       (path) =>
-        void client.invalidateQueries({ queryKey: ["project-record", path] }),
+        void client.invalidateQueries({
+          queryKey: ["project-record", path.split("?")[0]],
+        }),
     );
   const addMilestone = useMutation({
     mutationFn: async () => {
@@ -335,6 +361,9 @@ export default function ProjectDetail({ id }: { id: string }) {
       setMemberUser("");
       setNewBranch("");
       refresh(membersPath, projectPath);
+      void client.invalidateQueries({
+        queryKey: ["project-related", membersPath],
+      });
       toast({ title: "Project members updated" });
     },
     onError: (error: Error) =>
@@ -358,6 +387,9 @@ export default function ProjectDetail({ id }: { id: string }) {
     },
     onSuccess: () => {
       refresh(membersPath, projectPath);
+      void client.invalidateQueries({
+        queryKey: ["project-related", membersPath],
+      });
       toast({ title: "Project member removed" });
     },
     onError: (error: Error) =>
@@ -548,8 +580,15 @@ export default function ProjectDetail({ id }: { id: string }) {
       }),
   });
   const record = project.data;
+  const access = record?.access ?? {};
   const projectTasks = tasks.data?.results ?? [];
   const workflowItems = history.data?.data ?? [];
+  const showApprovals = Boolean(
+    workflow.data?.data.required ||
+    workflow.data?.data.in_progress ||
+    workflow.data?.data.binding ||
+    workflowItems.length,
+  );
   return (
     <ERPWorkspacePage
       title={record ? `${record.code} - ${record.name}` : "Project"}
@@ -563,23 +602,22 @@ export default function ProjectDetail({ id }: { id: string }) {
         <>
           <div className="mb-3 flex flex-wrap justify-end gap-2">
             <RecordAuditTrail modelLabel="SL_Projects.Project" objectPk={id} />
-            {record.status === "draft" &&
-              hasPermission(user, "SL_Projects.delete_project") && (
-                <Button
-                  variant="destructive"
-                  disabled={deleteProject.isPending}
-                  onClick={() => {
-                    if (
-                      window.confirm(
-                        "Delete this draft project? This cannot be undone.",
-                      )
+            {access.can_delete && (
+              <Button
+                variant="destructive"
+                disabled={deleteProject.isPending}
+                onClick={() => {
+                  if (
+                    window.confirm(
+                      "Delete this draft project? This cannot be undone.",
                     )
-                      deleteProject.mutate();
-                  }}
-                >
-                  {deleteProject.isPending ? "Deleting..." : "Delete draft"}
-                </Button>
-              )}
+                  )
+                    deleteProject.mutate();
+                }}
+              >
+                {deleteProject.isPending ? "Deleting..." : "Delete draft"}
+              </Button>
+            )}
           </div>
           <section className="mb-5 grid gap-4 lg:grid-cols-[1fr_auto]">
             <div className="rounded-lg border bg-card p-5">
@@ -619,7 +657,9 @@ export default function ProjectDetail({ id }: { id: string }) {
               <TabsTrigger value="team">Team</TabsTrigger>
               <TabsTrigger value="budget">Budget</TabsTrigger>
               <TabsTrigger value="documents">Documents</TabsTrigger>
-              <TabsTrigger value="workflow">Workflow</TabsTrigger>
+              {showApprovals && (
+                <TabsTrigger value="workflow">Approvals</TabsTrigger>
+              )}
               <TabsTrigger value="activity">Activity</TabsTrigger>
             </TabsList>
             <TabsContent value="overview">
@@ -650,84 +690,89 @@ export default function ProjectDetail({ id }: { id: string }) {
                       </dd>
                     </div>
                   </dl>
-                  <details className="mt-5 rounded border p-3">
-                    <summary className="cursor-pointer font-medium">
-                      Edit project planning
-                    </summary>
-                    <div className="mt-3 grid gap-3">
-                      <Input
-                        defaultValue={record.name}
-                        onChange={(event) => setEditName(event.target.value)}
-                        placeholder="Project name"
-                      />
-                      <Textarea
-                        defaultValue={record.description}
-                        onChange={(event) =>
-                          setEditDescription(event.target.value)
-                        }
-                        placeholder="Project description"
-                      />
-                      <div className="grid gap-2 sm:grid-cols-2">
+                  {access.can_edit && (
+                    <details className="mt-5 rounded border p-3">
+                      <summary className="cursor-pointer font-medium">
+                        Edit project planning
+                      </summary>
+                      <div className="mt-3 grid gap-3">
                         <Input
-                          defaultValue={record.start_date || ""}
-                          type="date"
-                          onChange={(event) =>
-                            setEditStartDate(event.target.value)
-                          }
+                          defaultValue={record.name}
+                          readOnly={record.is_general}
+                          onChange={(event) => setEditName(event.target.value)}
+                          placeholder="Project name"
                         />
-                        <Input
-                          defaultValue={record.target_end_date || ""}
-                          type="date"
+                        <Textarea
+                          defaultValue={record.description}
                           onChange={(event) =>
-                            setEditTargetEndDate(event.target.value)
+                            setEditDescription(event.target.value)
                           }
+                          placeholder="Project description"
                         />
-                      </div>
-                      <div className="grid gap-2 sm:grid-cols-2">
-                        <Select
-                          defaultValue={record.priority}
-                          onValueChange={setEditPriority}
+                        <div className="grid gap-2 sm:grid-cols-2">
+                          <Input
+                            defaultValue={record.start_date || ""}
+                            type="date"
+                            onChange={(event) =>
+                              setEditStartDate(event.target.value)
+                            }
+                          />
+                          <Input
+                            defaultValue={record.target_end_date || ""}
+                            type="date"
+                            onChange={(event) =>
+                              setEditTargetEndDate(event.target.value)
+                            }
+                          />
+                        </div>
+                        <div className="grid gap-2 sm:grid-cols-2">
+                          <Select
+                            defaultValue={record.priority}
+                            onValueChange={setEditPriority}
+                          >
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="low">Low priority</SelectItem>
+                              <SelectItem value="medium">
+                                Medium priority
+                              </SelectItem>
+                              <SelectItem value="high">
+                                High priority
+                              </SelectItem>
+                              <SelectItem value="critical">
+                                Critical priority
+                              </SelectItem>
+                            </SelectContent>
+                          </Select>
+                          <Select
+                            defaultValue={record.status}
+                            onValueChange={setEditStatus}
+                          >
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="draft">Draft</SelectItem>
+                              <SelectItem value="planned">Planned</SelectItem>
+                              <SelectItem value="active">Active</SelectItem>
+                              <SelectItem value="on_hold">On hold</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <Button
+                          className="w-fit"
+                          disabled={savePlanning.isPending}
+                          onClick={() => savePlanning.mutate()}
                         >
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="low">Low priority</SelectItem>
-                            <SelectItem value="medium">
-                              Medium priority
-                            </SelectItem>
-                            <SelectItem value="high">High priority</SelectItem>
-                            <SelectItem value="critical">
-                              Critical priority
-                            </SelectItem>
-                          </SelectContent>
-                        </Select>
-                        <Select
-                          defaultValue={record.status}
-                          onValueChange={setEditStatus}
-                        >
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="draft">Draft</SelectItem>
-                            <SelectItem value="planned">Planned</SelectItem>
-                            <SelectItem value="active">Active</SelectItem>
-                            <SelectItem value="on_hold">On hold</SelectItem>
-                          </SelectContent>
-                        </Select>
+                          {savePlanning.isPending
+                            ? "Saving..."
+                            : "Save planning changes"}
+                        </Button>
                       </div>
-                      <Button
-                        className="w-fit"
-                        disabled={savePlanning.isPending}
-                        onClick={() => savePlanning.mutate()}
-                      >
-                        {savePlanning.isPending
-                          ? "Saving..."
-                          : "Save planning changes"}
-                      </Button>
-                    </div>
-                  </details>
+                    </details>
+                  )}
                 </section>
                 <aside className="rounded-lg border bg-card p-5">
                   <h2 className="font-semibold">Quick status</h2>
@@ -735,18 +780,14 @@ export default function ProjectDetail({ id }: { id: string }) {
                     <div className="flex justify-between gap-4">
                       <dt className="text-muted-foreground">Tasks</dt>
                       <dd className="font-medium">
-                        {
-                          projectTasks.filter(
-                            (task) => task.status === "completed",
-                          ).length
-                        }{" "}
-                        / {tasks.data?.count ?? 0} completed
+                        {tasks.data?.summary?.completed ?? 0} /{" "}
+                        {tasks.data?.count ?? 0} completed
                       </dd>
                     </div>
                     <div className="flex justify-between gap-4">
                       <dt className="text-muted-foreground">Milestones</dt>
                       <dd className="font-medium">
-                        {milestones.data?.length ?? 0}
+                        {milestones.data?.count ?? 0}
                       </dd>
                     </div>
                     <div>
@@ -762,150 +803,92 @@ export default function ProjectDetail({ id }: { id: string }) {
               </div>
             </TabsContent>
             <TabsContent value="tasks">
-              <section className="rounded-lg border bg-card p-5">
-                <div className="flex items-center justify-between gap-3">
+              <section className="space-y-4 rounded-lg border bg-card p-4 sm:p-5">
+                <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <h2 className="font-semibold">Project tasks</h2>
                     <p className="text-sm text-muted-foreground">
-                      Open a task to update progress, evidence, follow-ups, and
-                      assignments.
+                      Search, filter and page through this project's tasks.
                     </p>
                   </div>
-                  <div className="flex gap-2">
+                  <div className="flex flex-wrap gap-2">
                     <Link href={`/projects/tasks?project=${id}`}>
                       <Button variant="outline">View all tasks</Button>
                     </Link>
-                    <Link href={`/projects/tasks?project=${id}&create=1}`}>
-                      <Button>Add task</Button>
-                    </Link>
+                    {!!access.can_add_task && (
+                      <Link href={`/projects/tasks?project=${id}&create=1`}>
+                        <Button>Add task</Button>
+                      </Link>
+                    )}
                   </div>
                 </div>
-                <div className="mt-4 space-y-2">
-                  {projectTasks.map((task) => (
-                    <Link href={`/projects/tasks/${task.id}`} key={task.id}>
-                      <div className="flex cursor-pointer flex-wrap items-center justify-between gap-3 rounded border p-3 text-sm hover:bg-muted/40">
-                        <div>
-                          <span className="font-mono text-xs text-muted-foreground">
-                            {task.number}
-                          </span>
-                          <div className="font-medium">{task.title}</div>
-                          <span className="text-muted-foreground">
-                            {task.assignee_name || "Unassigned"} · Due{" "}
-                            {date(task.due_date)}
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <span>{task.progress_percentage}%</span>
-                          <Badge variant="outline">
-                            {task.status.replaceAll("_", " ")}
-                          </Badge>
-                        </div>
-                      </div>
-                    </Link>
-                  ))}
-                  {!projectTasks.length && (
-                    <p className="py-8 text-center text-sm text-muted-foreground">
-                      No tasks have been added to this project yet.
-                    </p>
-                  )}
-                </div>
+                <ProjectTaskRegister key={id} projectId={id} />
               </section>
             </TabsContent>
             <TabsContent value="milestones">
-              <section className="rounded-lg border bg-card p-5">
-                <h2 className="font-semibold">Milestones</h2>
-                <div className="mt-4 grid gap-2 md:grid-cols-[1fr_11rem_1fr_auto]">
-                  <Input
-                    value={name}
-                    onChange={(event) => setName(event.target.value)}
-                    placeholder="Milestone name"
-                  />
-                  <Input
-                    type="date"
-                    value={dueDate}
-                    onChange={(event) => setDueDate(event.target.value)}
-                  />
-                  <Textarea
-                    value={description}
-                    onChange={(event) => setDescription(event.target.value)}
-                    placeholder="Outcome or dependency"
-                  />
-                  <Button
-                    disabled={!name.trim() || addMilestone.isPending}
-                    onClick={() => addMilestone.mutate()}
-                  >
-                    Add milestone
-                  </Button>
-                </div>
-                <div className="mt-4 space-y-2">
-                  {(milestones.data ?? []).map((milestone) => (
-                    <div
-                      className="flex flex-wrap items-center justify-between gap-3 rounded border p-3 text-sm"
-                      key={milestone.id}
-                    >
-                      <div>
-                        <div className="font-medium">{milestone.name}</div>
-                        <div className="text-muted-foreground">
-                          {milestone.description || "No description"}
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-3">
-                        <span className="text-muted-foreground">
-                          Due {date(milestone.due_date)}
-                        </span>
-                        <Badge variant="outline">{milestone.status}</Badge>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => {
-                            setEditingMilestone(milestone);
-                            setMilestoneName(milestone.name);
-                            setMilestoneDescription(milestone.description);
-                            setMilestoneDueDate(milestone.due_date ?? "");
-                            setMilestoneStatus(milestone.status);
-                            setMilestoneProgress(
-                              String(milestone.progress_percentage),
-                            );
-                          }}
-                        >
-                          Edit
-                        </Button>
-                        {milestone.status !== "completed" && (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            disabled={completeMilestone.isPending}
-                            onClick={() =>
-                              completeMilestone.mutate(milestone.id)
-                            }
-                          >
-                            Complete
-                          </Button>
-                        )}
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          disabled={removeMilestone.isPending}
-                          onClick={() => {
-                            if (
-                              window.confirm(
-                                `Remove milestone “${milestone.name}”?`,
-                              )
-                            )
-                              removeMilestone.mutate(milestone.id);
-                          }}
-                        >
-                          Remove
-                        </Button>
-                      </div>
+              <section className="space-y-4 rounded-lg border bg-card p-4 sm:p-5">
+                <h2 className="font-semibold">Project milestones</h2>
+                {!!access.can_add_milestone && (
+                  <div className="grid gap-3 rounded-lg border bg-muted/20 p-4 sm:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label htmlFor="milestone-name" required>
+                        Milestone name
+                      </Label>
+                      <Input
+                        id="milestone-name"
+                        value={name}
+                        onChange={(e) => setName(e.target.value)}
+                      />
                     </div>
-                  ))}
-                  {!milestones.data?.length && (
-                    <p className="py-8 text-center text-sm text-muted-foreground">
-                      No milestones have been added yet.
-                    </p>
-                  )}
-                </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="milestone-due">Due date</Label>
+                      <Input
+                        id="milestone-due"
+                        type="date"
+                        value={dueDate}
+                        onChange={(e) => setDueDate(e.target.value)}
+                      />
+                    </div>
+                    <div className="space-y-2 sm:col-span-2">
+                      <Label htmlFor="milestone-description">Description</Label>
+                      <Textarea
+                        id="milestone-description"
+                        value={description}
+                        onChange={(e) => setDescription(e.target.value)}
+                      />
+                    </div>
+                    <Button
+                      className="w-fit"
+                      disabled={!name.trim() || addMilestone.isPending}
+                      onClick={() => addMilestone.mutate()}
+                    >
+                      Add milestone
+                    </Button>
+                  </div>
+                )}
+                <ProjectMilestoneRegister
+                  key={id}
+                  projectId={id}
+                  canEdit={!!access.can_change_milestone}
+                  canRemove={!!access.can_delete_milestone}
+                  busy={
+                    completeMilestone.isPending || removeMilestone.isPending
+                  }
+                  onEdit={(row) => {
+                    setEditingMilestone(row);
+                    setMilestoneName(row.name);
+                    setMilestoneDescription(row.description);
+                    setMilestoneDueDate(row.due_date ?? "");
+                    setMilestoneStatus(row.status);
+                    setMilestoneProgress(String(row.progress_percentage));
+                  }}
+                  onComplete={(milestoneId) =>
+                    completeMilestone.mutate(milestoneId)
+                  }
+                  onRemove={(milestoneId) =>
+                    removeMilestone.mutate(milestoneId)
+                  }
+                />
               </section>
             </TabsContent>
             <TabsContent value="team">
@@ -915,7 +898,10 @@ export default function ProjectDetail({ id }: { id: string }) {
                   Enable participating branches, then allocate people and their
                   responsibility.
                 </p>
-                <div className="mt-4 grid gap-2 md:grid-cols-4">
+                <fieldset
+                  disabled={!access.can_manage_team}
+                  className="mt-4 grid gap-2 md:grid-cols-4"
+                >
                   <Select value={newBranch} onValueChange={setNewBranch}>
                     <SelectTrigger>
                       <SelectValue placeholder="Add participating branch" />
@@ -963,16 +949,30 @@ export default function ProjectDetail({ id }: { id: string }) {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="manager">Manager</SelectItem>
-                      <SelectItem value="owner">Owner</SelectItem>
+                      <SelectItem
+                        disabled={!access.can_assign_manager}
+                        value="manager"
+                      >
+                        Manager
+                      </SelectItem>
+                      <SelectItem
+                        disabled={!access.can_assign_manager}
+                        value="owner"
+                      >
+                        Owner
+                      </SelectItem>
                       <SelectItem value="contributor">Contributor</SelectItem>
                       <SelectItem value="viewer">Viewer</SelectItem>
                     </SelectContent>
                   </Select>
-                </div>
+                </fieldset>
                 <Button
                   className="mt-2"
-                  disabled={!memberUser || updateMembers.isPending}
+                  disabled={
+                    !access.can_manage_team ||
+                    !memberUser ||
+                    updateMembers.isPending
+                  }
                   onClick={() => {
                     const [user, branch] = memberUser.split(":");
                     updateMembers.mutate({ user, branch, responsibility });
@@ -980,34 +980,12 @@ export default function ProjectDetail({ id }: { id: string }) {
                 >
                   Add project member
                 </Button>
-                <div className="mt-4 space-y-2">
-                  {(members.data?.members ?? []).map((member) => (
-                    <div
-                      className="flex items-center justify-between gap-3 rounded border p-3 text-sm"
-                      key={member.id}
-                    >
-                      <span className="font-medium">{member.user_name}</span>
-                      <div className="flex items-center gap-3">
-                        <span className="text-muted-foreground">
-                          {member.responsibility} · {member.branch_name}
-                        </span>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          disabled={removeMember.isPending}
-                          onClick={() => removeMember.mutate(member.id)}
-                        >
-                          Remove
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
-                  {!members.data?.members.length && (
-                    <p className="py-8 text-center text-sm text-muted-foreground">
-                      No project members assigned yet.
-                    </p>
-                  )}
-                </div>
+                <ProjectTeamRegister
+                  projectId={id}
+                  onRemove={(memberId) => removeMember.mutate(memberId)}
+                  busy={removeMember.isPending}
+                  canManage={!!access.can_manage_team}
+                />
               </section>
             </TabsContent>
             <Dialog
@@ -1142,172 +1120,135 @@ export default function ProjectDetail({ id }: { id: string }) {
               </section>
             </TabsContent>
             <TabsContent value="documents">
-              <section className="rounded-lg border bg-card p-5">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <h2 className="font-semibold">Project documents</h2>
-                    <p className="mt-1 text-sm text-muted-foreground">
-                      Keep project documents here; supporting task files and
-                      approval evidence are included below.
+              <section className="space-y-4 rounded-lg border bg-card p-4 sm:p-5">
+                <div>
+                  <h2 className="font-semibold">Project documents</h2>
+                  <p className="text-sm text-muted-foreground">
+                    Project documents and attachments from tasks you can access.
+                    Preview a file here before downloading.
+                  </p>
+                </div>
+                {!!access.can_add_document && (
+                  <div className="space-y-3 rounded-lg border bg-muted/20 p-4">
+                    <Label htmlFor="project-document-file">
+                      Upload document
+                    </Label>
+                    <Input
+                      id="project-document-file"
+                      type="file"
+                      onChange={(event) =>
+                        setDocumentFile(event.target.files?.[0] ?? null)
+                      }
+                    />
+                    <label className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={documentEvidence}
+                        onChange={(e) => setDocumentEvidence(e.target.checked)}
+                      />
+                      Mark as evidence
+                    </label>
+                    <Button
+                      disabled={!documentFile || uploadDocument.isPending}
+                      onClick={() => uploadDocument.mutate()}
+                    >
+                      {uploadDocument.isPending
+                        ? "Uploading…"
+                        : "Upload document"}
+                    </Button>
+                    <p className="text-xs text-muted-foreground">
+                      Maximum file size: 10 MB. PDF, image, text and modern
+                      Office documents support preview.
                     </p>
                   </div>
-                  <span className="text-sm text-muted-foreground">
-                    {documents.data?.length ?? 0} file(s)
-                  </span>
-                </div>
-                <div className="mt-4 grid gap-2 rounded border bg-muted/20 p-3 md:grid-cols-[1fr_auto_auto]">
-                  <Input
-                    type="file"
-                    onChange={(event) =>
-                      setDocumentFile(event.target.files?.[0] ?? null)
-                    }
-                  />
-                  <label className="flex items-center gap-2 text-sm">
-                    <input
-                      checked={documentEvidence}
-                      onChange={(event) =>
-                        setDocumentEvidence(event.target.checked)
-                      }
-                      type="checkbox"
-                    />{" "}
-                    Approval evidence
-                  </label>
-                  <Button
-                    disabled={!documentFile || uploadDocument.isPending}
-                    onClick={() => uploadDocument.mutate()}
-                  >
-                    {uploadDocument.isPending
-                      ? "Uploading..."
-                      : "Upload document"}
-                  </Button>
-                </div>
-                <p className="mt-2 text-xs text-muted-foreground">
-                  Maximum file size: 10 MB. Project documents are retained in
-                  the project audit trail.
-                </p>
-                <div className="mt-4 space-y-2">
-                  {(documents.data ?? []).map((file) => (
-                    <div
-                      className="flex flex-wrap items-center justify-between gap-3 rounded border p-3 text-sm hover:bg-muted/40"
-                      key={`${file.source}-${file.id}`}
-                    >
-                      <a href={file.file} rel="noreferrer" target="_blank">
-                        <div className="font-medium">
-                          {file.original_name}
-                          {file.is_evidence ? " · Approval evidence" : ""}
-                        </div>
-                        <p className="text-muted-foreground">
-                          {file.source === "project"
-                            ? "Project document"
-                            : `${file.task_number} · ${file.task_title}`}{" "}
-                          · {file.uploaded_by_name}
-                        </p>
-                      </a>
-                      <div className="flex items-center gap-3">
-                        <span className="text-muted-foreground">
-                          {dateTime(file.created_at)}
-                        </span>
-                        {file.source === "project" && (
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            disabled={removeDocument.isPending}
-                            onClick={() => {
-                              if (
-                                window.confirm(
-                                  `Remove “${file.original_name}”?`,
-                                )
-                              )
-                                removeDocument.mutate(file.id);
-                            }}
-                          >
-                            Remove
-                          </Button>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                  {!documents.data?.length && (
-                    <p className="rounded border border-dashed py-8 text-center text-sm text-muted-foreground">
-                      No documents have been added to this project yet.
-                    </p>
-                  )}
-                </div>
+                )}
+                <ProjectDocumentRegister
+                  key={id}
+                  projectId={id}
+                  canRemove={!!access.can_delete_document}
+                  busy={removeDocument.isPending}
+                  onRemove={(documentId) => removeDocument.mutate(documentId)}
+                />
               </section>
             </TabsContent>
-            <TabsContent value="workflow">
-              <div className="grid gap-5 lg:grid-cols-3">
-                <section className="rounded-lg border bg-card p-5 lg:col-span-2">
-                  <h2 className="font-semibold">Approval history</h2>
-                  <div className="mt-4 space-y-3">
-                    {workflowItems.map((item) => (
-                      <div className="rounded border p-3 text-sm" key={item.id}>
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <div className="font-medium">{item.title}</div>
-                          <Badge variant="outline">{item.status}</Badge>
+            {showApprovals && (
+              <TabsContent value="workflow">
+                <div className="grid gap-5 lg:grid-cols-3">
+                  <section className="rounded-lg border bg-card p-5 lg:col-span-2">
+                    <h2 className="font-semibold">Approval history</h2>
+                    <div className="mt-4 space-y-3">
+                      {workflowItems.map((item) => (
+                        <div
+                          className="rounded border p-3 text-sm"
+                          key={item.id}
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div className="font-medium">{item.title}</div>
+                            <Badge variant="outline">{item.status}</Badge>
+                          </div>
+                          <p className="mt-1 text-muted-foreground">
+                            {item.detail}
+                          </p>
+                          <p className="mt-2 text-xs text-muted-foreground">
+                            Assigned to{" "}
+                            {item.assigned_group_name || "an approver"} ·{" "}
+                            {dateTime(item.created_at)}
+                          </p>
+                          {(item.metadata?.workflow_history ?? []).map(
+                            (event, index) => (
+                              <div
+                                className="mt-2 border-l-2 pl-3 text-xs text-muted-foreground"
+                                key={`${item.id}-${index}`}
+                              >
+                                <span className="font-medium text-foreground">
+                                  {event.action}
+                                </span>{" "}
+                                by {event.actor_name} · {dateTime(event.at)}
+                                {event.comment ? ` — ${event.comment}` : ""}
+                              </div>
+                            ),
+                          )}
                         </div>
-                        <p className="mt-1 text-muted-foreground">
-                          {item.detail}
+                      ))}
+                      {!workflowItems.length && (
+                        <p className="py-8 text-center text-sm text-muted-foreground">
+                          This project has not entered a workflow yet.
                         </p>
-                        <p className="mt-2 text-xs text-muted-foreground">
-                          Assigned to{" "}
-                          {item.assigned_group_name || "an approver"} ·{" "}
-                          {dateTime(item.created_at)}
-                        </p>
-                        {(item.metadata?.workflow_history ?? []).map(
-                          (event, index) => (
-                            <div
-                              className="mt-2 border-l-2 pl-3 text-xs text-muted-foreground"
-                              key={`${item.id}-${index}`}
-                            >
-                              <span className="font-medium text-foreground">
-                                {event.action}
-                              </span>{" "}
-                              by {event.actor_name} · {dateTime(event.at)}
-                              {event.comment ? ` — ${event.comment}` : ""}
-                            </div>
-                          ),
-                        )}
-                      </div>
-                    ))}
-                    {!workflowItems.length && (
-                      <p className="py-8 text-center text-sm text-muted-foreground">
-                        This project has not entered a workflow yet.
+                      )}
+                    </div>
+                  </section>
+                  <aside className="rounded-lg border bg-card p-5">
+                    <h2 className="font-semibold">Approval status</h2>
+                    <p className="mt-3 text-sm text-muted-foreground">
+                      {workflow.data?.data.required
+                        ? "A published workflow applies to this project."
+                        : "No published workflow is configured for this project type."}
+                    </p>
+                    {workflow.data?.data.required &&
+                      !workflow.data.data.in_progress &&
+                      workflow.data.data.can_forward && (
+                        <Button
+                          className="mt-4 w-full"
+                          disabled={forward.isPending}
+                          onClick={() => forward.mutate()}
+                        >
+                          {forward.isPending
+                            ? "Forwarding..."
+                            : "Forward for approval"}
+                        </Button>
+                      )}
+                    {workflow.data?.data.in_progress && (
+                      <p className="mt-4 text-sm text-muted-foreground">
+                        Currently at {workflow.data.data.current_stage}
+                        {workflow.data.data.current_role
+                          ? ` · ${workflow.data.data.current_role}`
+                          : ""}
                       </p>
                     )}
-                  </div>
-                </section>
-                <aside className="rounded-lg border bg-card p-5">
-                  <h2 className="font-semibold">Workflow control</h2>
-                  <p className="mt-3 text-sm text-muted-foreground">
-                    {workflow.data?.data.required
-                      ? "A published workflow applies to this project."
-                      : "No published workflow is configured for this project type."}
-                  </p>
-                  {workflow.data?.data.required &&
-                    !workflow.data.data.in_progress &&
-                    workflow.data.data.can_forward && (
-                      <Button
-                        className="mt-4 w-full"
-                        disabled={forward.isPending}
-                        onClick={() => forward.mutate()}
-                      >
-                        {forward.isPending
-                          ? "Forwarding..."
-                          : "Forward for approval"}
-                      </Button>
-                    )}
-                  {workflow.data?.data.in_progress && (
-                    <p className="mt-4 text-sm text-muted-foreground">
-                      Currently at {workflow.data.data.current_stage}
-                      {workflow.data.data.current_role
-                        ? ` · ${workflow.data.data.current_role}`
-                        : ""}
-                    </p>
-                  )}
-                </aside>
-              </div>
-            </TabsContent>
+                  </aside>
+                </div>
+              </TabsContent>
+            )}
             <TabsContent value="activity">
               <section className="rounded-lg border bg-card p-5">
                 <h2 className="font-semibold">Project lifecycle</h2>
@@ -1317,7 +1258,11 @@ export default function ProjectDetail({ id }: { id: string }) {
                   history.
                 </p>
                 <div className="mt-4 flex max-w-lg flex-wrap gap-2">
-                  <Select value={closeStatus} onValueChange={setCloseStatus}>
+                  <Select
+                    value={closeStatus}
+                    onValueChange={setCloseStatus}
+                    disabled={!access.can_close}
+                  >
                     <SelectTrigger>
                       <SelectValue placeholder="Choose lifecycle action" />
                     </SelectTrigger>
@@ -1331,7 +1276,11 @@ export default function ProjectDetail({ id }: { id: string }) {
                   </Select>
                   <Button
                     variant="outline"
-                    disabled={!closeStatus || closeProject.isPending}
+                    disabled={
+                      !access.can_close ||
+                      !closeStatus ||
+                      closeProject.isPending
+                    }
                     onClick={() => closeProject.mutate()}
                   >
                     {closeProject.isPending ? "Updating..." : "Apply action"}

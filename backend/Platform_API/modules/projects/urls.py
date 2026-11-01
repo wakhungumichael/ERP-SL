@@ -2,9 +2,14 @@
 from django.urls import path
 
 from . import views
+from .settings_views import ProjectModuleSettingsAPIView
 
 
 urlpatterns = [
+    path("settings/", ProjectModuleSettingsAPIView.as_view(), name="project-module-settings"),
+    path("task-types/", views.TaskTypeListAPIView.as_view(), name="project-task-types"),
+    path("projects/<int:pk>/document-preview/<str:source>/<int:document_id>/", views.ProjectDocumentPreviewAPIView.as_view(), name="project-document-preview"),
+    path("project-options/<int:pk>/milestones/", views.TaskMilestoneOptionsAPIView.as_view(), name="project-task-milestone-options"),
     path("project-options/", views.TaskProjectOptionsAPIView.as_view(), name="project-task-project-options"),
     path("sample-data/", views.ProjectSampleDataAPIView.as_view(), name="project-sample-data"),
     path("task-alerts/", views.ProjectTaskAlertsAPIView.as_view(), name="project-task-alerts"),
@@ -27,6 +32,7 @@ urlpatterns = [
     path("projects/<int:pk>/members/", views.ProjectMemberListCreateAPIView.as_view(), name="project-member-list"),
     path("projects/<int:pk>/members/<int:member_id>/", views.ProjectMemberDetailAPIView.as_view(), name="project-member-detail"),
     path("tasks/", views.TaskListCreateAPIView.as_view(), name="project-task-list"),
+    path("tasks/<int:pk>/activation/", views.TaskActivationAPIView.as_view(), name="project-task-activation"),
     path("tasks/<int:pk>/", views.TaskDetailAPIView.as_view(), name="project-task-detail"),
     path("tasks/<int:pk>/updates/", views.TaskUpdateListCreateAPIView.as_view(), name="project-task-update-list"),
     path("tasks/<int:pk>/follow-ups/", views.TaskFollowUpListCreateAPIView.as_view(), name="project-task-followup-list"),

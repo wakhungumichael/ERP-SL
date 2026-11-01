@@ -14,6 +14,8 @@ import {
 } from "@/components/ui/select";
 import { ERPWorkspacePage } from "@/components/erp/workspace/workspace-page";
 import { apiErrorFromResponse } from "@/lib/api-errors";
+import { evaluateWorkspaceRouteAccess } from "@/lib/workspace-access";
+import { useTenantTheme } from "@/hooks/use-tenant-theme";
 
 type CalendarEvent = {
   kind: "task" | "milestone" | "follow_up";
@@ -43,7 +45,24 @@ const addDays = (value: Date, days: number) => {
 const weekStart = (value: Date) => addDays(value, -((value.getDay() + 6) % 7));
 
 export default function ProjectCalendar() {
-  const { token } = useAuth();
+  const { token, user, role } = useAuth();
+  const { tenantContext } = useTenantTheme({ applyTheme: false });
+  const routeContext = {
+    role,
+    activeModuleSlugs: tenantContext.activeModuleSlugs ?? [],
+    permissions: Array.isArray(user?.permissions) ? user.permissions.map(String) : [],
+    isPermissionDrivenRole: role !== "superadmin" && role !== "tenant_admin",
+  };
+  // Use the destination page's guard, including the selected role, rather than
+  // a broader administrator flag that may belong to a different active role.
+  const canViewProjects = evaluateWorkspaceRouteAccess({ path: "/projects", ...routeContext }).allowed;
+  const canOpenEvent = (event: CalendarEvent) => {
+    const validDestination = event.kind === "milestone"
+      ? /^\/projects\/\d+$/.test(event.url)
+      : /^\/projects\/tasks\/\d+$/.test(event.url);
+    return validDestination && evaluateWorkspaceRouteAccess({ path: event.url, ...routeContext }).allowed;
+  };
+  const accessKey = [token, role, user?.active_membership_id, user?.organization_id, user?.branch_id, user?.active_role_group_name, user?.permissions];
   const [cursor, setCursor] = useState(() => new Date());
   const [view, setView] = useState<CalendarView>("month");
   const [project, setProject] = useState("all");
@@ -62,7 +81,7 @@ export default function ProjectCalendar() {
   if (project !== "all") filters.set("project", project);
   if (assignee !== "all") filters.set("assignee", assignee);
   const events = useQuery<CalendarEvent[]>({
-    queryKey: ["projects-calendar", range.start, range.end, project, assignee],
+    queryKey: ["projects-calendar", ...accessKey, range.start, range.end, project, assignee],
     enabled: !!token,
     queryFn: async () => {
       const response = await fetch(
@@ -78,7 +97,7 @@ export default function ProjectCalendar() {
     },
   });
   const projects = useQuery<ProjectPage>({
-    queryKey: ["projects-calendar-options"],
+    queryKey: ["projects-calendar-options", ...accessKey],
     enabled: !!token,
     queryFn: async () => {
       const response = await fetch(
@@ -96,7 +115,7 @@ export default function ProjectCalendar() {
     },
   });
   const assignees = useQuery<Assignee[]>({
-    queryKey: ["projects-calendar-assignee-options"],
+    queryKey: ["projects-calendar-assignee-options", ...accessKey],
     enabled: !!token,
     queryFn: async () => {
       const response = await fetch("/api/projects/tasks/assignees/", {
@@ -125,7 +144,7 @@ export default function ProjectCalendar() {
     );
   }, [cursor]);
   const eventsForDay = (day: Date) =>
-    (events.data ?? []).filter((event) => event.date === isoDate(day));
+    (events.data ?? []).filter((event) => event.date === isoDate(day) && canOpenEvent(event));
   const monthLabel = new Intl.DateTimeFormat(undefined, {
     month: "long",
     year: "numeric",
@@ -161,8 +180,8 @@ export default function ProjectCalendar() {
     day.getDate() === today.getDate();
   return (
     <ERPWorkspacePage
-      title="Project Calendar"
-      description="Task due dates, project milestones, and scheduled follow-ups in your active branch."
+      title={canViewProjects ? "Project Calendar" : "Task Calendar"}
+      description={canViewProjects ? "Task due dates, project milestones, and scheduled follow-ups you can access in your active branch." : "Task due dates and scheduled follow-ups you can access in your active branch."}
     >
       <div className="mb-4 flex items-center justify-between">
         <Button variant="outline" size="sm" onClick={() => moveCursor(-1)}>
@@ -185,10 +204,12 @@ export default function ProjectCalendar() {
           <i className="mr-1 inline-block h-2 w-2 rounded-full bg-[#C4B13B]" />
           Task
         </span>
-        <span>
-          <i className="mr-1 inline-block h-2 w-2 rounded-full bg-blue-500" />
-          Milestone
-        </span>
+        {canViewProjects && (
+          <span>
+            <i className="mr-1 inline-block h-2 w-2 rounded-full bg-blue-500" />
+            Milestone
+          </span>
+        )}
         <span>
           <i className="mr-1 inline-block h-2 w-2 rounded-full bg-violet-500" />
           Follow-up
@@ -316,7 +337,7 @@ export default function ProjectCalendar() {
             ))}
             {!eventsForDay(cursor).length && (
               <p className="text-sm text-muted-foreground">
-                No tasks, milestones, or follow-ups are scheduled for this day.
+                No accessible work is scheduled for this day.
               </p>
             )}
           </div>

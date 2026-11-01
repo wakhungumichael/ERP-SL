@@ -23,6 +23,7 @@ urlpatterns = [
     # Supporting data
     path("uninvoiced-transactions/",               views.UninvoicedTransactionsView.as_view(),   name="uninvoiced-transactions"),
     path("customers/",                             views.CustomerListForInvoiceView.as_view(),    name="invoice-customers"),
+    path("payment-methods/",                       views.PaymentMethodListView.as_view(),         name="payment-methods"),
     path("methods/",                               views.PaymentMethodListView.as_view(),         name="payment-method-list"),
     path("entries/",                               views.PaymentEntriesView.as_view(),            name="payment-entries"),
     path("provider-capabilities/",                 views.ProviderCapabilitiesView.as_view(),      name="payment-provider-capabilities"),

@@ -13,6 +13,7 @@ urlpatterns = [
     path('leave/allocations/', workforce.LeaveAllocationView.as_view(), name='hr-leave-allocation'),
     path('requests/', workforce.EmployeeServiceView.as_view(), name='hr-requests'),
     path('requests/<int:pk>/', workforce.EmployeeServiceDetailView.as_view(), name='hr-request'),
+    path('my-payslips/<int:pk>/download/', workforce.MyPayslipDownloadView.as_view(), name='hr-my-payslip-download'),
     path('my-payslips/', workforce.MyPayslipsView.as_view(), name='hr-my-payslips'),
     path("dashboard/",                                    views.HRDashboardView.as_view(),         name="hr-dashboard"),
     path("pay-periods/",                                  views.PayPeriodListCreateView.as_view(),  name="hr-pay-periods"),

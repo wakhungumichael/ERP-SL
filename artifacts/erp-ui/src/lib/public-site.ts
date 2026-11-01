@@ -39,6 +39,8 @@ export interface PublicSiteConfig {
   } | null;
   site_scope?: 'platform' | 'dedicated' | 'tenant';
   branding: {
+    app_name?: string;
+    app_icon_url?: string;
     logo_url?: string;
     primary_color?: string;
     footer_text?: string;

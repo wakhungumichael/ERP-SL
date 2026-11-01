@@ -1,3 +1,7 @@
+import {
+  useProjectSettings,
+  dateAfterDays,
+} from "@/components/projects/module-settings";
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { ReactNode, useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -20,10 +24,20 @@ import { useAuth } from "@/context/use-auth";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  ProjectSelect,
+  MilestoneSelect,
+  TaskTypeSelect,
+  TaskFilterFields,
+  EMPTY_TASK_FILTERS,
+  taskFilterParams,
+} from "@/components/projects/task-fields";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -57,9 +71,11 @@ type Project = {
   status: string;
 };
 type Task = {
+  is_active?: boolean;
   id: number;
   number: string;
   title: string;
+  project: number;
   project_name: string;
   source_ticket_reference: string;
   assignee_name: string;
@@ -77,6 +93,7 @@ const statusTone: Record<string, string> = {
   planned: "border-blue-200 bg-blue-50 text-blue-700",
   on_hold: "border-amber-200 bg-amber-50 text-amber-700",
   blocked: "border-red-200 bg-red-50 text-red-700",
+  reopened: "border-orange-200 bg-orange-50 text-orange-700",
   in_progress: "border-blue-200 bg-blue-50 text-blue-700",
   in_review: "border-violet-200 bg-violet-50 text-violet-700",
   todo: "border-slate-200 bg-slate-50 text-slate-700",
@@ -139,7 +156,9 @@ function Metric({
         {content}
       </div>
     </Link>
-  ) : content;
+  ) : (
+    content
+  );
 }
 
 function OverviewSection({
@@ -170,13 +189,26 @@ function OverviewSection({
           </span>
           <span className="min-w-0">
             <span className="block font-semibold">{title}</span>
-            {description ? <span className="block truncate text-sm text-muted-foreground">{description}</span> : null}
+            {description ? (
+              <span className="block truncate text-sm text-muted-foreground">
+                {description}
+              </span>
+            ) : null}
           </span>
         </button>
         <div className="flex shrink-0 items-center gap-2">
           {open ? action : null}
-          <Button size="icon" variant="ghost" onClick={() => setOpen((value) => !value)} aria-label={`${open ? "Collapse" : "Expand"} ${title}`}>
-            {open ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+          <Button
+            size="icon"
+            variant="ghost"
+            onClick={() => setOpen((value) => !value)}
+            aria-label={`${open ? "Collapse" : "Expand"} ${title}`}
+          >
+            {open ? (
+              <ChevronUp className="h-4 w-4" />
+            ) : (
+              <ChevronDown className="h-4 w-4" />
+            )}
           </Button>
         </div>
       </div>
@@ -241,9 +273,12 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
   const [createOpen, setCreateOpen] = useState(false);
   const [recordTitle, setRecordTitle] = useState("");
   const [recordDescription, setRecordDescription] = useState("");
-  const [taskProject, setTaskProject] = useState("none");
+  const [taskProject, setTaskProject] = useState("");
+  const [taskMilestone, setTaskMilestone] = useState("none");
+  const [taskFilters, setTaskFilters] = useState({ ...EMPTY_TASK_FILTERS });
   const [taskAssignee, setTaskAssignee] = useState("unassigned");
-  const [taskType, setTaskType] = useState("");
+  const [taskType, setTaskType] = useState("general");
+  const [taskStatus, setTaskStatus] = useState("draft");
   const [taskPriority, setTaskPriority] = useState("medium");
   const [taskStartDate, setTaskStartDate] = useState("");
   const [taskDueDate, setTaskDueDate] = useState("");
@@ -252,6 +287,21 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
   const [projectStartDate, setProjectStartDate] = useState("");
   const [projectTargetEndDate, setProjectTargetEndDate] = useState("");
   const queryClient = useQueryClient();
+  const moduleSettings = useProjectSettings();
+  useEffect(() => {
+    if (!createOpen && moduleSettings.data) {
+      const config = moduleSettings.data;
+      setTaskType(config.default_task_type);
+      setTaskPriority(config.default_priority);
+      setTaskStatus(config.default_task_status);
+      setTaskDueDate(
+        config.default_due_days === null
+          ? ""
+          : dateAfterDays(config.default_due_days),
+      );
+    }
+  }, [createOpen, moduleSettings.data]);
+
   const exportRegister = async () => {
     try {
       const response = await fetch(
@@ -291,14 +341,14 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
       if (!response.ok)
         throw await apiErrorFromResponse(
           response,
-          "Sample data could not be removed.",
+          "Sample tasks could not be deactivated.",
         );
       return response.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries();
       setClearSamplesOpen(false);
-      toast({ title: "Untouched sample data removed" });
+      toast({ title: "Sample tasks deactivated" });
     },
     onError: (error: Error) =>
       toast({
@@ -335,11 +385,16 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
       ) {
         throw new Error("Estimated hours must be zero or more.");
       }
+      if (!isProjects && !taskProject)
+        throw new Error("Choose a project for this task.");
+      if (!isProjects && (!taskType.trim() || taskType === "other"))
+        throw new Error("Choose a task type or specify a name for Other.");
       const taskPayload = {
         title: recordTitle,
         description: recordDescription,
-        status: "draft",
-        project: taskProject === "none" ? null : Number(taskProject),
+        status: taskStatus,
+        project: Number(taskProject),
+        milestone: taskMilestone === "none" ? null : Number(taskMilestone),
         primary_assignee:
           taskAssignee === "unassigned" ? null : Number(taskAssignee),
         task_type: taskType,
@@ -374,13 +429,14 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
         );
       return response.json();
     },
-    onSuccess: () => {
+    onSuccess: (created: Project | Task) => {
       setCreateOpen(false);
       setRecordTitle("");
       setRecordDescription("");
-      setTaskProject("none");
+      setTaskProject("");
+      setTaskMilestone("none");
       setTaskAssignee("unassigned");
-      setTaskType("");
+      setTaskType("general");
       setTaskPriority("medium");
       setTaskStartDate("");
       setTaskDueDate("");
@@ -388,8 +444,33 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
       setProjectPriority("medium");
       setProjectStartDate("");
       setProjectTargetEndDate("");
+      // Show the saved record first instead of keeping filters or a later page.
+      setSearch("");
+      setStatus("all");
+      setTaskFilters({ ...EMPTY_TASK_FILTERS });
+      setDateFrom("");
+      setDateTo("");
+      setPage(1);
+      setOrdering("-created_at");
+      const nextQuery = new URLSearchParams(routeSearch);
+      nextQuery.delete("create");
+      if (!isProjects && nextQuery.has("project")) {
+        nextQuery.set("project", String((created as Task).project));
+      }
+      if (
+        nextQuery.toString() !== new URLSearchParams(routeSearch).toString()
+      ) {
+        navigate(`${location}${nextQuery.size ? `?${nextQuery}` : ""}`, {
+          replace: true,
+        });
+      }
       void queryClient.invalidateQueries({ queryKey: ["projects"] });
-      toast({ title: `Draft ${isProjects ? "project" : "task"} created` });
+      toast({
+        title: `${isProjects ? "Project" : "Task"} created`,
+        description: isProjects
+          ? (created as Project).name
+          : `${(created as Task).number}: ${(created as Task).title}`,
+      });
     },
     onError: (error: Error) =>
       toast({
@@ -434,17 +515,10 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
   const endpoint = isProjects
     ? "/api/projects/projects/"
     : "/api/projects/tasks/";
-  const projectChoices = useApi<
-    PageResult<Pick<Project, "id" | "code" | "name">>
-  >(
-    "/api/projects/project-options/?page_size=100",
-    token,
-    !isProjects && createOpen,
-  );
   const assigneeChoices = useApi<Assignee[]>(
-    "/api/projects/tasks/assignees/",
+    `/api/projects/tasks/assignees/?project=${taskProject}`,
     token,
-    createOpen,
+    createOpen && !isProjects && Boolean(taskProject),
   );
   const query = new URLSearchParams({
     page: String(page),
@@ -455,6 +529,9 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
   query.set("ordering", ordering);
   if (dateFrom) query.set("date_from", dateFrom);
   if (dateTo) query.set("date_to", dateTo);
+  if (!isProjects)
+    for (const [key, value] of Object.entries(taskFilterParams(taskFilters)))
+      query.set(key, value);
   if (!isProjects && requestedProject) query.set("project", requestedProject);
   if (mode === "mine") query.set("scope", "mine");
   if (mode === "team") query.set("scope", "team");
@@ -471,7 +548,7 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
         : mode === "mine"
           ? "My Tasks"
           : mode === "team"
-            ? "Team Tasks"
+            ? "Project team"
             : "All Tasks";
 
   if (mode === "overview") {
@@ -485,7 +562,7 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
         metrics.data?.access.has_samples ? (
           <div className="mb-4 flex justify-end">
             <Button variant="outline" onClick={() => setClearSamplesOpen(true)}>
-              Remove sample data
+              Deactivate sample tasks
             </Button>
           </div>
         ) : null}
@@ -493,13 +570,12 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
           <DialogContent>
             <DialogHeader>
               <DialogTitle>
-                Remove this organization's sample project data?
+                Deactivate this organization's sample tasks?
               </DialogTitle>
             </DialogHeader>
             <p>
-              Removes untouched records marked [SAMPLE] across this
-              organization. Cleanup stops if any sample contains edits or real
-              work. Existing business records are preserved.
+              Deactivates sample tasks visible in the current branch. Records,
+              assignments, project links, and history are retained.
             </p>
             <DialogFooter>
               <Button
@@ -513,7 +589,7 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
                 disabled={clearSamples.isPending}
                 onClick={() => clearSamples.mutate()}
               >
-                Remove sample data
+                Deactivate sample tasks
               </Button>
             </DialogFooter>
           </DialogContent>
@@ -521,78 +597,119 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
         <OverviewSection
           title="Work overview"
           description="A live summary for your active branch and selected role. Select a card to drill into the matching register."
-          action={<Link href="/projects/tasks"><Button size="sm" variant="outline"><ListTodo className="mr-2 h-4 w-4" />View all tasks</Button></Link>}
+          action={
+            <Link href="/projects/tasks">
+              <Button size="sm" variant="outline">
+                <ListTodo className="mr-2 h-4 w-4" />
+                View all tasks
+              </Button>
+            </Link>
+          }
         >
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <Metric
-            label="Active projects"
-            value={counts?.active_projects}
-            icon={BriefcaseBusiness}
-            href="/projects?status=active"
-          />
-          <Metric
-            label="Open tasks"
-            value={counts?.open_tasks}
-            icon={ClipboardList}
-            href="/projects/tasks?status=todo"
-          />
-          <Metric label="My tasks" value={counts?.my_tasks} icon={UserCheck} href="/projects/my-tasks" />
-          <Metric
-            label="Overdue tasks"
-            value={counts?.overdue_tasks}
-            icon={ClipboardList}
-            href="/projects/tasks?overdue=1"
-          />
-        </div>
-        <div className="mt-4 grid gap-4 md:grid-cols-3">
-          <Metric
-            label="Blocked tasks"
-            value={counts?.blocked_tasks}
-            icon={ClipboardList}
-            href="/projects/tasks?status=blocked"
-          />
-          <Metric
-            label="Awaiting review"
-            value={counts?.awaiting_review}
-            icon={UserCheck}
-            href="/projects/tasks?status=in_review"
-          />
-          <Metric
-            label="Ticket-linked tasks"
-            value={counts?.ticket_tasks}
-            icon={BriefcaseBusiness}
-            href="/projects/tasks?ticket_linked=1"
-          />
-        </div>
-        </OverviewSection>
-        <div className="mt-5 grid gap-5 xl:grid-cols-2">
-        <OverviewSection title="Task health" description="Status and priority distribution across work you are permitted to see.">
-          <div className="grid gap-4 lg:grid-cols-2">
-          <Distribution
-            title="Tasks by status"
-            rows={metrics.data?.tasks_by_status ?? []}
-          />
-          <Distribution
-            title="Tasks by priority"
-            rows={metrics.data?.tasks_by_priority ?? []}
-          />
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <Metric
+              label="Active projects"
+              value={counts?.active_projects}
+              icon={BriefcaseBusiness}
+              href="/projects?status=active"
+            />
+            <Metric
+              label="Open tasks"
+              value={counts?.open_tasks}
+              icon={ClipboardList}
+              href="/projects/tasks?status=todo"
+            />
+            <Metric
+              label="My tasks"
+              value={counts?.my_tasks}
+              icon={UserCheck}
+              href="/projects/my-tasks"
+            />
+            <Metric
+              label="Overdue tasks"
+              value={counts?.overdue_tasks}
+              icon={ClipboardList}
+              href="/projects/tasks?overdue=1"
+            />
+          </div>
+          <div className="mt-4 grid gap-4 md:grid-cols-3">
+            <Metric
+              label="Blocked tasks"
+              value={counts?.blocked_tasks}
+              icon={ClipboardList}
+              href="/projects/tasks?status=blocked"
+            />
+            <Metric
+              label="Awaiting review"
+              value={counts?.awaiting_review}
+              icon={UserCheck}
+              href="/projects/tasks?status=in_review"
+            />
+            <Metric
+              label="Ticket-linked tasks"
+              value={counts?.ticket_tasks}
+              icon={BriefcaseBusiness}
+              href="/projects/tasks?ticket_linked=1"
+            />
           </div>
         </OverviewSection>
-        <OverviewSection
-          title="Quick actions"
-          description="Start work or go directly to your operating views."
-          defaultOpen={false}
-        >
-          <div className="grid gap-3 sm:grid-cols-2">
-            <Link href="/projects"><Button className="w-full justify-between" variant="outline">View projects <ChevronDown className="h-4 w-4 -rotate-90" /></Button></Link>
-            <Link href="/projects/tasks?create=1"><Button className="w-full justify-between">Create task <Plus className="h-4 w-4" /></Button></Link>
-            <Link href="/projects/task-board"><Button className="w-full justify-between" variant="outline">Open task board <ChevronDown className="h-4 w-4 -rotate-90" /></Button></Link>
-            <Link href="/projects/calendar"><Button className="w-full justify-between" variant="outline">View calendar <ChevronDown className="h-4 w-4 -rotate-90" /></Button></Link>
-          </div>
-        </OverviewSection>
+        <div className="mt-5 grid gap-5 xl:grid-cols-2">
+          <OverviewSection
+            title="Task health"
+            description="Status and priority distribution across work you are permitted to see."
+          >
+            <div className="grid gap-4 lg:grid-cols-2">
+              <Distribution
+                title="Tasks by status"
+                rows={metrics.data?.tasks_by_status ?? []}
+              />
+              <Distribution
+                title="Tasks by priority"
+                rows={metrics.data?.tasks_by_priority ?? []}
+              />
+            </div>
+          </OverviewSection>
+          <OverviewSection
+            title="Quick actions"
+            description="Start work or go directly to your operating views."
+            defaultOpen={false}
+          >
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Link href="/projects">
+                <Button className="w-full justify-between" variant="outline">
+                  View projects <ChevronDown className="h-4 w-4 -rotate-90" />
+                </Button>
+              </Link>
+              <Link href="/projects/tasks?create=1">
+                <Button className="w-full justify-between">
+                  Create task <Plus className="h-4 w-4" />
+                </Button>
+              </Link>
+              <Link href="/projects/task-board">
+                <Button className="w-full justify-between" variant="outline">
+                  Open task board <ChevronDown className="h-4 w-4 -rotate-90" />
+                </Button>
+              </Link>
+              <Link href="/projects/calendar">
+                <Button className="w-full justify-between" variant="outline">
+                  View calendar <ChevronDown className="h-4 w-4 -rotate-90" />
+                </Button>
+              </Link>
+            </div>
+          </OverviewSection>
         </div>
         <div className="mt-5 grid gap-5 xl:grid-cols-2">
-          <OverviewSection title="Recent task activity" description="Latest changes to work in your permitted scope." action={<Link href="/projects/tasks"><Button size="sm" variant="ghost">View all</Button></Link>}>
+          <OverviewSection
+            title="Recent task activity"
+            description="Latest changes to work in your permitted scope."
+            action={
+              <Link href="/projects/tasks">
+                <Button size="sm" variant="ghost">
+                  View all
+                </Button>
+              </Link>
+            }
+          >
             <div className="mt-3 space-y-2">
               {(metrics.data?.recent_tasks ?? []).map((task) => (
                 <Link href={`/projects/tasks/${task.id}`} key={task.id}>
@@ -614,7 +731,17 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
               )}
             </div>
           </OverviewSection>
-          <OverviewSection title="Upcoming deadlines" description="Open tasks ordered by their due date." action={<Link href="/projects/calendar"><Button size="sm" variant="ghost">View calendar</Button></Link>}>
+          <OverviewSection
+            title="Upcoming deadlines"
+            description="Open tasks ordered by their due date."
+            action={
+              <Link href="/projects/calendar">
+                <Button size="sm" variant="ghost">
+                  View calendar
+                </Button>
+              </Link>
+            }
+          >
             <div className="mt-3 space-y-2">
               {(metrics.data?.upcoming_deadlines ?? []).map((task) => (
                 <Link href={`/projects/tasks/${task.id}`} key={task.id}>
@@ -644,11 +771,13 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
 
   const items = records.data?.results ?? [];
   const filtersActive =
+    (!isProjects && Object.keys(taskFilterParams(taskFilters)).length > 0) ||
     status !== "all" ||
     dateFrom !== "" ||
     dateTo !== "" ||
     ordering !== (isProjects ? "-created_at" : "due_date");
   const clearFilters = () => {
+    setTaskFilters({ ...EMPTY_TASK_FILTERS });
     setStatus("all");
     setOrdering(isProjects ? "-created_at" : "due_date");
     setDateFrom("");
@@ -662,8 +791,10 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
         mode === "mine"
           ? "Tasks assigned to you in your active branch and role."
           : mode === "team"
-            ? "Tasks assigned to your currently selected role in the active branch."
-            : "Tenant and branch scoped work records."
+            ? "Project team tasks available to you in the active branch, including unassigned work."
+            : isProjects
+              ? "Projects available to you in the active branch."
+              : "Tasks in your projects and assigned work. Branch-wide viewing requires the corresponding permission."
       }
     >
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
@@ -746,6 +877,7 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
                     <SelectItem value="todo">To do</SelectItem>
                     <SelectItem value="in_progress">In progress</SelectItem>
                     <SelectItem value="blocked">Blocked</SelectItem>
+                    <SelectItem value="reopened">Reopened</SelectItem>
                     <SelectItem value="in_review">In review</SelectItem>
                     <SelectItem value="completed">Completed</SelectItem>
                     <SelectItem value="cancelled">Cancelled</SelectItem>
@@ -797,31 +929,55 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
                 )}
               </SelectContent>
             </Select>
-            <Input
-              aria-label={
-                isProjects ? "Project start date from" : "Task due date from"
-              }
-              max={dateTo || undefined}
-              onChange={(event) => {
-                setDateFrom(event.target.value);
-                setPage(1);
-              }}
-              type="date"
-              value={dateFrom}
-            />
-            <Input
-              aria-label={
-                isProjects ? "Project due date to" : "Task due date to"
-              }
-              min={dateFrom || undefined}
-              onChange={(event) => {
-                setDateTo(event.target.value);
-                setPage(1);
-              }}
-              type="date"
-              value={dateTo}
-            />
+            <div className="space-y-2">
+              <Label htmlFor="task-filter-date-from">
+                {isProjects ? "Start date from" : "Due date from"}
+              </Label>
+              <Input
+                id="task-filter-date-from"
+                aria-label={
+                  isProjects ? "Project start date from" : "Task due date from"
+                }
+                max={dateTo || undefined}
+                onChange={(event) => {
+                  setDateFrom(event.target.value);
+                  setPage(1);
+                }}
+                type="date"
+                value={dateFrom}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="task-filter-date-to">
+                {isProjects ? "Target end date to" : "Due date to"}
+              </Label>
+              <Input
+                id="task-filter-date-to"
+                aria-label={
+                  isProjects ? "Project due date to" : "Task due date to"
+                }
+                min={dateFrom || undefined}
+                onChange={(event) => {
+                  setDateTo(event.target.value);
+                  setPage(1);
+                }}
+                type="date"
+                value={dateTo}
+              />
+            </div>
           </div>
+          {!isProjects && (
+            <div className="mt-4 border-t pt-4">
+              <TaskFilterFields
+                value={taskFilters}
+                projectId={requestedProject || undefined}
+                onChange={(value) => {
+                  setTaskFilters(value);
+                  setPage(1);
+                }}
+              />
+            </div>
+          )}
         </section>
       )}
       <div className="overflow-hidden rounded-lg border bg-card">
@@ -887,7 +1043,7 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
                   <td className="px-4 py-3 text-muted-foreground">
                     {isProjects
                       ? assignee || "Unassigned"
-                      : task.project_name || "Standalone"}
+                      : task.project_name || "General"}
                   </td>
                   {!isProjects && (
                     <td className="px-4 py-3 font-mono text-xs text-muted-foreground">
@@ -923,6 +1079,9 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
                       variant="outline"
                       className={statusTone[currentStatus] ?? ""}
                     >
+                      {!isProjects && task.is_active === false
+                        ? "Inactive · "
+                        : ""}
                       {label(currentStatus)}
                     </Badge>
                   </td>
@@ -956,137 +1115,270 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
           if (open && requestedProject) setTaskProject(requestedProject);
         }}
       >
-        <DialogContent>
-          <DialogHeader>
+        <DialogContent className="flex max-h-[calc(100dvh_-_2rem)] w-[calc(100vw_-_2rem)] max-w-4xl flex-col gap-0 overflow-hidden p-0 sm:rounded-xl">
+          <DialogHeader className="shrink-0 border-b px-4 py-5 pr-12 text-left sm:px-6 sm:pr-12">
             <DialogTitle>New {isProjects ? "Project" : "Task"}</DialogTitle>
+            <DialogDescription>
+              {isProjects
+                ? "Add the project details and planned dates. You can update the draft before starting work."
+                : "Add the task details, assignment, and schedule. You can update the draft before starting work."}
+            </DialogDescription>
           </DialogHeader>
-          <div className="space-y-3">
-            <Input
-              value={recordTitle}
-              onChange={(event) => setRecordTitle(event.target.value)}
-              placeholder={isProjects ? "Project name" : "Task title"}
-            />
-            <Textarea
-              value={recordDescription}
-              onChange={(event) => setRecordDescription(event.target.value)}
-              placeholder={
-                isProjects
-                  ? "Describe the expected outcome"
-                  : "Describe the expected deliverable"
-              }
-            />
+          <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-4 py-5 sm:px-6">
+            <div className="space-y-2">
+              <Label htmlFor="new-record-title" required>
+                {isProjects ? "Project name" : "Task title"}
+              </Label>
+              <Input
+                id="new-record-title"
+                required
+                value={recordTitle}
+                onChange={(event) => setRecordTitle(event.target.value)}
+                placeholder={isProjects ? "Project name" : "Task title"}
+                className="h-11"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="new-record-description">
+                Description{" "}
+                <span className="font-normal text-muted-foreground">
+                  (optional)
+                </span>
+              </Label>
+              <Textarea
+                id="new-record-description"
+                value={recordDescription}
+                onChange={(event) => setRecordDescription(event.target.value)}
+                placeholder={
+                  isProjects
+                    ? "Describe the expected outcome"
+                    : "Describe the expected deliverable"
+                }
+                className="min-h-28"
+              />
+            </div>
             {isProjects && (
-              <div className="grid gap-3 sm:grid-cols-3">
-                <Select
-                  value={projectPriority}
-                  onValueChange={setProjectPriority}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="low">Low priority</SelectItem>
-                    <SelectItem value="medium">Medium priority</SelectItem>
-                    <SelectItem value="high">High priority</SelectItem>
-                    <SelectItem value="critical">Critical priority</SelectItem>
-                  </SelectContent>
-                </Select>
-                <Input
-                  type="date"
-                  value={projectStartDate}
-                  onChange={(event) => setProjectStartDate(event.target.value)}
-                />
-                <Input
-                  type="date"
-                  value={projectTargetEndDate}
-                  onChange={(event) =>
-                    setProjectTargetEndDate(event.target.value)
-                  }
-                />
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                <div className="min-w-0 space-y-2 sm:col-span-2 lg:col-span-1">
+                  <Label htmlFor="new-project-priority">Priority</Label>
+                  <Select
+                    value={projectPriority}
+                    onValueChange={setProjectPriority}
+                  >
+                    <SelectTrigger
+                      id="new-project-priority"
+                      className="h-11 min-w-0"
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="low">Low priority</SelectItem>
+                      <SelectItem value="medium">Medium priority</SelectItem>
+                      <SelectItem value="high">High priority</SelectItem>
+                      <SelectItem value="critical">
+                        Critical priority
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="min-w-0 space-y-2">
+                  <Label htmlFor="new-project-start-date">Start date</Label>
+                  <Input
+                    id="new-project-start-date"
+                    type="date"
+                    value={projectStartDate}
+                    onChange={(event) =>
+                      setProjectStartDate(event.target.value)
+                    }
+                    aria-describedby="new-project-start-help"
+                    className="h-11 min-w-0"
+                  />
+                  <p
+                    id="new-project-start-help"
+                    className="text-xs text-muted-foreground"
+                  >
+                    Planned first day of work.
+                  </p>
+                </div>
+                <div className="min-w-0 space-y-2">
+                  <Label htmlFor="new-project-target-end-date">
+                    Target end date
+                  </Label>
+                  <Input
+                    id="new-project-target-end-date"
+                    type="date"
+                    value={projectTargetEndDate}
+                    min={projectStartDate || undefined}
+                    onChange={(event) =>
+                      setProjectTargetEndDate(event.target.value)
+                    }
+                    aria-describedby="new-project-end-help"
+                    className="h-11 min-w-0"
+                  />
+                  <p
+                    id="new-project-end-help"
+                    className="text-xs text-muted-foreground"
+                  >
+                    Expected project completion date.
+                  </p>
+                </div>
               </div>
             )}
             {!isProjects && (
               <>
-                <Select value={taskProject} onValueChange={setTaskProject}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Link to project (optional)" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">Standalone task</SelectItem>
-                    {(projectChoices.data?.results ?? []).map((project) => (
-                      <SelectItem key={project.id} value={String(project.id)}>
-                        {project.code} · {project.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Select value={taskAssignee} onValueChange={setTaskAssignee}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Assign to (optional)" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="unassigned">Leave unassigned</SelectItem>
-                    {(assigneeChoices.data ?? []).map((assignee) => (
-                      <SelectItem key={assignee.id} value={String(assignee.id)}>
-                        {assignee.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                  <Input
-                    value={taskType}
-                    onChange={(event) => setTaskType(event.target.value)}
-                    placeholder="Task type"
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <div className="min-w-0 space-y-2">
+                    <Label htmlFor="new-task-project" required>
+                      Project
+                    </Label>
+                    <ProjectSelect
+                      id="new-task-project"
+                      value={taskProject}
+                      defaultGeneral
+                      onChange={(value) => {
+                        setTaskProject(value);
+                        setTaskMilestone("none");
+                        setTaskAssignee("unassigned");
+                      }}
+                    />
+                  </div>
+                  <div className="min-w-0 space-y-2">
+                    <Label htmlFor="new-task-assignee">
+                      Assignee{" "}
+                      <span className="font-normal text-muted-foreground">
+                        (optional)
+                      </span>
+                    </Label>
+                    <Select
+                      value={taskAssignee}
+                      onValueChange={setTaskAssignee}
+                    >
+                      <SelectTrigger
+                        id="new-task-assignee"
+                        className="h-11 min-w-0"
+                      >
+                        <SelectValue placeholder="Assign to (optional)" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="unassigned">
+                          Leave unassigned
+                        </SelectItem>
+                        {(assigneeChoices.data ?? []).map((assignee) => (
+                          <SelectItem
+                            key={assignee.id}
+                            value={String(assignee.id)}
+                          >
+                            {assignee.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="new-task-milestone">
+                    Milestone (optional)
+                  </Label>
+                  <MilestoneSelect
+                    id="new-task-milestone"
+                    projectId={taskProject}
+                    value={taskMilestone}
+                    onChange={setTaskMilestone}
                   />
-                  <Select value={taskPriority} onValueChange={setTaskPriority}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="low">Low</SelectItem>
-                      <SelectItem value="medium">Medium</SelectItem>
-                      <SelectItem value="high">High</SelectItem>
-                      <SelectItem value="critical">Critical</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <Input
-                    type="date"
-                    value={taskStartDate}
-                    aria-label="Task start date"
-                    onChange={(event) => setTaskStartDate(event.target.value)}
-                  />
-                  <Input
-                    type="date"
-                    value={taskDueDate}
-                    min={taskStartDate || undefined}
-                    aria-label="Task due date"
-                    onChange={(event) => setTaskDueDate(event.target.value)}
-                  />
-                  <Input
-                    type="number"
-                    min="0"
-                    step="0.25"
-                    value={taskEstimatedHours}
-                    aria-label="Estimated hours"
-                    placeholder="Estimated hours"
-                    onChange={(event) =>
-                      setTaskEstimatedHours(event.target.value)
-                    }
-                  />
+                </div>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                  <div className="min-w-0 space-y-2">
+                    <Label htmlFor="new-task-type">Task type</Label>
+                    <TaskTypeSelect
+                      id="new-task-type"
+                      value={taskType}
+                      onChange={setTaskType}
+                    />
+                  </div>
+                  <div className="min-w-0 space-y-2">
+                    <Label htmlFor="new-task-priority">Priority</Label>
+                    <Select
+                      value={taskPriority}
+                      onValueChange={setTaskPriority}
+                    >
+                      <SelectTrigger
+                        id="new-task-priority"
+                        className="h-11 min-w-0"
+                      >
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="low">Low</SelectItem>
+                        <SelectItem value="medium">Medium</SelectItem>
+                        <SelectItem value="high">High</SelectItem>
+                        <SelectItem value="critical">Critical</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="min-w-0 space-y-2">
+                    <Label htmlFor="new-task-start-date">Start date</Label>
+                    <Input
+                      id="new-task-start-date"
+                      type="date"
+                      value={taskStartDate}
+                      onChange={(event) => setTaskStartDate(event.target.value)}
+                      className="h-11 min-w-0"
+                    />
+                  </div>
+                  <div className="min-w-0 space-y-2">
+                    <Label htmlFor="new-task-due-date">Due date</Label>
+                    <Input
+                      id="new-task-due-date"
+                      type="date"
+                      value={taskDueDate}
+                      min={taskStartDate || undefined}
+                      onChange={(event) => setTaskDueDate(event.target.value)}
+                      className="h-11 min-w-0"
+                    />
+                  </div>
+                  <div className="min-w-0 space-y-2">
+                    <Label htmlFor="new-task-estimated-hours">
+                      Estimated hours
+                    </Label>
+                    <Input
+                      id="new-task-estimated-hours"
+                      type="number"
+                      min="0"
+                      step="0.25"
+                      value={taskEstimatedHours}
+                      placeholder="Estimated hours"
+                      onChange={(event) =>
+                        setTaskEstimatedHours(event.target.value)
+                      }
+                      className="h-11"
+                    />
+                  </div>
                 </div>
               </>
             )}
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setCreateOpen(false)}>
+          <DialogFooter className="shrink-0 gap-2 border-t bg-muted/20 px-4 py-4 sm:space-x-0 sm:px-6">
+            <Button
+              variant="outline"
+              className="h-11 w-full sm:w-auto"
+              onClick={() => setCreateOpen(false)}
+            >
               Cancel
             </Button>
             <Button
-              disabled={!recordTitle.trim() || createRecord.isPending}
+              className="h-11 w-full sm:w-auto"
+              disabled={
+                !recordTitle.trim() ||
+                (!isProjects && !taskProject) ||
+                createRecord.isPending
+              }
               onClick={() => createRecord.mutate()}
             >
-              Create draft {isProjects ? "project" : "task"}
+              {isProjects
+                ? "Create draft project"
+                : taskStatus === "todo"
+                  ? "Create task"
+                  : "Create draft task"}
             </Button>
           </DialogFooter>
         </DialogContent>

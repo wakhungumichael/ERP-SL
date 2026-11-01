@@ -874,6 +874,7 @@ class TenantSettingsSerializer(serializers.ModelSerializer):
             "secondary_color", "accent_color", "sidebar_color",
             "login_page_config", "footer_menu", "landing_page_config", "support_email",
             "invoice_prefix", "footer_text", "default_tax_name", "default_tax_rate",
+            "invoice_address", "invoice_tax_number", "invoice_website", "invoice_payment_instructions",
             "invoice_template", "invoice_template_id",
             "estimate_template", "estimate_template_id",
             "receipt_template", "receipt_template_id",
@@ -904,7 +905,32 @@ class TenantSettingsSerializer(serializers.ModelSerializer):
         return bool(obj.smtp_password)
 
 
+    def validate(self, attrs):
+        use_tls = attrs.get("smtp_use_tls", getattr(self.instance, "smtp_use_tls", True))
+        use_ssl = attrs.get("smtp_use_ssl", getattr(self.instance, "smtp_use_ssl", False))
+        if use_tls and use_ssl:
+            raise serializers.ValidationError({
+                "smtp_use_ssl": "Choose either SSL/TLS or STARTTLS, not both."
+            })
+        return attrs
+
+    def update(self, instance, validated_data):
+        password = validated_data.pop("smtp_password", None)
+        instance = super().update(instance, validated_data)
+        if password:
+            instance.smtp_password = password
+            instance.save(update_fields=["smtp_password"])
+        if getattr(instance, "logo_file", None):
+            try:
+                instance.logo_url = instance.logo_file.url
+                instance.save(update_fields=["logo_url"])
+            except Exception:
+                pass
+        return instance
+
+
 class PlatformBrandingSettingsSerializer(serializers.ModelSerializer):
+    print_qr_codes_enabled = serializers.BooleanField(required=False)
     logo_url = serializers.CharField(required=False, allow_blank=True)
     logo_file = serializers.ImageField(required=False, allow_null=True)
 
@@ -913,7 +939,7 @@ class PlatformBrandingSettingsSerializer(serializers.ModelSerializer):
         fields = (
             "id", "branding_mode", "dedicated_tenant", "platform_name",
             "logo_url", "logo_file", "primary_color", "footer_text", "support_email",
-            "login_page_config", "footer_menu", "landing_page_config",
+            "login_page_config", "footer_menu", "landing_page_config", "print_qr_codes_enabled",
             "created_at", "updated_at",
         )
         read_only_fields = ("id", "created_at", "updated_at")
@@ -934,21 +960,13 @@ class PlatformBrandingSettingsSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"dedicated_tenant": "Choose a tenant when dedicated branding is enabled."})
         return attrs
 
-    def validate(self, attrs):
-        use_tls = attrs.get("smtp_use_tls", getattr(self.instance, "smtp_use_tls", True))
-        use_ssl = attrs.get("smtp_use_ssl", getattr(self.instance, "smtp_use_ssl", False))
-        if use_tls and use_ssl:
-            raise serializers.ValidationError({
-                "smtp_use_ssl": "Choose either SSL/TLS or STARTTLS, not both."
-            })
-        return attrs
-
     def update(self, instance, validated_data):
-        password = validated_data.pop("smtp_password", None)
+        enabled = validated_data.pop("print_qr_codes_enabled", None)
+        if enabled is not None or "login_page_config" in validated_data:
+            config = dict(validated_data.get("login_page_config", instance.login_page_config) or {})
+            config["print_qr_codes_enabled"] = instance.print_qr_codes_enabled if enabled is None else enabled
+            validated_data["login_page_config"] = config
         instance = super().update(instance, validated_data)
-        if password:
-            instance.smtp_password = password
-            instance.save(update_fields=["smtp_password"])
         if getattr(instance, "logo_file", None):
             try:
                 instance.logo_url = instance.logo_file.url

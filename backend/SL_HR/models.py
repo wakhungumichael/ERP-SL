@@ -83,7 +83,7 @@ class Employee(models.Model):
     email = models.EmailField(blank=True)
     phone = models.CharField(max_length=40, blank=True)
     job_title = models.CharField(max_length=150, blank=True)
-    department = models.ForeignKey('SL_Procurement.Department', on_delete=models.PROTECT, null=True, blank=True, related_name='employees')
+    department = models.ForeignKey('Platform_Core.Department', on_delete=models.PROTECT, null=True, blank=True, related_name='employees')
     manager = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True, related_name='hr_direct_reports')
     start_date = models.DateField()
     employment_type = models.CharField(max_length=20, choices=[('permanent', 'Permanent'), ('fixed_term', 'Fixed term'), ('casual', 'Casual'), ('intern', 'Intern')], default='permanent')

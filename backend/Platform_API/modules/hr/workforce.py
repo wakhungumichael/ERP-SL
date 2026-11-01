@@ -160,7 +160,7 @@ class EmployeeSerializer(serializers.ModelSerializer):
         for name in ['user', 'manager']:
             if data.get(name) and (not data[name].is_active or not _user_belongs_to_tenant(data[name], tenant)):
                 raise ValidationError({name: 'Choose an active member of this organization.'})
-        if data.get('department') and data['department'].tenant_id != tenant.pk:
+        if data.get('department') and (data['department'].tenant_id != tenant.pk or data['department'].unit_type != 'department' or not data['department'].is_active):
             raise ValidationError({'department': 'Choose a department in this organization.'})
         for field in ['employee_number', 'user']:
             value = data.get(field, getattr(self.instance, field, None))
@@ -546,10 +546,59 @@ class EmployeeServiceDetailView(APIView):
         return Response(ServiceSerializer(obj).data)
 
 
+def personal_payslips(user):
+    # Personal self-service never inherits payroll administrator visibility.
+    return PayRecord.objects.filter(
+        period__tenant=tenant_for(user), employee=user, period__status='Completed'
+    ).select_related('employee', 'period', 'period__tenant').order_by('-period__period_start', '-pk')
+
+
+class MyPayslipSerializer(serializers.ModelSerializer):
+    period_name = serializers.CharField(source='period.name', read_only=True)
+    period_start = serializers.DateField(source='period.period_start', read_only=True)
+    period_end = serializers.DateField(source='period.period_end', read_only=True)
+    currency = serializers.CharField(source='period.tenant.default_currency', read_only=True)
+    employee_name = serializers.SerializerMethodField()
+    gross_pay = serializers.SerializerMethodField()
+    download_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = PayRecord
+        fields = ['id', 'period_name', 'period_start', 'period_end', 'currency', 'employee_name',
+                  'basic_pay', 'allowances', 'gross_pay', 'deductions', 'net_pay', 'download_url']
+
+    def get_employee_name(self, obj):
+        return obj.employee.get_full_name() or obj.employee.username
+
+    def get_gross_pay(self, obj):
+        return f'{obj.basic_pay + obj.allowances:.2f}'
+
+    def get_download_url(self, obj):
+        from django.urls import reverse
+        return reverse('hr-my-payslip-download', args=[obj.pk])
+
+
 class MyPayslipsView(APIView):
     permission_classes = [IsAuthenticated]
+
     def get(self, request):
-        tenant = tenant_for(request.user)
-        from Platform_API.modules.hr.views import PayRecordSerializer
-        qs = PayRecord.objects.filter(period__tenant=tenant, employee=request.user, period__status='Completed').select_related('employee', 'period').order_by('-period__period_start')
-        return Response({'results': [{**PayRecordSerializer(row).data, 'period_name': row.period.name} for row in qs]})
+        qs = personal_payslips(request.user)
+        if search := request.query_params.get('search', '').strip():
+            qs = qs.filter(period__name__icontains=search)
+        response = paged(request, qs, MyPayslipSerializer)
+        response['Cache-Control'] = 'private, no-store'
+        return response
+
+
+class MyPayslipDownloadView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+        row = get_object_or_404(personal_payslips(request.user), pk=pk)
+        from SL_HR.payslips import payslip_pdf
+        profile = Employee.objects.filter(tenant=row.period.tenant, user=request.user).first()
+        response = HttpResponse(payslip_pdf(row, profile, request=request), content_type='application/pdf')
+        response['Content-Disposition'] = f'attachment; filename="payslip-{row.period.period_start:%Y-%m-%d}-{row.pk}.pdf"'
+        response['Cache-Control'] = 'private, no-store'
+        response['X-Content-Type-Options'] = 'nosniff'
+        return response

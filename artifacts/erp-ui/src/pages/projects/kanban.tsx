@@ -45,6 +45,7 @@ const columns = [
   ["in_progress", "In Progress", "border-blue-200 bg-blue-50"],
   ["in_review", "In Review", "border-amber-200 bg-amber-50"],
   ["blocked", "Blocked", "border-red-200 bg-red-50"],
+  ["reopened", "Reopened", "border-orange-200 bg-orange-50"],
   ["completed", "Completed", "border-emerald-200 bg-emerald-50"],
   ["cancelled", "Cancelled", "border-slate-200 bg-slate-50"],
 ] as const;
@@ -197,7 +198,7 @@ export default function ProjectKanban() {
                         </div>
                         <h3 className="mt-2 font-medium">{task.title}</h3>
                         <p className="mt-1 truncate text-xs text-muted-foreground">
-                          {task.project_name || "Standalone task"}
+                          {task.project_name || "General"}
                         </p>
                         <div className="mt-3 h-1.5 overflow-hidden rounded bg-muted">
                           <div

@@ -38,6 +38,12 @@ class Budget(AuditMetadataMixin, models.Model):
         blank=True,
         null=True,
     )
+    department = models.ForeignKey('Platform_Core.Department', on_delete=models.PROTECT, null=True, blank=True, related_name='budget_submissions')
+    annual_budget = models.ForeignKey('self', on_delete=models.PROTECT, null=True, blank=True, related_name='department_budgets')
+    approval_status = models.CharField(max_length=20, choices=[('draft','Draft'),('submitted','Submitted'),('approved','Approved'),('rejected','Rejected'),('consolidated','Consolidated')], default='draft')
+    submitted_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='submitted_budgets')
+    approved_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='approved_budgets')
+    approved_at = models.DateTimeField(null=True, blank=True)
     name = models.CharField(max_length=180)
     code = models.CharField(max_length=40)
     period_type = models.CharField(max_length=20, choices=PERIOD_TYPE_CHOICES, default="annual")
@@ -61,6 +67,7 @@ class Budget(AuditMetadataMixin, models.Model):
     class Meta:
         ordering = ["tenant__name", "-start_date", "name"]
         unique_together = ("tenant", "code")
+        permissions = [("view_all_budget", "Can view all organization budgets"), ("submit_budget", "Can submit budgets for approval"), ("approve_budget", "Can approve budgets"), ("consolidate_budget", "Can consolidate approved departmental budgets")]
 
     def __str__(self):
         return f"{self.tenant.name} - {self.code}"

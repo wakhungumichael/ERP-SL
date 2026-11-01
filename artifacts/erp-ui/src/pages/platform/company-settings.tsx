@@ -1,6 +1,8 @@
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { useState, useEffect } from 'react';
+import { useSearch } from 'wouter';
 import OrganizationSetupImport from '@/pages/platform/setup-import';
+import { OrganizationUnits } from '@/components/organization/organization-units';
 import { useAuth } from '@/context/use-auth';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -21,6 +23,26 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { contrastText } from '@/lib/tenant-theme';
 import { invalidateErpBranchQueries } from '@/lib/branches';
+import { ERPPageHeader } from '@/components/erp/workspace/workspace-ui';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
+import { Check, ChevronsUpDown } from 'lucide-react';
+
+const ORGANIZATION_SETTINGS_SECTIONS = [
+  { value: 'company', label: 'Profile', icon: Building2 },
+  { value: 'branding', label: 'Branding', icon: Palette },
+  { value: 'public-site', label: 'Public Site', icon: Globe2 },
+  { value: 'email', label: 'Email', icon: Mail },
+  { value: 'invoicing', label: 'Invoicing', icon: FileText },
+  { value: 'taxes-charges', label: 'Taxes & Charges', icon: FileText },
+  { value: 'workflow-lifecycle', label: 'Workflow Lifecycle', icon: FileText },
+  { value: 'security', label: 'Security', icon: UserCheck },
+  { value: 'templates', label: 'Templates', icon: LayoutTemplate },
+  { value: 'users', label: 'Users', icon: Users },
+  { value: 'setup-import', label: 'Setup & Demo', icon: Copy },
+  { value: 'branches', label: 'Branches', icon: GitBranch },
+  { value: 'departments', label: 'Departments', icon: Users },
+];
 
 const BASE = '/api/platform';
 const CURRENCIES = ['KES', 'USD', 'EUR', 'GBP', 'UGX', 'TZS'];
@@ -212,6 +234,7 @@ const EMAIL_SETTINGS_FIELDS = [
 ] as const;
 const INVOICE_SETTINGS_FIELDS = [
   'invoice_prefix', 'default_payment_terms_days', 'footer_text', 'default_tax_name',
+  'invoice_address', 'invoice_tax_number', 'invoice_website', 'invoice_payment_instructions',
   'default_tax_rate', 'invoice_template_id', 'estimate_template_id', 'receipt_template_id',
   'statement_template_id', 'purchase_order_template_id',
 ] as const;
@@ -1882,9 +1905,11 @@ export default function OrganizationSettings() {
   const [templateDialogOpen, setTemplateDialogOpen] = useState(false);
   const [uploadingLogo, setUploadingLogo] = useState(false);
   const [organizationDialogOpen, setOrganizationDialogOpen] = useState(false);
-  const [organizationSearch, setOrganizationSearch] = useState('');
-  const [organizationsPage, setOrganizationsPage] = useState(1);
-  const [organizationsPageSize, setOrganizationsPageSize] = useState(10);
+  const [organizationPickerOpen, setOrganizationPickerOpen] = useState(false);
+  const sectionSearch = useSearch();
+  const [settingsSection, setSettingsSection] = useState(() => new URLSearchParams(sectionSearch).get('section') || 'company');
+  useEffect(() => { const section = new URLSearchParams(sectionSearch).get('section'); if (section && ORGANIZATION_SETTINGS_SECTIONS.some(item => item.value === section)) setSettingsSection(section); }, [sectionSearch]);
+  const [testRecipient, setTestRecipient] = useState<string>((user as any)?.email ?? '');
   const [newOrganizationForm, setNewOrganizationForm] = useState({
     name: '',
     legal_name: '',
@@ -1892,7 +1917,6 @@ export default function OrganizationSettings() {
     contact_phone: '',
     industry_id: '',
   });
-  const organizationBrandColor = settingsForm?.primary_color ?? settings?.primary_color ?? '#E85D26';
   const memberships: any[] = Array.isArray((user as any)?.memberships) ? (user as any).memberships : [];
   const activeMembershipId = (user as any)?.active_membership_id ? String((user as any).active_membership_id) : '';
 
@@ -1908,36 +1932,12 @@ export default function OrganizationSettings() {
   });
   const organizations: any[] = organizationsData?.results ?? [];
   const industries: any[] = industriesData?.results ?? [];
-  const filteredMemberships = memberships.filter((membership: any) => {
-    const query = organizationSearch.trim().toLowerCase();
-    if (!query) return true;
-    const org = organizations.find((entry: any) => entry.id === membership.tenant) ?? {};
-    return [
-      membership.organization_name,
-      membership.tenant_name,
-      membership.role,
-      membership.branch_name,
-      org.contact_email,
-      org.contact_phone,
-      org.legal_name,
-      org.code,
-    ]
-      .filter(Boolean)
-      .some((value) => String(value).toLowerCase().includes(query));
-  });
-  const organizationPageCount = Math.max(1, Math.ceil(filteredMemberships.length / organizationsPageSize));
-  const paginatedMemberships = filteredMemberships.slice(
-    (organizationsPage - 1) * organizationsPageSize,
-    organizationsPage * organizationsPageSize,
-  );
-
-  useEffect(() => {
-    setOrganizationsPage((current) => Math.min(current, organizationPageCount));
-  }, [organizationPageCount]);
-
-  useEffect(() => {
-    setOrganizationsPage(1);
-  }, [organizationSearch, organizationsPageSize]);
+  const selectedMembership = memberships.find(membership => String(membership.id) === activeMembershipId)
+    ?? memberships.find(membership => membership.tenant === organizationId && membership.is_default)
+    ?? memberships.find(membership => membership.tenant === organizationId);
+  const selectedMembershipId = selectedMembership ? String(selectedMembership.id) : '';
+  const selectedOrganizationName = selectedMembership?.organization_name ?? selectedMembership?.tenant_name ?? tenant.name ?? 'Choose an organization';
+  const settingsSections = ORGANIZATION_SETTINGS_SECTIONS.filter(section => section.value !== 'public-site' || canManagePublicSite);
 
   const switchOrganization = useMutation({
     mutationFn: (membershipId: string) => api(token!, '/auth/switch-organization/', 'POST', { membership_id: Number(membershipId) }),
@@ -2097,25 +2097,34 @@ export default function OrganizationSettings() {
     },
     onError: (e: any) => toast({ title: 'Unable to save SaaS branding', description: e.message, variant: 'destructive' }),
   });
+  const savePrintSettings = useMutation({
+    mutationFn: () => api(token!, '/settings/branding/', 'PATCH', { print_qr_codes_enabled: platformBrandingForm?.print_qr_codes_enabled !== false }),
+    onSuccess: (response) => {
+      setPlatformBrandingForm((current: any) => ({ ...current, print_qr_codes_enabled: (response?.data ?? response).print_qr_codes_enabled }));
+      qc.setQueryData(['platform-branding-settings'], response);
+      toast({ title: 'Global print settings saved' });
+    },
+    onError: (error: Error) => toast({ title: 'Unable to save print settings', description: error.message, variant: 'destructive' }),
+  });
   const testSmtp = useMutation({
     mutationFn: async () => {
       const payload = buildSettingsPayload(settingsForm, EMAIL_SETTINGS_FIELDS);
       await api(token!, `/tenants/${organizationId}/settings/`, 'PUT', payload);
       const savedSettings = await api(token!, `/tenants/${organizationId}/settings/`);
-      const testResult = await api(token!, `/tenants/${organizationId}/settings/test-smtp/`, 'POST');
-      return { savedSettings, testResult };
-    },
-    onSuccess: ({ savedSettings, testResult }) => {
       const saved = savedSettings?.data ?? savedSettings;
       setSettingsForm(buildSettingsForm(saved));
       qc.setQueryData(['my-tenant-settings', organizationId], savedSettings);
+      const testResult = await api(token!, `/tenants/${organizationId}/settings/test-smtp/`, 'POST', { recipient: testRecipient.trim() });
+      return { savedSettings, testResult };
+    },
+    onSuccess: ({ testResult }) => {
       toast({ title: 'Test email sent', description: testResult.data?.message });
     },
     onError: (e: any) => toast({ title: 'Test failed', description: e.message, variant: 'destructive' }),
   });
 
   const tf = (k: string) => (e: React.ChangeEvent<HTMLInputElement>) => setTenantForm((p: any) => ({ ...p, [k]: e.target.value }));
-  const sf = (k: string) => (e: React.ChangeEvent<HTMLInputElement>) => setSettingsForm((p: any) => ({ ...p, [k]: e.target.value }));
+  const sf = (k: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => setSettingsForm((p: any) => ({ ...p, [k]: e.target.value }));
   const updateLoginPageField = (key: string, value: unknown) =>
     setSettingsForm((p: any) => ({
       ...p,
@@ -2373,101 +2382,67 @@ export default function OrganizationSettings() {
   );
 
   return (
-    <div
-      className="w-full max-w-[1600px] grid grid-cols-1 gap-5 rounded-3xl p-1 xl:grid-cols-[330px_minmax(0,1fr)] xl:items-start"
-      style={{ backgroundImage: `radial-gradient(circle at 0 0, color-mix(in srgb, ${organizationBrandColor} 14%, transparent), transparent 46%)` }}
-    >
-      <div className="border-b border-border/70 pb-4 xl:col-span-2">
-        <h1 className="text-2xl font-bold tracking-tight">Organizations</h1>
-      </div>
+    <div className="min-w-0 space-y-5">
+      <ERPPageHeader
+        title="Organization Settings"
+        description="Manage your organization's profile, billing, and workspace settings."
+        actions={<Button onClick={() => setOrganizationDialogOpen(true)} className="min-h-11 gap-1.5 sm:min-h-9"><Plus className="h-4 w-4" /> New Organization</Button>}
+      />
 
-      <div className="grid grid-cols-1 gap-4 xl:col-start-1">
-        <Card className="overflow-hidden border-border/70 bg-card/95 shadow-sm xl:flex xl:max-h-[calc(100vh-12rem)] xl:flex-col">
-          <CardHeader className="border-b border-border/70 py-3 px-4">
-            <CardTitle className="text-xs font-bold uppercase tracking-widest flex items-center justify-between">
-              <span>Organizations</span>
-              <Button size="sm" onClick={() => setOrganizationDialogOpen(true)} className="gap-1.5">
-                <Plus className="h-3.5 w-3.5" /> New Organization
-              </Button>
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="min-h-0 p-3 xl:flex-1">
-            {organizations.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No organizations found.</p>
-            ) : (
-              <div className="flex min-h-0 flex-col overflow-hidden rounded-xl border bg-card xl:h-full">
-                <div className="border-b px-3 py-3">
-                  <div className="flex items-center gap-2 rounded-md border px-3 py-2">
-                    <Search className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                    <input
-                      placeholder="Search organizations..."
-                      value={organizationSearch}
-                      onChange={(event) => setOrganizationSearch(event.target.value)}
-                      className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground/60"
-                    />
-                    {organizationSearch && (
-                      <button type="button" onClick={() => setOrganizationSearch('')} className="text-muted-foreground hover:text-foreground">
-                        <X className="h-3.5 w-3.5" />
-                      </button>
-                    )}
-                  </div>
-                </div>
-                <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">
-                  {paginatedMemberships.length === 0 ? (
-                    <div className="rounded-xl border px-4 py-10 text-center text-sm text-muted-foreground">
-                      No organizations match your search.
-                    </div>
-                  ) : (
-                    paginatedMemberships.map((membership: any) => {
-                      const org = organizations.find((entry: any) => entry.id === membership.tenant) ?? {};
-                      return (
-                        <div key={membership.id} className="rounded-xl border p-3 flex flex-wrap items-center justify-between gap-3">
-                          <div className="min-w-0">
-                            <p className="font-semibold text-sm">{membership.organization_name ?? membership.tenant_name}</p>
-                            <p className="text-xs text-muted-foreground">{org.code ? `Code ${org.code}` : membership.role}</p>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            {membership.is_default && <Badge variant="secondary">Active</Badge>}
-                            {!membership.is_default && (
-                              <Button size="sm" variant="outline" onClick={() => switchOrganization.mutate(String(membership.id))} disabled={switchOrganization.isPending}>
-                                Switch
-                              </Button>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
-                <ListPagination
-                  page={organizationsPage}
-                  pageSize={organizationsPageSize}
-                  totalCount={filteredMemberships.length}
-                  onPage={setOrganizationsPage}
-                  onPageSize={setOrganizationsPageSize}
-                />
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      </div>
+      <div className="min-w-0 rounded-xl border border-border/80 bg-card p-4 shadow-sm sm:p-5 lg:p-6">
+        <div className="mb-5 flex min-w-0 flex-col gap-3 rounded-xl border bg-muted/10 p-3 sm:p-4 lg:flex-row lg:items-end lg:justify-between">
+          <div className="w-full min-w-0 space-y-1.5 lg:max-w-md">
+            <Label id="organization-picker-label" className="text-xs">Organization to manage</Label>
+            <Popover open={organizationPickerOpen} onOpenChange={setOrganizationPickerOpen}>
+              <PopoverTrigger asChild>
+                <Button variant="outline" role="combobox" aria-expanded={organizationPickerOpen} aria-labelledby="organization-picker-label organization-picker-value" disabled={switchOrganization.isPending || memberships.length === 0} className="min-h-11 w-full min-w-0 justify-between gap-2 px-3 font-normal sm:min-h-9">
+                  <Building2 className="h-4 w-4 shrink-0 text-muted-foreground" />
+                  <span id="organization-picker-value" className="min-w-0 flex-1 truncate text-left">{switchOrganization.isPending ? 'Switching organization...' : selectedOrganizationName}</span>
+                  <ChevronsUpDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent align="start" className="w-[var(--radix-popover-trigger-width)] max-w-[calc(100vw-2rem)] p-0">
+                <Command label="Search organizations">
+                  <CommandInput aria-label="Search organizations" placeholder="Search organizations..." />
+                  <CommandList>
+                    <CommandEmpty>No organizations match your search.</CommandEmpty>
+                    <CommandGroup>
+                      {memberships.map(membership => {
+                        const organization = organizations.find(entry => entry.id === membership.tenant) ?? {};
+                        const name = membership.organization_name ?? membership.tenant_name ?? organization.name ?? 'Organization';
+                        const current = String(membership.id) === selectedMembershipId;
+                        const details = [organization.code, membership.branch_name, membership.role].filter(Boolean).join(' / ');
+                        return <CommandItem key={membership.id} value={String(membership.id)} keywords={[name, details, organization.legal_name, organization.contact_email, organization.contact_phone].filter(Boolean)} className="min-h-11 items-start gap-2 py-3" onSelect={() => {
+                          setOrganizationPickerOpen(false);
+                          if (!current) switchOrganization.mutate(String(membership.id));
+                        }}>
+                          <Check className={`mt-0.5 h-4 w-4 shrink-0 ${current ? 'opacity-100' : 'opacity-0'}`} />
+                          <span className="min-w-0 flex-1 break-words"><span className="block font-medium">{name}</span>{details && <span className="block text-xs text-muted-foreground">{details}</span>}</span>
+                          {current && <span className="shrink-0 text-xs text-muted-foreground">Active</span>}
+                        </CommandItem>;
+                      })}
+                    </CommandGroup>
+                  </CommandList>
+                </Command>
+              </PopoverContent>
+            </Popover>
+          </div>
+          <div className="flex min-w-0 flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            {tenant.code && <span className="break-all">Code: {tenant.code}</span>}
+            {selectedMembership && <Badge variant="secondary" className="shrink-0">Active organization</Badge>}
+          </div>
+        </div>
 
-      <Tabs defaultValue="company" className="w-full xl:col-start-2 xl:row-start-2">
-        <TabsList className="flex h-auto w-full flex-wrap justify-start gap-1 rounded-none border-b border-orange-100 bg-transparent p-0">
-          <TabsTrigger value="company" className="gap-1.5"><Building2 className="h-3.5 w-3.5" /> Profile</TabsTrigger>
-          <TabsTrigger value="branding" className="gap-1.5"><Palette className="h-3.5 w-3.5" /> Branding</TabsTrigger>
-          {canManagePublicSite && (
-            <TabsTrigger value="public-site" className="gap-1.5"><Globe2 className="h-3.5 w-3.5" /> Public Site</TabsTrigger>
-          )}
-          <TabsTrigger value="email" className="gap-1.5"><Mail className="h-3.5 w-3.5" /> Email</TabsTrigger>
-          <TabsTrigger value="invoicing" className="gap-1.5"><FileText className="h-3.5 w-3.5" /> Invoicing</TabsTrigger>
-          <TabsTrigger value="taxes-charges" className="gap-1.5"><FileText className="h-3.5 w-3.5" /> Taxes & Charges</TabsTrigger>
-          <TabsTrigger value="workflow-lifecycle" className="gap-1.5"><FileText className="h-3.5 w-3.5" /> Workflow Lifecycle</TabsTrigger>
-          <TabsTrigger value="security" className="gap-1.5"><UserCheck className="h-3.5 w-3.5" /> Security</TabsTrigger>
-          <TabsTrigger value="templates" className="gap-1.5"><LayoutTemplate className="h-3.5 w-3.5" /> Templates</TabsTrigger>
-          <TabsTrigger value="users" className="gap-1.5"><Users className="h-3.5 w-3.5" /> Users</TabsTrigger>
-          <TabsTrigger value="setup-import" className="gap-1.5"><Copy className="h-3.5 w-3.5" /> Setup & Demo</TabsTrigger>
-          <TabsTrigger value="branches" className="gap-1.5"><GitBranch className="h-3.5 w-3.5" /> Branches</TabsTrigger>
+      <Tabs value={settingsSection} onValueChange={setSettingsSection} className="min-w-0 w-full [&_input]:min-w-0 [&>div[role=tabpanel]]:mt-4">
+        <div className="space-y-1.5 sm:hidden">
+          <Label htmlFor="organization-settings-section" className="text-xs">Settings section</Label>
+          <Select value={settingsSection} onValueChange={setSettingsSection}>
+            <SelectTrigger id="organization-settings-section" className="h-11 min-w-0 text-base"><SelectValue /></SelectTrigger>
+            <SelectContent>{settingsSections.map(section => <SelectItem key={section.value} value={section.value}>{section.label}</SelectItem>)}</SelectContent>
+          </Select>
+        </div>
+        <TabsList aria-label="Organization settings sections" className="hidden h-auto w-full flex-wrap justify-start gap-1 rounded-none border-b border-border/80 bg-transparent p-0 pb-2 sm:flex">
+          {settingsSections.map(({ value, label, icon: Icon }) => <TabsTrigger key={value} value={value} className="min-h-9 gap-1.5"><Icon className="h-3.5 w-3.5 shrink-0" />{label}</TabsTrigger>)}
         </TabsList>
 
         {/* ── Organization Profile Tab ──────────────────────────────────── */}
@@ -2557,6 +2532,18 @@ export default function OrganizationSettings() {
         </TabsContent>
 
         <TabsContent value="branding" className="mt-6">
+          {role === 'superadmin' && platformBrandingForm && (
+            <Card className="mb-6">
+              <CardHeader><CardTitle className="text-base">Global Print Settings</CardTitle></CardHeader>
+              <CardContent className="space-y-4">
+                <div className="flex items-start gap-3">
+                  <Switch id="global-print-qr" checked={platformBrandingForm.print_qr_codes_enabled !== false} onCheckedChange={value => setPlatformBrandingForm((current: any) => ({ ...current, print_qr_codes_enabled: value }))} />
+                  <div><Label htmlFor="global-print-qr">Include QR codes on printed documents</Label><p className="mt-1 text-sm text-muted-foreground">Applies across all organizations to newly generated payslips, invoices, receipts and reports. QR scans open read-only details without login. Payslip QR pages show only the reference, issuer and pay period.</p></div>
+                </div>
+                <Button onClick={() => savePrintSettings.mutate()} disabled={savePrintSettings.isPending}>{savePrintSettings.isPending ? 'Saving...' : 'Save Global Print Settings'}</Button>
+              </CardContent>
+            </Card>
+          )}
           {role === 'superadmin' && platformBrandingForm && (
             <Card className="mb-6 border-amber-300 bg-amber-50/40">
               <CardHeader className="border-b border-amber-200 py-3 px-4">
@@ -3062,7 +3049,7 @@ export default function OrganizationSettings() {
             <CardHeader className="bg-muted/20 border-b py-3 px-4">
               <CardTitle className="text-xs font-bold uppercase tracking-widest">SMTP Configuration</CardTitle>
             </CardHeader>
-            <CardContent className="p-6 space-y-4">
+            <CardContent className="space-y-4 p-4 sm:p-6">
               {settingsForm && (
                 <>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -3128,14 +3115,20 @@ export default function OrganizationSettings() {
                       </p>
                     </div>
                   </div>
-                  <div className="flex gap-3">
+                  <div className="space-y-1.5 border-t pt-4">
+                    <Label htmlFor="smtp-test-recipient">Send test email to</Label>
+                    <Input id="smtp-test-recipient" type="email" autoComplete="email" placeholder="recipient@example.com" value={testRecipient} disabled={testSmtp.isPending} onChange={event => { setTestRecipient(event.target.value); testSmtp.reset(); }} aria-describedby="smtp-test-recipient-help" />
+                    <p id="smtp-test-recipient-help" className="text-xs text-muted-foreground">Choose an inbox that accepts incoming email. This does not change your From address or SMTP username.</p>
+                  </div>
+                  <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap [&_button]:min-h-11 sm:[&_button]:min-h-9">
                     <Button onClick={() => saveSettings.mutate(EMAIL_SETTINGS_FIELDS)} disabled={saveSettings.isPending}>
                       {saveSettings.isPending ? 'Saving…' : 'Save Email Config'}
                     </Button>
-                    <Button variant="outline" onClick={() => testSmtp.mutate()} disabled={testSmtp.isPending}>
+                    <Button variant="outline" onClick={() => testSmtp.mutate()} disabled={testSmtp.isPending || !testRecipient.trim()}>
                       {testSmtp.isPending ? 'Sending…' : 'Send Test Email'}
                     </Button>
                   </div>
+                  {testSmtp.isError && <p role="alert" className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">{testSmtp.error.message}</p>}
                 </>
               )}
               {!settingsForm && (
@@ -3165,6 +3158,22 @@ export default function OrganizationSettings() {
                     <div className="space-y-1.5">
                       <Label>Default Payment Terms (days)</Label>
                       <Input value={settingsForm.default_payment_terms_days ?? '30'} onChange={sf('default_payment_terms_days')} type="number" min="0" />
+                    </div>
+                    <div className="space-y-1.5 sm:col-span-2">
+                      <Label htmlFor="issuer-invoice-address">Organization postal / physical address</Label>
+                      <Textarea id="issuer-invoice-address" rows={3} value={settingsForm.invoice_address ?? ''} onChange={sf('invoice_address')} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="issuer-invoice-tax">Organization tax ID / PIN</Label>
+                      <Input id="issuer-invoice-tax" maxLength={80} value={settingsForm.invoice_tax_number ?? ''} onChange={sf('invoice_tax_number')} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="issuer-invoice-website">Website</Label>
+                      <Input id="issuer-invoice-website" type="url" placeholder="https://example.com" value={settingsForm.invoice_website ?? ''} onChange={sf('invoice_website')} />
+                    </div>
+                    <div className="space-y-1.5 sm:col-span-2">
+                      <Label htmlFor="issuer-invoice-payment">Invoice payment instructions</Label>
+                      <Textarea id="issuer-invoice-payment" rows={4} value={settingsForm.invoice_payment_instructions ?? ''} onChange={sf('invoice_payment_instructions')} placeholder="Bank or mobile payment details and the payment reference to use" />
                     </div>
                     <div className="space-y-1.5 sm:col-span-2">
                       <Label>Invoice Footer Text</Label>
@@ -3391,6 +3400,7 @@ export default function OrganizationSettings() {
 
         {/* ── Branches Tab ──────────────────────────────────────────────── */}
         <TabsContent value="setup-import" className="mt-6"><OrganizationSetupImport tenantId={Number(organizationId)} /></TabsContent>
+        <TabsContent value="departments" className="mt-6"><OrganizationUnits embedded /></TabsContent>
         <TabsContent value="branches" className="mt-6 space-y-4">
           <div className="flex justify-between items-center">
             <p className="text-sm text-muted-foreground">{branches.length} branch{branches.length !== 1 ? 'es' : ''}</p>
@@ -3425,6 +3435,7 @@ export default function OrganizationSettings() {
         </TabsContent>
 
       </Tabs>
+      </div>
 
       {branchDialog.open && organizationId && (
         <BranchDialog

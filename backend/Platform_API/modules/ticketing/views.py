@@ -10,10 +10,11 @@ from io import StringIO
 
 from django.contrib.auth.models import User
 from django.core.mail import EmailMultiAlternatives
+from django.db import transaction
 from django.db.models import Count, Q
 from django.http import HttpResponse
 from django.utils import timezone
-from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework import serializers, status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
@@ -23,9 +24,11 @@ from Platform_API.modules.mixins import (
     apply_tenant_filter as _apply_tenant_filter,
     resolve_user_tenant as _resolve_user_tenant,
     tenant_or_403 as _tenant_or_403,
+    has_active_permission,
 )
 from Platform_Core.models import TenantSettings
 from Platform_Core.email import get_tenant_smtp_connection
+from SL_Ticketing.intake import project_values, schema_fields, validate_intake_values
 from SL_Ticketing.models import (
     Ticket,
     TicketEvent,
@@ -540,6 +543,17 @@ class TicketingApiKeyCreateSerializer(serializers.Serializer):
 
 
 class TicketFormSchemaSerializer(serializers.ModelSerializer):
+    def validate_schema(self,value):
+        fields=schema_fields(value)
+        return {**value,"fields":fields}
+
+    def validate(self,attrs):
+        branch=attrs.get("project_branch")
+        tenant=self.context.get("tenant") or getattr(self.instance,"tenant",None)
+        if branch and (branch.tenant_id!=getattr(tenant,"pk",None) or not branch.is_active):
+            raise serializers.ValidationError({"project_branch":"Choose an active branch in this organization."})
+        return attrs
+
     class Meta:
         model = TicketFormSchema
         fields = [
@@ -548,6 +562,7 @@ class TicketFormSchemaSerializer(serializers.ModelSerializer):
             "slug",
             "description",
             "schema",
+            "project_branch",
             "is_default",
             "is_public",
             "allowed_mime_types",
@@ -639,6 +654,9 @@ class TicketSerializer(serializers.ModelSerializer):
             "id",
             "public_id",
             "form_schema",
+            "project_name",
+            "project",
+            "submitted_project_name",
             "requester_name",
             "requester_email",
             "requester_phone",
@@ -659,7 +677,13 @@ class TicketSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["id", "public_id", "assigned_to_name", "messages", "timeline", "created_at", "updated_at"]
+        read_only_fields = ["project", "submitted_project_name", "id", "public_id", "assigned_to_name", "messages", "timeline", "created_at", "updated_at"]
+
+    def validate(self, attrs):
+        if "project_name" in attrs:
+            user=getattr(self.context.get("request"),"user",None)
+            attrs.update(project_values(self.instance.tenant,attrs["project_name"],actor=user if user and user.is_authenticated else None))
+        return attrs
 
     def get_assigned_to_name(self, obj):
         if obj.assigned_to:
@@ -677,6 +701,7 @@ class PublicTicketCreateSerializer(serializers.ModelSerializer):
         model = Ticket
         fields = [
             "form_schema",
+            "project_name",
             "requester_name",
             "requester_email",
             "requester_phone",
@@ -691,6 +716,27 @@ class PublicTicketCreateSerializer(serializers.ModelSerializer):
             "attachments",
             "message",
         ]
+
+
+    def validate(self, attrs):
+        tenant=self.context.get("tenant")
+        form=attrs.get("form_schema")
+        if tenant and form and form.tenant_id!=tenant.pk:
+            raise serializers.ValidationError({"form_schema":"Choose a form belonging to this organization."})
+        if self.context.get("public") and form and not form.is_public:
+            raise serializers.ValidationError({"form_schema":"This intake form is not public."})
+        if form:validate_intake_values(form,attrs)
+        if tenant:
+            custom=attrs.get("custom_fields") or {}
+            entered=attrs.get("project_name") or (custom.get("project_name","") if isinstance(custom,dict) else "")
+            actor=getattr(self.context.get("request"),"user",None)
+            if self.context.get("public") or not getattr(actor,"is_authenticated",False):actor=None
+            branch=getattr(form,"project_branch",None)
+            if branch is None and actor:
+                membership=actor.organization_memberships.filter(tenant=tenant,is_active=True).order_by("-is_default").first()
+                branch=membership.branch if membership else None
+            attrs.update(project_values(tenant,entered,branch=branch,actor=actor))
+        return attrs
 
 
 class TicketReplySerializer(serializers.Serializer):
@@ -858,10 +904,34 @@ class TicketFormSchemaListCreateView(_TenantScopedCrudAPIView):
     model = TicketFormSchema
     serializer_class = TicketFormSchemaSerializer
 
+    def get(self,request):
+        tenant=_tenant_or_403(request.user)
+        if tenant is None or not _can_ticket_permission(request.user,tenant,"view_ticketformschema"):
+            raise PermissionDenied("Your active role cannot view intake form configuration.")
+        return super().get(request)
+
+    def post(self,request):
+        tenant=_tenant_or_403(request.user)
+        if tenant is None or not _can_ticket_permission(request.user,tenant,"add_ticketformschema"):
+            raise PermissionDenied("Your active role cannot create intake forms.")
+        return super().post(request)
+
 
 class TicketFormSchemaDetailView(_TenantScopedDetailAPIView):
     model = TicketFormSchema
     serializer_class = TicketFormSchemaSerializer
+
+    def patch(self,request,pk):
+        tenant=_tenant_or_403(request.user)
+        if tenant is None or not _can_ticket_permission(request.user,tenant,"change_ticketformschema"):
+            raise PermissionDenied("Your active role cannot change intake forms.")
+        return super().patch(request,pk)
+
+    def delete(self,request,pk):
+        tenant=_tenant_or_403(request.user)
+        if tenant is None or not _can_ticket_permission(request.user,tenant,"delete_ticketformschema"):
+            raise PermissionDenied("Your active role cannot delete intake forms.")
+        return super().delete(request,pk)
 
 
 class TicketRoutingRuleListCreateView(_TenantScopedCrudAPIView):
@@ -882,6 +952,54 @@ class TicketWebhookEndpointListCreateView(_TenantScopedCrudAPIView):
 class TicketWebhookEndpointDetailView(_TenantScopedDetailAPIView):
     model = TicketingWebhookEndpoint
     serializer_class = TicketingWebhookEndpointSerializer
+
+
+def _can_ticket_permission(user, tenant, codename):
+    if has_active_permission(user, f"SL_Ticketing.{codename}"):
+        return True
+    # Legacy tenant-admin profiles predate organization memberships. A selected
+    # membership/role remains authoritative when one exists.
+    if not user.organization_memberships.filter(is_active=True).exists():
+        profile = getattr(user, "tenant_profile", None)
+        return bool(profile and profile.tenant_id == tenant.pk and profile.is_tenant_admin)
+    return False
+
+
+def _can_create_agent_ticket(user, tenant):
+    return _can_ticket_permission(user,tenant,"add_ticket")
+
+
+class AgentTicketCreateSerializer(PublicTicketCreateSerializer):
+    def validate_form_schema(self, value):
+        if value is not None and value.tenant_id != self.context["tenant"].pk:
+            raise serializers.ValidationError("Choose a form belonging to the active organization.")
+        return value
+
+
+class AgentTicketOptionsAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        tenant = _tenant_or_403(request.user)
+        if tenant is None:
+            raise ValidationError("Select an organization before creating a ticket.")
+        from SL_Projects.models import Project
+        query=request.query_params.get("project_search","").strip()
+        projects=Project.objects.filter(tenant=tenant).exclude(status__in=["archived","cancelled","completed"]).order_by("name","pk")
+        names=Ticket.objects.filter(tenant=tenant).exclude(project_name="").order_by("project_name").values_list("project_name",flat=True).distinct()
+        if query:
+            projects=projects.filter(Q(name__icontains=query)|Q(code__icontains=query))
+            names=names.filter(project_name__icontains=query)
+        return Response({
+            "project_names":list(dict.fromkeys([*projects.values_list("name",flat=True)[:100],*names[:100]])),
+            "forms":[{"id":form.pk,"name":form.name,"schema":form.schema,"is_default":form.is_default} for form in TicketFormSchema.objects.filter(tenant=tenant).order_by("-is_default","name")],
+            "can_create": _can_create_agent_ticket(request.user, tenant),
+            "can_change": _can_ticket_permission(request.user,tenant,"change_ticket"),
+            "requester_defaults": {
+                "name": request.user.get_full_name() or request.user.username,
+                "email": request.user.email,
+            },
+        })
 
 
 class AgentTicketListCreateView(APIView):
@@ -908,12 +1026,18 @@ class AgentTicketListCreateView(APIView):
             )
         return Response(TicketSerializer(qs[:200], many=True).data)
 
+    @transaction.atomic
     def post(self, request):
         tenant = _tenant_or_403(request.user)
-        serializer = PublicTicketCreateSerializer(data=request.data)
+        if tenant is None:
+            raise ValidationError("Select an organization before creating a ticket.")
+        if not _can_create_agent_ticket(request.user, tenant):
+            raise PermissionDenied("Your active role does not have permission to create tickets.")
+        serializer = AgentTicketCreateSerializer(data=request.data, context={"tenant": tenant,"request":request})
         serializer.is_valid(raise_exception=True)
         validated = dict(serializer.validated_data)
         initial_message = str(validated.pop("message", "") or "").strip()
+        validated["source_channel"] = "erp"
         ticket = Ticket.objects.create(tenant=tenant, **validated)
         initial_body = ticket.description or initial_message
         if initial_body:
@@ -928,7 +1052,7 @@ class AgentTicketListCreateView(APIView):
                 direction="inbound",
                 delivery_status="internal",
             )
-        _record_event(ticket, "ticket.created", "Ticket created by internal agent.", {"source": "erp"})
+        _record_event(ticket, "ticket.created", "Ticket created by internal agent.", {"source": "erp", "created_by": request.user.pk}, is_public=False)
         _apply_routing(ticket)
         return Response(TicketSerializer(ticket).data, status=status.HTTP_201_CREATED)
 
@@ -946,12 +1070,16 @@ class AgentTicketDetailView(APIView):
             return Response({"error": "Not found."}, status=status.HTTP_404_NOT_FOUND)
         return Response(TicketSerializer(ticket).data)
 
+    @transaction.atomic
     def patch(self, request, pk):
+        tenant=_tenant_or_403(request.user)
+        if tenant is None or not _can_ticket_permission(request.user,tenant,"change_ticket"):
+            raise PermissionDenied("Your active role cannot change tickets.")
         ticket = self._get_ticket(request.user, pk)
         if not ticket:
             return Response({"error": "Not found."}, status=status.HTTP_404_NOT_FOUND)
         previous_status = ticket.status
-        serializer = TicketSerializer(ticket, data=request.data, partial=True)
+        serializer = TicketSerializer(ticket, data=request.data, partial=True,context={"request":request})
         serializer.is_valid(raise_exception=True)
         serializer.save()
         if ticket.status != previous_status:
@@ -1132,13 +1260,14 @@ class TicketingInboundWhatsAppAPIView(APIView):
 class PublicTicketCreateListExportAPIView(APIView):
     permission_classes = [AllowAny]
 
+    @transaction.atomic
     def post(self, request):
         raw_token = _extract_bearer_token(request)
         if raw_token:
             tenant, _ = _authenticate_public_request(request, "public")
         else:
             tenant = _resolve_public_tenant_request(request)
-        serializer = PublicTicketCreateSerializer(data=request.data)
+        serializer = PublicTicketCreateSerializer(data=request.data, context={"tenant":tenant,"public":True})
         serializer.is_valid(raise_exception=True)
         validated = dict(serializer.validated_data)
         initial_message = str(validated.pop("message", "") or "").strip()

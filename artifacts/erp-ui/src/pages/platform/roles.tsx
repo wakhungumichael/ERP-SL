@@ -123,6 +123,7 @@ const MODULE_LABELS: Record<string, string> = {
   SL_Inventory: "Inventory",
   SL_Budgeting: "Budgeting & Commitments",
   SL_Ticketing: "Ticketing",
+  SL_Projects: "Projects & Tasks",
   Accounting: "Accounting & Finance",
   Platform_Core: "Core & Workflows",
   auth: "User Management",
@@ -137,6 +138,7 @@ const MODULE_ORDER = [
   "Accounting",
   "SL_Budgeting",
   "SL_Ticketing",
+  "SL_Projects",
   "Platform_Core",
   "auth",
 ];
@@ -201,6 +203,7 @@ const ACTION_CODENAMES: Record<string, string> = {
   view_own_projecttask: "View assigned and role tasks",
   view_all_projecttask: "View all active-branch tasks",
   assign_projecttask: "Assign tasks",
+  deactivate_projecttask: "Deactivate / reactivate tasks",
   update_projecttask_progress: "Update task progress",
   complete_projecttask: "Complete tasks",
   reopen_projecttask: "Reopen tasks",
@@ -242,12 +245,12 @@ function permissionDisplay(permission: Perm): string {
   // Project task view rights have different scopes, so a generic "View" label
   // is not enough for an administrator deciding what a role may see.
   if (permission.codename === "view_projecttask") {
-    return "View all active-branch tasks (legacy)";
+    return "View tasks in joined projects";
   }
   return (
     ACTION_CODENAMES[permission.codename] ??
     CRUD_LABELS[
-      extractCrudAction(permission.codename) as keyof typeof CRUD_LABELS
+      extractCrudAction(permission.codename, permission.content_type.model) as keyof typeof CRUD_LABELS
     ] ??
     permission.name
   );
@@ -255,8 +258,10 @@ function permissionDisplay(permission: Perm): string {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function extractCrudAction(codename: string): string | null {
-  for (const a of CRUD_ACTIONS) if (codename.startsWith(`${a}_`)) return a;
+function extractCrudAction(codename: string, model: string): string | null {
+  // Scoped view rights are separate actions, not replacements for model View.
+  // For example, view_own_projecttask must not overwrite view_projecttask.
+  for (const action of CRUD_ACTIONS) if (codename === `${action}_${model}`) return action;
   return null;
 }
 
@@ -273,6 +278,7 @@ function modelDisplayFromPerm(perm: Perm): string {
   ) {
     return "Sales Customers";
   }
+  if (perm.content_type.app_label === "SL_Projects" && perm.content_type.model === "projecttask") return "Project tasks";
   // "Can view vehicle type" → "Vehicle type" → capitalise first
   const match = perm.name.match(/^Can (?:add|change|delete|view) (.+)$/i);
   const raw = match ? match[1] : perm.content_type.model;
@@ -322,7 +328,7 @@ function buildSections(allPerms: Perm[]): ModuleSection[] {
     const standaloneActions: Perm[] = [];
 
     for (const p of perms) {
-      const action = extractCrudAction(p.codename);
+      const action = extractCrudAction(p.codename, p.content_type.model);
       if (action) {
         const model = p.content_type.model;
         if (!modelMap[model]) {
@@ -751,9 +757,11 @@ function PermissionMatrix({
                   <section className="mt-3 rounded-xl border border-sky-200 bg-sky-50/40 p-4 text-sm text-slate-700">
                     <h3 className="font-semibold text-slate-900">Projects &amp; Tasks access guide</h3>
                     <ul className="mt-2 space-y-1 text-xs leading-5">
-                      <li><strong>View all active-branch tasks</strong> allows Projects, All Tasks, task detail, board and calendar for the selected branch. The legacy task-view permission has the same scope for existing roles.</li>
-                      <li><strong>View assigned and role tasks</strong> limits task lists and detail to tasks assigned directly to the user or their selected role, plus tasks they created.</li>
-                      <li><strong>All Tasks register</strong> is shown only when the role has the active-branch task-view right; use it only for supervisors and managers.</li>
+                      <li><strong>Project View</strong> opens the Projects register and project details. <strong>Projects dashboard</strong> opens Overview. Task viewing does not grant either page.</li>
+                      <li><strong>View tasks in joined projects</strong> shows tasks in projects the user belongs to, manages, or owns, plus their assigned work. This enables the All Tasks register without granting access to unrelated projects.</li>
+                      <li><strong>My Tasks</strong> stays limited to work assigned directly to the user, shared with them, or assigned to their selected role.</li>
+                      <li><strong>View assigned and role tasks</strong> grants personal task access without access to teammates' project tasks.</li>
+                      <li><strong>View all active-branch tasks</strong> separately grants access to every task in the selected branch. Other branches and organizations stay restricted.</li>
                     </ul>
                   </section>
                 )}
@@ -912,61 +920,57 @@ function PermissionMatrix({
                       rowIds.length > 0 &&
                       rowIds.every((id) => selected.has(id));
                     const rowSomeOn = rowIds.some((id) => selected.has(id));
+                    const renderPermission = (permission: Perm) => (
+                      <label
+                        key={permission.id}
+                        className="flex min-w-0 cursor-pointer items-start gap-2 rounded-md px-2 py-2 text-sm leading-5 hover:bg-muted/40 has-[:disabled]:cursor-not-allowed"
+                      >
+                        <Checkbox
+                          checked={selected.has(permission.id)}
+                          onCheckedChange={() => editable && toggle(permission.id)}
+                          disabled={!editable}
+                          className="mt-0.5 shrink-0"
+                        />
+                        <span className="min-w-0 break-words">{permissionDisplay(permission)}</span>
+                      </label>
+                    );
                     return (
                       <section
                         key={group.model}
-                        className="rounded-xl border bg-card p-4"
+                        aria-label={`${group.display} permissions`}
+                        className="min-w-0 rounded-xl border bg-card p-4"
                       >
-                        <div className="flex items-start justify-between gap-3">
-                          <button
-                            type="button"
-                            onClick={() => editable && toggleModel(group)}
-                            disabled={!editable}
-                            className="flex min-w-0 items-center gap-2 text-left disabled:cursor-not-allowed"
-                          >
+                        <div className="flex items-start justify-between gap-3 border-b pb-3">
+                          <label className="flex min-w-0 cursor-pointer items-start gap-2 text-left">
                             <Checkbox
-                              checked={rowAllOn}
-                              data-state={
-                                rowSomeOn && !rowAllOn
-                                  ? "indeterminate"
-                                  : rowAllOn
-                                    ? "checked"
-                                    : "unchecked"
-                              }
-                              className="pointer-events-none"
-                              onCheckedChange={() => {}}
+                              checked={rowAllOn ? true : rowSomeOn ? "indeterminate" : false}
+                              onCheckedChange={() => editable && toggleModel(group)}
+                              disabled={!editable}
+                              aria-label={`Select all ${group.display} permissions`}
+                              className="mt-0.5 shrink-0"
                             />
-                            <span className="font-semibold text-sm leading-tight">
-                              {group.display}
-                            </span>
-                          </button>
-                          <span className="shrink-0 text-[10px] text-muted-foreground">
-                            {rowIds.filter((id) => selected.has(id)).length}/
-                            {rowIds.length}
+                            <span className="font-semibold text-sm leading-6">{group.display}</span>
+                          </label>
+                          <span className="shrink-0 text-xs leading-6 text-muted-foreground">
+                            {rowIds.filter((id) => selected.has(id)).length}/{rowIds.length}
                           </span>
                         </div>
-                        <div className="mt-3 flex flex-wrap gap-x-4 gap-y-2 border-t pt-3">
-                          {permissions.map((permission) => (
-                            <label
-                              key={permission.id}
-                              className="flex cursor-pointer items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"
-                            >
-                              <Checkbox
-                                checked={selected.has(permission.id)}
-                                onCheckedChange={() =>
-                                  editable && toggle(permission.id)
-                                }
-                                disabled={!editable}
-                                className={
-                                  group.actions.includes(permission)
-                                    ? "border-amber-400 data-[state=checked]:bg-amber-500 data-[state=checked]:border-amber-500"
-                                    : ""
-                                }
-                              />
-                              {permissionDisplay(permission)}
-                            </label>
-                          ))}
-                        </div>
+                        {Object.keys(group.perms).length > 0 && (
+                          <div className="pt-3">
+                            <p className="px-2 text-xs font-medium text-muted-foreground">Record access</p>
+                            <div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-1">
+                              {CRUD_ACTIONS.map(action => group.perms[action]).filter(Boolean).map(renderPermission)}
+                            </div>
+                          </div>
+                        )}
+                        {group.actions.length > 0 && (
+                          <div className="mt-3 border-t pt-3">
+                            <p className="px-2 text-xs font-medium text-muted-foreground">Special actions</p>
+                            <div className="mt-1 grid grid-cols-1 gap-x-3 gap-y-1 sm:grid-cols-2">
+                              {[...group.actions].sort((a, b) => permissionDisplay(a).localeCompare(permissionDisplay(b))).map(renderPermission)}
+                            </div>
+                          </div>
+                        )}
                       </section>
                     );
                   })}
@@ -1105,7 +1109,7 @@ function MembersPanel({ role, allUsers }: { role: Role; allUsers: any[] }) {
 // ── Main Component ────────────────────────────────────────────────────────────
 
 export default function Roles() {
-  const { token } = useAuth();
+  const { token, refreshUser } = useAuth();
   const { toast } = useToast();
   const qc = useQueryClient();
 
@@ -1533,9 +1537,10 @@ export default function Roles() {
                     key={selectedRole.id}
                     role={selectedRole}
                     allPerms={allPerms}
-                    onSaved={() =>
-                      qc.invalidateQueries({ queryKey: ["roles"] })
-                    }
+                    onSaved={() => {
+                      void qc.invalidateQueries({ queryKey: ["roles"] });
+                      void refreshUser();
+                    }}
                   />
                 </div>
               )}

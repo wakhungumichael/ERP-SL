@@ -58,7 +58,7 @@ def import_setup(tenant, actor, selections, *, publish=True, dry_run=False):
         report['workflows'] = {'created': tenant.workflow_definitions.count()-before, 'activation': 'published' if publish else 'draft'}
     if 'approval_rules' in selections:
         count = 0
-        preserved = ApprovalMatrix.objects.filter(tenant=tenant).exists() or ProcurementPolicy.objects.filter(tenant=tenant, approval_source='matrix').exists()
+        preserved = ApprovalMatrix.objects.filter(tenant=tenant).exists()
         if not preserved:
             chooser = WorkflowSeeder()
             chooser.stdout = StringIO()
@@ -94,11 +94,18 @@ def import_setup(tenant, actor, selections, *, publish=True, dry_run=False):
             counts['products'] += example(Product, {'code': code}, {'name': name, 'description': MARKER, 'product_type': kind, 'is_service': kind == 'service', 'unit': unit, 'unit_price': 1000, 'tax_rate': 0})
         report['demo_masters'] = {'created': counts}
     if 'project_samples' in selections:
-        before = tenant.project_tasks.count()
+        from SL_Projects.models import Project, ProjectTask, ProjectMilestone, TaskFollowUp
+        models = {'projects': Project, 'tasks': ProjectTask, 'milestones': ProjectMilestone, 'follow_ups': TaskFollowUp}
+        def sample_count(key, model):
+            return model.objects.filter(**{('project__tenant' if key == 'milestones' else 'task__tenant' if key == 'follow_ups' else 'tenant'): tenant}).count()
+        before = {key: sample_count(key, model) for key, model in models.items()}
         call_command('seed_project_samples', tenant=tenant.code, stdout=StringIO())
-        report['project_samples'] = {'tasks_created': tenant.project_tasks.count()-before}
+        report['project_samples'] = {key+'_created': sample_count(key, model)-before[key] for key, model in models.items()}
     run = OrganizationSetupImport.objects.create(tenant=tenant, imported_by=actor, selections=selections, report=report, demo_records=records)
-    result = {'id': run.pk, 'report': report, 'dry_run': dry_run, 'demo_records_created': len(records)}
+    def created(values):
+        return sum((sum(value.values()) if isinstance(value, dict) else int(value)) for key, value in values.items() if key == 'created' or key.endswith('_created'))
+    created_count = sum(created(values) for values in report.values())
+    result = {'created_count': created_count, 'no_changes': created_count == 0, 'id': run.pk, 'report': report, 'dry_run': dry_run, 'demo_records_created': len(records)}
     if dry_run:
         transaction.set_rollback(True)
     return result

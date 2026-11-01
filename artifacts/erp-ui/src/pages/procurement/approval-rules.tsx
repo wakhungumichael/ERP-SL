@@ -339,7 +339,7 @@ export default function ProcurementApprovalRules() {
                 </p>
               ) : null}
               <p className="text-sm text-muted-foreground md:col-span-2">
-                Saving changes makes approval rules govern new requisitions.
+                Choose Approval rules in Procurement configuration to use these routes.
                 Requests already in approval keep their recorded steps.
               </p>
               <div className="md:col-span-2 flex justify-end">

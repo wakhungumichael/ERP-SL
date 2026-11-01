@@ -2,6 +2,7 @@
 import { createContext, useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { type AppRole, detectRole } from '@/lib/roles';
+import { organizationCodeForUser, rememberAppOrganization } from '@/lib/app-branding';
 
 const LAST_ACTIVITY_KEY = 'sl-erp-last-activity';
 const SESSION_EXPIRED_KEY = 'sl-erp-session-expired';
@@ -113,13 +114,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     localStorage.setItem(LAST_ACTIVITY_KEY, String(Date.now()));
     localStorage.removeItem(SESSION_EXPIRED_KEY);
     if (userPayload) {
-      const activeMembershipId = String(userPayload.active_membership_id ?? '');
-      const memberships = Array.isArray(userPayload.memberships)
-        ? userPayload.memberships as Array<Record<string, unknown>>
-        : [];
-      const activeMembership = memberships.find((membership) => String(membership.id ?? '') === activeMembershipId);
-      const tenantCode = String(activeMembership?.tenant_code ?? activeMembership?.organization_code ?? '').trim();
-      if (tenantCode) localStorage.setItem('sl-erp-tenant-code', tenantCode);
+      rememberAppOrganization(organizationCodeForUser(userPayload));
       localStorage.setItem('sl-erp-user', JSON.stringify(userPayload));
       setCachedUser(userPayload);
     }
@@ -183,6 +178,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!queriedUser) return;
+    rememberAppOrganization(organizationCodeForUser(queriedUser));
     localStorage.setItem('sl-erp-user', JSON.stringify(queriedUser));
     setCachedUser(queriedUser);
   }, [queriedUser]);

@@ -522,7 +522,9 @@ def _statement_pdf_response(*, payload, customer_id, request, tenant):
         ("FONTNAME", (2, 0), (2, -1), "Helvetica-Bold"),
         ("FONTSIZE", (0, 0), (-1, -1), 8.5),
     ]))
-    if y < 120:
+    from Platform_Core.printing import print_qr_codes_enabled
+    notes_table.wrapOn(pdf, right - left, y)
+    if y < 120 or (print_qr_codes_enabled() and y - notes_table._height < 108):
         pdf.showPage()
         y = page_height - 60
     notes_table.wrapOn(pdf, right - left, y)
@@ -534,6 +536,8 @@ def _statement_pdf_response(*, payload, customer_id, request, tenant):
     pdf.drawString(left, 28, footer_text[:110])
     pdf.drawRightString(right, 28, f"Printed {timezone.now().strftime('%d %b %Y %H:%M')}")
 
+    from Platform_Core.printing import document_reference, draw_print_qr
+    draw_print_qr(pdf, document_reference(tenant=tenant, kind="statement", number=str(customer_id), path="/sales/statements", request=request), x=right-48, y=42)
     pdf.showPage()
     pdf.save()
     pdf_bytes = buffer.getvalue()
@@ -1166,6 +1170,7 @@ class EstimateConvertView(APIView):
         invoice = Invoice.objects.create(
             tenant=estimate.tenant,
             customer=invoice_customer,
+            created_by=request.user,
             status="draft",
             notes=estimate.notes,
             total_amount=estimate.total,
@@ -1402,6 +1407,7 @@ class SalesOrderConvertToInvoiceView(APIView):
         invoice = Invoice.objects.create(
             tenant=order.tenant,
             customer=invoice_customer,
+            created_by=request.user,
             status="draft",
             notes=order.notes,
             total_amount=order.total,

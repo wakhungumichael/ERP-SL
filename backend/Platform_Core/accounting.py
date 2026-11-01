@@ -615,7 +615,7 @@ def sync_invoice_posting(invoice):
         tenant=tenant,
         source_type="invoice",
         source_reference=f"invoice:{invoice.pk}",
-        entry_date=getattr(invoice, "issued_at", None) or getattr(invoice, "issued_date", None),
+        entry_date=getattr(invoice, "invoice_date", None) or getattr(invoice, "issued_at", None) or getattr(invoice, "issued_date", None),
         memo=f"Invoice {invoice.invoice_number}",
         amount=invoice.total_amount,
         journal=ctx["journal"],

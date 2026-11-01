@@ -344,9 +344,12 @@ export default function ProcurementRequisitions() {
         <Button disabled={!access.add} onClick={() => startEdit()}>
           New requisition
         </Button>
-        <Link href="/procurement/departments">
-          <Button variant="outline">Departments & Heads</Button>
-        </Link>
+        {setup.data?.can_manage_departments && <Link href="/platform/organization-structure">
+          <Button variant="outline">Organization structure</Button>
+        </Link>}
+        {setup.data?.can_configure_procurement && <Link href="/procurement/configuration">
+          <Button variant="outline">Configuration</Button>
+        </Link>}
         <Link href="/procurement/approval-rules">
           <Button variant="outline">Approval Rules</Button>
         </Link>

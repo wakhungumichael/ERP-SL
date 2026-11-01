@@ -559,6 +559,8 @@ import tempfile
 
 def generate_invoice_pdf(invoice):
     html_string = render_to_string('invoice_template.html', {'invoice': invoice})
+    from Platform_Core.printing import append_document_qr
+    html_string = append_document_qr(html_string, tenant=getattr(invoice, "tenant", None), kind="invoice", number=invoice.invoice_number, path=f"/payments/invoices/{invoice.pk}")
     result_file = tempfile.NamedTemporaryFile(delete=True, suffix='.pdf')
     if WeasyHTML is None:
         raise RuntimeError("weasyprint is not installed; PDF generation is unavailable.")

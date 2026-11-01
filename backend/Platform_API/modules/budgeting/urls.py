@@ -5,6 +5,8 @@ from . import views
 
 
 urlpatterns = [
+    path("options/", views.BudgetOptionsView.as_view()),
+    path("budgets/consolidate/", views.BudgetConsolidateView.as_view()),
     path("dashboard/", views.BudgetDashboardView.as_view(), name="budgeting-dashboard"),
     path("budgets/", views.BudgetListCreateView.as_view(), name="budget-list"),
     path("budgets/<int:pk>/", views.BudgetDetailView.as_view(), name="budget-detail"),

@@ -221,6 +221,8 @@ def report_document(tenant, report_type, columns, rows, request=None):
     )
     stylesheet = _render_template_string(stylesheet, context)
     rendered_body = _render_template_string(template_body, context)
+    from Platform_Core.printing import append_document_qr
+    rendered_body = append_document_qr(rendered_body, tenant=tenant, kind="report", number=title, path="/projects/reports", request=request)
     html = f"""<!DOCTYPE html>
 <html lang="en">
   <head>

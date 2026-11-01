@@ -3,7 +3,6 @@ import { useState, useCallback } from 'react';
 import { Link, useLocation } from 'wouter';
 import {
   useGetPaymentSummary, getGetPaymentSummaryQueryKey,
-  useListPaymentMethods, getListPaymentMethodsQueryKey,
 } from '@workspace/api-client-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@/context/use-auth';
@@ -23,6 +22,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
+import { InvoiceFormDialog } from '@/components/invoices/invoice-form-dialog';
 import {
   FileText, DollarSign, AlertCircle, Search, Plus, ChevronRight,
   CheckCircle2, Clock, Package, X, ArrowRight, Users, Layers, ChevronLeft, Download,
@@ -304,344 +304,6 @@ function GenerateInvoiceDialog({ open, onOpenChange, token, onSuccess }: Generat
   );
 }
 
-/* ─────────────────────────────────────────── New (Manual) Invoice dialog ── */
-interface NewInvoiceDialogProps {
-  open: boolean;
-  onOpenChange: (v: boolean) => void;
-  token: string | null;
-  onSuccess: (id: number) => void;
-}
-
-interface LineItem {
-  product_id: number | null;
-  description: string;
-  qty: number;
-  unit_price: number;
-  tax_rate: number;
-}
-
-function NewInvoiceDialog({ open, onOpenChange, token, onSuccess }: NewInvoiceDialogProps) {
-  const { toast } = useToast();
-  const { user } = useAuth();
-  const tenantId = (user as any)?.organization_id ?? (user as any)?.tenant_id;
-  const [customerId, setCustomerId] = useState('');
-  const [customerSearch, setCustomerSearch] = useState('');
-  const [currency, setCurrency] = useState('KES');
-  const [dueDate, setDueDate] = useState('');
-  const [notes, setNotes] = useState('');
-  const [lines, setLines] = useState<LineItem[]>([{ product_id: null, description: '', qty: 1, unit_price: 0, tax_rate: 0 }]);
-  const [taxMode, setTaxMode] = useState<'per_line' | 'combined'>('per_line');
-  const [combinedTaxRate, setCombinedTaxRate] = useState(0);
-  const [chargeIds, setChargeIds] = useState<number[]>([]);
-  const [newProduct, setNewProduct] = useState({ name: '', description: '', unit_price: '', product_type: 'service' });
-  const [showNewProduct, setShowNewProduct] = useState(false);
-  const [creatingProduct, setCreatingProduct] = useState(false);
-  const [saving, setSaving] = useState(false);
-
-  const { data: customersData } = useQuery({
-    queryKey: ['invoice-customers-new', customerSearch],
-    queryFn: async () => {
-      const qs = customerSearch ? `?search=${encodeURIComponent(customerSearch)}` : '';
-      const res = await fetch(`/api/payments/customers/${qs}`, { headers: { Authorization: `Token ${token}` } });
-      if (!res.ok) throw new Error(`${res.status}`);
-      return res.json();
-    },
-    enabled: !!token && open,
-    staleTime: 15_000,
-  });
-
-  const customers: any[] = customersData?.results ?? [];
-  const { data: productsData, refetch: refetchProducts } = useQuery({
-    queryKey: ['invoice-products-new'],
-    queryFn: async () => {
-      const res = await fetch('/api/sales/products/?is_active=true&page_size=100', { headers: { Authorization: `Token ${token}` } });
-      if (!res.ok) throw new Error(`${res.status}`);
-      return res.json();
-    },
-    enabled: !!token && open,
-  });
-  const products: any[] = productsData?.results ?? productsData ?? [];
-  const { data: settingsData } = useQuery({ queryKey: ['invoice-tax-settings', tenantId], queryFn: async () => (await fetch(`/api/platform/tenants/${tenantId}/settings/`, { headers: { Authorization: `Token ${token}` } })).json(), enabled: !!token && !!tenantId && open });
-  const settings = settingsData?.data ?? settingsData ?? {};
-  const { data: chargesData } = useQuery({ queryKey: ['invoice-charges'], queryFn: async () => (await fetch('/api/sales/charges/', { headers: { Authorization: `Token ${token}` } })).json(), enabled: !!token && open });
-  const charges: any[] = chargesData?.results ?? chargesData ?? [];
-  const subtotal = lines.reduce((s, l) => s + l.qty * l.unit_price, 0);
-  const taxTotal = taxMode === 'combined' ? subtotal * combinedTaxRate / 100 : lines.reduce((s, l) => s + (l.qty * l.unit_price * l.tax_rate / 100), 0);
-  const chargeTotal = charges.filter(charge => chargeIds.includes(charge.id)).reduce((sum, charge) => sum + (charge.calculation_type === 'percentage' ? subtotal * Number(charge.rate) / 100 : Number(charge.rate)), 0);
-  const total = subtotal + taxTotal + chargeTotal;
-
-  const addLine = () => setLines(prev => [...prev, { product_id: null, description: '', qty: 1, unit_price: 0, tax_rate: Number(settings?.default_tax_rate ?? 0) }]);
-  const removeLine = (i: number) => setLines(prev => prev.filter((_, idx) => idx !== i));
-  const updateLine = (i: number, field: keyof LineItem, val: string | number) =>
-    setLines(prev => prev.map((l, idx) => idx === i ? { ...l, [field]: val } : l));
-  const selectProduct = (i: number, value: string) => {
-    const product = products.find(item => String(item.id) === value);
-    setLines(prev => prev.map((line, idx) => idx === i ? {
-      ...line,
-      product_id: product?.id ?? null,
-      description: product?.description || product?.name || line.description,
-      unit_price: Number(product?.unit_price ?? line.unit_price),
-      tax_rate: Number(product?.tax_rate ?? line.tax_rate),
-    } : line));
-  };
-  const createProduct = async () => {
-    const name = newProduct.name.trim();
-    if (!name) {
-      toast({ title: 'Enter a product or service name', variant: 'destructive' });
-      return;
-    }
-    const unitPrice = Number(newProduct.unit_price || 0);
-    if (!Number.isFinite(unitPrice) || unitPrice < 0) {
-      toast({ title: 'Enter a valid unit price', variant: 'destructive' });
-      return;
-    }
-    setCreatingProduct(true);
-    try {
-      const response = await fetch('/api/sales/products/', {
-        method: 'POST',
-        headers: { Authorization: `Token ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...newProduct, name, unit_price: unitPrice, is_active: true, is_sales_item: true }),
-      });
-      const body = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        const firstError = Object.values(body).flat().find(Boolean);
-        throw new Error(typeof body.detail === 'string' ? body.detail : typeof body.error === 'string' ? body.error : typeof firstError === 'string' ? firstError : 'Product or service could not be created.');
-      }
-      await refetchProducts();
-      setLines(prev => prev.map((line, index) => index === prev.length - 1 ? {
-        ...line,
-        product_id: body.id,
-        description: body.description || body.name,
-        unit_price: Number(body.unit_price),
-        tax_rate: Number(body.tax_rate ?? line.tax_rate),
-      } : line));
-      setNewProduct({ name: '', description: '', unit_price: '', product_type: 'service' });
-      setShowNewProduct(false);
-      toast({ title: `${body.name} saved`, description: 'It has been added to this invoice and the product catalogue.' });
-    } catch (error: any) {
-      toast({ title: 'Could not save product or service', description: error.message, variant: 'destructive' });
-    } finally {
-      setCreatingProduct(false);
-    }
-  };
-
-  const handleSave = async () => {
-    if (!customerId) { toast({ title: 'Select a customer', variant: 'destructive' }); return; }
-    if (lines.every(l => !l.description)) { toast({ title: 'Add at least one line item', variant: 'destructive' }); return; }
-
-    setSaving(true);
-    try {
-      const res = await fetch('/api/payments/invoices/', {
-        method: 'POST',
-        headers: { Authorization: `Token ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          customer_id:   parseInt(customerId),
-          line_items:    lines.filter(l => l.description),
-          currency,
-          due_date:      dueDate || undefined,
-          notes,
-          source_module: 'manual',
-          tax_mode: taxMode,
-          combined_tax_rate: combinedTaxRate,
-          charge_ids: chargeIds,
-        }),
-      });
-      const contentType = res.headers.get('content-type') ?? '';
-      const body = contentType.includes('application/json')
-        ? await res.json().catch(() => ({}))
-        : { error: `The invoice service returned an unexpected response (${res.status}). Please try again or contact an administrator.` };
-      if (!res.ok) {
-        const firstError = Object.values(body).flat().find(Boolean);
-        throw new Error(typeof body.error === 'string' ? body.error : typeof body.detail === 'string' ? body.detail : typeof firstError === 'string' ? firstError : res.statusText);
-      }
-      const inv = body;
-      toast({ title: `Invoice ${inv.invoice_number} created` });
-      onSuccess(inv.id);
-      onOpenChange(false);
-    } catch (e: any) {
-      toast({ title: 'Error creating invoice', description: e.message, variant: 'destructive' });
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const reset = () => {
-    setCustomerId(''); setCustomerSearch(''); setCurrency('KES');
-    setDueDate(''); setNotes('');
-    setLines([{ product_id: null, description: '', qty: 1, unit_price: 0, tax_rate: Number(settings?.default_tax_rate ?? 0) }]);
-    setTaxMode('per_line'); setCombinedTaxRate(Number(settings?.default_tax_rate ?? 0)); setChargeIds([]);
-  };
-
-  return (
-    <Dialog open={open} onOpenChange={v => { if (!v) reset(); onOpenChange(v); }}>
-      <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Plus className="h-4 w-4" /> New Invoice
-          </DialogTitle>
-        </DialogHeader>
-
-        <div className="space-y-4 py-2">
-          {/* Customer picker */}
-          <div className="space-y-1.5">
-            <Label>Customer</Label>
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search customer…"
-                value={customerSearch}
-                onChange={e => setCustomerSearch(e.target.value)}
-                className="pl-9"
-              />
-            </div>
-            {customers.length > 0 && (
-              <div className="border rounded-lg divide-y max-h-36 overflow-y-auto">
-                {customers.slice(0, 8).map((c: any) => (
-                  <button
-                    key={c.id}
-                    className={`w-full text-left px-4 py-2 hover:bg-muted/50 transition-colors flex items-center justify-between text-sm ${customerId === String(c.id) ? 'bg-primary/5 border-l-2 border-l-primary font-bold' : ''}`}
-                    onClick={() => { setCustomerId(String(c.id)); setCustomerSearch(c.name); }}
-                  >
-                    <span>{c.name}</span>
-                    {customerId === String(c.id) && <CheckCircle2 className="h-3.5 w-3.5 text-primary" />}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Line items */}
-          <div className="space-y-2">
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <Label>Line Items</Label>
-              <div className="flex flex-wrap gap-2">
-                <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => setShowNewProduct(value => !value)}><Plus className="h-3 w-3" /> New product/service</Button>
-                <Button size="sm" variant="ghost" className="h-7 text-xs gap-1" onClick={addLine}><Plus className="h-3 w-3" /> Add Row</Button>
-              </div>
-            </div>
-            {showNewProduct && <div className="grid gap-2 rounded-lg border bg-muted/20 p-3 sm:grid-cols-2 xl:grid-cols-4">
-              <Input placeholder="Name" value={newProduct.name} onChange={e => setNewProduct(value => ({ ...value, name: e.target.value }))} />
-              <Input placeholder="Description" value={newProduct.description} onChange={e => setNewProduct(value => ({ ...value, description: e.target.value }))} />
-              <Input type="number" min="0" step="0.01" placeholder="Unit price" value={newProduct.unit_price} onChange={e => setNewProduct(value => ({ ...value, unit_price: e.target.value }))} />
-              <Button type="button" onClick={() => void createProduct()} disabled={!newProduct.name.trim() || creatingProduct}>{creatingProduct ? 'Saving…' : 'Save product/service'}</Button>
-            </div>}
-            <div className="overflow-x-auto rounded-lg border">
-              <table className="w-full min-w-[760px] text-sm">
-                <thead className="bg-muted/50 text-[10px] font-bold uppercase tracking-widest">
-                  <tr>
-                    <th className="text-left px-3 py-2">Product / Service</th>
-                    <th className="text-left px-3 py-2">Description</th>
-                    <th className="text-right px-3 py-2 w-16">Qty</th>
-                    <th className="text-right px-3 py-2 w-28">Unit Price</th>
-                    <th className="text-right px-3 py-2 w-20">Tax %</th>
-                    <th className="text-right px-3 py-2 w-24">Total</th>
-                    <th className="w-8" />
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
-                  {lines.map((line, i) => (
-                    <tr key={i}>
-                      <td className="px-2 py-1">
-                        <Select value={line.product_id ? String(line.product_id) : '__custom__'} onValueChange={value => selectProduct(i, value)}>
-                          <SelectTrigger className="h-8 min-w-40 text-xs"><SelectValue /></SelectTrigger>
-                          <SelectContent><SelectItem value="__custom__">Custom line</SelectItem>{products.map(product => <SelectItem key={product.id} value={String(product.id)}>{product.name}</SelectItem>)}</SelectContent>
-                        </Select>
-                      </td>
-                      <td className="px-2 py-1">
-                        <Input
-                          placeholder="Service description…"
-                          value={line.description}
-                          onChange={e => updateLine(i, 'description', e.target.value)}
-                          className="h-7 text-xs border-0 shadow-none focus-visible:ring-0 px-1"
-                        />
-                      </td>
-                      <td className="px-2 py-1">
-                        <Input
-                          type="number" min="1" value={line.qty}
-                          onChange={e => updateLine(i, 'qty', Number(e.target.value))}
-                          className="h-7 text-xs text-right border-0 shadow-none focus-visible:ring-0 px-1 w-14"
-                        />
-                      </td>
-                      <td className="px-2 py-1">
-                        <Input
-                          type="number" min="0" step="0.01" value={line.unit_price}
-                          onChange={e => updateLine(i, 'unit_price', Number(e.target.value))}
-                          className="h-7 text-xs text-right font-mono border-0 shadow-none focus-visible:ring-0 px-1 w-24"
-                        />
-                      </td>
-                      <td className="px-2 py-1">
-                        <Input type="number" min="0" step="0.01" disabled={taxMode === 'combined'} value={line.tax_rate} onChange={e => updateLine(i, 'tax_rate', Number(e.target.value))} className="h-7 w-16 border-0 px-1 text-right text-xs shadow-none focus-visible:ring-0" />
-                      </td>
-                      <td className="px-3 py-1 text-right font-mono text-xs font-bold">
-                        {(line.qty * line.unit_price).toLocaleString('en-KE', { minimumFractionDigits: 2 })}
-                      </td>
-                      <td className="px-1 py-1">
-                        {lines.length > 1 && (
-                          <button onClick={() => removeLine(i)} className="text-muted-foreground hover:text-destructive p-1">
-                            <X className="h-3.5 w-3.5" />
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-                <tfoot>
-                  <tr className="bg-muted/20 border-t">
-                    <td colSpan={5} className="px-3 py-2 text-xs font-bold uppercase tracking-wide text-muted-foreground text-right">Subtotal</td>
-                    <td className="px-3 py-2 text-right font-mono font-bold text-sm">{kes(subtotal)}</td>
-                    <td />
-                  </tr>
-                </tfoot>
-              </table>
-            </div>
-          </div>
-
-          <div className="rounded-lg border bg-muted/10 p-3 space-y-3">
-            <div className="flex flex-wrap items-end gap-3">
-              <div className="space-y-1"><Label className="text-xs">Tax method</Label><Select value={taxMode} onValueChange={(value: 'per_line' | 'combined') => setTaxMode(value)}><SelectTrigger className="h-8 w-44"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="per_line">Tax per line</SelectItem><SelectItem value="combined">Combined invoice tax</SelectItem></SelectContent></Select></div>
-              {taxMode === 'combined' && <div className="space-y-1"><Label className="text-xs">{settings?.default_tax_name || 'Tax'} rate (%)</Label><Input type="number" min="0" step="0.01" value={combinedTaxRate} onChange={e => setCombinedTaxRate(Number(e.target.value))} className="h-8 w-28" /></div>}
-            </div>
-            {charges.length > 0 && <div><Label className="text-xs">Additional charges / levies</Label><div className="mt-2 flex flex-wrap gap-2">{charges.filter(charge => charge.is_active).map(charge => <label key={charge.id} className="flex items-center gap-2 rounded border bg-background px-2 py-1 text-xs"><input type="checkbox" checked={chargeIds.includes(charge.id)} onChange={() => setChargeIds(current => current.includes(charge.id) ? current.filter(id => id !== charge.id) : [...current, charge.id])} />{charge.name} ({charge.calculation_type === 'percentage' ? `${charge.rate}%` : kes(Number(charge.rate))})</label>)}</div></div>}
-            <div className="grid grid-cols-2 gap-x-5 gap-y-1 border-t pt-2 text-sm sm:grid-cols-4"><span>Subtotal <strong>{kes(subtotal)}</strong></span><span>Tax <strong>{kes(taxTotal)}</strong></span><span>Charges <strong>{kes(chargeTotal)}</strong></span><span className="font-bold">Grand total <strong>{kes(total)}</strong></span></div>
-          </div>
-
-          {/* Options */}
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className="space-y-1">
-              <Label className="text-xs">Currency</Label>
-              <Select value={currency} onValueChange={setCurrency}>
-                <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {['KES','USD','EUR','GBP'].map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs">Due Date</Label>
-              <Input
-                type="date" value={dueDate}
-                onChange={e => setDueDate(e.target.value)}
-                className="h-8 text-sm"
-              />
-            </div>
-          </div>
-          <div className="space-y-1">
-            <Label className="text-xs">Notes</Label>
-            <Textarea placeholder="Optional notes…" value={notes} onChange={e => setNotes(e.target.value)} className="h-16 text-sm" />
-          </div>
-        </div>
-
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button onClick={handleSave} disabled={saving || !customerId}>
-            {saving ? 'Creating…' : 'Create Invoice'}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
 /* ─────────────────────────────────────────── Debt Tab ── */
 function DebtTab({ token }: { token: string | null }) {
   const [, navigate] = useLocation();
@@ -916,20 +578,20 @@ export default function InvoicesList() {
   ];
 
   return (
-    <div className="space-y-6">
+    <div className="min-w-0 space-y-6">
       {/* Header */}
-      <div className="flex items-start justify-between gap-4 border-b pb-4">
+      <div className="flex flex-col gap-4 border-b pb-4 xl:flex-row xl:items-start xl:justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
             <FileText className="h-6 w-6 text-primary" /> Invoices
           </h1>
           <p className="text-sm text-muted-foreground mt-0.5">Create invoices, track payment status, and follow customer balances.</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap">
           <Button
             size="sm"
             variant="outline"
-            className="gap-1.5 font-bold uppercase tracking-wide text-xs"
+            className="col-span-2 min-h-11 gap-1.5 text-xs font-bold sm:min-h-9"
             onClick={() => {
               handleExportPayments().catch(() => {});
             }}
@@ -939,14 +601,14 @@ export default function InvoicesList() {
           <Button
             size="sm"
             variant="outline"
-            className="gap-1.5 font-bold uppercase tracking-wide text-xs"
+            className="min-h-11 gap-1.5 text-xs font-bold sm:min-h-9"
             onClick={() => setGenerateOpen(true)}
           >
             <Package className="h-3.5 w-3.5" /> Generate
           </Button>
           <Button
             size="sm"
-            className="gap-1.5 font-bold uppercase tracking-wide text-xs"
+            className="min-h-11 gap-1.5 text-xs font-bold sm:min-h-9"
             onClick={() => setNewInvoiceOpen(true)}
           >
             <Plus className="h-3.5 w-3.5" /> New Invoice
@@ -955,15 +617,15 @@ export default function InvoicesList() {
       </div>
 
       {/* Stat cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+      <div className="grid min-w-0 grid-cols-1 gap-3 min-[400px]:grid-cols-2 xl:grid-cols-4 sm:gap-4">
         {statCards.map(s => (
-          <Card key={s.label} className={`border-l-4 ${s.cls} shadow-sm`}>
-            <CardHeader className="flex flex-row items-center justify-between pb-2">
+          <Card key={s.label} className={`min-w-0 border-l-4 ${s.cls} shadow-sm`}>
+            <CardHeader className="flex flex-row items-center justify-between gap-2 p-4 pb-2 sm:p-6 sm:pb-2 [&_svg]:shrink-0">
               <CardTitle className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">{s.label}</CardTitle>
               {s.icon}
             </CardHeader>
-            <CardContent>
-              <div className={`text-2xl font-black font-mono tracking-tighter ${s.textCls}`}>
+            <CardContent className="min-w-0 px-4 pb-4 sm:px-6 sm:pb-6">
+              <div className={`break-words text-xl font-black font-mono tracking-tighter 2xl:text-2xl ${s.textCls}`}>
                 {s.value}
               </div>
             </CardContent>
@@ -972,7 +634,7 @@ export default function InvoicesList() {
       </div>
 
       {/* Tabs */}
-      <div className="flex items-center gap-0 border-b">
+      <div className="grid grid-cols-2 border-b sm:flex sm:items-center">
         {[
           { key: 'all', label: 'All Invoices', icon: <FileText className="h-3.5 w-3.5" /> },
           { key: 'debt', label: 'Customer Balances', icon: <Users className="h-3.5 w-3.5" /> },
@@ -980,7 +642,7 @@ export default function InvoicesList() {
           <button
             key={tab.key}
             onClick={() => setActiveTab(tab.key as any)}
-            className={`flex items-center gap-1.5 px-4 py-2.5 text-xs font-bold uppercase tracking-widest border-b-2 transition-colors ${
+            className={`flex min-h-11 items-center justify-center gap-1.5 px-2 py-2.5 text-xs font-bold border-b-2 transition-colors sm:justify-start sm:px-4 sm:uppercase sm:tracking-widest ${
               activeTab === tab.key
                 ? 'border-primary text-primary'
                 : 'border-transparent text-muted-foreground hover:text-foreground'
@@ -996,18 +658,18 @@ export default function InvoicesList() {
       ) : (
         <>
           {/* Filters */}
-          <div className="flex flex-col sm:flex-row gap-3">
-            <div className="relative flex-1">
+          <div className="grid min-w-0 grid-cols-2 gap-3 md:flex">
+            <div className="relative col-span-2 min-w-0 md:flex-1">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
                 placeholder="Search by invoice # or customer…"
                 value={search}
                 onChange={e => { setSearch(e.target.value); setPage(1); }}
-                className="pl-9 bg-card"
+                className="h-11 pl-9 bg-card md:h-9"
               />
             </div>
             <Select value={statusFilter || '__all__'} onValueChange={(value) => { setStatusFilter(value === '__all__' ? '' : value); setPage(1); }}>
-              <SelectTrigger className="w-40 bg-card">
+              <SelectTrigger className="h-11 w-full min-w-0 bg-card md:h-9 md:w-40">
                 <SelectValue placeholder="All statuses" />
               </SelectTrigger>
               <SelectContent>
@@ -1019,7 +681,7 @@ export default function InvoicesList() {
               </SelectContent>
             </Select>
             <Select value={String(pageSize)} onValueChange={(value) => { setPageSize(Number(value)); setPage(1); }}>
-              <SelectTrigger className="w-28 bg-card">
+              <SelectTrigger className="h-11 w-full min-w-0 bg-card md:h-9 md:w-28">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -1031,7 +693,7 @@ export default function InvoicesList() {
           </div>
 
           {/* Table */}
-          <Card>
+          <Card className="min-w-0 overflow-hidden">
             <CardHeader className="pb-3">
               <CardTitle className="text-sm font-bold uppercase tracking-widest text-muted-foreground">
                 {isLoading ? 'Loading…' : `${totalCount} Invoice${totalCount !== 1 ? 's' : ''}`}
@@ -1046,7 +708,7 @@ export default function InvoicesList() {
                     <TableHead className="text-[10px] font-bold uppercase tracking-widest">Source</TableHead>
                     <TableHead className="text-[10px] font-bold uppercase tracking-widest">Status</TableHead>
                     <TableHead className="text-[10px] font-bold uppercase tracking-widest text-right">Amount</TableHead>
-                    <TableHead className="text-[10px] font-bold uppercase tracking-widest">Issued</TableHead>
+                    <TableHead className="text-[10px] font-bold uppercase tracking-widest">Invoice date</TableHead>
                     <TableHead className="text-[10px] font-bold uppercase tracking-widest">Due</TableHead>
                     <TableHead />
                   </TableRow>
@@ -1112,11 +774,11 @@ export default function InvoicesList() {
             </CardContent>
           </Card>
           {!isLoading && totalCount > 0 && (
-            <div className="flex items-center justify-between text-sm">
+            <div className="flex flex-col gap-3 text-sm sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
               <span className="text-muted-foreground">
                 Showing {Math.min((page - 1) * pageSize + 1, totalCount)}-{Math.min(page * pageSize, totalCount)} of {totalCount} invoices
               </span>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center justify-between gap-2 sm:justify-end [&_button]:min-h-11 sm:[&_button]:min-h-9">
                 <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>
                   <ChevronLeft className="h-4 w-4 mr-1" /> Previous
                 </Button>
@@ -1136,7 +798,7 @@ export default function InvoicesList() {
         token={token}
         onSuccess={handleSuccess}
       />
-      <NewInvoiceDialog
+      <InvoiceFormDialog
         open={newInvoiceOpen}
         onOpenChange={setNewInvoiceOpen}
         token={token}

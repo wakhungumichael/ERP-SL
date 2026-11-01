@@ -82,6 +82,7 @@ const ROUTE_ACCESS_RULES: RouteAccessRule[] = [
   { pathPrefix: '/retail', modules: ['retail', 'retail-pack', 'commerce'], roles: ERP_USERS },
   { pathPrefix: '/services', modules: ['services', 'services-pack', 'projects'], roles: ERP_USERS },
 
+  { pathPrefix: '/platform/organization-structure', roles: ERP_USERS },
   { pathPrefix: '/platform/company-settings', roles: ADMIN_UP },
   { pathPrefix: '/platform/organization-settings', roles: ADMIN_UP },
   { pathPrefix: '/platform/users', roles: ADMIN_UP },
@@ -144,13 +145,12 @@ export function evaluateWorkspaceRouteAccess({
     // record to the active branch, assignment and role.  Keeping this check
     // explicit prevents a stale/generic route rule from hiding a task that
     // was correctly listed to the user.
-    const isProjectTaskDetail = /^\/projects\/tasks\/[^/]+\/?$/.test(normalizedPath);
-    const isProjectDetail = /^\/projects\/[^/]+\/?$/.test(normalizedPath)
-      && !normalizedPath.startsWith('/projects/tasks/');
+    const isProjectTaskDetail = /^\/projects\/tasks\/\d+\/?$/.test(normalizedPath);
+    const isProjectDetail = /^\/projects\/\d+\/?$/.test(normalizedPath);
     if (isProjectTaskDetail || isProjectDetail) {
       const requiredPermissions = isProjectTaskDetail
         ? ['SL_Projects.view_projecttask', 'SL_Projects.view_own_projecttask', 'SL_Projects.view_all_projecttask']
-        : ['SL_Projects.view_project', 'SL_Projects.add_project', 'SL_Projects.view_projecttask', 'SL_Projects.view_own_projecttask', 'SL_Projects.view_all_projecttask'];
+        : ['SL_Projects.view_project'];
       const canViewRecord = requiredPermissions.some((required) => permissions.includes(required));
       if (!canViewRecord) {
         return { allowed: false, reason: 'permission', rule };

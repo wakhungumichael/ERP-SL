@@ -75,3 +75,7 @@ Thumbs.db
 # Replit
 .cache/
 .local/
+
+# Local previews and editor/browser scratch data
+/output/
+/:TEMP/

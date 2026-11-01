@@ -73,7 +73,9 @@ export default function OrganizationSetupImport({
           ? "Import preview ready"
           : options.remove
             ? "Optional examples removed"
-            : "Organization setup imported",
+            : data.no_changes
+              ? "Setup already exists — no new records"
+              : `${data.created_count} records created`,
       });
     },
     onError: (e: Error) =>
@@ -93,7 +95,8 @@ export default function OrganizationSetupImport({
           Choose what to add to this organization. Imports add missing records
           and preserve existing customizations. Optional examples are marked
           [DEMO] or [SAMPLE]. Module access continues to follow the
-          organization’s plan.
+          organization’s plan. Select Optional demo master data or Optional demo
+          projects to add sample records.
         </p>
         {catalog.error ? (
           <p role="alert" className="text-destructive">
@@ -176,12 +179,42 @@ export default function OrganizationSetupImport({
             <strong className="text-sm">
               {result.dry_run ? "Preview — no records saved" : "Result"}
             </strong>
+            {typeof result.created_count === "number" ? (
+              <p className="mt-2 text-sm">
+                {result.no_changes
+                  ? "All selected setup already exists. No records were added."
+                  : `${result.created_count} records ${result.dry_run ? "would be added" : "added"}.`}
+              </p>
+            ) : null}
             {result.detail ? (
               <p className="mt-2 text-sm">{result.detail}</p>
             ) : null}
             {Object.entries(result.report ?? {}).map(([name, values]) => (
               <div key={name} className="mt-3 border-t pt-3 text-sm">
-                <strong>{name.replaceAll("_", " ")}</strong>
+                <strong>
+                  {(catalog.data?.catalog ?? []).find(
+                    (entry: Package) => entry.key === name,
+                  )?.name ?? name.replaceAll("_", " ")}
+                </strong>
+                <div className="mt-1">
+                  <a
+                    className="text-primary underline"
+                    href={
+                      (
+                        {
+                          workflows: "/platform/workflows",
+                          approval_rules: "/procurement/approval-rules",
+                          finance_masters: "/finance/chart-of-accounts",
+                          hr_defaults: "/hr/staff",
+                          demo_masters: "/sales/products",
+                          project_samples: "/projects",
+                        } as Record<string, string>
+                      )[name]
+                    }
+                  >
+                    View records
+                  </a>
+                </div>
                 <div className="mt-1 grid gap-1 text-xs text-muted-foreground">
                   {Object.entries(values as object).map(([key, value]) => (
                     <div key={key}>

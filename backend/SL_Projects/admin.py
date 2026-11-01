@@ -18,8 +18,12 @@ class ProjectMilestoneAdmin(admin.ModelAdmin):
 
 @admin.register(ProjectTask)
 class ProjectTaskAdmin(admin.ModelAdmin):
-    list_display = ("number", "title", "tenant", "branch", "status", "primary_assignee", "due_date")
-    list_filter = ("status", "priority", "tenant")
+    list_display = ("number", "title", "tenant", "branch", "is_active", "status", "primary_assignee", "due_date")
+    readonly_fields = ("is_active", "deactivated_at", "deactivated_by")
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+    list_filter = ("is_active", "status", "priority", "tenant")
     search_fields = ("number", "title")
 
 

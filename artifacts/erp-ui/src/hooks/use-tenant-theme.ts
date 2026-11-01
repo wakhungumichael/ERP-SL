@@ -5,6 +5,7 @@ import { useAuth } from '@/context/use-auth';
 import type { DashboardTenantContextValue } from '@/components/dashboard/types';
 import type { NavSection } from '@/lib/roles';
 import { themeVariables } from '@/lib/tenant-theme';
+import { organizationCodeForUser } from '@/lib/app-branding';
 import { fetchPublicSiteConfig, getCachedPublicSiteConfig } from '@/lib/public-site';
 
 function normalizeSections(payload: any): NavSection[] {
@@ -28,17 +29,6 @@ function normalizeSections(payload: any): NavSection[] {
   })).filter((section: NavSection) => section.title && section.items.some((item) => item.path));
 }
 
-function ensureHeadLink(rel: string) {
-  if (typeof document === 'undefined') return null;
-  let link = document.head.querySelector(`link[rel="${rel}"]`) as HTMLLinkElement | null;
-  if (!link) {
-    link = document.createElement('link');
-    link.rel = rel;
-    document.head.appendChild(link);
-  }
-  return link;
-}
-
 export function useTenantTheme({ applyTheme = true }: { applyTheme?: boolean } = {}) {
   const { token, role, user } = useAuth();
   const organizationId = (((user as any)?.organization_id ?? (user as any)?.tenant_id) as number | null | undefined) ?? null;
@@ -46,7 +36,7 @@ export function useTenantTheme({ applyTheme = true }: { applyTheme?: boolean } =
   const rememberedTenantCode = typeof window === 'undefined'
     ? ''
     : window.localStorage.getItem('sl-erp-tenant-code') || '';
-  const cachedPublicSite = getCachedPublicSiteConfig(rememberedTenantCode);
+  const rememberedSite = getCachedPublicSiteConfig(rememberedTenantCode);
 
   const tenantQuery = useQuery({
     queryKey: ['dashboard-tenant-self', organizationId, token],
@@ -93,10 +83,12 @@ export function useTenantTheme({ applyTheme = true }: { applyTheme?: boolean } =
   const tenant = tenantQuery.data ?? {};
   const settings = settingsQuery.data ?? {};
   const workspace = workspaceQuery.data ?? {};
-  const tenantCode = tenant.code || rememberedTenantCode;
+  const tenantCode = organizationCodeForUser(user) || tenant.code
+    || (organizationId && rememberedSite?.tenant?.id === organizationId ? rememberedTenantCode : '');
+  const cachedPublicSite = tenantCode ? getCachedPublicSiteConfig(tenantCode) : undefined;
 
   const publicSiteQuery = useQuery({
-    queryKey: ['public-site-config', tenantCode],
+    queryKey: ['public-site-config', tenantCode || 'owner'],
     queryFn: () => fetchPublicSiteConfig(tenantCode),
     enabled: !!tenantCode,
     retry: false,
@@ -104,7 +96,7 @@ export function useTenantTheme({ applyTheme = true }: { applyTheme?: boolean } =
     staleTime: 0,
   });
 
-  const publicSite = publicSiteQuery.data;
+  const publicSite = tenantCode || !organizationId ? publicSiteQuery.data : undefined;
 
   const tenantContext = useMemo<DashboardTenantContextValue>(() => {
     // Signed-in workspaces always use their own tenant profile. Public SaaS
@@ -155,38 +147,6 @@ export function useTenantTheme({ applyTheme = true }: { applyTheme?: boolean } =
       for (const name of Object.keys(variables)) root.style.removeProperty(name);
     };
   }, [applyTheme, tenantContext.branding.primaryColor, settings.secondary_color, settings.accent_color, settings.sidebar_color]);
-
-  useEffect(() => {
-    if (typeof document === 'undefined') return;
-    const title = tenantContext.branding.workspaceName?.trim() || tenantContext.tenantName?.trim() || 'Business Workspace';
-    document.title = title;
-  }, [tenantContext.branding.workspaceName, tenantContext.tenantName]);
-
-  useEffect(() => {
-    if (typeof document === 'undefined') return;
-    const faviconHref = tenantContext.branding.logoUrl || '/favicon.svg';
-    const iconLink = ensureHeadLink('icon');
-    const shortcutIconLink = ensureHeadLink('shortcut icon');
-    if (iconLink) {
-      iconLink.type = faviconHref.endsWith('.svg') ? 'image/svg+xml' : 'image/png';
-      iconLink.href = faviconHref;
-    }
-    if (shortcutIconLink) {
-      shortcutIconLink.type = faviconHref.endsWith('.svg') ? 'image/svg+xml' : 'image/png';
-      shortcutIconLink.href = faviconHref;
-    }
-  }, [tenantContext.branding.logoUrl]);
-
-  useEffect(() => {
-    if (!tenantContext.tenantCode || typeof document === 'undefined') return;
-    const manifest = ensureHeadLink('manifest');
-    if (manifest) manifest.href = `/api/platform/public/manifest/?tenant_code=${encodeURIComponent(tenantContext.tenantCode)}`;
-  }, [tenantContext.tenantCode]);
-
-  useEffect(() => {
-    if (typeof window === 'undefined' || !tenantContext.tenantCode) return;
-    window.localStorage.setItem('sl-erp-tenant-code', tenantContext.tenantCode);
-  }, [tenantContext.tenantCode]);
 
   return {
     tenantContext,

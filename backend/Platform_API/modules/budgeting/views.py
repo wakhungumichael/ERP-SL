@@ -2,6 +2,10 @@
 from decimal import Decimal
 
 from django.db.models import Q
+from django.db import transaction
+from rest_framework.exceptions import ValidationError
+from rest_framework.pagination import PageNumberPagination
+from .planning import require, can, budgets_for, budget_access, validate_budget_data, tenant_for, consolidate
 from rest_framework import serializers, status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -77,16 +81,28 @@ class BudgetLineSerializer(serializers.ModelSerializer):
             "notes",
             "metadata",
         ]
-        read_only_fields = ["id", "available_amount"]
+        read_only_fields = ["id", "available_amount", "committed_amount", "obligated_amount", "actual_amount"]
 
 
 class BudgetSerializer(serializers.ModelSerializer):
+    department_name = serializers.CharField(source='department.name', read_only=True)
+    total_amount = serializers.SerializerMethodField()
+    access = serializers.SerializerMethodField()
+    source_budgets = serializers.PrimaryKeyRelatedField(source='department_budgets', many=True, read_only=True)
+
+    def get_total_amount(self, obj):
+        return str(sum((line.allocated_amount for line in obj.lines.all()), Decimal('0')))
+
+    def get_access(self, obj):
+        request = self.context.get('request')
+        return budget_access(obj, request.user) if request else {}
     lines = BudgetLineSerializer(many=True, read_only=True)
 
     class Meta:
         model = Budget
         fields = [
             "id",
+            "department", "department_name", "annual_budget", "approval_status", "submitted_by", "approved_by", "approved_at", "total_amount", "access", "source_budgets",
             "tenant",
             "branch",
             "financial_year",
@@ -113,6 +129,7 @@ class BudgetWriteSerializer(serializers.ModelSerializer):
     class Meta:
         model = Budget
         fields = [
+            "department",
             "branch",
             "financial_year",
             "name",
@@ -128,7 +145,24 @@ class BudgetWriteSerializer(serializers.ModelSerializer):
             "lines",
         ]
 
+    def validate(self, attrs):
+        request = self.context.get('request')
+        if 'currency' in attrs:
+            value = attrs['currency'].strip().upper()
+            if len(value) != 3 or not value.isascii() or not value.isalpha():
+                raise ValidationError({'currency': 'Use a three-letter currency code, such as KES.'})
+            attrs['currency'] = value
+        if request:
+            tenant = tenant_for(request.user)
+            errors = _validate_budget_payload(tenant=tenant, branch=attrs.get('branch', getattr(self.instance, 'branch', None)), financial_year=attrs.get('financial_year', getattr(self.instance, 'financial_year', None)), lines=attrs.get('lines'))
+            if errors:
+                raise ValidationError(errors)
+            return validate_budget_data(self.instance, attrs, request.user)
+        return attrs
+
     def _sync_lines(self, budget, lines_data):
+        if budget.lines.filter(Q(committed_amount__gt=0) | Q(obligated_amount__gt=0) | Q(actual_amount__gt=0)).exists():
+            raise ValidationError({'lines': 'Budget lines with recorded spending cannot be replaced.'})
         budget.lines.all().delete()
         for line_data in lines_data:
             BudgetLine.objects.create(budget=budget, **line_data)
@@ -157,7 +191,7 @@ class BudgetDashboardView(APIView):
 
         require_workspace_permission(request.user, "can_view_budgeting_overview")
         budgets = _apply_tenant_filter(Budget.objects.all(), request.user)
-        lines = _apply_budget_line_tenant_filter(BudgetLine.objects.select_related("budget"), request.user)
+        lines = _apply_budget_line_tenant_filter(BudgetLine.objects.filter(budget__department__isnull=True).select_related("budget"), request.user)
         commitments = _apply_tenant_filter(BudgetCommitment.objects.all(), request.user)
         checks = _apply_tenant_filter(BudgetCheckLog.objects.all(), request.user)
 
@@ -186,61 +220,85 @@ class BudgetDashboardView(APIView):
         )
 
 
+class BudgetPagination(PageNumberPagination):
+    page_size = 25
+    page_size_query_param = 'page_size'
+    max_page_size = 100
+
+
 class BudgetListCreateView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        qs = _apply_tenant_filter(Budget.objects.prefetch_related("lines"), request.user).order_by("-created_at")
-        if status_filter := request.query_params.get("status"):
-            qs = qs.filter(status=status_filter)
-        if q := request.query_params.get("search"):
-            qs = qs.filter(Q(name__icontains=q) | Q(code__icontains=q))
-        return Response(BudgetSerializer(qs, many=True).data)
+        require(request.user, 'view_budget')
+        qs = budgets_for(request.user).order_by('-created_at', '-pk')
+        if kind := request.query_params.get('kind'):
+            qs = qs.filter(department__isnull=kind == 'annual')
+        if value := request.query_params.get('approval_status'):
+            qs = qs.filter(approval_status=value)
+        if value := request.query_params.get('search'):
+            qs = qs.filter(Q(name__icontains=value) | Q(code__icontains=value) | Q(department__name__icontains=value))
+        if 'page' in request.query_params:
+            pager = BudgetPagination()
+            rows = pager.paginate_queryset(qs, request)
+            return pager.get_paginated_response(BudgetSerializer(rows, many=True, context={'request': request}).data)
+        return Response(BudgetSerializer(qs, many=True, context={'request': request}).data)
 
+    @transaction.atomic
     def post(self, request):
-        tenant = _tenant_or_403(request.user)
-        serializer = BudgetWriteSerializer(data=request.data)
+        require(request.user, 'add_budget')
+        tenant = tenant_for(request.user)
+        serializer = BudgetWriteSerializer(data=request.data, context={'request': request})
         serializer.is_valid(raise_exception=True)
-        relation_errors = _validate_budget_payload(
-            tenant=tenant,
-            branch=serializer.validated_data.get("branch"),
-            financial_year=serializer.validated_data.get("financial_year"),
-            lines=serializer.validated_data.get("lines"),
-        )
-        if relation_errors:
-            return Response(relation_errors, status=status.HTTP_400_BAD_REQUEST)
+        errors = _validate_budget_payload(tenant=tenant, branch=serializer.validated_data.get('branch'), financial_year=serializer.validated_data.get('financial_year'), lines=serializer.validated_data.get('lines'))
+        if errors:
+            raise ValidationError(errors)
         budget = serializer.save(tenant=tenant, created_by=request.user)
-        return Response(BudgetSerializer(budget).data, status=status.HTTP_201_CREATED)
+        return Response(BudgetSerializer(budget, context={'request': request}).data, status=201)
 
 
 class BudgetDetailView(APIView):
     permission_classes = [IsAuthenticated]
-
-    def _get(self, user, pk):
-        try:
-            return _apply_tenant_filter(Budget.objects.prefetch_related("lines"), user).get(pk=pk)
-        except Budget.DoesNotExist:
-            return None
-
     def get(self, request, pk):
-        budget = self._get(request.user, pk)
-        if not budget:
-            return Response({"error": "Not found."}, status=status.HTTP_404_NOT_FOUND)
-        return Response(BudgetSerializer(budget).data)
+        require(request.user, 'view_budget')
+        from django.shortcuts import get_object_or_404
+        return Response(BudgetSerializer(get_object_or_404(budgets_for(request.user), pk=pk), context={'request': request}).data)
 
+    @transaction.atomic
     def patch(self, request, pk):
-        budget = self._get(request.user, pk)
-        if not budget:
-            return Response({"error": "Not found."}, status=status.HTTP_404_NOT_FOUND)
-        serializer = BudgetWriteSerializer(budget, data=request.data, partial=True)
+        from django.shortcuts import get_object_or_404
+        require(request.user, 'change_budget')
+        budget = get_object_or_404(budgets_for(request.user).select_for_update(of=('self',)), pk=pk)
+        serializer = BudgetWriteSerializer(budget, data=request.data, partial=True, context={'request': request})
         serializer.is_valid(raise_exception=True)
-        relation_errors = _validate_budget_payload(
-            tenant=budget.tenant,
-            branch=serializer.validated_data.get("branch", budget.branch),
-            financial_year=serializer.validated_data.get("financial_year", budget.financial_year),
-            lines=serializer.validated_data.get("lines"),
-        )
-        if relation_errors:
-            return Response(relation_errors, status=status.HTTP_400_BAD_REQUEST)
+        errors = _validate_budget_payload(tenant=budget.tenant, branch=serializer.validated_data.get('branch', budget.branch), financial_year=serializer.validated_data.get('financial_year', budget.financial_year), lines=serializer.validated_data.get('lines'))
+        if errors:
+            raise ValidationError(errors)
         budget = serializer.save()
-        return Response(BudgetSerializer(budget).data)
+        return Response(BudgetSerializer(budget, context={'request': request}).data)
+
+
+class BudgetOptionsView(APIView):
+    permission_classes = [IsAuthenticated]
+    def get(self, request):
+        require(request.user, 'view_budget')
+        from Platform_Core.models import Account, Department, FinancialYear, TenantBranch
+        from Platform_Core.organization import visible_units, branch_allowed_for_user
+        tenant = tenant_for(request.user)
+        departments = visible_units(request.user, tenant, catalog=can(request.user, 'view_all_budget')).filter(unit_type='department', is_active=True)
+        if not can(request.user, 'view_all_budget'):
+            departments = departments.filter(Q(head=request.user) | Q(deputy=request.user) | Q(members=request.user)).distinct()
+        return Response({'departments': list(departments.values('id','name','code')), 'branches': [{'id': row.pk, 'name': row.name} for row in TenantBranch.objects.filter(tenant=tenant, is_active=True) if branch_allowed_for_user(request.user, row)],
+            'accounts': list(Account.objects.filter(tenant=tenant, allow_posting=True).values('id','code','name')),
+            'financial_years': list(FinancialYear.objects.filter(tenant=tenant).values('id','name','start_date','end_date')),
+            'access': {'can_create': can(request.user, 'add_budget'), 'can_consolidate': can(request.user, 'consolidate_budget')}})
+
+
+class BudgetConsolidateView(APIView):
+    permission_classes = [IsAuthenticated]
+    def post(self, request):
+        identifiers = serializers.ListField(child=serializers.IntegerField(min_value=1), min_length=1).run_validation(request.data.get('budgets'))
+        name = serializers.CharField(max_length=180).run_validation(request.data.get('name'))
+        code = serializers.CharField(max_length=40).run_validation(request.data.get('code'))
+        annual = consolidate(request.user, identifiers, name, code)
+        return Response(BudgetSerializer(annual, context={'request': request}).data, status=201)

@@ -1,3 +1,4 @@
+from django.conf import settings
 # Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu.
 from django.contrib.auth.models import Group, User
 from django.contrib.contenttypes.fields import GenericForeignKey
@@ -959,6 +960,11 @@ class TenantSettings(TimeStampedModel):
     landing_page_config = models.JSONField(blank=True, default=dict)
     support_email = models.EmailField(blank=True)
     invoice_prefix = models.CharField(max_length=20, blank=True, default="INV")
+    invoice_address = models.TextField(blank=True)
+    invoice_tax_number = models.CharField(max_length=80, blank=True)
+    invoice_website = models.URLField(max_length=500, blank=True)
+    invoice_payment_instructions = models.TextField(blank=True)
+
     footer_text = models.TextField(blank=True)
     default_tax_name = models.CharField(max_length=100, blank=True, default="VAT")
     default_tax_rate = models.DecimalField(max_digits=5, decimal_places=2, default=0)
@@ -1076,6 +1082,10 @@ class PlatformBrandingSettings(TimeStampedModel):
     login_page_config = models.JSONField(blank=True, default=dict)
     footer_menu = models.JSONField(blank=True, default=list)
     landing_page_config = models.JSONField(blank=True, default=dict)
+
+    @property
+    def print_qr_codes_enabled(self):
+        return (self.login_page_config or {}).get("print_qr_codes_enabled", True) is not False
 
     class Meta:
         verbose_name = "platform branding settings"
@@ -1962,3 +1972,37 @@ class OrganizationSetupImport(models.Model):
 
     class Meta:
         ordering = ['-created_at']
+
+
+class Department(models.Model):
+    """Organization structure shared by every ERP module.
+
+    The original tables are retained so HR and procurement history keep their IDs.
+    """
+    UNIT_TYPES = [("department", "Department"), ("division", "Division"), ("team", "Team"), ("business_unit", "Business unit"), ("cost_center", "Cost center"), ("other", "Other grouping")]
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name="departments")
+    name = models.CharField(max_length=120)
+    code = models.CharField(max_length=40)
+    head = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="headed_departments")
+    deputy = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True, related_name="deputy_departments")
+    members = models.ManyToManyField(settings.AUTH_USER_MODEL, related_name="erp_departments", blank=True, db_table="SL_Procurement_department_members")
+    unit_type = models.CharField(max_length=20, choices=UNIT_TYPES, default="department")
+    parent = models.ForeignKey("self", on_delete=models.PROTECT, null=True, blank=True, related_name="child_units")
+    branch_scope = models.CharField(max_length=12, choices=[("all", "All organization branches"), ("selected", "Selected branches only")], default="all")
+    branches = models.ManyToManyField(TenantBranch, blank=True, related_name="organization_departments")
+    access_mode = models.CharField(max_length=12, choices=[("organization", "Organization members"), ("members", "Department members only")], default="organization")
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        db_table = "SL_Procurement_department"
+        unique_together = [("tenant", "code")]
+        ordering = ["name"]
+
+    def __str__(self):
+        return self.name
+
+
+class OrganizationBranchLink(models.Model):
+    """Stable identity for legacy operational branch references."""
+    branch = models.ForeignKey(TenantBranch, on_delete=models.CASCADE, related_name='operational_links')
+    operational_branch = models.OneToOneField('SL_Weighbridge.Branch', on_delete=models.CASCADE, related_name='organization_link')

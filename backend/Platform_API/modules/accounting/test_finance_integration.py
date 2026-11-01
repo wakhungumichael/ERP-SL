@@ -5,6 +5,7 @@ from decimal import Decimal
 from django.contrib.auth.models import User
 from django.test import TestCase
 from django.urls import reverse
+from django.utils import timezone
 from rest_framework.test import APIClient
 
 from Platform_Core.models import Account, AccountingPeriod, FinancialYear, Journal, JournalEntry, JournalEntryLine, Tenant, TenantUserProfile
@@ -396,3 +397,25 @@ class FinanceIntegrationTests(TestCase):
         session_detail = self.client.get(reverse("accounting-reconciliation-session-detail", kwargs={"pk": session_id}))
         self.assertEqual(session_detail.status_code, 200, session_detail.data)
         self.assertEqual(session_detail.data["summary"]["matched_lines"], 1)
+
+    def test_backdated_invoice_posts_on_invoice_date_and_edit_resyncs_entry(self):
+        invoice = Invoice.objects.create(tenant=self.tenant, customer=self.customer, total_amount=Decimal("900.00"), invoice_date=datetime.date(2026, 8, 15), status="draft")
+        issued = self.client.post(reverse("invoice-issue", kwargs={"pk": invoice.pk}))
+        self.assertEqual(issued.status_code, 200, issued.data)
+        entry = self.tenant.journal_entries.get(source_type="invoice", source_reference=f"invoice:{invoice.pk}")
+        self.assertEqual(timezone.localtime(entry.entry_date).date(), datetime.date(2026, 8, 15))
+        response = self.client.patch(reverse("invoice-detail", kwargs={"pk": invoice.pk}), {"invoice_date": "2026-08-10"}, format="json")
+        self.assertEqual(response.status_code, 200, response.data)
+        entry.refresh_from_db()
+        self.assertEqual(timezone.localtime(entry.entry_date).date(), datetime.date(2026, 8, 10))
+        self.assertEqual(sum(line.debit_amount for line in entry.lines.all()), Decimal("900.00"))
+
+    def test_backdating_issued_invoice_into_closed_period_is_rejected(self):
+        year = FinancialYear.objects.create(tenant=self.tenant, name="Backdating Year", code="BACKDATE", start_date=datetime.date(2026, 1, 1), end_date=datetime.date(2026, 12, 31), status="open")
+        AccountingPeriod.objects.create(tenant=self.tenant, financial_year=year, name="Closed January", code="BACKDATE-JAN", start_date=datetime.date(2026, 1, 1), end_date=datetime.date(2026, 1, 31), status="closed")
+        invoice = Invoice.objects.create(tenant=self.tenant, customer=self.customer, total_amount=Decimal("900.00"), invoice_date=datetime.date(2026, 1, 1), status="issued")
+        response = self.client.patch(reverse("invoice-detail", kwargs={"pk": invoice.pk}), {"invoice_date": "2026-01-15", "notes": "Must roll back"}, format="json")
+        self.assertEqual(response.status_code, 400, response.data)
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.invoice_date, datetime.date(2026, 1, 1))
+        self.assertNotEqual(invoice.notes, "Must roll back")

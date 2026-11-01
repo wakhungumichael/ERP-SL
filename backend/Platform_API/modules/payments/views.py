@@ -6,10 +6,11 @@ from datetime import timedelta
 from decimal import Decimal
 
 from django.conf import settings
-from django.db import DatabaseError
+from django.db import DatabaseError, transaction
 from django.db.models import Q
 from django.http import HttpResponse
 from django.utils import timezone
+from Platform_Core.email import get_tenant_smtp_connection
 from rest_framework import serializers, status
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
@@ -19,6 +20,8 @@ from Platform_API.modules.mixins import (
     apply_tenant_filter,
     resolve_user_tenant,
 )
+
+from .invoice_editing import InvoiceBillingDetailsSerializer, InvoiceEditSerializer, can_edit_invoice, can_edit_invoice_items
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +71,18 @@ class PaymentMethodSerializer(serializers.Serializer):
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+def _invoice_email_options(invoice):
+    """Use the invoice organization's mailbox, retaining global legacy defaults."""
+    options = {"from_email": settings.DEFAULT_FROM_EMAIL}
+    if not invoice.tenant_id:
+        return options
+    tenant_settings = TenantSettings.objects.filter(tenant_id=invoice.tenant_id).first()
+    if tenant_settings and tenant_settings.smtp_host:
+        options["connection"] = get_tenant_smtp_connection(tenant_settings)
+        options["from_email"] = tenant_settings.support_email or tenant_settings.smtp_user or settings.DEFAULT_FROM_EMAIL
+    return options
+
+
 def _customer_data(inv):
     c = getattr(inv, "customer", None)
     if not c:
@@ -80,15 +95,25 @@ def _customer_data(inv):
     }
 
 
-def _serialize_invoice(inv, with_lines=False, with_transactions=False):
+def _serialize_invoice(inv, with_lines=False, with_transactions=False, request=None):
     customer = _customer_data(inv)
     data = {
         "id":             inv.id,
         "invoice_number": inv.invoice_number or f"INV-{inv.id:04d}",
         "customer":       customer["id"],
+        "tenant":         inv.tenant_id,
         "customer_name":  customer["name"],
         "customer_email": customer["email"],
         "customer_phone": customer["phone"],
+        "billing_address": inv.billing_address or getattr(inv.customer, "address", "") or "",
+        "billing_contact_name": inv.billing_contact_name,
+        "billing_email": inv.billing_email or customer["email"],
+        "billing_phone": inv.billing_phone or customer["phone"],
+        "customer_tax_number": inv.customer_tax_number,
+        "customer_reference": inv.customer_reference,
+        "prepared_by_name": (inv.created_by.get_full_name() or inv.created_by.get_username()) if inv.created_by_id else "",
+        "prepared_by_email": inv.created_by.email if inv.created_by_id else "",
+
         "status":         inv.status,
         "total_amount":   float(inv.total_amount or 0),
         "subtotal_amount": float(getattr(inv, "subtotal_amount", 0) or 0),
@@ -101,10 +126,15 @@ def _serialize_invoice(inv, with_lines=False, with_transactions=False):
         "issued_at":      inv.issued_at.isoformat()  if getattr(inv, "issued_at",   None) else None,
         "due_date":       str(inv.due_date)           if getattr(inv, "due_date",    None) else None,
         "created_at":     inv.issued_date.isoformat() if getattr(inv, "issued_date", None) else None,
+        "invoice_date":   str(inv.invoice_date or timezone.localtime(inv.issued_at or inv.issued_date).date()),
         "notes":          getattr(inv, "notes", "") or "",
         "source_module":  getattr(inv, "source_module", "manual") or "manual",
         "source_id":      getattr(inv, "source_id", None),
     }
+
+    if request is not None:
+        data["can_edit"] = can_edit_invoice(request.user)
+        data["can_edit_items"] = can_edit_invoice_items(inv)
 
     if with_lines:
         try:
@@ -126,7 +156,7 @@ def _serialize_invoice(inv, with_lines=False, with_transactions=False):
                 }
                 for line in lines
             ]
-            data["charges"] = [{"id": charge.id, "name": charge.name, "calculation_type": charge.calculation_type, "rate": float(charge.rate), "amount": float(charge.amount)} for charge in inv.charges.all()]
+            data["charges"] = [{"id": charge.id, "charge_rule": charge.charge_rule_id, "name": charge.name, "calculation_type": charge.calculation_type, "rate": float(charge.rate), "amount": float(charge.amount)} for charge in inv.charges.all()]
         except Exception:
             data["lines"] = []
 
@@ -346,6 +376,7 @@ def create_draft_invoice_for_transaction(tx):
         total = float(tx.charge or 0)
         inv = Invoice.objects.create(
             customer=tx.customer,
+            created_by=getattr(tx, "created_by", None),
             total_amount=total,
             currency='KES',
             status='draft',
@@ -440,7 +471,7 @@ class InvoiceListView(APIView):
             if tenant_code_param and tenant_code_param != user_tenant.code:
                 return Response({"count": 0, "next": None, "previous": None, "results": []})
 
-        qs = Invoice.objects.select_related("customer").order_by("-issued_date")
+        qs = Invoice.objects.select_related("customer", "created_by").order_by("-issued_date")
         qs = self._apply_invoice_tenant_filter(request, qs)
 
         if s := request.query_params.get("status"):
@@ -469,6 +500,9 @@ class InvoiceListView(APIView):
         line_items    = request.data.get("line_items", [])
         currency      = request.data.get("currency", "KES")
         due_date      = request.data.get("due_date")
+        invoice_date = serializers.DateField().run_validation(request.data.get("invoice_date", timezone.localdate()))
+        if due_date:
+            due_date = serializers.DateField().run_validation(due_date)
         notes         = request.data.get("notes", "")
         source_module = request.data.get("source_module", "manual")
         tax_mode = request.data.get("tax_mode", "per_line")
@@ -534,8 +568,12 @@ class InvoiceListView(APIView):
             charge_rows.append((charge, amount))
         total = subtotal + tax_total + charge_total
 
+        billing = InvoiceBillingDetailsSerializer(data=request.data)
+        billing.is_valid(raise_exception=True)
         inv = Invoice.objects.create(
             customer=customer,
+            created_by=request.user,
+            **billing.validated_data,
             total_amount=total,
             subtotal_amount=subtotal,
             tax_total=tax_total,
@@ -544,7 +582,8 @@ class InvoiceListView(APIView):
             combined_tax_name=(settings_obj.default_tax_name if settings_obj and tax_mode == "combined" else ""),
             combined_tax_rate=combined_tax_rate if tax_mode == "combined" else Decimal("0"),
             currency=currency,
-            due_date=due_date or (timezone.now() + timedelta(days=30)).date(),
+            invoice_date=invoice_date,
+            due_date=due_date or (invoice_date + timedelta(days=settings_obj.default_payment_terms_days if settings_obj else 30)),
             status='draft',
             notes=notes,
             source_module=source_module,
@@ -581,7 +620,7 @@ class InvoiceDetailView(APIView):
         - Profileless non-superusers: deny-all → qs.none() → always 404
         """
         qs = InvoiceListView._apply_invoice_tenant_filter(
-            request, Invoice.objects.select_related("customer")
+            request, Invoice.objects.select_related("customer", "created_by")
         )
         return qs.get(pk=pk)
 
@@ -590,23 +629,25 @@ class InvoiceDetailView(APIView):
             return Response({"error": "Not found."}, status=status.HTTP_404_NOT_FOUND)
         try:
             inv = self._get_invoice(request, pk)
-            return Response(_serialize_invoice(inv, with_lines=True, with_transactions=True))
+            return Response(_serialize_invoice(inv, with_lines=True, with_transactions=True, request=request))
         except Invoice.DoesNotExist:
             return Response({"error": "Invoice not found."}, status=status.HTTP_404_NOT_FOUND)
 
+    @transaction.atomic
     def patch(self, request, pk):
         if not HAS_PAYMENT_MODELS:
             return Response({"error": "Not found."}, status=status.HTTP_404_NOT_FOUND)
         try:
             inv = self._get_invoice(request, pk)
+            inv = Invoice.objects.select_for_update().get(pk=inv.pk)
         except Invoice.DoesNotExist:
             return Response({"error": "Invoice not found."}, status=status.HTTP_404_NOT_FOUND)
-        allowed = ["notes", "due_date", "currency"]
-        for field in allowed:
-            if field in request.data:
-                setattr(inv, field, request.data[field])
-        inv.save()
-        return Response(_serialize_invoice(inv))
+        if not can_edit_invoice(request.user):
+            return Response({"error": "You do not have permission to edit invoices."}, status=status.HTTP_403_FORBIDDEN)
+        serializer = InvoiceEditSerializer(inv, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        inv = serializer.save()
+        return Response(_serialize_invoice(inv, with_lines=True, with_transactions=True, request=request))
 
 
 class InvoiceDocumentView(APIView):
@@ -638,7 +679,7 @@ class IssueInvoiceView(APIView):
             return Response({"error": "Not found."}, status=status.HTTP_404_NOT_FOUND)
         try:
             qs = InvoiceListView._apply_invoice_tenant_filter(
-                request, Invoice.objects.select_related("customer")
+                request, Invoice.objects.select_related("customer", "created_by")
             )
             inv = qs.get(pk=pk)
         except Invoice.DoesNotExist:
@@ -652,7 +693,7 @@ class IssueInvoiceView(APIView):
             try:
                 assert_posting_allowed(
                     tenant=getattr(inv, "tenant", None),
-                    posting_date=timezone.now(),
+                    posting_date=inv.invoice_date or timezone.now(),
                     source_label="invoice issue",
                 )
             except ValueError as exc:
@@ -660,7 +701,7 @@ class IssueInvoiceView(APIView):
         inv.status    = "issued"
         inv.issued_at = timezone.now()
         if not inv.due_date:
-            inv.due_date = (timezone.now() + timedelta(days=30)).date()
+            inv.due_date = (inv.invoice_date or timezone.localdate()) + timedelta(days=30)
         inv.save(update_fields=["status", "issued_at", "due_date"])
         if sync_invoice_posting is not None:
             try:
@@ -672,7 +713,7 @@ class IssueInvoiceView(APIView):
         # Send only when the customer has an email address. A missing/
         # misconfigured SMTP setup must never break invoice issuance.
         customer = getattr(inv, "customer", None)
-        customer_email = getattr(customer, "email", None) if customer else None
+        customer_email = inv.billing_email or (getattr(customer, "email", None) if customer else None)
         if customer_email:
             _email_success = False
             _email_failure = None
@@ -710,8 +751,8 @@ class IssueInvoiceView(APIView):
                 msg = EmailMultiAlternatives(
                     subject=subject,
                     body=plain_body,
-                    from_email=settings.DEFAULT_FROM_EMAIL,
                     to=[customer_email],
+                    **_invoice_email_options(inv),
                 )
                 msg.attach_alternative(html_body, "text/html")
                 msg.send(fail_silently=False)
@@ -910,7 +951,7 @@ class PaymentEntriesView(APIView):
 
     def _build_entries(self, request):
         invoice_qs = InvoiceListView._apply_invoice_tenant_filter(
-            request, Invoice.objects.select_related("customer").prefetch_related("transactions")
+            request, Invoice.objects.select_related("customer", "created_by").prefetch_related("transactions")
         )
 
         entries = []
@@ -1145,6 +1186,7 @@ class GenerateInvoiceView(APIView):
         user_tenant = InvoiceListView._get_user_tenant(request)
         inv = Invoice.objects.create(
             customer=customer,
+            created_by=request.user,
             total_amount=total,
             currency=currency,
             due_date=(timezone.now() + timedelta(days=due_days)).date(),
@@ -1238,7 +1280,7 @@ class CustomerListForInvoiceView(APIView):
         qs = qs.order_by("name")
         if q := request.query_params.get("search"):
             qs = qs.filter(name__icontains=q)
-        data = [{"id": c.id, "name": c.name, "email": c.email or "", "phone": c.phone_number or ""} for c in qs[:200]]
+        data = [{"id": c.id, "name": c.name, "email": c.email or "", "phone": c.phone_number or "", "address": c.address or ""} for c in qs[:200]]
         return Response({"results": data})
 
 
@@ -1331,6 +1373,7 @@ class DebtConsolidateView(APIView):
         user_tenant = InvoiceListView._get_user_tenant(request)
         inv = Invoice.objects.create(
             customer=customer,
+            created_by=request.user,
             total_amount=total,
             currency=currency,
             due_date=timezone.now().date(),
@@ -1373,7 +1416,7 @@ class DebtConsolidateView(APIView):
         # ── Email notification ────────────────────────────────────────────────
         # Send only when the customer has an email address. A missing/
         # misconfigured SMTP setup must never break invoice creation.
-        customer_email = getattr(customer, "email", None)
+        customer_email = inv.billing_email or getattr(customer, "email", None)
         if customer_email:
             _email_success = False
             _email_failure = None
@@ -1411,8 +1454,8 @@ class DebtConsolidateView(APIView):
                 msg = EmailMultiAlternatives(
                     subject=subject,
                     body=plain_body,
-                    from_email=settings.DEFAULT_FROM_EMAIL,
                     to=[customer_email],
+                    **_invoice_email_options(inv),
                 )
                 msg.attach_alternative(html_body, "text/html")
                 msg.send(fail_silently=False)
@@ -1475,7 +1518,7 @@ class PublicInvoicePayView(APIView):
             return Response({"error": "Invalid payment link."}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            inv = Invoice.objects.select_related("customer").get(pk=invoice_id)
+            inv = Invoice.objects.select_related("customer", "created_by").get(pk=invoice_id)
         except Invoice.DoesNotExist:
             return Response({"error": "Invoice not found."}, status=status.HTTP_404_NOT_FOUND)
 

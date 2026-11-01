@@ -2,7 +2,22 @@
 
 This runbook covers the standard update and validation flow for an SL-ERP server that is already provisioned.
 
-For first-time Ubuntu setup, use [UBUNTU_DEPLOYMENT.md](/home/mike/DEVELOPMENT/SIAKORA%20LABS/SL-ERP/docs/UBUNTU_DEPLOYMENT.md).
+For first-time Ubuntu setup, use [UBUNTU_DEPLOYMENT.md](UBUNTU_DEPLOYMENT.md).
+
+## Production SSH access
+
+Connect from your terminal:
+
+```bash
+ssh erp@erp.siakoralabs.co.ke
+```
+
+Confirm the actual application directory and whether the server uses systemd
+or Docker Compose before running deployment commands. The layout below is the
+standard layout, and must be checked against the existing server.
+
+The bare-metal workflow also runs automatically on pushes to `main`. Run the
+release gate on the intended commit before merging or triggering a deployment.
 
 ## Expected Layout
 
@@ -57,6 +72,18 @@ Check:
 - tenant creation
 - plan/module visibility
 - procurement, payments, and weighbridge screens for a tenant user
+
+### Invoice and document previews
+
+PDF.js loads an `.mjs` worker from the frontend assets. Verify its response
+has `Content-Type: application/javascript` (or `text/javascript`), rather than
+`application/octet-stream`. A successful HTTP status alone is insufficient:
+browsers reject module workers with a non-JavaScript content type.
+
+Both Nginx templates explicitly map frontend `.mjs` assets to JavaScript and
+return 404 for a missing worker instead of serving the app's HTML. Preserve this
+mapping in custom server configurations. Validate with `nginx -t` before reload,
+then check the worker URL shown in the browser error and open an invoice preview.
 
 ## Backup Before Risky Changes
 
@@ -113,13 +140,13 @@ bash scripts/deploy-docker.sh
 Docker deployments automatically create a database dump before rebuilding and
 running migrations when an existing database container is active.
 
-The Docker stack is defined in [docker-compose.production.yml](/home/mike/DEVELOPMENT/SIAKORA%20LABS/SL-ERP/docker-compose.production.yml:1).
+The Docker stack is defined in [docker-compose.production.yml](../docker-compose.production.yml).
 
 ## GitHub Actions Automation
 
-CI runs from [ci.yml](/home/mike/DEVELOPMENT/SIAKORA%20LABS/SL-ERP/.github/workflows/ci.yml:1).
+CI runs from [ci.yml](../.github/workflows/ci.yml).
 
 Remote deploy workflows:
 
-- bare metal: [deploy-baremetal.yml](/home/mike/DEVELOPMENT/SIAKORA%20LABS/SL-ERP/.github/workflows/deploy-baremetal.yml:1)
-- docker: [deploy-docker.yml](/home/mike/DEVELOPMENT/SIAKORA%20LABS/SL-ERP/.github/workflows/deploy-docker.yml:1)
+- bare metal: [deploy-baremetal.yml](../.github/workflows/deploy-baremetal.yml)
+- docker: [deploy-docker.yml](../.github/workflows/deploy-docker.yml)
