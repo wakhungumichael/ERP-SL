@@ -18,6 +18,7 @@ DOCUMENT_SETTINGS_FIELD_MAP = {
     "receipt": "receipt_template",
     "statement": "statement_template",
     "purchase_order": "purchase_order_template",
+    "report": "report_template",
 }
 
 DOCUMENT_TITLES = {
@@ -69,7 +70,7 @@ def _get_settings(tenant):
     if tenant is None:
         return None
     try:
-        return tenant.settings
+        return TenantSettings.objects.filter(tenant_id=tenant.pk).select_related(*DOCUMENT_SETTINGS_FIELD_MAP.values()).first()
     except TenantSettings.DoesNotExist:
         return None
     except Exception:
@@ -1303,6 +1304,15 @@ def render_document_template_preview(template, *, tenant=None, request=None):
         "generated_at": timezone.now(),
     }
 
+    if template.document_type == "receipt":
+        context["document"]["terms"] = ""
+    if template.document_type == "statement":
+        context["statement_invoices"] = [
+            {"number": "INV-PREVIEW-001", "date": "26 Jul 2026", "due_date": "30 Jul 2026", "total": _money(Decimal("13920"), currency), "paid": _money(0, currency), "balance": _money(Decimal("13920"), currency)},
+        ]
+        context["statement_aging"] = [{"label": "Current", "amount": _money(Decimal("13920"), currency)}, {"label": "1-30 days", "amount": _money(0, currency)}, {"label": "31-60 days", "amount": _money(0, currency)}]
+        context["totals"]["paid_display"] = _money(0, currency)
+        context["totals"]["subtotal_display"] = _money(Decimal("13920"), currency)
     primary_color = context["branding"]["primary_color"] or "#E85D26"
     template_body = template.body_template or _default_body(template.document_type)
     stylesheet = template.stylesheet or _default_stylesheet(primary_color)

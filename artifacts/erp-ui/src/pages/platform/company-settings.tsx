@@ -1,3 +1,4 @@
+import { DocumentTemplateGallery } from '@/components/documents/document-template-gallery';
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { useState, useEffect } from 'react';
 import { useSearch } from 'wouter';
@@ -64,27 +65,6 @@ const DOCUMENT_TYPES = [
   { value: 'statement', label: 'Statement' },
   { value: 'report', label: 'Report' },
 ];
-
-const TEMPLATE_GROUPS = [
-  {
-    key: 'sales',
-    title: 'Sales',
-    description: 'Customer-facing billing and commercial documents.',
-    documentTypes: ['invoice', 'quotation', 'receipt'],
-  },
-  {
-    key: 'finance',
-    title: 'Finance',
-    description: 'Internal and account follow-up financial documents.',
-    documentTypes: ['statement', 'purchase_order'],
-  },
-  {
-    key: 'reports',
-    title: 'Reports',
-    description: 'Centralized report layouts used by ERP reporting workspaces.',
-    documentTypes: ['report'],
-  },
-] as const;
 
 const DEFAULT_LOGIN_PAGE_CONFIG = {
   eyebrow: 'SL ERP',
@@ -224,7 +204,7 @@ const PAGINATION_PAGE_SIZES = [5, 10, 25, 50];
 const BRANDING_SETTINGS_FIELDS = ['primary_color', 'secondary_color', 'accent_color', 'sidebar_color', 'workspace_name'] as const;
 const DOCUMENT_TEMPLATE_FIELDS: Record<string, string> = {
   invoice: 'invoice_template_id', quotation: 'estimate_template_id', receipt: 'receipt_template_id',
-  statement: 'statement_template_id', purchase_order: 'purchase_order_template_id',
+  statement: 'statement_template_id', purchase_order: 'purchase_order_template_id', report: 'report_template_id',
 };
 const PLATFORM_BRANDING_FIELDS = ['branding_mode', 'dedicated_tenant', 'platform_name', 'logo_url', 'primary_color', 'footer_text', 'support_email'] as const;
 const PUBLIC_SITE_SETTINGS_FIELDS = ['login_page_config', 'landing_page_config', 'footer_menu'] as const;
@@ -235,8 +215,7 @@ const EMAIL_SETTINGS_FIELDS = [
 const INVOICE_SETTINGS_FIELDS = [
   'invoice_prefix', 'default_payment_terms_days', 'footer_text', 'default_tax_name',
   'invoice_address', 'invoice_tax_number', 'invoice_website', 'invoice_payment_instructions',
-  'default_tax_rate', 'invoice_template_id', 'estimate_template_id', 'receipt_template_id',
-  'statement_template_id', 'purchase_order_template_id',
+  'default_tax_rate',
 ] as const;
 const WORKFLOW_LIFECYCLE_SETTINGS_FIELDS = ['document_status_policy'] as const;
 const SESSION_SECURITY_SETTINGS_FIELDS = ['session_timeout_minutes'] as const;
@@ -1992,6 +1971,7 @@ export default function OrganizationSettings() {
     receipt_template_id: source?.receipt_template?.id ?? null,
     purchase_order_template_id: source?.purchase_order_template?.id ?? null,
     statement_template_id: source?.statement_template?.id ?? null,
+    report_template_id: source?.report_template?.id ?? null,
     session_timeout_minutes: source?.session_timeout_minutes ?? 30,
   });
   };
@@ -2295,15 +2275,13 @@ export default function OrganizationSettings() {
       setSettingsForm((current: any) => ({ ...current, ...assignments }));
       qc.setQueryData(['my-tenant-settings', organizationId], response);
       qc.setQueryData(['dashboard-tenant-settings', organizationId, token], saved);
-      toast({ title: 'Document template selected', description: 'New previews and PDF downloads will use this layout.' });
+      toast({ title: 'Document template selected', description: 'This layout now applies to this document type throughout the organization.' });
     },
     onError: (error: any) => toast({ title: 'Template selection failed', description: error.message, variant: 'destructive' }),
   });
 
   const templatesByType = (documentType: string) =>
     templates.filter((t: any) => t.document_type === documentType && t.is_active !== false);
-
-  const templateTypeMap = new Map(DOCUMENT_TYPES.map((documentType) => [documentType.value, documentType]));
 
   const previewTemplate = async (templateId: number) => {
     try {
@@ -3189,66 +3167,6 @@ export default function OrganizationSettings() {
                       <Input value={settingsForm.default_tax_rate ?? '0'} onChange={sf('default_tax_rate')} type="number" min="0" step="0.01" />
                       <p className="text-xs text-muted-foreground">Used as the starting tax rate when creating products, services, and billable lines.</p>
                     </div>
-                    <div className="space-y-1.5">
-                      <Label>Invoice Template</Label>
-                      <Select value={String(settingsForm.invoice_template_id ?? '__none__')} onValueChange={v => setSettingsForm((p: any) => ({ ...p, invoice_template_id: v === '__none__' ? null : Number(v) }))}>
-                        <SelectTrigger><SelectValue placeholder="Select invoice template" /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="__none__">Automatic default</SelectItem>
-                          {templatesByType('invoice').map((t: any) => (
-                            <SelectItem key={t.id} value={String(t.id)}>{t.name}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label>Estimate Template</Label>
-                      <Select value={String(settingsForm.estimate_template_id ?? '__none__')} onValueChange={v => setSettingsForm((p: any) => ({ ...p, estimate_template_id: v === '__none__' ? null : Number(v) }))}>
-                        <SelectTrigger><SelectValue placeholder="Select estimate template" /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="__none__">Automatic default</SelectItem>
-                          {templatesByType('quotation').map((t: any) => (
-                            <SelectItem key={t.id} value={String(t.id)}>{t.name}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label>Receipt Template</Label>
-                      <Select value={String(settingsForm.receipt_template_id ?? '__none__')} onValueChange={v => setSettingsForm((p: any) => ({ ...p, receipt_template_id: v === '__none__' ? null : Number(v) }))}>
-                        <SelectTrigger><SelectValue placeholder="Select receipt template" /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="__none__">Automatic default</SelectItem>
-                          {templatesByType('receipt').map((t: any) => (
-                            <SelectItem key={t.id} value={String(t.id)}>{t.name}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label>Statement Template</Label>
-                      <Select value={String(settingsForm.statement_template_id ?? '__none__')} onValueChange={v => setSettingsForm((p: any) => ({ ...p, statement_template_id: v === '__none__' ? null : Number(v) }))}>
-                        <SelectTrigger><SelectValue placeholder="Select statement template" /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="__none__">Automatic default</SelectItem>
-                          {templatesByType('statement').map((t: any) => (
-                            <SelectItem key={t.id} value={String(t.id)}>{t.name}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label>Purchase Order Template</Label>
-                      <Select value={String(settingsForm.purchase_order_template_id ?? '__none__')} onValueChange={v => setSettingsForm((p: any) => ({ ...p, purchase_order_template_id: v === '__none__' ? null : Number(v) }))}>
-                        <SelectTrigger><SelectValue placeholder="Select purchase order template" /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="__none__">Automatic default</SelectItem>
-                          {templatesByType('purchase_order').map((t: any) => (
-                            <SelectItem key={t.id} value={String(t.id)}>{t.name}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
                   </div>
                   <Button onClick={() => saveSettings.mutate(INVOICE_SETTINGS_FIELDS)} disabled={saveSettings.isPending}>
                     {saveSettings.isPending ? 'Saving…' : 'Save Invoice Settings'}
@@ -3257,6 +3175,9 @@ export default function OrganizationSettings() {
               )}
             </CardContent>
           </Card>
+          <Card className="mt-6"><CardContent className="p-4 sm:p-6">
+            <DocumentTemplateGallery templates={templates} settings={settings} pending={selectDocumentTemplate.isPending} onSelect={template => selectDocumentTemplate.mutate(template)} onPreview={previewTemplate} />
+          </CardContent></Card>
         </TabsContent>
 
         <TabsContent value="taxes-charges" className="mt-6">
@@ -3303,88 +3224,10 @@ export default function OrganizationSettings() {
         </TabsContent>
 
         <TabsContent value="templates" className="mt-6">
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium">Document Templates</p>
-                <p className="text-xs text-muted-foreground">Preview Classic, Modern, and Compact layouts with your branding, then choose a layout for each document type. Downloads use PDF.</p>
-              </div>
-              <Button size="sm" onClick={() => setTemplateDialogOpen(true)} className="gap-1.5">
-                <Plus className="h-3.5 w-3.5" /> New Template
-              </Button>
-            </div>
-            <div className="space-y-5">
-              {TEMPLATE_GROUPS.map((group) => {
-                const groupTypes = group.documentTypes
-                  .map((documentType) => templateTypeMap.get(documentType))
-                  .filter(Boolean) as Array<{ value: string; label: string }>;
-                const groupTemplateCount = groupTypes.reduce((count, documentType) => count + templatesByType(documentType.value).length, 0);
-
-                return (
-                  <Card key={group.key} className="overflow-hidden">
-                    <CardHeader className="border-b bg-muted/20 px-4 py-4">
-                      <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
-                        <div>
-                          <CardTitle className="text-sm font-bold uppercase tracking-[0.14em]">{group.title}</CardTitle>
-                          <p className="mt-1 text-xs text-muted-foreground">{group.description}</p>
-                        </div>
-                        <div className="inline-flex w-fit rounded-full border border-border bg-background px-3 py-1 text-[11px] font-semibold text-muted-foreground">
-                          {groupTemplateCount} template{groupTemplateCount === 1 ? '' : 's'}
-                        </div>
-                      </div>
-                    </CardHeader>
-                    <CardContent className="space-y-4 p-4">
-                      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 2xl:grid-cols-3">
-                        {groupTypes.map((dt) => (
-                          <div key={dt.value} className="rounded-2xl border bg-background">
-                            <div className="border-b px-4 py-3">
-                              <div className="flex items-center justify-between gap-3">
-                                <p className="text-sm font-semibold">{dt.label}</p>
-                                <span className="text-xs text-muted-foreground">
-                                  {templatesByType(dt.value).length} item{templatesByType(dt.value).length === 1 ? '' : 's'}
-                                </span>
-                              </div>
-                            </div>
-                            <div className="space-y-3 p-4">
-                              {templatesByType(dt.value).length === 0 ? (
-                                <p className="text-sm text-muted-foreground">No templates yet.</p>
-                              ) : (
-                                templatesByType(dt.value).map((t: any) => (
-                                  <div key={t.id} className="rounded-xl border p-3">
-                                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                                      <div className="min-w-0 break-words">
-                                        <p className="text-sm font-semibold">{t.name}</p>
-                                        <p className="text-xs text-muted-foreground">
-                                          {t.tenant ? 'Organization template' : 'Shared template'} {t.is_default ? '· Default' : ''}
-                                        </p>
-                                      </div>
-                                      <div className="flex flex-wrap items-center gap-1">
-                                        <Button size="sm" variant="outline" onClick={() => previewTemplate(t.id)}>
-                                          <Eye className="h-3.5 w-3.5" /> Preview
-                                        </Button>
-                                        <Button size="sm" variant="ghost" aria-label={`Copy ${t.name} template`} onClick={() => navigator.clipboard.writeText(t.body_template ?? '')}>
-                                          <Copy className="h-3.5 w-3.5" />
-                                        </Button>
-                                      </div>
-                                    </div>
-                                    {DOCUMENT_TEMPLATE_FIELDS[dt.value] && (
-                                      <Button className="mt-3 w-full" size="sm" variant={settings[DOCUMENT_TEMPLATE_FIELDS[dt.value].replace('_id', '')]?.id === t.id ? 'secondary' : 'default'} disabled={selectDocumentTemplate.isPending || settings[DOCUMENT_TEMPLATE_FIELDS[dt.value].replace('_id', '')]?.id === t.id} onClick={() => selectDocumentTemplate.mutate(t)}>
-                                        {settings[DOCUMENT_TEMPLATE_FIELDS[dt.value].replace('_id', '')]?.id === t.id ? 'Selected for this organization' : `Use for ${dt.label}`}
-                                      </Button>
-                                    )}
-                                  </div>
-                                ))
-                              )}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </CardContent>
-                  </Card>
-                );
-              })}
-            </div>
-          </div>
+          <Card><CardContent className="space-y-5 p-4 sm:p-6">
+            <div className="flex justify-end"><Button size="sm" onClick={() => setTemplateDialogOpen(true)} className="gap-1.5"><Plus className="h-3.5 w-3.5" />New Template</Button></div>
+            <DocumentTemplateGallery templates={templates} settings={settings} pending={selectDocumentTemplate.isPending} onSelect={template => selectDocumentTemplate.mutate(template)} onPreview={previewTemplate} />
+          </CardContent></Card>
         </TabsContent>
 
         <TabsContent value="users" className="mt-6">

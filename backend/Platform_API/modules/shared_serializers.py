@@ -533,6 +533,17 @@ class IntegrationEndpointSerializer(serializers.ModelSerializer):
 
 
 class DocumentTemplateSerializer(serializers.ModelSerializer):
+    layout_key = serializers.SerializerMethodField()
+    layout_description = serializers.SerializerMethodField()
+
+    def get_layout_key(self, obj):
+        from Platform_Core.document_styles import template_style
+        return template_style(obj)[0]
+
+    def get_layout_description(self, obj):
+        from Platform_Core.document_styles import template_style
+        return template_style(obj)[1]
+
     tenant = TenantSummarySerializer(read_only=True)
     tenant_id = serializers.PrimaryKeyRelatedField(
         source="tenant", queryset=Tenant.objects.all(), write_only=True, allow_null=True, required=False
@@ -552,7 +563,7 @@ class DocumentTemplateSerializer(serializers.ModelSerializer):
             "subject_template",
             "body_template",
             "stylesheet",
-            "version",
+            "version", "layout_key", "layout_description",
             "created_at",
             "updated_at",
         )
@@ -856,6 +867,11 @@ class TenantSettingsSerializer(serializers.ModelSerializer):
         required=False,
         allow_null=True,
     )
+    report_template_id = serializers.PrimaryKeyRelatedField(
+        source="report_template", queryset=DocumentTemplate.objects.all(),
+        write_only=True, required=False, allow_null=True,
+    )
+    report_template = DocumentTemplateSerializer(read_only=True)
     invoice_template = DocumentTemplateSerializer(read_only=True)
     estimate_template = DocumentTemplateSerializer(read_only=True)
     receipt_template = DocumentTemplateSerializer(read_only=True)
@@ -880,6 +896,7 @@ class TenantSettingsSerializer(serializers.ModelSerializer):
             "receipt_template", "receipt_template_id",
             "statement_template", "statement_template_id",
             "purchase_order_template", "purchase_order_template_id",
+            "report_template", "report_template_id",
             "smtp_host", "smtp_port", "smtp_user", "smtp_password", "smtp_use_tls", "smtp_use_ssl",
             "smtp_allow_insecure_ssl", "smtp_password_configured",
             "session_timeout_minutes",

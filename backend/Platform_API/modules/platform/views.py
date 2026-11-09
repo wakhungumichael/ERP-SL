@@ -4372,10 +4372,13 @@ class TenantSettingsAPIView(APIView):
             ("receipt_template", "receipt"),
             ("statement_template", "statement"),
             ("purchase_order_template", "purchase_order"),
+            ("report_template", "report"),
         ):
             template = s.validated_data.get(field_name)
             if not template:
                 continue
+            if not template.is_active:
+                return error_response("Select an active document template.", status_code=status.HTTP_400_BAD_REQUEST)
             if template.document_type != document_type:
                 return error_response(
                     f"{field_name} must reference a {document_type} template.",

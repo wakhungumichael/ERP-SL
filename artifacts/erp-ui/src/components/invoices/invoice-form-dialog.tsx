@@ -349,6 +349,19 @@ export function InvoiceFormDialog({ open, onOpenChange, token, onSuccess, invoic
         </DialogHeader>
 
         <div className="min-h-0 min-w-0 flex-1 space-y-6 overflow-y-auto overscroll-y-contain px-4 py-5 sm:px-6 [&_input]:h-11 [&_input]:min-w-0 [&_input]:text-base md:[&_input]:h-9 md:[&_input]:text-sm [&_button[role=combobox]]:h-11 [&_button[role=combobox]]:min-w-0 [&_button[role=combobox]]:text-base md:[&_button[role=combobox]]:h-9 md:[&_button[role=combobox]]:text-sm">
+          <section aria-label="Invoice dates" className="grid min-w-0 gap-4 rounded-lg border bg-muted/20 p-4 sm:grid-cols-2">
+            <div className="min-w-0 space-y-1.5">
+              <Label htmlFor="invoice-date">Invoice date</Label>
+              <Input id="invoice-date" className="w-full max-w-full" type="date" required value={invoiceDate} onChange={e => setInvoiceDate(e.target.value)} />
+              <p className="text-xs text-muted-foreground">Use the date on the original invoice, including dates from previous years.</p>
+            </div>
+            <div className="min-w-0 space-y-1.5">
+              <Label htmlFor="invoice-due-date">Due date</Label>
+              <Input id="invoice-due-date" className="w-full max-w-full" type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} />
+              <p className="text-xs text-muted-foreground">Leave blank to calculate it from the invoice date and payment terms.</p>
+            </div>
+          </section>
+
           {/* Customer picker */}
           <div className="min-w-0 space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -485,15 +498,6 @@ export function InvoiceFormDialog({ open, onOpenChange, token, onSuccess, invoic
                     <SelectTrigger id="invoice-currency"><SelectValue /></SelectTrigger>
                     <SelectContent>{['KES', 'USD', 'EUR', 'GBP'].map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
                   </Select>
-                </div>
-                <div className="min-w-0 space-y-1.5">
-                  <Label htmlFor="invoice-date">Invoice date</Label>
-                  <Input id="invoice-date" className="w-full max-w-full" type="date" required value={invoiceDate} onChange={e => setInvoiceDate(e.target.value)} />
-                  <p className="text-xs text-muted-foreground">Choose an earlier date to backdate this invoice.</p>
-                </div>
-                <div className="min-w-0 space-y-1.5">
-                  <Label htmlFor="invoice-due-date">Due date</Label>
-                  <Input id="invoice-due-date" className="w-full max-w-full" type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} />
                 </div>
                 <div className="min-w-0 space-y-1.5">
                   <Label htmlFor="invoice-tax-method">Tax method</Label>

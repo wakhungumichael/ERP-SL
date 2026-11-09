@@ -6,6 +6,8 @@ VARIANTS = [
     ("classic", "Classic"),
     ("modern", "Modern"),
     ("compact", "Compact"),
+    ("executive", "Executive"),
+    ("minimal", "Minimal"),
 ]
 
 DOCUMENTS = [
@@ -186,38 +188,51 @@ def _legacy_body(document_label: str, variant: str):
 
 
 def _body(document_label, variant):
+    from .document_styles import apply_layout, report_body
     if document_label == "Report":
-        return _legacy_body(document_label, variant)
-    if document_label == "Invoice":
+        layout = report_body()
+    elif document_label == "Invoice":
         from .invoice_templates import body
-        return body(variant)
-    from .professional_templates import body
-    return body(document_label, variant)
+        layout = body(variant)
+    else:
+        from .professional_templates import body
+        layout = body(document_label, variant)
+        if document_label == "Receipt":
+            import re
+            layout = re.sub(r'<table class="totals">.*?</td></tr></table>', '<table class="totals"><tr class="total-row"><td width="50%"></td><td width="25%">Amount paid</td><td class="num" width="25%">{{ totals.total_display }}</td></tr></table>', layout, count=1, flags=re.S)
+    return apply_layout(layout, variant)
 
 
 def _stylesheet(variant, document_type=None):
+    from .document_styles import stylesheet as style_overrides
     if document_type == "invoice":
         from .invoice_templates import stylesheet
     else:
         from .professional_templates import stylesheet
-    return stylesheet(variant)
+    return stylesheet(variant) + style_overrides(variant)
 
 
 def upgrade_shared_template(template):
-    """Upgrade untouched library layouts while preserving customer edits."""
+    """Upgrade exact previous library layouts; never replace customer edits."""
     if template.tenant_id is not None:
         return template
+    from .professional_templates import body as previous_body, stylesheet as previous_stylesheet
+    from .invoice_templates import body as invoice_body, stylesheet as invoice_stylesheet, previous_print_layout
     for document_type, label in DOCUMENTS:
-        for variant, title in VARIANTS:
-            if template.document_type != document_type or template.name != f"{label} {title}" or label == "Report":
+        for variant, title in VARIANTS[:3]:
+            if template.document_type != document_type or template.name != f"{label} {title}":
                 continue
-            from .professional_templates import body as previous_body, stylesheet as previous_stylesheet
-            untouched_legacy = template.body_template == _legacy_body(label, variant) and template.stylesheet == _legacy_stylesheet(variant)
-            untouched_invoice = label == "Invoice" and template.body_template == previous_body(label, variant) and template.stylesheet == previous_stylesheet(variant)
-            if untouched_legacy or untouched_invoice:
+            previous = [(_legacy_body(label, variant), _legacy_stylesheet(variant))]
+            if label != "Report":
+                previous.append((previous_body(label, variant), previous_stylesheet(variant)))
+            if label == "Invoice":
+                previous.append((invoice_body(variant), invoice_stylesheet(variant)))
+                previous.append(previous_print_layout(variant))
+            if (template.body_template, template.stylesheet) in previous:
                 template.body_template = _body(label, variant)
                 template.stylesheet = _stylesheet(variant, document_type)
                 template.save(update_fields=["body_template", "stylesheet", "updated_at"])
+            return template
     return template
 
 
@@ -245,7 +260,7 @@ def ensure_shared_document_template_library():
                     is_active=True,
                     subject_template=f"{document_label} {{{{ document.number }}}}",
                     body_template=_body(document_label, variant_key),
-                    stylesheet=_legacy_stylesheet(variant_key) if document_type == "report" else _stylesheet(variant_key, document_type),
+                    stylesheet=_stylesheet(variant_key, document_type),
                 )
                 created += 1
             else:

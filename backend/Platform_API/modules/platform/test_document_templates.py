@@ -1,6 +1,6 @@
 # Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu.
 from django.contrib.auth.models import User
-from django.test import TestCase
+from django.test import SimpleTestCase, TestCase
 from django.urls import reverse
 from rest_framework.test import APIClient
 
@@ -156,3 +156,125 @@ class TenantDocumentTemplateTests(TestCase):
         self.assertEqual(response.status_code, 400, response.data)
         template.refresh_from_db()
         self.assertEqual(template.tenant_id, self.tenant.id)
+
+    def test_each_document_has_five_styles_and_idempotent_library(self):
+        from Platform_Core.template_library import DOCUMENTS, VARIANTS
+        ensure_shared_document_template_library()
+        self.assertEqual(ensure_shared_document_template_library(), 0)
+        for kind, label in DOCUMENTS:
+            with self.subTest(document=kind):
+                layouts = DocumentTemplate.objects.filter(tenant=None, document_type=kind)
+                self.assertEqual(layouts.count(), 5)
+                self.assertEqual(layouts.filter(is_default=True).count(), 1)
+                for key, title in VARIANTS:
+                    layout = layouts.get(name=f"{label} {title}")
+                    self.assertIn(f"style-{key}", layout.body_template)
+
+    def test_selection_persists_per_document_and_is_used_by_shared_renderer(self):
+        from Platform_Core.documents import DOCUMENT_SETTINGS_FIELD_MAP, render_business_document, resolve_document_template
+        from Platform_Core.template_library import DOCUMENTS
+        ensure_shared_document_template_library()
+        url = reverse("tenant-settings", kwargs={"pk": self.tenant.id})
+        for kind, label in DOCUMENTS:
+            with self.subTest(document=kind):
+                layout = DocumentTemplate.objects.get(tenant=None, name=f"{label} Executive")
+                field = DOCUMENT_SETTINGS_FIELD_MAP[kind]
+                response = self.client.put(url, {field + "_id": layout.id}, format="json")
+                self.assertEqual(response.status_code, 200, response.data)
+                reloaded = self.client.get(url).data["data"]
+                self.assertEqual(reloaded[field]["id"], layout.id)
+                selected, _ = resolve_document_template(tenant=self.tenant, document_type=kind)
+                self.assertEqual(selected.pk, layout.pk)
+                rendered = render_business_document(tenant=self.tenant, document_type=kind, context={"document": {"number": "CHOICE-001"}, "company": {"name": "Template Tenant"}, "branding": {"primary_color": "#224466"}})
+                self.assertEqual(rendered.template.pk, layout.pk)
+                self.assertIn("style-executive", rendered.html)
+        # Changing only one selection must preserve the other modules' choices.
+        modern = DocumentTemplate.objects.get(tenant=None, name="Invoice Modern")
+        response = self.client.put(url, {"invoice_template_id": modern.id}, format="json")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["data"]["estimate_template"]["name"], "Estimate Executive")
+        self.assertEqual(response.data["data"]["report_template"]["name"], "Report Executive")
+        response = self.client.put(url, {"invoice_template_id": None}, format="json")
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.data["data"]["invoice_template"])
+        selected, _ = resolve_document_template(tenant=self.tenant, document_type="invoice")
+        self.assertEqual(selected.name, "Invoice Classic")
+
+    def test_invalid_inactive_and_foreign_layout_selections_are_rejected(self):
+        other = Tenant.objects.create(name="Foreign Template", code="foreign-template")
+        foreign = DocumentTemplate.objects.create(tenant=other, document_type="invoice", name="Private invoice")
+        inactive = DocumentTemplate.objects.create(document_type="invoice", name="Inactive invoice", is_active=False)
+        wrong_type = DocumentTemplate.objects.create(document_type="quotation", name="Wrong type")
+        url = reverse("tenant-settings", kwargs={"pk": self.tenant.pk})
+        for layout in [foreign, inactive, wrong_type]:
+            with self.subTest(layout=layout.name):
+                response = self.client.put(url, {"invoice_template_id": layout.pk}, format="json")
+                self.assertEqual(response.status_code, 400, response.data)
+
+    def test_existing_generated_layouts_upgrade_but_customized_templates_stay(self):
+        from Platform_Core.invoice_templates import body, stylesheet
+        old = DocumentTemplate.objects.create(name="Invoice Modern", document_type="invoice", body_template=body("modern"), stylesheet=stylesheet("modern"))
+        custom = DocumentTemplate.objects.create(name="Estimate Modern", document_type="quotation", body_template="<h1>Custom shared estimate</h1>", stylesheet="h1 {color:red;}")
+        ensure_shared_document_template_library()
+        old.refresh_from_db()
+        custom.refresh_from_db()
+        self.assertIn("banner-heading", old.body_template)
+        self.assertEqual(custom.body_template, "<h1>Custom shared estimate</h1>")
+        self.assertEqual(custom.stylesheet, "h1 {color:red;}")
+
+    def test_all_library_layouts_export_pdf_with_document_content(self):
+        from io import BytesIO
+        from pypdf import PdfReader
+        from Platform_Core.document_pdf import document_pdf_bytes
+        from Platform_Core.documents import render_document_template_preview
+        ensure_shared_document_template_library()
+        TenantSettings.objects.create(tenant=self.tenant, primary_color="#224466", footer_text="Template export footer")
+        for layout in DocumentTemplate.objects.filter(tenant=None):
+            with self.subTest(layout=layout.name):
+                rendered = render_document_template_preview(layout, tenant=self.tenant)
+                self.assertNotIn("{{", rendered.html)
+                pdf = PdfReader(BytesIO(document_pdf_bytes(rendered.html)))
+                self.assertEqual(len(pdf.pages), 1, "Short sample should not spill onto an extra page")
+                text = " ".join(" ".join(page.extract_text() for page in pdf.pages).split())
+                self.assertIn("Template Tenant", text)
+                self.assertIn("Template export footer", text)
+                if layout.document_type == "report":
+                    self.assertIn("RPT-PREVIEW-001", text)
+                    self.assertIn("Net Weight", text)
+                elif layout.document_type == "receipt":
+                    self.assertIn("RCT-PREVIEW-001", text)
+                    self.assertIn("KES 1,800.00", text)
+                elif layout.document_type == "statement":
+                    self.assertIn("INV-PREVIEW-001", text)
+                    self.assertIn("Aging Summary", text)
+                    self.assertIn("KES 13,920.00", text)
+                else:
+                    self.assertIn("Premium service subscription", text)
+                    self.assertIn("KES 13,920.00", text)
+
+
+class SharedInvoiceLayoutUpgradeTests(SimpleTestCase):
+    def test_previous_invoice_print_layouts_receive_distinct_styles(self):
+        from unittest.mock import patch
+        from Platform_Core.invoice_templates import previous_print_layout
+        from Platform_Core.template_library import upgrade_shared_template
+        for key, title in [("classic", "Classic"), ("modern", "Modern"), ("compact", "Compact")]:
+            with self.subTest(layout=title):
+                body, css = previous_print_layout(key)
+                layout = DocumentTemplate(name=f"Invoice {title}", document_type="invoice", body_template=body, stylesheet=css)
+                with patch.object(layout, "save") as save:
+                    upgrade_shared_template(layout)
+                self.assertIn(f"style-{key}", layout.body_template)
+                save.assert_called_once()
+
+    def test_modified_previous_layout_is_preserved(self):
+        from unittest.mock import patch
+        from Platform_Core.invoice_templates import previous_print_layout
+        from Platform_Core.template_library import upgrade_shared_template
+        body, css = previous_print_layout("modern")
+        body += "<p>Customer-specific billing terms</p>"
+        layout = DocumentTemplate(name="Invoice Modern", document_type="invoice", body_template=body, stylesheet=css)
+        with patch.object(layout, "save") as save:
+            upgrade_shared_template(layout)
+        self.assertEqual(layout.body_template, body)
+        save.assert_not_called()

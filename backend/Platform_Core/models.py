@@ -1003,6 +1003,10 @@ class TenantSettings(TimeStampedModel):
         null=True,
         related_name="purchase_order_template_settings",
     )
+    report_template = models.ForeignKey(
+        "DocumentTemplate", on_delete=models.SET_NULL, blank=True, null=True,
+        related_name="report_template_settings",
+    )
     # SMTP
     smtp_host = models.CharField(max_length=255, blank=True)
     smtp_port = models.PositiveIntegerField(default=587)

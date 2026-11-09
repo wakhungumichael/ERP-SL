@@ -125,11 +125,15 @@ class DocumentPdfTests(TestCase):
             for index in range(100)
         ])
         self.estimate.recalculate()
-        response = self.client.get(reverse("estimate-document", args=[self.estimate.pk]), {"download": "pdf"})
-        reader, text = self.assert_pdf(response, self.estimate.estimate_number)
-        self.assertGreater(len(reader.pages), 1)
-        self.assertIn("Service line 099", text)
-        self.assertIn("KES 13,000.00", text)
+        for title in ("Classic", "Modern", "Compact", "Executive", "Minimal"):
+            with self.subTest(layout=title):
+                self.settings.estimate_template = DocumentTemplate.objects.get(tenant=None, name=f"Estimate {title}")
+                self.settings.save()
+                response = self.client.get(reverse("estimate-document", args=[self.estimate.pk]), {"download": "pdf"})
+                reader, text = self.assert_pdf(response, self.estimate.estimate_number)
+                self.assertGreater(len(reader.pages), 1)
+                self.assertIn("Service line 099", text)
+                self.assertIn("KES 13,000.00", text)
 
     def test_pdf_cannot_be_downloaded_by_a_different_tenant(self):
         other = Tenant.objects.create(name="Other", code="other-pdf")

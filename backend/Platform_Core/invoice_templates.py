@@ -125,3 +125,23 @@ def body(variant):
     </div>
     <div id="invoice-page-footer">{{ document.number }} | Page <pdf:pagenumber /> of <pdf:pagecount /></div>
     """
+
+
+def previous_print_layout(variant):
+    """Exact pre-spacing-update layout; recognize untouched built-ins only."""
+    layout = body(variant)
+    layout = layout.replace('<div class="invoice-notes"><strong class="label">Notes</strong><br/>', '<div class="notes"><div class="label">Notes</div>')
+    layout = layout.replace('<div class="invoice-notes"><strong class="label">Terms &amp; conditions</strong><br/>', '<div class="notes"><div class="label">Terms &amp; conditions</div>')
+    layout = layout.replace('<div id="invoice-page-footer">{{ document.number }} | Page <pdf:pagenumber /> of <pdf:pagecount /></div>', '<div id="invoice-page-footer"><table><tr><td>{{ document.number }}</td><td class="num">Page <pdf:pagenumber /> of <pdf:pagecount /></td></tr></table></div>')
+    css = stylesheet(variant)
+    replacements = [
+        ('bottom: 7mm; height: 10mm;', 'bottom: 9mm; height: 7mm;'),
+        ('.party { background-color: #ffffff; margin: 0 0 6pt; }', '.party { background-color: #ffffff; margin: 0 0 12pt; }'),
+        ('.line-items { margin-top: 4pt; margin-bottom: 10pt; }', '.line-items { margin-top: 8pt; margin-bottom: 14pt; }'),
+        ('.invoice-notes { margin-top: 10pt; font-size: 9pt; line-height: 12pt; }', '.notes { margin-top: 14pt; padding-top: 10pt; }'),
+        ('.prepared-by { margin-top: 10pt;', '.prepared-by { margin-top: 16pt;'),
+        ('#invoice-page-footer { color: #5b6573; font-size: 8pt; line-height: 10pt; text-align: right; }', '#invoice-page-footer { color: #5b6573; font-size: 8pt; border-top: 1px solid #e1e5ea; }'),
+    ]
+    for before, after in replacements:
+        css = css.replace(before, after)
+    return layout, css
