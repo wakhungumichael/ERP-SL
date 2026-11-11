@@ -38,3 +38,17 @@ styles. Custom templates may use the new context fields:
 Local schema changes are in `Platform_Core.0076_invoice_billing_details` and
 `SL_Weighbridge.0085_invoice_billing_details`. Run migrations before starting an
 updated backend. These changes do not seed, replace, or delete existing invoices.
+
+## Tax-inclusive invoice prices
+
+For a manual invoice, choose **Combined invoice tax**, enter the tax rate, and set
+**Tax treatment** to **Prices include tax**. Enter each item's agreed price including
+tax. At 16%, KES 1,160 is split into KES 1,000 before tax and KES 160 tax; the total
+stays KES 1,160. The tax is extracted using total × rate ÷ (100 + rate).
+
+The summary, saved invoice and printable document show the same subtotal, tax and
+total. Additional charges are added separately; percentage charges use the subtotal
+before tax. Draft edits retain the entered inclusive prices and tax treatment.
+Existing invoices and new invoices default to prices excluding tax.
+
+This option requires migration `SL_Weighbridge.0086_invoice_prices_include_tax`.

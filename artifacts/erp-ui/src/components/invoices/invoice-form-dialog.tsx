@@ -6,6 +6,7 @@ import { useAuth } from '@/context/use-auth';
 import { useToast } from '@/hooks/use-toast';
 import { hasPermission } from '@/lib/permissions';
 import { formatApiError } from '@/lib/api-errors';
+import { invoiceTotals } from '@/lib/invoice-totals';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -31,6 +32,7 @@ export interface EditableInvoice extends Partial<BillingDetails> {
   lines: { product: number | null; product_name: string; description: string; quantity: number | string; unit_price: number; tax_rate: number }[];
   tax_mode: 'per_line' | 'combined';
   combined_tax_rate: number;
+  prices_include_tax?: boolean;
   charges: { id: number; charge_rule: number | null; name: string; calculation_type: string; rate: number; amount: number }[];
 }
 
@@ -76,6 +78,7 @@ export function InvoiceFormDialog({ open, onOpenChange, token, onSuccess, invoic
   const [lines, setLines] = useState<LineItem[]>([{ product_id: null, description: '', qty: 1, unit_price: 0, tax_rate: 0 }]);
   const [taxMode, setTaxMode] = useState<'per_line' | 'combined'>('per_line');
   const [combinedTaxRate, setCombinedTaxRate] = useState(0);
+  const [pricesIncludeTax, setPricesIncludeTax] = useState(false);
   const [chargeIds, setChargeIds] = useState<number[]>([]);
   const [newProduct, setNewProduct] = useState({ name: '', description: '', unit_price: '', product_type: 'service' });
   const [showNewProduct, setShowNewProduct] = useState(false);
@@ -138,14 +141,14 @@ export function InvoiceFormDialog({ open, onOpenChange, token, onSuccess, invoic
     setLines(invoice.lines.map(line => ({ product_id: line.product, description: line.description, qty: Number(line.quantity), unit_price: Number(line.unit_price), tax_rate: Number(line.tax_rate) })));
     setTaxMode(invoice.tax_mode);
     setCombinedTaxRate(Number(invoice.combined_tax_rate));
+    setPricesIncludeTax(Boolean(invoice.prices_include_tax));
     setChargeIds(invoice.charges.map(charge => charge.charge_rule ?? -charge.id));
     setShowNewCustomer(false);
     setShowNewProduct(false);
   }, [open, invoice, token, qc]);
-  const subtotal = lines.reduce((s, l) => s + l.qty * l.unit_price, 0);
-  const taxTotal = taxMode === 'combined' ? subtotal * combinedTaxRate / 100 : lines.reduce((s, l) => s + (l.qty * l.unit_price * l.tax_rate / 100), 0);
-  const chargeTotal = charges.filter(charge => chargeIds.includes(charge.id)).reduce((sum, charge) => sum + (charge.calculation_type === 'percentage' ? subtotal * Number(charge.rate) / 100 : Number(charge.rate)), 0);
-  const total = subtotal + taxTotal + chargeTotal;
+  const { subtotal, taxTotal, chargeTotal, total } = invoiceTotals(
+    lines, taxMode, combinedTaxRate, pricesIncludeTax, charges.filter(charge => chargeIds.includes(charge.id)),
+  );
 
   const addLine = () => setLines(prev => [...prev, { product_id: null, description: '', qty: 1, unit_price: 0, tax_rate: Number(settings?.default_tax_rate ?? 0) }]);
   const removeLine = (i: number) => setLines(prev => prev.filter((_, idx) => idx !== i));
@@ -256,6 +259,7 @@ export function InvoiceFormDialog({ open, onOpenChange, token, onSuccess, invoic
       currency,
       tax_mode: taxMode,
       combined_tax_rate: combinedTaxRate,
+      prices_include_tax: pricesIncludeTax,
       charge_ids: [...chargeIds].sort((a, b) => a - b),
     };
     const financialChanges = editableItems && (!invoice || JSON.stringify(financialPayload) !== JSON.stringify({
@@ -264,6 +268,7 @@ export function InvoiceFormDialog({ open, onOpenChange, token, onSuccess, invoic
       currency: invoice.currency,
       tax_mode: invoice.tax_mode,
       combined_tax_rate: Number(invoice.combined_tax_rate),
+      prices_include_tax: Boolean(invoice.prices_include_tax),
       charge_ids: invoice.charges.map(charge => charge.charge_rule ?? -charge.id).sort((a, b) => a - b),
     }));
     setSaving(true);
@@ -305,6 +310,7 @@ export function InvoiceFormDialog({ open, onOpenChange, token, onSuccess, invoic
     setShowNewProduct(false); setNewProduct({ name: '', description: '', unit_price: '', product_type: 'service' });
     setInvoiceDate(todayForDateInput()); setDueDate(''); setNotes(''); setBillingDetails(emptyBillingDetails());
     setLines([{ product_id: null, description: '', qty: 1, unit_price: 0, tax_rate: Number(settings?.default_tax_rate ?? 0) }]);
+    setPricesIncludeTax(false);
     setTaxMode('per_line'); setCombinedTaxRate(Number(settings?.default_tax_rate ?? 0)); setChargeIds([]);
   };
 
@@ -450,7 +456,7 @@ export function InvoiceFormDialog({ open, onOpenChange, token, onSuccess, invoic
             )}
             <div className="min-w-0 space-y-3 lg:space-y-0 lg:overflow-hidden lg:rounded-lg lg:border">
               <div aria-hidden="true" className="hidden gap-3 bg-muted/50 px-4 py-3 text-xs font-semibold lg:grid lg:grid-cols-[minmax(0,1.3fr)_minmax(0,1.6fr)_4rem_6rem_4rem_7rem_2.75rem]">
-                <span>Product / Service</span><span>Description</span><span>Qty</span><span>Unit price</span><span>Tax %</span><span className="text-right">Total</span><span />
+                <span>Product / Service</span><span>Description</span><span>Qty</span><span>Unit price{pricesIncludeTax ? " (incl. tax)" : ""}</span><span>Tax %</span><span className="text-right">Total{pricesIncludeTax ? " (incl. tax)" : ""}</span><span />
               </div>
               {lines.map((line, i) => (
                 <div key={i} role="group" aria-label={`Invoice line ${i + 1}`} className="grid min-w-0 grid-cols-2 items-end gap-4 rounded-lg border bg-background p-4 sm:grid-cols-4 lg:grid-cols-[minmax(0,1.3fr)_minmax(0,1.6fr)_4rem_6rem_4rem_7rem_2.75rem] lg:gap-3 lg:rounded-none lg:border-0 lg:border-t">
@@ -470,7 +476,7 @@ export function InvoiceFormDialog({ open, onOpenChange, token, onSuccess, invoic
                     <Input id={`invoice-line-${i}-qty`} type="number" inputMode="decimal" min="0.001" step="0.001" value={line.qty} onChange={e => updateLine(i, 'qty', Number(e.target.value))} />
                   </div>
                   <div className="min-w-0 space-y-1.5">
-                    <Label htmlFor={`invoice-line-${i}-price`} className="lg:sr-only">Unit price</Label>
+                    <Label htmlFor={`invoice-line-${i}-price`} className="lg:sr-only">Unit price{pricesIncludeTax ? " (incl. tax)" : ""}</Label>
                     <Input id={`invoice-line-${i}-price`} type="number" inputMode="decimal" min="0" step="0.01" value={line.unit_price} onChange={e => updateLine(i, 'unit_price', Number(e.target.value))} />
                   </div>
                   <div className="min-w-0 space-y-1.5">
@@ -478,8 +484,8 @@ export function InvoiceFormDialog({ open, onOpenChange, token, onSuccess, invoic
                     <Input id={`invoice-line-${i}-tax`} type="number" inputMode="decimal" min="0" step="0.01" disabled={taxMode === 'combined'} value={line.tax_rate} onChange={e => updateLine(i, 'tax_rate', Number(e.target.value))} />
                   </div>
                   <div className="min-w-0 space-y-1.5 text-right">
-                    <span className="text-sm font-medium lg:sr-only">Total</span>
-                    <div className="flex min-h-11 items-center justify-end break-all font-mono text-sm font-semibold md:min-h-9">{(line.qty * line.unit_price).toLocaleString('en-KE', { minimumFractionDigits: 2 })}</div>
+                    <span className="text-sm font-medium lg:sr-only">Total{pricesIncludeTax ? " (incl. tax)" : ""}</span>
+                    <div className="flex min-h-11 items-center justify-end break-all font-mono text-sm font-semibold md:min-h-9">{(line.qty * line.unit_price).toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                   </div>
                   <div className="col-span-2 flex justify-end sm:col-span-4 lg:col-span-1 lg:min-h-9">
                     {lines.length > 1 && <Button type="button" variant="ghost" className="min-h-11 gap-1.5 px-2 text-muted-foreground hover:text-destructive lg:h-9 lg:min-h-9 lg:w-11" aria-label={`Remove invoice line ${i + 1}`} onClick={() => removeLine(i)}><X className="h-4 w-4" /><span className="lg:sr-only">Remove item</span></Button>}
@@ -501,14 +507,24 @@ export function InvoiceFormDialog({ open, onOpenChange, token, onSuccess, invoic
                 </div>
                 <div className="min-w-0 space-y-1.5">
                   <Label htmlFor="invoice-tax-method">Tax method</Label>
-                  <Select value={taxMode} onValueChange={(value: 'per_line' | 'combined') => setTaxMode(value)}>
+                  <Select value={taxMode} onValueChange={(value: 'per_line' | 'combined') => { setTaxMode(value); if (value !== 'combined') setPricesIncludeTax(false); }}>
                     <SelectTrigger id="invoice-tax-method"><SelectValue /></SelectTrigger>
                     <SelectContent><SelectItem value="per_line">Tax per line</SelectItem><SelectItem value="combined">Combined invoice tax</SelectItem></SelectContent>
                   </Select>
                 </div>
-                {taxMode === 'combined' && <div className="min-w-0 space-y-1.5"><Label htmlFor="invoice-tax-rate">{settings?.default_tax_name || 'Tax'} rate (%)</Label><Input id="invoice-tax-rate" type="number" inputMode="decimal" min="0" step="0.01" value={combinedTaxRate} onChange={e => setCombinedTaxRate(Number(e.target.value))} /></div>}
+                {taxMode === 'combined' && <>
+                  <div className="min-w-0 space-y-1.5"><Label htmlFor="invoice-tax-rate">{settings?.default_tax_name || 'Tax'} rate (%)</Label><Input id="invoice-tax-rate" type="number" inputMode="decimal" min="0" max="999.99" step="0.01" value={combinedTaxRate} onChange={e => setCombinedTaxRate(Number(e.target.value))} /></div>
+                  <div className="min-w-0 space-y-1.5">
+                    <Label htmlFor="invoice-tax-treatment">Tax treatment</Label>
+                    <Select value={pricesIncludeTax ? 'inclusive' : 'exclusive'} onValueChange={value => setPricesIncludeTax(value === 'inclusive')}>
+                      <SelectTrigger id="invoice-tax-treatment"><SelectValue /></SelectTrigger>
+                      <SelectContent><SelectItem value="exclusive">Prices exclude tax</SelectItem><SelectItem value="inclusive">Prices include tax</SelectItem></SelectContent>
+                    </Select>
+                  </div>
+                  {pricesIncludeTax && <p className="text-sm text-muted-foreground sm:col-span-2">Enter prices including tax. Tax is extracted from the item total; additional charges are added separately.</p>}
+                </>}
               </div>
-              {charges.some(charge => charge.is_active) && <fieldset className="min-w-0 space-y-2"><legend className="text-sm font-medium">Additional charges / levies</legend><div className="grid gap-2">{charges.filter(charge => charge.is_active).map(charge => <label key={charge.id} className="flex min-h-11 min-w-0 cursor-pointer items-center gap-3 rounded-md border px-3 py-2 text-sm"><input type="checkbox" className="!h-4 w-4 shrink-0" checked={chargeIds.includes(charge.id)} onChange={() => setChargeIds(current => current.includes(charge.id) ? current.filter(id => id !== charge.id) : [...current, charge.id])} /><span className="min-w-0 break-words">{charge.name} ({charge.calculation_type === 'percentage' ? `${charge.rate}%` : `${currency} ${Number(charge.rate).toLocaleString('en-KE', { minimumFractionDigits: 2 })}`})</span></label>)}</div></fieldset>}
+              {charges.some(charge => charge.is_active) && <fieldset className="min-w-0 space-y-2"><legend className="text-sm font-medium">Additional charges / levies</legend><div className="grid gap-2">{charges.filter(charge => charge.is_active).map(charge => <label key={charge.id} className="flex min-h-11 min-w-0 cursor-pointer items-center gap-3 rounded-md border px-3 py-2 text-sm"><input type="checkbox" className="!h-4 w-4 shrink-0" checked={chargeIds.includes(charge.id)} onChange={() => setChargeIds(current => current.includes(charge.id) ? current.filter(id => id !== charge.id) : [...current, charge.id])} /><span className="min-w-0 break-words">{charge.name} ({charge.calculation_type === 'percentage' ? `${charge.rate}%` : `${currency} ${Number(charge.rate).toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`})</span></label>)}</div></fieldset>}
               <div className="space-y-1.5">
                 <Label htmlFor="invoice-notes">Notes</Label>
                 <Textarea id="invoice-notes" placeholder="Optional notes..." value={notes} onChange={e => setNotes(e.target.value)} className="min-h-24 text-base md:text-sm" />
@@ -517,8 +533,8 @@ export function InvoiceFormDialog({ open, onOpenChange, token, onSuccess, invoic
             <div className="min-w-0 rounded-lg border bg-muted/20 p-4 sm:p-5">
               <h3 className="mb-4 text-sm font-semibold">Invoice summary</h3>
               <dl className="space-y-3 text-sm">
-                {[['Subtotal', subtotal], ['Tax', taxTotal], ['Charges', chargeTotal]].map(([label, amount]) => <div key={label} className="grid grid-cols-[auto_minmax(0,1fr)] items-baseline gap-4"><dt className="text-muted-foreground">{label}</dt><dd className="break-all text-right font-mono font-medium">{currency} {Number(amount).toLocaleString('en-KE', { minimumFractionDigits: 2 })}</dd></div>)}
-                <div className="grid grid-cols-[auto_minmax(0,1fr)] items-baseline gap-4 border-t pt-4 font-semibold"><dt>Grand total</dt><dd className="break-all text-right font-mono text-lg">{currency} {total.toLocaleString('en-KE', { minimumFractionDigits: 2 })}</dd></div>
+                {[[pricesIncludeTax ? 'Subtotal (excl. tax)' : 'Subtotal', subtotal], [pricesIncludeTax ? 'Tax included' : 'Tax', taxTotal], ['Charges', chargeTotal]].map(([label, amount]) => <div key={label} className="grid grid-cols-[auto_minmax(0,1fr)] items-baseline gap-4"><dt className="text-muted-foreground">{label}</dt><dd className="break-all text-right font-mono font-medium">{currency} {Number(amount).toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</dd></div>)}
+                <div className="grid grid-cols-[auto_minmax(0,1fr)] items-baseline gap-4 border-t pt-4 font-semibold"><dt>Grand total</dt><dd className="break-all text-right font-mono text-lg">{currency} {total.toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</dd></div>
               </dl>
             </div>
           </div>

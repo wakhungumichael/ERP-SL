@@ -154,12 +154,13 @@ const PageDialogContent = React.forwardRef<
           maxWidth: "none",
           maxHeight: "none",
         }}
-        onChangeCapture={(event) => {
-          props.onChangeCapture?.(event);
+        // Bubble after field handlers; capture updates can reset controlled inputs.
+        onChange={(event) => {
+          props.onChange?.(event);
           if (recordChanged(event.target)) flow.change(dialog.id);
         }}
-        onInputCapture={(event) => {
-          props.onInputCapture?.(event);
+        onInput={(event) => {
+          props.onInput?.(event);
           if (recordChanged(event.target)) flow.change(dialog.id);
         }}
         onKeyDown={(event) => {

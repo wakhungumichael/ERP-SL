@@ -901,6 +901,7 @@ class Invoice(models.Model):
     tax_total = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     charge_total = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     tax_mode = models.CharField(max_length=16, default='per_line')
+    prices_include_tax = models.BooleanField(default=False)
     combined_tax_name = models.CharField(max_length=100, blank=True)
     combined_tax_rate = models.DecimalField(max_digits=5, decimal_places=2, default=0)
     currency       = models.CharField(max_length=10, default='KES')

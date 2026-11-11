@@ -21,6 +21,8 @@ from Platform_API.modules.mixins import (
     resolve_user_tenant,
 )
 
+from SL_Weighbridge.invoice_tax import net_unit_price, split_inclusive_combined_tax
+
 from .invoice_editing import InvoiceBillingDetailsSerializer, InvoiceEditSerializer, can_edit_invoice, can_edit_invoice_items
 
 logger = logging.getLogger(__name__)
@@ -120,6 +122,7 @@ def _serialize_invoice(inv, with_lines=False, with_transactions=False, request=N
         "tax_total": float(getattr(inv, "tax_total", 0) or 0),
         "charge_total": float(getattr(inv, "charge_total", 0) or 0),
         "tax_mode": getattr(inv, "tax_mode", "per_line"),
+        "prices_include_tax": inv.prices_include_tax,
         "combined_tax_name": getattr(inv, "combined_tax_name", "") or "",
         "combined_tax_rate": float(getattr(inv, "combined_tax_rate", 0) or 0),
         "currency":       getattr(inv, "currency", "KES") or "KES",
@@ -150,6 +153,7 @@ def _serialize_invoice(inv, with_lines=False, with_transactions=False, request=N
                     "product_name": getattr(getattr(line, "product", None), "name", ""),
                     "quantity":     getattr(line, "quantity", 0),
                     "unit_price":   float(getattr(line, "unit_price", 0) or 0),
+                    "net_unit_price": float(net_unit_price(inv, line.unit_price)),
                     "tax_rate": float(getattr(line, "tax_rate", 0) or 0),
                     "tax_amount": float(getattr(line, "tax_amount", 0) or 0),
                     "total":        float(getattr(line, "total_amount", 0) or 0),
@@ -487,6 +491,7 @@ class InvoiceListView(APIView):
         data = [_serialize_invoice(inv) for inv in qs[:200]]
         return Response({"count": len(data), "next": None, "previous": None, "results": data})
 
+    @transaction.atomic
     def post(self, request):
         """
         Manual invoice creation — no transaction required.
@@ -506,7 +511,10 @@ class InvoiceListView(APIView):
         notes         = request.data.get("notes", "")
         source_module = request.data.get("source_module", "manual")
         tax_mode = request.data.get("tax_mode", "per_line")
-        combined_tax_rate = Decimal(str(request.data.get("combined_tax_rate", 0) or 0))
+        combined_tax_rate = serializers.DecimalField(max_digits=5, decimal_places=2, min_value=Decimal("0")).run_validation(request.data.get("combined_tax_rate", 0))
+        prices_include_tax = serializers.BooleanField().run_validation(request.data.get("prices_include_tax", False))
+        if prices_include_tax and tax_mode != "combined":
+            raise serializers.ValidationError({"prices_include_tax": "Tax-inclusive prices require combined invoice tax."})
         charge_ids = request.data.get("charge_ids", []) or []
 
         if tax_mode not in {"per_line", "combined"} or combined_tax_rate < 0:
@@ -536,8 +544,8 @@ class InvoiceListView(APIView):
         line_tax_total = Decimal("0")
         for item in line_items:
             try:
-                qty = Decimal(str(item.get("qty", item.get("quantity", 1)) or 1))
-                unit_price = Decimal(str(item.get("unit_price", 0) or 0))
+                qty = serializers.DecimalField(max_digits=10, decimal_places=3, min_value=Decimal("0.001")).run_validation(item.get("qty", item.get("quantity", 1)))
+                unit_price = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal("0")).run_validation(item.get("unit_price", 0))
             except Exception:
                 return Response({"error": "Quantity and unit price must be valid numbers."}, status=status.HTTP_400_BAD_REQUEST)
             if qty <= 0 or unit_price < 0:
@@ -549,7 +557,7 @@ class InvoiceListView(APIView):
                     return Response({"error": "Choose an active sales product from this organization."}, status=status.HTTP_400_BAD_REQUEST)
             description = str(item.get("description") or (product.description if product else "") or (product.name if product else "Service")).strip()
             line_total = qty * unit_price
-            line_tax_rate = Decimal(str(item.get("tax_rate", product.tax_rate if product else default_tax_rate) or 0)) if tax_mode == "per_line" else Decimal("0")
+            line_tax_rate = serializers.DecimalField(max_digits=5, decimal_places=2, min_value=Decimal("0")).run_validation(item.get("tax_rate", product.tax_rate if product else default_tax_rate)) if tax_mode == "per_line" else Decimal("0")
             if line_tax_rate < 0:
                 return Response({"error": "Tax rate cannot be negative."}, status=status.HTTP_400_BAD_REQUEST)
             line_tax = (line_total * line_tax_rate / Decimal("100")).quantize(Decimal("0.01"))
@@ -558,6 +566,9 @@ class InvoiceListView(APIView):
             normalized_lines.append((product, description, qty, unit_price, line_total, line_tax_rate, line_tax))
 
         tax_total = line_tax_total if tax_mode == "per_line" else (subtotal * combined_tax_rate / Decimal("100")).quantize(Decimal("0.01"))
+        if prices_include_tax:
+            amounts, subtotal, tax_total = split_inclusive_combined_tax([row[4] for row in normalized_lines], combined_tax_rate)
+            normalized_lines = [(*row[:4], amount, *row[5:]) for row, amount in zip(normalized_lines, amounts)]
         selected_charges = OrganisationCharge.objects.filter(tenant=user_tenant, is_active=True, applies_to__in=["invoice", "both"], id__in=charge_ids)
         charge_rows = []
         charge_total = Decimal("0")
@@ -579,6 +590,7 @@ class InvoiceListView(APIView):
             tax_total=tax_total,
             charge_total=charge_total,
             tax_mode=tax_mode,
+            prices_include_tax=prices_include_tax,
             combined_tax_name=(settings_obj.default_tax_name if settings_obj and tax_mode == "combined" else ""),
             combined_tax_rate=combined_tax_rate if tax_mode == "combined" else Decimal("0"),
             currency=currency,

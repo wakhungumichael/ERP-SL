@@ -8,7 +8,8 @@
     "build": "pnpm run typecheck && pnpm -r --if-present run build",
     "typecheck:libs": "tsc --build",
     "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck",
-    "test:workspace-ui": "node scripts/test-workspace-ui.mjs"
+    "test:workspace-ui": "node scripts/test-workspace-ui.mjs",
+    "test:invoice-tax": "node scripts/test-invoice-tax.mjs"
   },
   "private": true,
   "dependencies": {

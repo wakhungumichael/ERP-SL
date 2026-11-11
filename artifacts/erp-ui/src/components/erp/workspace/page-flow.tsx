@@ -49,8 +49,8 @@ function PageHost({
       ref={ref}
       hidden={!active}
       data-workspace-page-host
-      onChangeCapture={onChange}
-      onInputCapture={onChange}
+      onChange={onChange}
+      onInput={onChange}
     />
   );
 }

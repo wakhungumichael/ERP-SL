@@ -683,11 +683,13 @@ def _render_template_string(template_string, context):
 
 def _invoice_context(invoice, settings_obj, request=None):
     customer = getattr(invoice, "customer", None)
+    from SL_Weighbridge.invoice_tax import net_unit_price
+
     lines = []
     subtotal = Decimal("0.00")
     for line in invoice.lines.all():
         line_total = Decimal(line.total_amount or 0)
-        unit_price = Decimal(line.unit_price or 0)
+        unit_price = net_unit_price(invoice, line.unit_price)
         subtotal += line_total
         lines.append(
             {
@@ -748,6 +750,8 @@ def _invoice_context(invoice, settings_obj, request=None):
     rates = {Decimal(line.tax_rate) for line in invoice.lines.all() if line.tax_amount}
     tax_rate = invoice.combined_tax_rate if invoice.tax_mode == "combined" else (next(iter(rates)) if len(rates) == 1 else None)
     tax_label = f"{tax_name} ({Decimal(str(tax_rate)).normalize():f}%)" if tax_rate else tax_name
+    if invoice.prices_include_tax:
+        tax_label += " included"
     creator = invoice.created_by
 
     tenant = getattr(invoice, "tenant", None)

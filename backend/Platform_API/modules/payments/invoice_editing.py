@@ -8,6 +8,7 @@ from rest_framework import serializers
 from Platform_API.modules.mixins import has_active_permission
 from SL_Sales.models import OrganisationCharge, Product
 from SL_Weighbridge.models import Customer, InvoiceCharge, InvoiceLine
+from SL_Weighbridge.invoice_tax import split_inclusive_combined_tax
 
 
 def can_edit_invoice(user):
@@ -58,6 +59,7 @@ class InvoiceEditSerializer(InvoiceBillingDetailsSerializer):
     line_items = InvoiceEditLineSerializer(many=True, required=False, allow_empty=False)
     tax_mode = serializers.ChoiceField(choices=["per_line", "combined"], required=False)
     combined_tax_rate = serializers.DecimalField(max_digits=5, decimal_places=2, min_value=Decimal("0"), required=False)
+    prices_include_tax = serializers.BooleanField(required=False)
     charge_ids = serializers.ListField(child=serializers.IntegerField(), required=False)
 
     def validate(self, attrs):
@@ -67,6 +69,10 @@ class InvoiceEditSerializer(InvoiceBillingDetailsSerializer):
         financial_fields = set(attrs) - INVOICE_DETAIL_FIELDS
         if financial_fields and not can_edit_invoice_items(self.instance):
             raise serializers.ValidationError("Only draft manual invoices can have customer, currency, items, tax, or charges changed. You can still update the invoice date, due date, and notes.")
+        tax_mode = attrs.get("tax_mode", self.instance.tax_mode)
+        prices_include_tax = attrs.get("prices_include_tax", self.instance.prices_include_tax)
+        if prices_include_tax and tax_mode != "combined":
+            raise serializers.ValidationError({"prices_include_tax": "Tax-inclusive prices require combined invoice tax."})
         if attrs.get("invoice_date") and attrs["invoice_date"] != self.instance.invoice_date and self.instance.status.lower() in {"issued", "paid", "overdue"}:
             from Platform_Core.accounting import assert_posting_allowed
             try:
@@ -103,6 +109,7 @@ class InvoiceEditSerializer(InvoiceBillingDetailsSerializer):
                 raise serializers.ValidationError({"line_items": "Add at least one line item."})
             tax_mode = data.get("tax_mode", invoice.tax_mode)
             combined_rate = data.get("combined_tax_rate", invoice.combined_tax_rate)
+            prices_include_tax = data.get("prices_include_tax", invoice.prices_include_tax)
             old_product_ids = {line.product_id for line in existing_lines if line.product_id}
             product_ids = {item.get("product_id") for item in items if item.get("product_id")}
             products = {product.pk: product for product in Product.objects.filter(tenant=invoice.tenant, pk__in=product_ids).filter(Q(is_active=True, is_sales_item=True) | Q(pk__in=old_product_ids))}
@@ -125,6 +132,12 @@ class InvoiceEditSerializer(InvoiceBillingDetailsSerializer):
                 new_lines.append(InvoiceLine(invoice=invoice, product=product, description=item["description"] or (product.name if product else "Service"), quantity=item["qty"], unit_price=item["unit_price"], tax_rate=rate, tax_amount=tax, total_amount=amount))
             if tax_mode == "combined":
                 tax_total = (subtotal * combined_rate / Decimal("100")).quantize(Decimal("0.01"))
+            if prices_include_tax:
+                amounts, subtotal, tax_total = split_inclusive_combined_tax(
+                    [line.quantity * line.unit_price for line in new_lines], combined_rate
+                )
+                for line, amount in zip(new_lines, amounts):
+                    line.total_amount = line_money_field.run_validation(amount)
             snapshots = {(row.charge_rule_id if row.charge_rule_id is not None else -row.pk): row for row in invoice.charges.all()}
             if selected_ids is None:
                 selected_ids = list(snapshots)

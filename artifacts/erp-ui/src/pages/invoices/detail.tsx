@@ -37,7 +37,7 @@ import {
 
 /* ─────────────────────────────────────────── helpers ── */
 function kes(v: number | null | undefined, currency = 'KES') {
-  return `${currency} ${Number(v ?? 0).toLocaleString('en-KE', { minimumFractionDigits: 2 })}`;
+  return `${currency} ${Number(v ?? 0).toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 const STATUS_META: Record<string, { cls: string; label: string }> = {
@@ -394,8 +394,8 @@ export default function InvoiceDetail({ id }: { id: string }) {
                   <TableHead className="text-[10px] font-bold uppercase tracking-widest">Product / Service</TableHead>
                   <TableHead className="text-[10px] font-bold uppercase tracking-widest">Description</TableHead>
                   <TableHead className="text-[10px] font-bold uppercase tracking-widest text-right">Qty</TableHead>
-                  <TableHead className="text-[10px] font-bold uppercase tracking-widest text-right">Unit Price</TableHead>
-                  <TableHead className="text-[10px] font-bold uppercase tracking-widest text-right">Amount</TableHead>
+                  <TableHead className="text-[10px] font-bold uppercase tracking-widest text-right">Unit Price{inv.prices_include_tax ? " (excl. tax)" : ""}</TableHead>
+                  <TableHead className="text-[10px] font-bold uppercase tracking-widest text-right">Amount{inv.prices_include_tax ? " (excl. tax)" : ""}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -407,7 +407,7 @@ export default function InvoiceDetail({ id }: { id: string }) {
                   <TableCell className="py-2 text-sm font-medium">{line.product_name || 'Custom line'}</TableCell>
                   <TableCell className="py-2 text-sm">{line.description || line.product_name || 'General item'}</TableCell>
                   <TableCell className="py-2 text-right font-mono text-sm">{line.quantity}</TableCell>
-                  <TableCell className="py-2 text-right font-mono text-sm">{kes(line.unit_price, inv.currency)}</TableCell>
+                  <TableCell className="py-2 text-right font-mono text-sm">{kes(line.net_unit_price ?? line.unit_price, inv.currency)}</TableCell>
                   <TableCell className="py-2 text-right font-mono font-bold text-sm">
                     {kes(line.total, inv.currency)}
                   </TableCell>
@@ -415,6 +415,13 @@ export default function InvoiceDetail({ id }: { id: string }) {
               ))}
             </TableBody>
           </Table>
+          {inv.prices_include_tax && <dl className="space-y-2 border-t p-4 text-sm">
+            {[
+              ['Subtotal (excl. tax)', inv.subtotal_amount],
+              [`${inv.combined_tax_name || 'Tax'} included (${inv.combined_tax_rate}%)`, inv.tax_total],
+              ['Additional charges', inv.charge_total],
+            ].map(([label, amount]) => <div key={String(label)} className="flex flex-wrap justify-between gap-2"><dt className="text-muted-foreground">{label}</dt><dd className="font-mono">{kes(Number(amount), inv.currency)}</dd></div>)}
+          </dl>}
           {/* Total row */}
           <div className="flex items-center justify-between p-4 border-t bg-muted/20">
             <span className="text-sm font-bold uppercase tracking-wide text-muted-foreground">Total</span>
