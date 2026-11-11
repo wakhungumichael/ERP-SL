@@ -12,6 +12,8 @@ SL-ERP is a multi-module ERP and SaaS platform built with Django, Django REST Fr
 
 ## Key Documents
 
+- Workspace tabs, Home, and table controls: [docs/WORKSPACE_UI.md](docs/WORKSPACE_UI.md)
+
 - Local development: [docs/LOCAL_SETUP.md](docs/LOCAL_SETUP.md)
 - Windows/WSL development: [docs/WINDOWS_SETUP.md](docs/WINDOWS_SETUP.md)
 - Complete Docker operations: [docs/COMPLETE_DOCKER_OPERATIONS.md](docs/COMPLETE_DOCKER_OPERATIONS.md)

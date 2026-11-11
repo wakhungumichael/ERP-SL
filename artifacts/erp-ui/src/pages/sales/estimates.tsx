@@ -1,3 +1,5 @@
+import { ERPFilterBar } from "@/components/erp/listing/filter-bar";
+import { ERPListingScope, ERPListingActions, ERPExistingPagination, ERPPageSizeControl, ERPToolbarDock } from '@/components/erp/listing/listing-scope';
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { downloadDocumentPdf } from '@/lib/document-download';
 import { useMemo, useState } from 'react';
@@ -507,7 +509,7 @@ export default function EstimatesPage() {
     }
   }
 
-  return (
+  return <ERPListingScope>{(
     <div className="space-y-6 p-6">
       <div className="flex items-center justify-between gap-4">
         <div>
@@ -516,11 +518,12 @@ export default function EstimatesPage() {
             Create quotes, review line items, and move accepted work into orders or invoices.
           </p>
         </div>
-        <Button onClick={openCreate} className="gap-2">
+        <ERPListingActions><Button onClick={openCreate} className="gap-2">
           <Plus className="h-4 w-4" />
           New Quote
-        </Button>
+        </Button></ERPListingActions>
       </div>
+<ERPToolbarDock />
 
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
         {[
@@ -538,14 +541,14 @@ export default function EstimatesPage() {
         ))}
       </div>
 
-      <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-        <div className="flex flex-1 flex-wrap gap-3">
-          <Input
+      <><ERPFilterBar searchSlot={<Input
             value={search}
             onChange={(e) => { setSearch(e.target.value); setPage(1); }}
             placeholder="Search quote number, customer, or notes"
             className="w-full md:w-72"
-          />
+          />} filterSlot={<>
+        <div className="flex flex-1 flex-wrap gap-3">
+          <></>
           <Select value={filterStatus || '__all__'} onValueChange={(value) => { setFilterStatus(value === '__all__' ? '' : value); setPage(1); }}>
             <SelectTrigger className="w-full md:w-44">
               <SelectValue placeholder="All statuses" />
@@ -562,7 +565,8 @@ export default function EstimatesPage() {
           <Input type="date" value={dateFrom} onChange={(e) => { setDateFrom(e.target.value); setPage(1); }} className="w-full md:w-44" />
           <Input type="date" value={dateTo} onChange={(e) => { setDateTo(e.target.value); setPage(1); }} className="w-full md:w-44" />
         </div>
-        <div className="flex items-center gap-3">
+        {null}
+       </>} /><ERPPageSizeControl><div className="flex items-center gap-3">
           <span className="text-sm text-muted-foreground">Rows</span>
           <Select value={String(pageSize)} onValueChange={(value) => { setPageSize(Number(value)); setPage(1); }}>
             <SelectTrigger className="w-24">
@@ -574,8 +578,7 @@ export default function EstimatesPage() {
               <SelectItem value="50">50</SelectItem>
             </SelectContent>
           </Select>
-        </div>
-      </div>
+        </div></ERPPageSizeControl></>
 
       {isLoading ? (
         <p className="text-muted-foreground">Loading…</p>
@@ -628,7 +631,7 @@ export default function EstimatesPage() {
         </div>
       )}
 
-      <div className="flex flex-col gap-3 rounded-lg border p-4 sm:flex-row sm:items-center sm:justify-between">
+      <ERPExistingPagination><div className="flex flex-col gap-3 rounded-lg border p-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="text-sm text-muted-foreground">
           Showing {filteredEstimates.length ? (currentPage - 1) * pageSize + 1 : 0}
           {' '}to {Math.min(currentPage * pageSize, filteredEstimates.length)} of {filteredEstimates.length} quotes
@@ -641,7 +644,7 @@ export default function EstimatesPage() {
             Next
           </Button>
         </div>
-      </div>
+      </div></ERPExistingPagination>
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-5xl max-h-[92vh] overflow-y-auto">
@@ -908,5 +911,5 @@ export default function EstimatesPage() {
         </DialogContent>
       </Dialog>
     </div>
-  );
+  )}</ERPListingScope>;
 }

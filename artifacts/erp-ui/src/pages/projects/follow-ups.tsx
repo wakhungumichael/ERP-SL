@@ -1,3 +1,6 @@
+import { Table } from "@/components/ui/table";
+import { ERPFilterBar } from "@/components/erp/listing/filter-bar";
+import { ERPListingScope } from "@/components/erp/listing/listing-scope";
 import {
   useProjectSettings,
   dateAfterDays,
@@ -225,7 +228,7 @@ export default function ProjectFollowUps() {
   const list = followUps.data?.results ?? [];
   const summary = followUps.data?.summary;
 
-  return (
+  return <ERPListingScope>{(
     <ERPWorkspacePage
       title="Project Follow-ups"
       description="Reminders linked to tasks: chase a response, check progress, or plan the next action. Completing a follow-up leaves the task status unchanged."
@@ -239,8 +242,7 @@ export default function ProjectFollowUps() {
         />
         <Metric label="Completed" value={summary?.completed ?? 0} />
       </div>
-      <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:justify-between">
-        <Input
+      <ERPFilterBar searchSlot={<Input
           value={search}
           onChange={(event) => {
             setSearch(event.target.value);
@@ -248,7 +250,8 @@ export default function ProjectFollowUps() {
           }}
           placeholder="Search task, owner, or follow-up notes"
           className="sm:max-w-md"
-        />
+        />} filterSlot={<>
+        <></>
         <div className="flex gap-2">
           <Select
             value={status}
@@ -269,21 +272,22 @@ export default function ProjectFollowUps() {
               <SelectItem value="cancelled">Cancelled</SelectItem>
             </SelectContent>
           </Select>
-          <Button
+          <></>
+          <></>
+        </div>
+       </>} toolsSlot={<> <Button
             onClick={() => setCreateOpen(true)}
             disabled={!followUps.data?.can_create}
           >
             <Plus className="mr-2 h-4 w-4" />
             New follow-up
           </Button>
-          <Button variant="outline" onClick={exportRegister}>
+<Button variant="outline" onClick={exportRegister}>
             <Download className="mr-2 h-4 w-4" />
             Export CSV
-          </Button>
-        </div>
-      </div>
+          </Button> </>} />
       <div className="mt-3 overflow-x-auto rounded-lg border bg-card">
-        <table className="w-full min-w-[760px] text-sm">
+        <Table className="w-full min-w-[760px] text-sm">
           <thead className="border-b bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
             <tr>
               <th className="px-4 py-3">Due</th>
@@ -327,7 +331,7 @@ export default function ProjectFollowUps() {
               </tr>
             ))}
           </tbody>
-        </table>
+        </Table>
         {!list.length && (
           <div className="p-10 text-center text-sm text-muted-foreground">
             No follow-ups are scheduled in this branch.
@@ -402,7 +406,7 @@ export default function ProjectFollowUps() {
         </DialogContent>
       </Dialog>
     </ERPWorkspacePage>
-  );
+  )}</ERPListingScope>;
 }
 
 function Metric({

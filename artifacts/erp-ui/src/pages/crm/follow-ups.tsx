@@ -1,3 +1,5 @@
+import { ERPFilterBar } from "@/components/erp/listing/filter-bar";
+import { ERPListingScope, ERPToolbarDock } from '@/components/erp/listing/listing-scope';
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -250,7 +252,7 @@ export default function FollowUpsPage() {
     };
   }, [followUps, today]);
 
-  return (
+  return <ERPListingScope>{(
     <div className="space-y-4">
       <div className="flex items-center justify-between border-b pb-4">
         <div>
@@ -259,6 +261,7 @@ export default function FollowUpsPage() {
         </div>
         <LogFollowUpDialog />
       </div>
+<ERPToolbarDock />
 
       <section className="rounded-lg border bg-card p-3 shadow-sm">
         <div className="flex flex-wrap items-start justify-between gap-4">
@@ -300,8 +303,8 @@ export default function FollowUpsPage() {
         </div>
       </section>
 
-      <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-card p-2">
-        <Input className="h-8 min-w-[220px] flex-1 border-0 shadow-none focus-visible:ring-0" placeholder="Search follow-ups…" value={search} onChange={(event) => setSearch(event.target.value)} />
+      <ERPFilterBar searchSlot={<Input className="h-8 min-w-[220px] flex-1 border-0 shadow-none focus-visible:ring-0" placeholder="Search follow-ups…" value={search} onChange={(event) => setSearch(event.target.value)} />} filterSlot={<>
+        <></>
         <button
           onClick={() => setTypeFilter('')}
           className={`px-3 py-1.5 rounded-full text-xs font-bold uppercase tracking-wide border transition-colors ${!typeFilter ? 'bg-primary text-primary-foreground border-primary' : 'bg-card border-border text-muted-foreground hover:text-foreground'}`}
@@ -315,7 +318,7 @@ export default function FollowUpsPage() {
             {TYPE_ICONS[t.value]}{t.label}
           </button>
         ))}
-      </div>
+       </>} />
 
       {viewMode === 'board' ? (
         <div className="space-y-4">
@@ -400,7 +403,7 @@ export default function FollowUpsPage() {
 
       <ActivityDetailSheet activity={selectedActivity} onOpenChange={(open) => { if (!open) setSelectedActivity(null); }} />
     </div>
-  );
+  )}</ERPListingScope>;
 }
 
 function ActivityDetailSheet({ activity, onOpenChange }: { activity: any; onOpenChange: (open: boolean) => void }) {

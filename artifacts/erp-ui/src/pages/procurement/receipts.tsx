@@ -1,3 +1,5 @@
+import { ERPListingActions } from '@/components/erp/listing/listing-scope';
+import { ERPListingScope, ERPExistingPagination, ERPPageSizeControl, ERPToolbarDock } from '@/components/erp/listing/listing-scope';
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { useState } from 'react';
 import { Link } from 'wouter';
@@ -108,16 +110,17 @@ export default function GoodsReceiptsPage() {
   const totalPages = Math.max(1, Math.ceil(receipts.length / Number(pageSize)));
   const visibleReceipts = receipts.slice((page - 1) * Number(pageSize), page * Number(pageSize));
 
-  return (
+  return <ERPListingScope>{(
     <div className="space-y-6 p-6">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-semibold tracking-tight">Goods received</h1>
+<ERPToolbarDock />
           <p className="mt-1 text-sm text-muted-foreground">
             Record deliveries against purchase orders before supplier bills are matched and approved.
           </p>
         </div>
-        <Dialog open={open} onOpenChange={setOpen}>
+        <ERPListingActions><Dialog open={open} onOpenChange={setOpen}>
           <DialogTrigger asChild>
             <Button>Record delivery</Button>
           </DialogTrigger>
@@ -160,7 +163,7 @@ export default function GoodsReceiptsPage() {
               </div>
             </div>
           </DialogContent>
-        </Dialog>
+        </Dialog></ERPListingActions>
       </div>
 
       <ProcessFlow
@@ -241,7 +244,7 @@ export default function GoodsReceiptsPage() {
       </Card>
 
       {receipts.length > 0 ? (
-        <div className="flex flex-col gap-3 rounded-lg border p-4 sm:flex-row sm:items-center sm:justify-between">
+        <ERPExistingPagination><div className="flex flex-col gap-3 rounded-lg border p-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="text-sm text-muted-foreground">
             Showing page {page} of {totalPages} with {receipts.length} delivery records
           </div>
@@ -260,8 +263,8 @@ export default function GoodsReceiptsPage() {
             <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage(page - 1)}>Previous</Button>
             <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage(page + 1)}>Next</Button>
           </div>
-        </div>
+        </div></ERPExistingPagination>
       ) : null}
     </div>
-  );
+  )}</ERPListingScope>;
 }

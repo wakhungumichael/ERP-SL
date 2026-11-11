@@ -1,3 +1,6 @@
+import { ERPListingActions } from '@/components/erp/listing/listing-scope';
+import { ERPFilterBar } from "@/components/erp/listing/filter-bar";
+import { ERPListingScope, ERPToolbarDock } from '@/components/erp/listing/listing-scope';
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
@@ -730,7 +733,7 @@ export default function StatementsPage() {
       })
     : '';
 
-  return (
+  return <ERPListingScope>{(
     <div className="min-w-0 space-y-6 p-4 sm:p-6">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div>
@@ -739,7 +742,7 @@ export default function StatementsPage() {
             Review customer balances, outstanding invoices, payments, and statement exports in one place.
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <ERPListingActions><div className="flex flex-wrap gap-2">
           <Button variant="outline" className="gap-2" onClick={handlePrintPreview} disabled={!statement}>
             <Eye className="h-4 w-4" />
             Preview
@@ -756,8 +759,9 @@ export default function StatementsPage() {
             <Printer className="h-4 w-4" />
             Print
           </Button>
-        </div>
+        </div></ERPListingActions>
       </div>
+<ERPToolbarDock />
 
       <Card>
         <CardContent className="space-y-4 p-4">
@@ -770,7 +774,15 @@ export default function StatementsPage() {
             </Badge>
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
+          <ERPFilterBar searchSlot={<div className="sm:col-span-2 xl:col-span-6">
+              <label htmlFor="statement-content-search" className="mb-1 block text-xs text-muted-foreground">Search in selected statement</label>
+              <Input
+                id="statement-content-search"
+                placeholder="Search invoice numbers, transactions, branches, vehicles, references, or statuses…"
+                value={detailSearch}
+                onChange={(e) => setDetailSearch(e.target.value)}
+              />
+            </div>} filterSlot={<>
             <div className="min-w-0 sm:col-span-2">
               <label id="statement-customer-label" className="mb-1 block text-xs text-muted-foreground">Customer</label>
               <Popover open={customerPickerOpen} onOpenChange={(open) => { setCustomerPickerOpen(open); if (open) setCustomerSearch(''); }}>
@@ -854,16 +866,8 @@ export default function StatementsPage() {
                 </SelectContent>
               </Select>
             </div>
-            <div className="sm:col-span-2 xl:col-span-6">
-              <label htmlFor="statement-content-search" className="mb-1 block text-xs text-muted-foreground">Search in selected statement</label>
-              <Input
-                id="statement-content-search"
-                placeholder="Search invoice numbers, transactions, branches, vehicles, references, or statuses…"
-                value={detailSearch}
-                onChange={(e) => setDetailSearch(e.target.value)}
-              />
-            </div>
-          </div>
+            <></>
+           </>} />
 
           <div className="flex flex-wrap gap-2">
             <Button variant="outline" size="sm" onClick={() => applyQuickDatePreset('thisMonth')}>This month</Button>
@@ -1191,5 +1195,5 @@ export default function StatementsPage() {
         </DialogContent>
       </Dialog>
     </div>
-  );
+  )}</ERPListingScope>;
 }

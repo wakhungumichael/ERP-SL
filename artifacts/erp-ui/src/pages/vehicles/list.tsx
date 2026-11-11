@@ -1,3 +1,6 @@
+import { ListingPagination as Pagination } from '@/components/erp/listing/pagination';
+import { ERPFilterBar } from "@/components/erp/listing/filter-bar";
+import { ERPListingScope, ERPToolbarDock } from '@/components/erp/listing/listing-scope';
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import { useAuth } from '@/context/use-auth';
@@ -200,90 +203,7 @@ function ColumnPicker({ visibleKeys, onChange }: { visibleKeys: string[]; onChan
   );
 }
 
-function Pagination({
-  page,
-  pageSize,
-  totalCount,
-  onPage,
-  onPageSize,
-}: {
-  page: number;
-  pageSize: number;
-  totalCount: number;
-  onPage: (page: number) => void;
-  onPageSize: (pageSize: number) => void;
-}) {
-  const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
-  const from = totalCount === 0 ? 0 : (page - 1) * pageSize + 1;
-  const to = Math.min(page * pageSize, totalCount);
-  const pages: (number | '…')[] = [];
 
-  if (totalPages <= 7) {
-    for (let index = 1; index <= totalPages; index += 1) pages.push(index);
-  } else {
-    pages.push(1);
-    if (page > 3) pages.push('…');
-    for (let index = Math.max(2, page - 1); index <= Math.min(totalPages - 1, page + 1); index += 1) pages.push(index);
-    if (page < totalPages - 2) pages.push('…');
-    pages.push(totalPages);
-  }
-
-  return (
-    <div className="flex items-center justify-between gap-4 rounded-b-lg border-t bg-card px-1 py-2">
-      <div className="flex items-center gap-3 text-xs text-muted-foreground">
-        <span className="hidden font-mono sm:inline">
-          {totalCount === 0 ? 'No records' : `${from}–${to} of ${totalCount.toLocaleString()}`}
-        </span>
-        <Select
-          value={String(pageSize)}
-          onValueChange={(value) => {
-            onPageSize(Number(value));
-            onPage(1);
-          }}
-        >
-          <SelectTrigger className="h-7 w-28 text-xs">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {[10, 25, 50, 100].map((option) => (
-              <SelectItem key={option} value={String(option)} className="text-xs">{option} per page</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-
-      <div className="flex items-center gap-1">
-        <Button variant="outline" size="icon" className="h-7 w-7" disabled={page === 1} onClick={() => onPage(1)}>
-          <ChevronsLeft className="h-3.5 w-3.5" />
-        </Button>
-        <Button variant="outline" size="icon" className="h-7 w-7" disabled={page === 1} onClick={() => onPage(page - 1)}>
-          <ChevronLeft className="h-3.5 w-3.5" />
-        </Button>
-        {pages.map((entry, index) => (
-          entry === '…' ? (
-            <span key={`ellipsis-${index}`} className="px-1.5 text-xs text-muted-foreground">…</span>
-          ) : (
-            <Button
-              key={entry}
-              variant={entry === page ? 'default' : 'outline'}
-              size="icon"
-              className="h-7 w-7 text-xs font-mono"
-              onClick={() => onPage(entry)}
-            >
-              {entry}
-            </Button>
-          )
-        ))}
-        <Button variant="outline" size="icon" className="h-7 w-7" disabled={page === totalPages} onClick={() => onPage(page + 1)}>
-          <ChevronRight className="h-3.5 w-3.5" />
-        </Button>
-        <Button variant="outline" size="icon" className="h-7 w-7" disabled={page === totalPages} onClick={() => onPage(totalPages)}>
-          <ChevronsRight className="h-3.5 w-3.5" />
-        </Button>
-      </div>
-    </div>
-  );
-}
 
 export default function VehiclesList() {
   const { token, user } = useAuth();
@@ -457,7 +377,7 @@ export default function VehiclesList() {
     });
   }, [bulkAction, eligibleRowsByAction, queryClient, selectedRows.length, toast, updateVehicleStatus]);
 
-  return (
+  return <ERPListingScope>{(
     <div className="space-y-4">
       <div className="flex items-start justify-between gap-4 border-b pb-5">
         <div>
@@ -467,8 +387,14 @@ export default function VehiclesList() {
         </div>
         {canAddVehicle ? <CreateVehicleDialog /> : null}
       </div>
+<ERPToolbarDock />
 
-      <div className="rounded-xl border-2 border-primary/40 bg-card p-1 shadow-sm">
+      <ERPFilterBar searchSlot={<Input
+              placeholder="Search plate, customer, or type..."
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              className="flex-1 bg-transparent font-mono text-sm outline-none placeholder:text-muted-foreground/60"
+            />} filterSlot={<>
         <div className="flex flex-wrap items-center gap-0 divide-y divide-border sm:divide-x sm:divide-y-0">
           <div className="flex min-w-[180px] items-center px-3 py-2">
             <Select value={customerId} onValueChange={(value) => setCustomerId(value === '__all__' ? '' : value)}>
@@ -513,12 +439,7 @@ export default function VehiclesList() {
 
           <div className="flex min-w-[220px] flex-1 items-center gap-2 px-3 py-2">
             <Search className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-            <input
-              placeholder="Search plate, customer, or type..."
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              className="flex-1 bg-transparent font-mono text-sm outline-none placeholder:text-muted-foreground/60"
-            />
+            <></>
             {search && (
               <button type="button" onClick={() => setSearch('')} className="text-muted-foreground hover:text-foreground">
                 <X className="h-3.5 w-3.5" />
@@ -549,7 +470,7 @@ export default function VehiclesList() {
             )}
           </div>
         </div>
-      </div>
+       </>} />
 
       {canChangeVehicle ? <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border-2 border-primary/40 bg-card px-3 py-2 shadow-sm">
         <div className="flex flex-wrap items-center gap-3">
@@ -665,7 +586,7 @@ export default function VehiclesList() {
         <Pagination page={page} pageSize={pageSize} totalCount={totalCount} onPage={setPage} onPageSize={setPageSize} />
       </div>
     </div>
-  );
+  )}</ERPListingScope>;
 }
 
 function CreateVehicleDialog() {

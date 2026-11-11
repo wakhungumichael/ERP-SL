@@ -1,3 +1,4 @@
+import { ERPListingScope, ERPListingActions, ERPToolbarDock } from '@/components/erp/listing/listing-scope';
 import type { IntakeForm } from "@/components/ticketing/form-schema";
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { useEffect, useMemo, useState } from "react";
@@ -397,7 +398,7 @@ export default function TicketingQueue() {
       }),
   });
 
-  return (
+  return <ERPListingScope>{(
     <div className="space-y-6 p-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
@@ -409,12 +410,13 @@ export default function TicketingQueue() {
           </p>
         </div>
         {creationOptions.data?.can_create && (
-          <Button onClick={() => setCreateTicketOpen(true)}>
+          <ERPListingActions><Button onClick={() => setCreateTicketOpen(true)}>
             <Plus className="mr-2 h-4 w-4" />
             New Ticket
-          </Button>
+          </Button></ERPListingActions>
         )}
       </div>
+<ERPToolbarDock />
       {creationOptions.isError && (
         <div
           role="alert"
@@ -1029,5 +1031,5 @@ export default function TicketingQueue() {
         </div>
       </ERPFormDialog>
     </div>
-  );
+  )}</ERPListingScope>;
 }

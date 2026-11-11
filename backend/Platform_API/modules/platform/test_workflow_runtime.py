@@ -282,3 +282,50 @@ class WorkflowRuntimeTests(TestCase):
         membership.save(update_fields=["active_role_group_name", "updated_at"])
         supervisor_inbox = self.client.get(reverse("workflow-inbox"))
         self.assertEqual([row["id"] for row in supervisor_inbox.data["data"]["results"]], [supervisor_pending.id])
+
+
+    def test_submitter_in_approval_group_receives_separate_completion_notification(self):
+        self._assert_submitter_notification_does_not_block_decision("approve", "completed")
+
+    def test_submitter_in_approval_group_receives_separate_rejection_notification(self):
+        self._assert_submitter_notification_does_not_block_decision("reject", "rejected")
+
+    def _assert_submitter_notification_does_not_block_decision(self, decision, expected_status):
+        self.submitter.groups.add(self.approver_group)
+        self.client.force_authenticate(self.submitter)
+        forwarded = self.client.post(reverse("workflow-forward"), {
+            "module_slug": "weighbridge", "entity_type": "weighbridge_transaction", "entity_id": 907,
+        }, format="json")
+        self.assertEqual(forwarded.status_code, 201, forwarded.data)
+        item = WorkflowInboxItem.objects.get(entity_id=907)
+        original = SystemNotification.objects.get(
+            tenant=self.tenant, recipient=self.submitter, source_type="workflow_inbox", source_id=item.pk,
+        )
+        original.is_read = True
+        original.save(update_fields=["is_read"])
+        self.client.force_authenticate(self.approver)
+        action_url = reverse("workflow-inbox-action", kwargs={"pk": item.pk})
+        response = self.client.post(action_url, {"decision": decision}, format="json")
+        self.assertEqual(response.status_code, 200, response.data)
+        item.refresh_from_db()
+        self.assertEqual(item.status, expected_status)
+        self.assertEqual(item.acted_by, self.approver)
+        original.refresh_from_db()
+        self.assertTrue(original.is_read)
+        self.assertTrue(original.title.startswith("Approval required:"))
+        outcome = SystemNotification.objects.get(
+            tenant=self.tenant, recipient=self.submitter,
+            source_type=f"workflow_inbox_{expected_status}", source_id=item.pk,
+        )
+        self.assertFalse(outcome.is_read)
+        self.assertEqual(outcome.route_path, item.route_path)
+        self.assertTrue(outcome.title.startswith(f"Workflow {expected_status}:"))
+        history_length = len(item.metadata["workflow_history"])
+        repeated = self.client.post(action_url, {"decision": decision}, format="json")
+        self.assertEqual(repeated.status_code, 400, repeated.data)
+        item.refresh_from_db()
+        self.assertEqual(len(item.metadata["workflow_history"]), history_length)
+        self.assertEqual(SystemNotification.objects.filter(
+            tenant=self.tenant, recipient=self.submitter,
+            source_type=f"workflow_inbox_{expected_status}", source_id=item.pk,
+        ).count(), 1)

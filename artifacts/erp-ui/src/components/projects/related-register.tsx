@@ -1,3 +1,6 @@
+import { Table } from "@/components/ui/table";
+import { ERPFilterBar } from "@/components/erp/listing/filter-bar";
+import { ERPListingScope } from "@/components/erp/listing/listing-scope";
 import { useEffect, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
@@ -79,13 +82,12 @@ export function RelatedRegister({
   useEffect(() => {
     setPage(1);
   }, [path, pageSize]);
-  return (
+  return <ERPListingScope>{(
     <div
       className="mt-4 min-w-0 overflow-hidden rounded-lg border"
       aria-label={label}
     >
-      <div className="flex flex-wrap gap-2 border-b p-3">
-        <Input
+      <ERPFilterBar searchSlot={<Input
           className="min-w-40 flex-1"
           aria-label={`Search ${label}`}
           placeholder={`Search ${label.toLowerCase()}`}
@@ -94,7 +96,8 @@ export function RelatedRegister({
             setSearch(event.target.value);
             setPage(1);
           }}
-        />
+        />} filterSlot={<>
+        <></>
         <Select
           value={ordering}
           onValueChange={(value) => {
@@ -116,7 +119,7 @@ export function RelatedRegister({
             ))}
           </SelectContent>
         </Select>
-      </div>
+       </>} />
       {records.isError && (
         <p role="alert" className="p-3 text-sm text-destructive">
           {records.error.message}
@@ -154,7 +157,7 @@ export function RelatedRegister({
           mobileCards ? "hidden overflow-x-auto md:block" : "overflow-x-auto"
         }
       >
-        <table className="w-full min-w-[36rem] text-left text-sm">
+        <Table className="w-full min-w-[36rem] text-left text-sm">
           <thead className="border-b bg-muted/40 text-xs uppercase text-muted-foreground">
             <tr>
               <th className="px-3 py-3">No.</th>
@@ -182,7 +185,7 @@ export function RelatedRegister({
               </tr>
             ))}
           </tbody>
-        </table>
+        </Table>
       </div>
       {!records.isError && !records.data?.results.length && (
         <p className="p-5 text-center text-sm text-muted-foreground">
@@ -203,7 +206,7 @@ export function RelatedRegister({
         />
       </div>
     </div>
-  );
+  )}</ERPListingScope>;
 }
 export function ProjectTeamRegister({
   projectId,

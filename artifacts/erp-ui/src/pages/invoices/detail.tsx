@@ -1,3 +1,5 @@
+import { ERPListingActions } from '@/components/erp/listing/listing-scope';
+import { ERPListingScope, ERPToolbarDock } from '@/components/erp/listing/listing-scope';
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { downloadDocumentPdf } from '@/lib/document-download';
 import { useEffect, useState } from 'react';
@@ -250,14 +252,14 @@ export default function InvoiceDetail({ id }: { id: string }) {
   const canPay     = inv.status === 'issued' || inv.status === 'Pending' || isOverdue;
   const isPaid     = inv.status === 'paid' || inv.status === 'Paid';
 
-  return (
+  return <ERPListingScope>{(
     <div className="min-w-0 space-y-6 max-w-5xl mx-auto">
       {/* Header */}
       <div className="flex items-center justify-between border-b pb-4 gap-4 flex-wrap">
         <div className="flex min-w-0 items-start gap-3">
-          <Button variant="outline" size="icon" onClick={() => navigate('/payments/invoices')}>
+          <ERPListingActions><Button variant="outline" size="icon" onClick={() => navigate('/payments/invoices')}>
             <ArrowLeft className="h-4 w-4" />
-          </Button>
+          </Button></ERPListingActions>
           <div>
             <div className="flex items-center gap-2 flex-wrap">
               <h1 className="break-all text-xl font-bold tracking-tight font-mono sm:text-2xl">{inv.invoice_number}</h1>
@@ -306,6 +308,7 @@ export default function InvoiceDetail({ id }: { id: string }) {
           </Button>
         </div>
       </div>
+<ERPToolbarDock />
 
       {/* Top cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -556,5 +559,5 @@ export default function InvoiceDetail({ id }: { id: string }) {
         }}
       />
     </div>
-  );
+  )}</ERPListingScope>;
 }

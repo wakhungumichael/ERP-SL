@@ -4,6 +4,7 @@ from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 from Platform_Core.documents import (
     RenderedDocument,
+    organization_document_details,
     _brand_stylesheet,
     _default_body,
     _default_stylesheet,
@@ -202,6 +203,9 @@ def report_document(tenant, report_type, columns, rows, request=None):
         },
         "company": {
             "name": company_name,
+            **organization_document_details(settings_obj),
+            "email": getattr(tenant, "contact_email", ""),
+            "phone": getattr(tenant, "contact_phone", ""),
             "prepared_by": prepared_by,
         },
         "document": {"number": title.upper().replace(" ", "-")},

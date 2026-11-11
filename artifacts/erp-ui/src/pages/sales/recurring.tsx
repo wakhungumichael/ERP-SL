@@ -1,3 +1,4 @@
+import { ERPListingScope, ERPListingActions, ERPExistingPagination, ERPPageSizeControl, ERPToolbarDock } from '@/components/erp/listing/listing-scope';
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
@@ -128,7 +129,7 @@ export default function RecurringPage() {
     }
   }
 
-  return (
+  return <ERPListingScope>{(
     <div className="space-y-6 p-6">
       <div className="flex items-center justify-between">
         <div>
@@ -137,8 +138,9 @@ export default function RecurringPage() {
             Keep scheduled customer billing clear, simple, and easy to act on.
           </p>
         </div>
-        <Button onClick={() => setOpen(true)}>New billing plan</Button>
+        <ERPListingActions><Button onClick={() => setOpen(true)}>New billing plan</Button></ERPListingActions>
       </div>
+<ERPToolbarDock />
 
       {/* Stats */}
       <div className="grid grid-cols-3 gap-4">
@@ -242,7 +244,7 @@ export default function RecurringPage() {
       )}
 
       {records.length > 0 ? (
-        <div className="flex flex-col gap-3 rounded-lg border p-4 sm:flex-row sm:items-center sm:justify-between">
+        <ERPExistingPagination><div className="flex flex-col gap-3 rounded-lg border p-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="text-sm text-muted-foreground">
             Showing page {page} of {totalPages} with {records.length} billing plans
           </div>
@@ -261,7 +263,7 @@ export default function RecurringPage() {
             <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage(page - 1)}>Previous</Button>
             <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage(page + 1)}>Next</Button>
           </div>
-        </div>
+        </div></ERPExistingPagination>
       ) : null}
 
       {/* Create Dialog */}
@@ -313,5 +315,5 @@ export default function RecurringPage() {
         </DialogContent>
       </Dialog>
     </div>
-  );
+  )}</ERPListingScope>;
 }

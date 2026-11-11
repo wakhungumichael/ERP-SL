@@ -1,3 +1,4 @@
+import { ERPListingScope, ERPListingActions, ERPExistingPagination, ERPPageSizeControl, ERPToolbarDock } from '@/components/erp/listing/listing-scope';
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -236,6 +237,7 @@ export default function ProcurementApprovalRules() {
           <h1 className="text-3xl font-semibold tracking-tight">
             Approval routing
           </h1>
+<ERPToolbarDock />
           <p className="mt-1 text-sm text-muted-foreground">
             Decide who approves spending by amount band and, if needed, by cost
             center.
@@ -243,7 +245,7 @@ export default function ProcurementApprovalRules() {
         </div>
         <Dialog open={open} onOpenChange={setOpen}>
           <DialogTrigger asChild>
-            <Button
+            <ERPListingActions><Button
               disabled={!access.add}
               onClick={() => {
                 setEditing(null);
@@ -259,7 +261,7 @@ export default function ProcurementApprovalRules() {
             >
               <Plus className="mr-2 h-4 w-4" />
               Add route
-            </Button>
+            </Button></ERPListingActions>
           </DialogTrigger>
           <DialogContent>
             <DialogHeader>
@@ -421,7 +423,7 @@ export default function ProcurementApprovalRules() {
         </Card>
       </div>
 
-      {pagedGrouped.map(([costCenter, items]) => (
+      {pagedGrouped.map(([costCenter, items]) => <ERPListingScope>{(
         <Card key={costCenter}>
           <CardHeader className="flex flex-row items-center justify-between">
             <CardTitle>{costCenter}</CardTitle>
@@ -505,10 +507,10 @@ export default function ProcurementApprovalRules() {
             </Table>
           </CardContent>
         </Card>
-      ))}
+      )}</ERPListingScope>)}
 
       {rules.length > 0 ? (
-        <div className="flex flex-col gap-3 rounded-lg border p-4 sm:flex-row sm:items-center sm:justify-between">
+        <ERPExistingPagination><div className="flex flex-col gap-3 rounded-lg border p-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="text-sm text-muted-foreground">
             Showing page {page} of {totalPages} with {rules.length} approval
             routes
@@ -548,7 +550,7 @@ export default function ProcurementApprovalRules() {
               Next
             </Button>
           </div>
-        </div>
+        </div></ERPExistingPagination>
       ) : null}
     </div>
   );

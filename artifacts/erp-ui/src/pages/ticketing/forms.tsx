@@ -1,3 +1,4 @@
+import { ERPListingScope, ERPListingActions, ERPToolbarDock } from '@/components/erp/listing/listing-scope';
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -584,7 +585,7 @@ export default function TicketingForms() {
 
   const fieldCount = editor.fields.length;
 
-  return (
+  return <ERPListingScope>{(
     <div className="space-y-6 p-6">
       <div className="flex items-center justify-between gap-4">
         <div>
@@ -596,12 +597,13 @@ export default function TicketingForms() {
           </p>
         </div>
         {options.data?.permissions.add && (
-          <Button onClick={openCreate}>
+          <ERPListingActions><Button onClick={openCreate}>
             <Plus className="mr-1 h-4 w-4" />
             New Intake Form
-          </Button>
+          </Button></ERPListingActions>
         )}
       </div>
+<ERPToolbarDock />
 
       {options.isError && (
         <p role="alert" className="text-sm text-destructive">
@@ -1108,5 +1110,5 @@ export default function TicketingForms() {
         </div>
       </ERPFormDialog>
     </div>
-  );
+  )}</ERPListingScope>;
 }

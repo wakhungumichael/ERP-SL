@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { Bell, Check, Clock3, Eye, ExternalLink, Paperclip, RotateCcw, X } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link } from "wouter";
+import { Link, useSearch } from "wouter";
 import { useAuth } from "@/context/use-auth";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
@@ -72,7 +72,11 @@ export default function WorkflowApprovals() {
   const { token } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const [tab, setTab] = useState<QueueTab>("requests");
+  const routeSearch = useSearch();
+  const [tab, setTab] = useState<QueueTab>(() => {
+    const initial = new URLSearchParams(routeSearch).get('tab');
+    return initial && initial in tabCopy ? initial as QueueTab : 'requests';
+  });
   const [acting, setActing] = useState<number | null>(null);
   const [reviewing, setReviewing] = useState<any>(null);
   const [reviewTab, setReviewTab] = useState("summary");

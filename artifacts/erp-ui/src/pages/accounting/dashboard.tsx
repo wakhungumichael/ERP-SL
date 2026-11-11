@@ -1,3 +1,5 @@
+import { ERPListingActions } from '@/components/erp/listing/listing-scope';
+import { ERPListingScope, ERPToolbarDock } from '@/components/erp/listing/listing-scope';
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
@@ -105,14 +107,14 @@ export default function AccountingDashboard() {
     { label: 'Profit (Month)', value: profit, hint: 'Revenue less expenses', href: `/finance/reports?tab=income-statement&drill=profit&${currentMonthRange}`, icon: <CircleDollarSign className="h-5 w-5" />, tone: 'violet' },
   ];
 
-  return (
+  return <ERPListingScope>{(
     <div className="w-full space-y-5 p-4 md:p-6">
       <div className="flex flex-wrap items-end justify-between gap-4 border-b pb-5">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Accounting Overview</h1>
           <p className="mt-1 text-sm text-muted-foreground">Real-time summary of your accounting performance and key financial insights.</p>
         </div>
-        <div className="flex items-center gap-2">
+        <ERPListingActions><div className="flex items-center gap-2">
           <Button variant="outline" size="sm" onClick={() => postAction('/api/accounting/setup/bootstrap/', setBootstrapping, 'Accounting structure prepared')} disabled={bootstrapping}>
             <WandSparkles className="mr-1 h-4 w-4" /> {bootstrapping ? 'Preparing…' : 'Prepare Setup'}
           </Button>
@@ -120,8 +122,9 @@ export default function AccountingDashboard() {
             <RefreshCw className="mr-1 h-4 w-4" /> {resyncing ? 'Re-syncing…' : 'Re-sync Postings'}
           </Button>
           <div className="rounded-md border bg-card px-3 py-2 text-xs font-mono text-muted-foreground">Month from {data?.period?.month_start ?? '—'}</div>
-        </div>
+        </div></ERPListingActions>
       </div>
+<ERPToolbarDock />
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
         {kpis.map((kpi) => <Link key={kpi.label} href={kpi.href} className="group"><Card className="h-full border shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-md"><CardContent className="flex items-center gap-3 p-4"><div className={`rounded-full p-3 ${kpi.tone === 'emerald' ? 'bg-emerald-100 text-emerald-600' : kpi.tone === 'blue' ? 'bg-blue-100 text-blue-600' : kpi.tone === 'orange' ? 'bg-orange-100 text-orange-600' : 'bg-violet-100 text-violet-600'}`}>{kpi.icon}</div><div className="min-w-0"><p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">{kpi.label}</p><p className="mt-1 truncate font-mono text-xl font-black">{formatKes(kpi.value)}</p><p className="mt-1 text-[10px] text-muted-foreground">{kpi.hint}</p></div></CardContent></Card></Link>)}
@@ -229,5 +232,5 @@ export default function AccountingDashboard() {
       <Card className="shadow-sm"><CardHeader className="border-b py-3"><CardTitle className="text-xs font-bold uppercase tracking-wide">Quick Actions</CardTitle></CardHeader><CardContent className="space-y-1 p-3">{[{ label: 'Create Invoice', href: '/sales/invoices', icon: FileText }, { label: 'Record Payment', href: '/finance/receivables', icon: WalletCards }, { label: 'Record Expense', href: '/purchases/bills?create=1', icon: ReceiptText }, { label: 'Create Journal Entry', href: '/finance/transactions', icon: FileText }, { label: 'Import Transactions', href: '/finance/transactions', icon: Upload }].map((action) => { const Icon = action.icon; return <Link key={action.label} href={action.href} className="flex items-center justify-between rounded-md border px-3 py-2.5 text-sm font-medium transition-colors hover:border-primary/40 hover:bg-muted"><span className="flex items-center gap-2"><Icon className="h-4 w-4 text-muted-foreground" />{action.label}</span><ArrowRight className="h-4 w-4 text-muted-foreground" /></Link>; })}</CardContent></Card>
       </div>
     </div>
-  );
+  )}</ERPListingScope>;
 }

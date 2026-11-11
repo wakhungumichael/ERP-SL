@@ -1,3 +1,6 @@
+import { Table } from "@/components/ui/table";
+import { ERPFilterBar } from "@/components/erp/listing/filter-bar";
+import { ERPListingScope, ERPListingActions } from "@/components/erp/listing/listing-scope";
 import { useState } from "react";
 import { Link } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -335,15 +338,15 @@ export default function ProcurementRequisitions() {
         },
       });
   };
-  return (
+  return <ERPListingScope>{(
     <ERPWorkspacePage
       title="Requisitions"
       description="Individual request → department head review → departmental consolidation → configured higher approvals → purchase order → receipt → supplier bill → payment."
     >
       <div className="mb-5 flex flex-wrap gap-2">
-        <Button disabled={!access.add} onClick={() => startEdit()}>
+        <ERPListingActions><Button disabled={!access.add} onClick={() => startEdit()}>
           New requisition
-        </Button>
+        </Button></ERPListingActions>
         {setup.data?.can_manage_departments && <Link href="/platform/organization-structure">
           <Button variant="outline">Organization structure</Button>
         </Link>}
@@ -360,8 +363,7 @@ export default function ProcurementRequisitions() {
           <Button variant="outline">Purchase Orders</Button>
         </Link>
       </div>
-      <div className="mb-4 flex flex-col gap-3 sm:flex-row">
-        <Input
+      <ERPFilterBar searchSlot={<Input
           className="sm:max-w-md"
           placeholder="Search reference, title or department…"
           value={search}
@@ -369,7 +371,8 @@ export default function ProcurementRequisitions() {
             setSearch(e.target.value);
             setPage(1);
           }}
-        />
+        />} filterSlot={<>
+        <></>
         <select
           aria-label="Requisition status"
           className="h-10 rounded-md border bg-background px-3"
@@ -405,7 +408,7 @@ export default function ProcurementRequisitions() {
             Consolidate {selected.length} approved requests
           </Button>
         ) : null}
-      </div>
+       </>} />
       {query.isLoading ? <p>Loading requisitions…</p> : null}
       {query.error ? (
         <p role="alert" className="text-destructive">
@@ -413,7 +416,7 @@ export default function ProcurementRequisitions() {
         </p>
       ) : null}
       <div className="overflow-x-auto rounded-md border">
-        <table className="w-full text-left text-sm">
+        <Table className="w-full text-left text-sm">
           <thead className="bg-muted">
             <tr>
               {[
@@ -503,7 +506,7 @@ export default function ProcurementRequisitions() {
               </tr>
             ) : null}
           </tbody>
-        </table>
+        </Table>
       </div>
       <ListingPagination
         page={page}
@@ -867,5 +870,5 @@ export default function ProcurementRequisitions() {
         </DialogContent>
       </Dialog>
     </ERPWorkspacePage>
-  );
+  )}</ERPListingScope>;
 }

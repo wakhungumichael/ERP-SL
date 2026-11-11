@@ -1,3 +1,5 @@
+import { Table } from "@/components/ui/table";
+import { ERPListingScope } from "@/components/erp/listing/listing-scope";
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -343,7 +345,7 @@ export default function CompaniesPage() {
     return visibleKeys.map((key) => renderers[key]).filter(Boolean);
   }, [visibleKeys]);
 
-  return (
+  return <ERPListingScope>{(
     <ERPWorkspacePage
       title="Companies"
       description="Manage company records, key contacts, active deals, and follow-ups from one clear account view."
@@ -469,7 +471,7 @@ export default function CompaniesPage() {
         onEdit={openEdit}
       />
     </ERPWorkspacePage>
-  );
+  )}</ERPListingScope>;
 }
 
 function CompanyWorkspaceSheet({
@@ -527,7 +529,7 @@ function CompanyWorkspaceSheet({
   const pipelineValue = openOpportunities.reduce((sum: number, item: any) => sum + Number(item.value ?? 0), 0);
   const overdueActivities = activities.filter((item: any) => item.status !== 'completed' && item.status !== 'cancelled' && new Date(item.date).getTime() < Date.now());
 
-  return (
+  return <ERPListingScope>{(
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="right" className="w-full overflow-y-auto sm:max-w-4xl">
         <SheetHeader>
@@ -685,7 +687,7 @@ function CompanyWorkspaceSheet({
           <Card id="company-opportunities" className={`${activeTab === 'opportunities' ? '' : 'hidden'} shadow-sm`}>
             <CardContent className="p-4">
               <div className="flex items-center justify-between border-b pb-3"><div className="text-sm font-semibold">Opportunities</div><Link href="/crm/opportunities" className="text-xs text-primary hover:underline">View all deals</Link></div>
-              <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="border-b text-left text-xs text-muted-foreground"><th className="py-2 pr-4">Opportunity</th><th className="py-2 pr-4">Stage</th><th className="py-2 pr-4">Value</th><th className="py-2">Expected Close</th></tr></thead><tbody>{opportunities.length ? opportunities.map((opportunity: any) => <tr key={opportunity.id} className="border-b last:border-0"><td className="py-2 pr-4 font-medium">{opportunity.title}</td><td className="py-2 pr-4"><span className={`inline-flex rounded border px-2 py-0.5 text-[10px] font-semibold ${STAGE_BADGE[opportunity.stage] ?? 'bg-secondary border-border'}`}>{opportunity.stage_display || opportunity.stage}</span></td><td className="py-2 pr-4 whitespace-nowrap">{formatMoney(opportunity.value, opportunity.currency || 'KES')}</td><td className="py-2 whitespace-nowrap text-muted-foreground">{formatDate(opportunity.expected_close_date)}</td></tr>) : <tr><td colSpan={4} className="py-8 text-center text-sm text-muted-foreground">No opportunities linked yet.</td></tr>}</tbody></table></div>
+              <div className="overflow-x-auto"><Table className="w-full text-sm"><thead><tr className="border-b text-left text-xs text-muted-foreground"><th className="py-2 pr-4">Opportunity</th><th className="py-2 pr-4">Stage</th><th className="py-2 pr-4">Value</th><th className="py-2">Expected Close</th></tr></thead><tbody>{opportunities.length ? opportunities.map((opportunity: any) => <tr key={opportunity.id} className="border-b last:border-0"><td className="py-2 pr-4 font-medium">{opportunity.title}</td><td className="py-2 pr-4"><span className={`inline-flex rounded border px-2 py-0.5 text-[10px] font-semibold ${STAGE_BADGE[opportunity.stage] ?? 'bg-secondary border-border'}`}>{opportunity.stage_display || opportunity.stage}</span></td><td className="py-2 pr-4 whitespace-nowrap">{formatMoney(opportunity.value, opportunity.currency || 'KES')}</td><td className="py-2 whitespace-nowrap text-muted-foreground">{formatDate(opportunity.expected_close_date)}</td></tr>) : <tr><td colSpan={4} className="py-8 text-center text-sm text-muted-foreground">No opportunities linked yet.</td></tr>}</tbody></Table></div>
             </CardContent>
           </Card>
 
@@ -719,11 +721,11 @@ function CompanyWorkspaceSheet({
             </CardContent>
           </Card>
           <div className={`${activeTab === 'quotes' || activeTab === 'orders' ? '' : 'hidden'} grid gap-4 xl:grid-cols-1`}>
-            <Card id="company-quotes" className={`${activeTab === 'quotes' ? '' : 'hidden'} shadow-sm`}><CardContent className="p-4"><div className="flex items-center justify-between border-b pb-3"><div className="text-sm font-semibold">Quotes</div><Link href="/sales/estimates" className="text-xs text-primary hover:underline">Open quotes</Link></div><div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="border-b text-left text-xs text-muted-foreground"><th className="py-2">Reference</th><th className="py-2">Status</th><th className="py-2">Amount</th><th className="py-2">Date</th></tr></thead><tbody>{quotes.length ? quotes.slice(0, 10).map((quote: any) => <tr key={quote.id} className="border-b last:border-0"><td className="py-2 font-medium">{quote.estimate_number}</td><td className="py-2 capitalize text-muted-foreground">{quote.status}</td><td className="py-2 whitespace-nowrap">{formatMoney(quote.total)}</td><td className="py-2 whitespace-nowrap text-muted-foreground">{formatDate(quote.issue_date)}</td></tr>) : <tr><td colSpan={4} className="py-8 text-center text-sm text-muted-foreground">No quotations linked yet.</td></tr>}</tbody></table></div></CardContent></Card>
-            <Card id="company-orders" className={`${activeTab === 'orders' ? '' : 'hidden'} shadow-sm`}><CardContent className="p-4"><div className="flex items-center justify-between border-b pb-3"><div className="text-sm font-semibold">Orders</div><Link href="/sales/orders" className="text-xs text-primary hover:underline">Open orders</Link></div><div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="border-b text-left text-xs text-muted-foreground"><th className="py-2">Reference</th><th className="py-2">Status</th><th className="py-2">Amount</th><th className="py-2">Fulfilment</th><th className="py-2">Date</th></tr></thead><tbody>{orders.length ? orders.slice(0, 10).map((order: any) => <tr key={order.id} className="border-b last:border-0"><td className="py-2 font-medium">{order.order_number}</td><td className="py-2 capitalize text-muted-foreground">{order.status}</td><td className="py-2 whitespace-nowrap">{formatMoney(order.total)}</td><td className="py-2 text-muted-foreground">{order.status === 'fulfilled' ? 'Fulfilled' : 'Pending'}</td><td className="py-2 whitespace-nowrap text-muted-foreground">{formatDate(order.order_date)}</td></tr>) : <tr><td colSpan={5} className="py-8 text-center text-sm text-muted-foreground">No sales orders linked yet.</td></tr>}</tbody></table></div></CardContent></Card>
+            <Card id="company-quotes" className={`${activeTab === 'quotes' ? '' : 'hidden'} shadow-sm`}><CardContent className="p-4"><div className="flex items-center justify-between border-b pb-3"><div className="text-sm font-semibold">Quotes</div><Link href="/sales/estimates" className="text-xs text-primary hover:underline">Open quotes</Link></div><div className="overflow-x-auto"><Table className="w-full text-sm"><thead><tr className="border-b text-left text-xs text-muted-foreground"><th className="py-2">Reference</th><th className="py-2">Status</th><th className="py-2">Amount</th><th className="py-2">Date</th></tr></thead><tbody>{quotes.length ? quotes.slice(0, 10).map((quote: any) => <tr key={quote.id} className="border-b last:border-0"><td className="py-2 font-medium">{quote.estimate_number}</td><td className="py-2 capitalize text-muted-foreground">{quote.status}</td><td className="py-2 whitespace-nowrap">{formatMoney(quote.total)}</td><td className="py-2 whitespace-nowrap text-muted-foreground">{formatDate(quote.issue_date)}</td></tr>) : <tr><td colSpan={4} className="py-8 text-center text-sm text-muted-foreground">No quotations linked yet.</td></tr>}</tbody></Table></div></CardContent></Card>
+            <Card id="company-orders" className={`${activeTab === 'orders' ? '' : 'hidden'} shadow-sm`}><CardContent className="p-4"><div className="flex items-center justify-between border-b pb-3"><div className="text-sm font-semibold">Orders</div><Link href="/sales/orders" className="text-xs text-primary hover:underline">Open orders</Link></div><div className="overflow-x-auto"><Table className="w-full text-sm"><thead><tr className="border-b text-left text-xs text-muted-foreground"><th className="py-2">Reference</th><th className="py-2">Status</th><th className="py-2">Amount</th><th className="py-2">Fulfilment</th><th className="py-2">Date</th></tr></thead><tbody>{orders.length ? orders.slice(0, 10).map((order: any) => <tr key={order.id} className="border-b last:border-0"><td className="py-2 font-medium">{order.order_number}</td><td className="py-2 capitalize text-muted-foreground">{order.status}</td><td className="py-2 whitespace-nowrap">{formatMoney(order.total)}</td><td className="py-2 text-muted-foreground">{order.status === 'fulfilled' ? 'Fulfilled' : 'Pending'}</td><td className="py-2 whitespace-nowrap text-muted-foreground">{formatDate(order.order_date)}</td></tr>) : <tr><td colSpan={5} className="py-8 text-center text-sm text-muted-foreground">No sales orders linked yet.</td></tr>}</tbody></Table></div></CardContent></Card>
           </div>
         </div>
       </SheetContent>
     </Sheet>
-  );
+  )}</ERPListingScope>;
 }

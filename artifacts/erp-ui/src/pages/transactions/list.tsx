@@ -1,3 +1,6 @@
+import { ListingPagination as Pagination } from '@/components/erp/listing/pagination';
+import { ERPFilterBar } from "@/components/erp/listing/filter-bar";
+import { ERPListingScope, ERPListingActions, ERPToolbarDock } from '@/components/erp/listing/listing-scope';
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import { Link } from 'wouter';
@@ -352,82 +355,7 @@ function DateRangeFilter({ value, onChange }: { value: DateFilter; onChange: (v:
 
 // ── Pagination control ────────────────────────────────────────────────────────
 
-function Pagination({
-  page, pageSize, totalCount, onPage, onPageSize,
-}: {
-  page: number; pageSize: number; totalCount: number;
-  onPage: (p: number) => void; onPageSize: (n: number) => void;
-}) {
-  const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
-  const from = (page - 1) * pageSize + 1;
-  const to   = Math.min(page * pageSize, totalCount);
 
-  // page window
-  const pages: (number | '…')[] = [];
-  if (totalPages <= 7) {
-    for (let i = 1; i <= totalPages; i++) pages.push(i);
-  } else {
-    pages.push(1);
-    if (page > 3) pages.push('…');
-    for (let i = Math.max(2, page - 1); i <= Math.min(totalPages - 1, page + 1); i++) pages.push(i);
-    if (page < totalPages - 2) pages.push('…');
-    pages.push(totalPages);
-  }
-
-  return (
-    <div className="flex items-center justify-between gap-4 px-1 py-2 border-t bg-card rounded-b-lg">
-      {/* Record info + page size */}
-      <div className="flex items-center gap-3 text-xs text-muted-foreground">
-        <span className="hidden sm:inline font-mono">
-          {totalCount === 0 ? 'No records' : `${from}–${to} of ${totalCount.toLocaleString()}`}
-        </span>
-        <Select value={String(pageSize)} onValueChange={v => { onPageSize(Number(v)); onPage(1); }}>
-          <SelectTrigger className="h-7 w-28 text-xs border-muted">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {[10, 25, 50, 100].map(n => (
-              <SelectItem key={n} value={String(n)} className="text-xs">{n} per page</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-
-      {/* Page buttons */}
-      <div className="flex items-center gap-1">
-        <Button variant="outline" size="icon" className="h-7 w-7" disabled={page === 1} onClick={() => onPage(1)} title="First page">
-          <ChevronsLeft className="h-3.5 w-3.5" />
-        </Button>
-        <Button variant="outline" size="icon" className="h-7 w-7" disabled={page === 1} onClick={() => onPage(page - 1)} title="Previous">
-          <ChevronLeft className="h-3.5 w-3.5" />
-        </Button>
-
-        {pages.map((p, i) =>
-          p === '…' ? (
-            <span key={`ellipsis-${i}`} className="px-1.5 text-xs text-muted-foreground">…</span>
-          ) : (
-            <Button
-              key={p}
-              variant={p === page ? 'default' : 'outline'}
-              size="icon"
-              className="h-7 w-7 text-xs font-mono"
-              onClick={() => onPage(p as number)}
-            >
-              {p}
-            </Button>
-          )
-        )}
-
-        <Button variant="outline" size="icon" className="h-7 w-7" disabled={page === totalPages} onClick={() => onPage(page + 1)} title="Next">
-          <ChevronRight className="h-3.5 w-3.5" />
-        </Button>
-        <Button variant="outline" size="icon" className="h-7 w-7" disabled={page === totalPages} onClick={() => onPage(totalPages)} title="Last page">
-          <ChevronsRight className="h-3.5 w-3.5" />
-        </Button>
-      </div>
-    </div>
-  );
-}
 
 const PAYMENT_METHODS = ['Cash', 'Mpesa', 'Bank Deposit', 'Debt'];
 
@@ -565,7 +493,7 @@ export default function TransactionsList() {
   }, [token]);
 
   useEffect(() => {
-    setSelectedIds((current) => current.filter((id) => allPageIds.includes(id)));
+    setSelectedIds((current) => { const next = current.filter((id) => allPageIds.includes(id)); return next.length === current.length ? current : next; });
   }, [allPageIds]);
 
   const toggleSelected = useCallback((txId: number, checked: boolean) => {
@@ -671,7 +599,7 @@ export default function TransactionsList() {
       .catch(() => toast({ title: 'Export failed', variant: 'destructive' }));
   }, [params, token, toast]);
 
-  return (
+  return <ERPListingScope>{(
     <div className="space-y-4">
       {/* Header */}
       <div className="flex items-start justify-between gap-4 border-b pb-4">
@@ -684,21 +612,27 @@ export default function TransactionsList() {
           )}
         </div>
         <div className="flex flex-wrap gap-2 shrink-0">
-          <Link href="/weighbridge/weighment-entry">
+          <ERPListingActions><Link href="/weighbridge/weighment-entry">
             <Button variant="outline" size="sm" className="gap-1.5 font-bold uppercase tracking-wide text-xs">
               <Scale className="h-3.5 w-3.5" /> Weighment Entry
             </Button>
-          </Link>
+          </Link></ERPListingActions>
           {CAN_EXPORT.includes(role) && (
-            <Button variant="outline" size="sm" className="gap-1.5 font-bold uppercase tracking-wide text-xs" onClick={handleExportCSV}>
+            <ERPListingActions><Button variant="outline" size="sm" className="gap-1.5 font-bold uppercase tracking-wide text-xs" onClick={handleExportCSV}>
               <Download className="h-3.5 w-3.5" /> Export CSV
-            </Button>
+            </Button></ERPListingActions>
           )}
         </div>
       </div>
+<ERPToolbarDock />
 
       {/* Filter bar */}
-      <div className="bg-card border rounded-lg shadow-sm">
+      <ERPFilterBar searchSlot={<Input
+              placeholder="Search plate, customer, operator, driver…"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground/60 font-mono"
+            />} filterSlot={<>
         {/* Primary filters row */}
         <div className="flex flex-wrap items-center gap-0 divide-x divide-border">
           {/* Status */}
@@ -749,12 +683,7 @@ export default function TransactionsList() {
           {/* Search */}
           <div className="flex items-center gap-2 px-3 py-2 flex-1 min-w-[200px]">
             <Search className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-            <input
-              placeholder="Search plate, customer, operator, driver…"
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground/60 font-mono"
-            />
+            <></>
             {search && (
               <button onClick={() => setSearch('')} className="text-muted-foreground hover:text-foreground">
                 <X className="h-3.5 w-3.5" />
@@ -764,8 +693,8 @@ export default function TransactionsList() {
 
           {/* Toolbar buttons */}
           <div className="flex items-center gap-2 px-3 py-2">
-            <DateRangeFilter value={dateFilter} onChange={setDateFilter} />
-            <ColumnPicker visibleKeys={visibleKeys} onChange={handleColumnsChange} />
+
+
             {activeFilterCount > 0 && (
               <Button
                 variant="ghost" size="sm"
@@ -811,9 +740,7 @@ export default function TransactionsList() {
             )}
           </div>
         )}
-      </div>
-
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-card px-4 py-3">
+       </>}  toolsSlot={<><DateRangeFilter value={dateFilter} onChange={setDateFilter} /><ColumnPicker visibleKeys={visibleKeys} onChange={handleColumnsChange} /><Popover><PopoverTrigger asChild><Button type="button" variant="outline">Bulk actions ({selectedIds.length})</Button></PopoverTrigger><PopoverContent align="end" className="max-h-[70vh] w-[min(32rem,calc(100vw-2rem))] overflow-y-auto"><div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-card px-4 py-3">
         <div className="flex flex-wrap items-center gap-3">
           <div className="text-xs font-medium text-muted-foreground">
             {selectedIds.length > 0 ? `${selectedIds.length} selected on this page` : 'Select rows to run bulk actions'}
@@ -887,7 +814,9 @@ export default function TransactionsList() {
             {bulkRunning ? 'Running…' : 'Run'}
           </Button>
         </div>
-      </div>
+      </div></PopoverContent></Popover></>} />
+
+
 
       {/* Table */}
       <div className="bg-card rounded-lg border shadow-sm overflow-hidden">
@@ -996,7 +925,7 @@ export default function TransactionsList() {
         token={token}
       />
     </div>
-  );
+  )}</ERPListingScope>;
 }
 
 // ── Create Transaction Dialog ─────────────────────────────────────────────────

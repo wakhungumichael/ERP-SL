@@ -1,5 +1,7 @@
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { Link, useLocation } from 'wouter';
+import { useWorkspace } from '@/context/workspace-context';
+import { WorkspaceWindowTabs } from '@/components/erp/workspace/window-tabs';
 import { useAuthLogout } from '@workspace/api-client-react';
 import { LogOut, Scale, ChevronRight, ChevronDown, Search, UserCircle2, Settings, PanelTop, X, Menu, ShieldAlert, LayoutDashboard, ShoppingCart, Package, Landmark, Users, Ticket, BarChart3, ClipboardList, Factory, Store, Wrench, Boxes, FileText, Truck, CreditCard, FolderKanban, ContactRound, Download, Bell } from 'lucide-react';
 import { activeNavigationPath } from '@/lib/navigation-active';
@@ -46,11 +48,11 @@ import {
 } from '@/components/ui/select';
 
 const HOME_SECTION: NavSection = {
-  key: 'dashboard',
-  title: 'Dashboard',
+  key: 'workspace-home',
+  title: 'Home',
   roles: [],
   items: [
-    { key: 'dashboard', title: 'Dashboard', path: '/dashboard', roles: [] },
+    { key: 'home', title: 'Home', path: '/home', roles: [] },
   ],
 };
 
@@ -414,6 +416,7 @@ function NavSectionItem({ section, location, sidebarCollapsed, open, onToggle }:
 // ── Shell ──────────────────────────────────────────────────────────────────────
 export function Shell({ children }: { children: React.ReactNode }) {
   const [location, setLocation] = useLocation();
+  const workspace = useWorkspace();
   const { token, user, role, isLoading, authErrorStatus, clearToken, refreshUser } = useAuth();
   const queryClient = useQueryClient();
   const { tenantContext, isLoading: tenantThemeLoading } = useTenantTheme();
@@ -660,26 +663,18 @@ export function Shell({ children }: { children: React.ReactNode }) {
   );
   const platformSections = nonDashboardSections.filter(section => section.key === 'platform');
   const remainingSections = nonDashboardSections.filter(section => section.key !== 'platform');
-  const navSections = dashboardSections.length > 0
-    ? [...dashboardSections, ...remainingSections, ...platformSections]
-    : usesPermissionDrivenNavigation
-      ? [...remainingSections, ...platformSections]
-      : [HOME_SECTION, ...remainingSections, ...platformSections];
-  const workspaceHomePath = navSections
-    .flatMap((section) => section.items)
-    .find((item) => item.path === '/dashboard')?.path
-    ?? navSections.flatMap((section) => section.items)[0]?.path
-    ?? '/dashboard';
-  const routeAccess = useMemo(
-    () => evaluateWorkspaceRouteAccess({
-      path: location,
-      role: effectiveRole,
-      activeModuleSlugs: tenantContext.activeModuleSlugs ?? [],
-      permissions: Array.from(userPermissions),
-      isPermissionDrivenRole: usesPermissionDrivenNavigation,
-    }),
-    [effectiveRole, location, tenantContext.activeModuleSlugs, (user as any)?.permissions],
-  );
+  const navSections = [HOME_SECTION, ...dashboardSections, ...remainingSections, ...platformSections];
+  const workspaceHomePath = '/home';
+  const navigationLabels = JSON.stringify(Object.fromEntries(navSections.flatMap(section => section.items).map(item => [item.path, item.title])));
+  useEffect(() => { workspace?.setLabels(JSON.parse(navigationLabels)); }, [navigationLabels, workspace?.setLabels]);
+  const openNavigation = (event: React.MouseEvent) => {
+    if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+    const anchor = (event.target as HTMLElement).closest<HTMLAnchorElement>('a[href]');
+    if (!anchor || anchor.target === '_blank' || !anchor.href.startsWith(window.location.origin + '/')) return;
+    event.preventDefault();
+    workspace?.open(new URL(anchor.href).pathname + new URL(anchor.href).search);
+    setMobileNavOpen(false);
+  };
 
   const filteredSidebarSections = useMemo(() => {
     if (!sidebarSearch.trim()) return navSections;
@@ -814,6 +809,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
     <div className="flex h-screen w-full overflow-hidden bg-background text-foreground">
       {/* Sidebar */}
       <aside
+        onClickCapture={openNavigation}
         className={`${sidebarCollapsed ? 'w-16' : 'w-60'} h-screen overflow-hidden transition-all duration-200 bg-sidebar text-sidebar-foreground border-r border-sidebar-border flex-col hidden md:flex shrink-0`}
       >
         {/* Logo */}
@@ -890,14 +886,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
             >
               <Menu className="h-5 w-5" />
             </Button>
-            <div className="hidden lg:block text-sm font-semibold text-muted-foreground tracking-wide">
-              {navSections
-                .flatMap(s => s.items)
-                .find(
-                  item =>
-                    item.path === activeNavigationPath(location, navSections.flatMap(section => section.items).map(entry => entry.path)),
-                )?.title ?? 'Operations Center'}
-            </div>
+            <div className="hidden max-w-xs truncate text-sm font-semibold text-muted-foreground lg:block">{appTitle}</div>
 
           </div>
 
@@ -1051,46 +1040,12 @@ export function Shell({ children }: { children: React.ReactNode }) {
           </div>
         </header>
 
-        {/* Page content */}
-        <div className="flex-1 overflow-auto bg-muted/20 p-4 md:p-6 lg:p-7">
-          <div className="erp-workspace w-full">
-            {!tenantThemeLoading && !routeAccess.allowed ? (
-              <div className="flex min-h-[60vh] items-center justify-center">
-                <div className="w-full max-w-2xl rounded-[28px] border border-border bg-card p-8 shadow-sm">
-                  <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-orange-50 text-orange-600">
-                    <ShieldAlert className="h-6 w-6" />
-                  </div>
-                  <h1 className="mt-5 text-2xl font-semibold tracking-tight text-foreground">
-                    {routeAccess.reason === 'module'
-                      ? 'This page is not active for your organization.'
-                      : 'You do not have access to this page.'}
-                  </h1>
-                  <p className="mt-3 text-sm leading-7 text-muted-foreground">
-                    {routeAccess.reason === 'module'
-                      ? 'Your current organization plan does not include this module, or the module has not been activated for this workspace.'
-                      : 'Your current role does not have permission to open this workspace area for this organization.'}
-                  </p>
-                  <div className="mt-6 flex flex-col gap-3 sm:flex-row">
-                    <Button onClick={() => setLocation(workspaceHomePath)}>
-                      Return to workspace
-                    </Button>
-                    {effectiveRole === 'tenant_admin' ? (
-                      <Button variant="outline" onClick={() => setLocation('/platform/organization-settings')}>
-                        Open organization settings
-                      </Button>
-                    ) : null}
-                  </div>
-                </div>
-              </div>
-            ) : (
-              children
-            )}
-          </div>
-        </div>
+        <WorkspaceWindowTabs />
+        <div className="flex min-h-0 flex-1 flex-col bg-muted/20">{children}</div>
       </main>
 
       <Sheet open={mobileNavOpen} onOpenChange={setMobileNavOpen}>
-        <SheetContent side="left" className="w-[20rem] max-w-[85vw] border-sidebar-border bg-sidebar p-0 text-sidebar-foreground sm:max-w-[20rem]">
+        <SheetContent onClickCapture={openNavigation} side="left" className="w-[20rem] max-w-[85vw] border-sidebar-border bg-sidebar p-0 text-sidebar-foreground sm:max-w-[20rem]">
           <SheetHeader className="sr-only">
             <SheetTitle>Navigation menu</SheetTitle>
             <SheetDescription>Browse modules and pages on mobile.</SheetDescription>

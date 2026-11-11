@@ -58,8 +58,8 @@ def stylesheet(variant):
     """
 
 
-def body(variant):
-    return """
+def body(variant, *, include_preparer=False):
+    layout = """
     <div class="business-document">
       <table class="heading"><tr>
         <td class="identity">
@@ -125,11 +125,14 @@ def body(variant):
     </div>
     <div id="invoice-page-footer">{{ document.number }} | Page <pdf:pagenumber /> of <pdf:pagecount /></div>
     """
+    if not include_preparer:
+        layout = layout.replace('      {% if company.prepared_by %}<div class="prepared-by">Prepared by: <strong>{{ company.prepared_by }}</strong>{% if company.prepared_by_email %} | {{ company.prepared_by_email }}{% endif %}</div>{% endif %}\n', "")
+    return layout
 
 
 def previous_print_layout(variant):
     """Exact pre-spacing-update layout; recognize untouched built-ins only."""
-    layout = body(variant)
+    layout = body(variant, include_preparer=True)
     layout = layout.replace('<div class="invoice-notes"><strong class="label">Notes</strong><br/>', '<div class="notes"><div class="label">Notes</div>')
     layout = layout.replace('<div class="invoice-notes"><strong class="label">Terms &amp; conditions</strong><br/>', '<div class="notes"><div class="label">Terms &amp; conditions</div>')
     layout = layout.replace('<div id="invoice-page-footer">{{ document.number }} | Page <pdf:pagenumber /> of <pdf:pagecount /></div>', '<div id="invoice-page-footer"><table><tr><td>{{ document.number }}</td><td class="num">Page <pdf:pagenumber /> of <pdf:pagecount /></td></tr></table></div>')
@@ -145,3 +148,17 @@ def previous_print_layout(variant):
     for before, after in replacements:
         css = css.replace(before, after)
     return layout, css
+
+
+def alignment_stylesheet():
+    return """
+      .heading .identity, .heading .document-reference { padding-top: 12pt; padding-bottom: 12pt; }
+      .heading .document-title { line-height: 32pt; margin: 0 0 6pt; }
+      .banner-heading .identity, .banner-heading .document-reference { padding: 16pt 12pt; }
+      .centered-heading .identity, .centered-heading .document-reference { padding: 6pt 0; }
+      .invoice-meta td { vertical-align: top; }
+      .invoice-settlement td { vertical-align: top; }
+      .invoice-settlement, .invoice-notes, .prepared-by, .print-document-qr { -pdf-keep-with-next: true; }
+      .invoice-totals table { width: 100%; }
+      .invoice-totals .num { text-align: right; white-space: nowrap; }
+    """

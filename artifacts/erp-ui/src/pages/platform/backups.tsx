@@ -1,3 +1,4 @@
+import { ERPListingScope } from "@/components/erp/listing/listing-scope";
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -377,7 +378,7 @@ export default function PlatformBackupsPage() {
     },
   ];
 
-  return (
+  return <ERPListingScope>{(
     <ERPWorkspacePage
       title="Backups"
       description="Configure PostgreSQL backup policies, run tenant-scoped exports, and manage archive settings."
@@ -564,5 +565,5 @@ export default function PlatformBackupsPage() {
         </div>
       </ERPFormDialog>
     </ERPWorkspacePage>
-  );
+  )}</ERPListingScope>;
 }

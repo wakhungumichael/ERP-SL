@@ -1,4 +1,4 @@
-import { DocumentTemplateGallery } from '@/components/documents/document-template-gallery';
+import { DOCUMENT_DEFAULT_FIELDS, OrganizationDocumentSettings } from '@/components/documents/organization-document-settings';
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { useState, useEffect } from 'react';
 import { useSearch } from 'wouter';
@@ -34,11 +34,10 @@ const ORGANIZATION_SETTINGS_SECTIONS = [
   { value: 'branding', label: 'Branding', icon: Palette },
   { value: 'public-site', label: 'Public Site', icon: Globe2 },
   { value: 'email', label: 'Email', icon: Mail },
-  { value: 'invoicing', label: 'Invoicing', icon: FileText },
+  { value: 'documents', label: 'Documents', icon: FileText },
   { value: 'taxes-charges', label: 'Taxes & Charges', icon: FileText },
   { value: 'workflow-lifecycle', label: 'Workflow Lifecycle', icon: FileText },
   { value: 'security', label: 'Security', icon: UserCheck },
-  { value: 'templates', label: 'Templates', icon: LayoutTemplate },
   { value: 'users', label: 'Users', icon: Users },
   { value: 'setup-import', label: 'Setup & Demo', icon: Copy },
   { value: 'branches', label: 'Branches', icon: GitBranch },
@@ -211,11 +210,6 @@ const PUBLIC_SITE_SETTINGS_FIELDS = ['login_page_config', 'landing_page_config',
 const EMAIL_SETTINGS_FIELDS = [
   'support_email', 'smtp_host', 'smtp_port', 'smtp_user', 'smtp_password',
   'smtp_use_tls', 'smtp_use_ssl', 'smtp_allow_insecure_ssl',
-] as const;
-const INVOICE_SETTINGS_FIELDS = [
-  'invoice_prefix', 'default_payment_terms_days', 'footer_text', 'default_tax_name',
-  'invoice_address', 'invoice_tax_number', 'invoice_website', 'invoice_payment_instructions',
-  'default_tax_rate',
 ] as const;
 const WORKFLOW_LIFECYCLE_SETTINGS_FIELDS = ['document_status_policy'] as const;
 const SESSION_SECURITY_SETTINGS_FIELDS = ['session_timeout_minutes'] as const;
@@ -399,8 +393,8 @@ function DocumentTemplateDialog({
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="max-w-3xl">
-        <DialogHeader><DialogTitle>Create Document Template</DialogTitle></DialogHeader>
+      <DialogContent className="w-[calc(100%-1.5rem)] max-w-4xl max-h-[90dvh]">
+        <DialogHeader><DialogTitle>Create custom document layout</DialogTitle></DialogHeader>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 py-2">
           <div className="space-y-1.5">
             <Label>Template Name</Label>
@@ -1886,8 +1880,9 @@ export default function OrganizationSettings() {
   const [organizationDialogOpen, setOrganizationDialogOpen] = useState(false);
   const [organizationPickerOpen, setOrganizationPickerOpen] = useState(false);
   const sectionSearch = useSearch();
-  const [settingsSection, setSettingsSection] = useState(() => new URLSearchParams(sectionSearch).get('section') || 'company');
-  useEffect(() => { const section = new URLSearchParams(sectionSearch).get('section'); if (section && ORGANIZATION_SETTINGS_SECTIONS.some(item => item.value === section)) setSettingsSection(section); }, [sectionSearch]);
+  const normalizeSection = (section: string | null) => section === 'invoicing' || section === 'templates' ? 'documents' : section || 'company';
+  const [settingsSection, setSettingsSection] = useState(() => normalizeSection(new URLSearchParams(sectionSearch).get('section')));
+  useEffect(() => { const section = normalizeSection(new URLSearchParams(sectionSearch).get('section')); if (section && ORGANIZATION_SETTINGS_SECTIONS.some(item => item.value === section)) setSettingsSection(section); }, [sectionSearch]);
   const [testRecipient, setTestRecipient] = useState<string>((user as any)?.email ?? '');
   const [newOrganizationForm, setNewOrganizationForm] = useState({
     name: '',
@@ -1966,6 +1961,7 @@ export default function OrganizationSettings() {
         : DEFAULT_LANDING_PAGE_CONFIG.highlights,
     },
     smtp_password: '',
+    print_qr_codes_enabled: source?.print_qr_codes_enabled !== false,
     invoice_template_id: source?.invoice_template?.id ?? null,
     estimate_template_id: source?.estimate_template?.id ?? null,
     receipt_template_id: source?.receipt_template?.id ?? null,
@@ -1986,11 +1982,14 @@ export default function OrganizationSettings() {
       legal_name: tenant.legal_name ?? '',
       contact_email: tenant.contact_email ?? '',
       contact_phone: tenant.contact_phone ?? '',
+      postal_address: tenant.postal_address ?? '',
+      website: tenant.website ?? '',
+      tax_number: tenant.tax_number ?? '',
       industry_id: tenant.industry?.id ? String(tenant.industry.id) : '',
       default_currency: tenant.default_currency ?? 'KES',
       timezone: tenant.timezone ?? 'Africa/Nairobi',
     });
-  }, [activeMembershipId, tenant?.id, tenant?.name, tenant?.legal_name, tenant?.contact_email, tenant?.contact_phone, tenant?.industry?.id, tenant?.default_currency, tenant?.timezone]);
+  }, [activeMembershipId, tenant?.id, tenant?.name, tenant?.legal_name, tenant?.contact_email, tenant?.contact_phone, tenant?.postal_address, tenant?.website, tenant?.tax_number, tenant?.industry?.id, tenant?.default_currency, tenant?.timezone]);
 
   useEffect(() => {
     if (!organizationId || settingsLoading) {
@@ -2014,7 +2013,14 @@ export default function OrganizationSettings() {
       ...tenantForm,
       industry_id: tenantForm?.industry_id ? Number(tenantForm.industry_id) : null,
     }),
-    onSuccess: () => { toast({ title: 'Organization profile saved' }); qc.invalidateQueries({ queryKey: ['my-tenant'] }); },
+    onSuccess: (response) => {
+      const saved = response?.data ?? response;
+      setSettingsForm((current: any) => current ? { ...current, invoice_address: saved.postal_address ?? '', invoice_website: saved.website ?? '', invoice_tax_number: saved.tax_number ?? '' } : current);
+      toast({ title: 'Organization profile saved' });
+      void qc.invalidateQueries({ queryKey: ['my-tenant'] });
+      void qc.invalidateQueries({ queryKey: ['my-tenant-settings', organizationId] });
+      void qc.invalidateQueries({ queryKey: ['public-site-config'] });
+    },
     onError: (e: any) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
   });
   const createOrganization = useMutation({
@@ -2058,9 +2064,24 @@ export default function OrganizationSettings() {
       qc.setQueryData(['my-tenant-settings', organizationId], response);
       qc.setQueryData(['dashboard-tenant-settings', organizationId, token], saved);
       void qc.invalidateQueries({ queryKey: ['public-site-config'] });
+      if (fields.includes('invoice_address')) void qc.invalidateQueries({ queryKey: ['my-tenant'] });
       if (fields.includes('session_timeout_minutes')) await refreshUser();
     },
     onError: (e: any) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
+  });
+  const saveDocumentDefaults = useMutation({
+    mutationFn: async (values: Record<string, unknown>) => {
+      await api(token!, `/tenants/${organizationId}/settings/`, 'PUT', buildSettingsPayload(values, DOCUMENT_DEFAULT_FIELDS));
+      return api(token!, `/tenants/${organizationId}/settings/`);
+    },
+    onSuccess: (response) => {
+      const saved = response?.data ?? response;
+      setSettingsForm(buildSettingsForm(saved));
+      qc.setQueryData(['my-tenant-settings', organizationId], response);
+      qc.setQueryData(['dashboard-tenant-settings', organizationId, token], saved);
+      void qc.invalidateQueries({ queryKey: ['my-tenant'] });
+      toast({ title: 'Document defaults saved' });
+    },
   });
   const savePlatformBranding = useMutation({
     mutationFn: async () => api(
@@ -2456,6 +2477,19 @@ export default function OrganizationSettings() {
                         <div className="space-y-1.5">
                           <Label>Phone</Label>
                           <Input value={tenantForm.contact_phone ?? ''} onChange={tf('contact_phone')} />
+                        </div>
+                        <div className="space-y-1.5 sm:col-span-2">
+                          <Label htmlFor="organization-postal-address">Postal / Physical Address</Label>
+                          <Textarea id="organization-postal-address" rows={3} value={tenantForm.postal_address ?? ''} onChange={e => setTenantForm((current: any) => ({ ...current, postal_address: e.target.value }))} placeholder={'Building, street or office location\nP.O. Box 12345 - 00100, Nairobi, Kenya'} />
+                          <p className="text-xs text-muted-foreground">Printed on invoices and other organization documents. Include your postal code, town and country.</p>
+                        </div>
+                        <div className="space-y-1.5 min-w-0">
+                          <Label htmlFor="organization-website">Website</Label>
+                          <Input id="organization-website" type="url" maxLength={500} value={tenantForm.website ?? ''} onChange={tf('website')} placeholder="https://example.com" />
+                        </div>
+                        <div className="space-y-1.5 min-w-0">
+                          <Label htmlFor="organization-tax-number">Tax ID / KRA PIN</Label>
+                          <Input id="organization-tax-number" maxLength={80} value={tenantForm.tax_number ?? ''} onChange={tf('tax_number')} placeholder="Organization tax registration number" />
                         </div>
                         <div className="space-y-1.5 sm:col-span-2">
                           <Label>Industry</Label>
@@ -3119,65 +3153,12 @@ export default function OrganizationSettings() {
         </TabsContent>
 
         {/* ── Invoicing Tab ─────────────────────────────────────────────── */}
-        <TabsContent value="invoicing" className="mt-6">
-          <Card>
-            <CardHeader className="bg-muted/20 border-b py-3 px-4">
-              <CardTitle className="text-xs font-bold uppercase tracking-widest">Invoice Settings</CardTitle>
-            </CardHeader>
-            <CardContent className="p-6 space-y-4">
-              {settingsForm && (
-                <>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div className="space-y-1.5">
-                      <Label>Invoice Number Prefix</Label>
-                      <Input value={settingsForm.invoice_prefix ?? 'INV'} onChange={sf('invoice_prefix')} placeholder="INV" maxLength={10} />
-                      <p className="text-xs text-muted-foreground">e.g. INV-2024-0001</p>
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label>Default Payment Terms (days)</Label>
-                      <Input value={settingsForm.default_payment_terms_days ?? '30'} onChange={sf('default_payment_terms_days')} type="number" min="0" />
-                    </div>
-                    <div className="space-y-1.5 sm:col-span-2">
-                      <Label htmlFor="issuer-invoice-address">Organization postal / physical address</Label>
-                      <Textarea id="issuer-invoice-address" rows={3} value={settingsForm.invoice_address ?? ''} onChange={sf('invoice_address')} />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label htmlFor="issuer-invoice-tax">Organization tax ID / PIN</Label>
-                      <Input id="issuer-invoice-tax" maxLength={80} value={settingsForm.invoice_tax_number ?? ''} onChange={sf('invoice_tax_number')} />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label htmlFor="issuer-invoice-website">Website</Label>
-                      <Input id="issuer-invoice-website" type="url" placeholder="https://example.com" value={settingsForm.invoice_website ?? ''} onChange={sf('invoice_website')} />
-                    </div>
-                    <div className="space-y-1.5 sm:col-span-2">
-                      <Label htmlFor="issuer-invoice-payment">Invoice payment instructions</Label>
-                      <Textarea id="issuer-invoice-payment" rows={4} value={settingsForm.invoice_payment_instructions ?? ''} onChange={sf('invoice_payment_instructions')} placeholder="Bank or mobile payment details and the payment reference to use" />
-                    </div>
-                    <div className="space-y-1.5 sm:col-span-2">
-                      <Label>Invoice Footer Text</Label>
-                      <Input value={settingsForm.footer_text ?? ''} onChange={sf('footer_text')} placeholder="Thank you for your business." />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label>Default Tax Name</Label>
-                      <Input value={settingsForm.default_tax_name ?? 'VAT'} onChange={sf('default_tax_name')} placeholder="VAT" />
-                      <p className="text-xs text-muted-foreground">Shared tax label used across sales, purchases, and customer documents.</p>
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label>Default Tax Rate (%)</Label>
-                      <Input value={settingsForm.default_tax_rate ?? '0'} onChange={sf('default_tax_rate')} type="number" min="0" step="0.01" />
-                      <p className="text-xs text-muted-foreground">Used as the starting tax rate when creating products, services, and billable lines.</p>
-                    </div>
-                  </div>
-                  <Button onClick={() => saveSettings.mutate(INVOICE_SETTINGS_FIELDS)} disabled={saveSettings.isPending}>
-                    {saveSettings.isPending ? 'Saving…' : 'Save Invoice Settings'}
-                  </Button>
-                </>
-              )}
-            </CardContent>
-          </Card>
-          <Card className="mt-6"><CardContent className="p-4 sm:p-6">
-            <DocumentTemplateGallery templates={templates} settings={settings} pending={selectDocumentTemplate.isPending} onSelect={template => selectDocumentTemplate.mutate(template)} onPreview={previewTemplate} />
-          </CardContent></Card>
+        <TabsContent value="documents" className="mt-6">
+          <OrganizationDocumentSettings key={organizationId} settings={settings} templates={templates} loading={settingsLoading || !settingsForm}
+            saving={saveDocumentDefaults.isPending} selecting={selectDocumentTemplate.isPending}
+            onSave={values => saveDocumentDefaults.mutateAsync(values)}
+            onSelect={template => selectDocumentTemplate.mutate(template)} onPreview={previewTemplate}
+            onCreateTemplate={() => setTemplateDialogOpen(true)} />
         </TabsContent>
 
         <TabsContent value="taxes-charges" className="mt-6">
@@ -3221,13 +3202,6 @@ export default function OrganizationSettings() {
               )}
             </CardContent>
           </Card>
-        </TabsContent>
-
-        <TabsContent value="templates" className="mt-6">
-          <Card><CardContent className="space-y-5 p-4 sm:p-6">
-            <div className="flex justify-end"><Button size="sm" onClick={() => setTemplateDialogOpen(true)} className="gap-1.5"><Plus className="h-3.5 w-3.5" />New Template</Button></div>
-            <DocumentTemplateGallery templates={templates} settings={settings} pending={selectDocumentTemplate.isPending} onSelect={template => selectDocumentTemplate.mutate(template)} onPreview={previewTemplate} />
-          </CardContent></Card>
         </TabsContent>
 
         <TabsContent value="users" className="mt-6">

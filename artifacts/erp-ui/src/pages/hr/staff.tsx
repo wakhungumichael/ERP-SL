@@ -1,3 +1,6 @@
+import { ERPListingActions } from '@/components/erp/listing/listing-scope';
+import { ERPFilterBar } from "@/components/erp/listing/filter-bar";
+import { ERPListingScope, ERPToolbarDock } from '@/components/erp/listing/listing-scope';
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -250,7 +253,7 @@ function PayPeriodDetail({ periodId, token }: { periodId: number; token: string 
   const canProcess = data.status === 'Draft';
   const canComplete = data.status === 'Processing';
 
-  return (
+  return <ERPListingScope>{(
     <div className="space-y-4">
       {/* Period header */}
       <div className="flex items-center justify-between">
@@ -349,7 +352,7 @@ function PayPeriodDetail({ periodId, token }: { periodId: number; token: string 
         />
       )}
     </div>
-  );
+  )}</ERPListingScope>;
 }
 
 /* ════════════════════════════════════════════════════════════════ main ── */
@@ -402,7 +405,7 @@ export default function HRStaff() {
   const staffTotal = staffData?.count ?? staffRows.length;
   const periods: any[] = periodsData?.results ?? [];
 
-  return (
+  return <ERPListingScope>{(
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-start justify-between gap-4 border-b pb-4">
@@ -414,7 +417,7 @@ export default function HRStaff() {
             Staff directory and payroll management
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <ERPListingActions><div className="flex items-center gap-2">
           {tab === 'staff' && (
             <Button size="sm" className="gap-1.5 font-bold uppercase tracking-wide text-xs" asChild>
               <a href="/platform/organization-settings"><UserPlus className="h-3.5 w-3.5" /> Manage Team</a>
@@ -430,8 +433,9 @@ export default function HRStaff() {
               ← All Periods
             </Button>
           )}
-        </div>
+        </div></ERPListingActions>
       </div>
+<ERPToolbarDock />
 
       {/* Stat cards */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
@@ -462,11 +466,8 @@ export default function HRStaff() {
 
         {/* ── Staff tab ── */}
         <TabsContent value="staff" className="mt-4 space-y-4">
-          <div className="bg-card border rounded-lg px-4 py-2 flex items-center gap-2">
-            <Search className="h-4 w-4 text-muted-foreground shrink-0" />
-            <Input placeholder="Search by name or email…" value={search} onChange={e => setSearch(e.target.value)}
-              className="border-0 shadow-none focus-visible:ring-0 text-sm h-8" />
-          </div>
+          <ERPFilterBar searchSlot={<Input placeholder="Search by name or email…" value={search} onChange={e => setSearch(e.target.value)}
+              className="border-0 shadow-none focus-visible:ring-0 text-sm h-8" />} />
           <Card>
             <CardHeader className="pb-3">
               <CardTitle className="text-sm font-bold uppercase tracking-widest text-muted-foreground">
@@ -582,5 +583,5 @@ export default function HRStaff() {
         onSuccess={() => qc.invalidateQueries({ queryKey: ['hr-pay-periods'] })}
       />
     </div>
-  );
+  )}</ERPListingScope>;
 }

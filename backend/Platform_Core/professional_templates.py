@@ -47,7 +47,7 @@ def stylesheet(variant):
     )
 
 
-def body(label, variant):
+def body(label, variant, *, include_contact_details=True):
     party_label = "Supplier" if label == "Purchase Order" else "Customer"
     date_label = "Valid Until" if label == "Estimate" else "Due Date"
     total_label = "Outstanding Balance" if label == "Statement" else "Total"
@@ -113,4 +113,14 @@ def body(label, variant):
           {% if statement_payments %}<div class="label">Recent Payments</div><table class="line-items" repeat="1"><thead><tr><th>Date</th><th>Reference</th><th>Method</th><th class="num">Amount</th></tr></thead><tbody>{% for payment in statement_payments %}<tr><td>{{ payment.date }}</td><td>{{ payment.reference }}</td><td>{{ payment.method }}</td><td class="num">{{ payment.amount }}</td></tr>{% endfor %}</tbody></table>{% endif %}
         """ + layout[end:]
         layout = layout.replace('<tr><td>Tax</td><td class="num">{{ totals.tax_display }}</td></tr>', '<tr><td>Total Paid</td><td class="num">{{ totals.paid_display }}</td></tr>').replace('<tr><td>Discount</td><td class="num">{{ totals.discount_display }}</td></tr>', '')
+    if include_contact_details:
+        layout = layout.replace(
+            '<div class="company-name">{{ company.name }}</div>',
+            '<div class="company-name">{{ company.name }}</div>'
+            '{% if company.address %}<div class="muted">{{ company.address|linebreaksbr }}</div>{% endif %}'
+            '{% if company.website %}<div class="muted">{{ company.website }}</div>{% endif %}'
+            '{% if company.tax_number %}<div class="muted">Tax ID / PIN: {{ company.tax_number }}</div>{% endif %}',
+            1,
+        )
+        layout = layout.replace('{{ company.address }}', '{{ company.address|linebreaksbr }}')
     return layout

@@ -1,3 +1,5 @@
+import { ERPFilterBar } from "@/components/erp/listing/filter-bar";
+import { ERPListingScope, ERPExistingPagination, ERPPageSizeControl } from '@/components/erp/listing/listing-scope';
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
@@ -186,7 +188,7 @@ export default function ProductsPage() {
     }
   }
 
-  return (
+  return <ERPListingScope>{(
     <div className="space-y-5">
       <ERPPageHeader
         title="Products & Services"
@@ -207,14 +209,14 @@ export default function ProductsPage() {
       </div>
 
       {/* Filters */}
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border/80 bg-card p-3 shadow-sm">
-        <div className="flex flex-wrap gap-3">
-          <Input
+      <><ERPFilterBar searchSlot={<Input
             placeholder="Search…"
             value={search}
             onChange={(e) => { setSearch(e.target.value); setPage(1); }}
             className="w-48"
-          />
+          />} filterSlot={<>
+        <div className="flex flex-wrap gap-3">
+          <></>
           <Select value={filterType || '__all__'} onValueChange={(value) => { setFilterType(value === '__all__' ? '' : value); setPage(1); }}>
             <SelectTrigger className="w-40">
               <SelectValue placeholder="All Types" />
@@ -236,7 +238,8 @@ export default function ProductsPage() {
             </SelectContent>
           </Select>
         </div>
-        <div className="flex items-center gap-2 text-sm">
+        {null}
+       </>} /><ERPPageSizeControl><div className="flex items-center gap-2 text-sm">
           <span className="text-muted-foreground">Records:</span>
           <Select value={String(pageSize)} onValueChange={(value) => { setPageSize(Number(value)); setPage(1); }}>
             <SelectTrigger className="w-20">
@@ -248,8 +251,7 @@ export default function ProductsPage() {
               ))}
             </SelectContent>
           </Select>
-        </div>
-      </div>
+        </div></ERPPageSizeControl></>
       <div className="text-sm text-muted-foreground">
         {products.length} record{products.length !== 1 ? 's' : ''} found
       </div>
@@ -317,7 +319,7 @@ export default function ProductsPage() {
               </TableBody>
             </Table>
           </div>
-          <div className="flex items-center justify-between text-sm mt-4">
+          <ERPExistingPagination><div className="flex items-center justify-between text-sm mt-4">
             <span className="text-muted-foreground">
               Showing {Math.min((page - 1) * pageSize + 1, products.length)}-{Math.min(page * pageSize, products.length)} of {products.length}
             </span>
@@ -330,7 +332,7 @@ export default function ProductsPage() {
                 Next <ChevronRight className="h-4 w-4 ml-1" />
               </Button>
             </div>
-          </div>
+          </div></ERPExistingPagination>
         </>
       )}
 
@@ -434,5 +436,5 @@ export default function ProductsPage() {
         </DialogContent>
       </Dialog>
     </div>
-  );
+  )}</ERPListingScope>;
 }

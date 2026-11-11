@@ -1,3 +1,4 @@
+import { ERPListingScope, ERPListingActions, ERPToolbarDock } from '@/components/erp/listing/listing-scope';
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 /**
  * Weighbridge Settings — tenant-admin configuration surface.
@@ -300,15 +301,15 @@ function IndicatorConfigTab() {
 
   const set = (k: keyof IndicatorCfg, v: any) => setForm(f => ({ ...f, [k]: v }));
 
-  return (
+  return <ERPListingScope>{(
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <p className="text-sm text-muted-foreground">
           One config per branch. The <span className="font-mono text-foreground">Max First Weight Age</span> window is especially important — it controls how many days back the second-weight flow searches for a matching pending first weight.
         </p>
-        <Button size="sm" className="gap-1.5 shrink-0" onClick={openNew}>
+        <ERPListingActions><Button size="sm" className="gap-1.5 shrink-0" onClick={openNew}>
           <Plus className="h-3.5 w-3.5" /> Add Indicator
-        </Button>
+        </Button></ERPListingActions>
       </div>
 
       <div className="rounded-lg border overflow-hidden bg-card">
@@ -456,7 +457,7 @@ function IndicatorConfigTab() {
         onCancel={() => setDelId(null)}
       />
     </div>
-  );
+  )}</ERPListingScope>;
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -576,7 +577,7 @@ function VehicleTypesTab() {
 
   const set = (k: keyof VehicleType, v: any) => setForm(f => ({ ...f, [k]: v }));
 
-  return (
+  return <ERPListingScope>{(
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <p className="text-sm text-muted-foreground">
@@ -656,7 +657,7 @@ function VehicleTypesTab() {
         onCancel={() => setDelId(null)}
       />
     </div>
-  );
+  )}</ERPListingScope>;
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -732,7 +733,7 @@ function ItemsTab() {
 
   const set = (k: keyof Item, v: any) => setForm(f => ({ ...f, [k]: v }));
 
-  return (
+  return <ERPListingScope>{(
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <p className="text-sm text-muted-foreground">
@@ -803,7 +804,7 @@ function ItemsTab() {
         onCancel={() => setDelId(null)}
       />
     </div>
-  );
+  )}</ERPListingScope>;
 }
 
 type OperationType = {
@@ -902,7 +903,7 @@ function OperationTypesTab() {
     else mut.mutate({ url: '/api/commercial-weighbridge/weighing-operation-types/', method: 'POST', body });
   };
 
-  return (
+  return <ERPListingScope>{(
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <p className="text-sm text-muted-foreground">Control which weighing workflows this organization can use. Default system types can be activated, deactivated, or reordered, while organization-specific custom types can still be fully edited.</p>
@@ -999,7 +1000,7 @@ function OperationTypesTab() {
         onCancel={() => setDelId(null)}
       />
     </div>
-  );
+  )}</ERPListingScope>;
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1181,7 +1182,7 @@ function DiscountsTab() {
     },
   ];
 
-  return (
+  return <ERPListingScope>{(
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3">
         <p className="text-sm text-muted-foreground">
@@ -1312,7 +1313,7 @@ function DiscountsTab() {
         onCancel={() => setDelId(null)}
       />
     </div>
-  );
+  )}</ERPListingScope>;
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1580,7 +1581,7 @@ function SurveillanceTab() {
     }
   }
 
-  return (
+  return <ERPListingScope>{(
     <div className="space-y-6">
       <div className="rounded-lg border p-5 space-y-4">
         <div className="flex items-center justify-between gap-3">
@@ -1855,7 +1856,7 @@ function SurveillanceTab() {
         onCancel={() => setCamDelId(null)}
       />
     </div>
-  );
+  )}</ERPListingScope>;
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -2029,6 +2030,7 @@ export default function WeighbridgeSettings() {
     <div className="space-y-6 max-w-5xl">
       <div className="border-b pb-4">
         <h1 className="text-2xl font-bold tracking-tight">Weighbridge Settings</h1>
+<ERPToolbarDock />
         <p className="text-sm text-muted-foreground mt-0.5">
           Manage indicator hardware, vehicle types, commodities, and customer discount rates.
         </p>

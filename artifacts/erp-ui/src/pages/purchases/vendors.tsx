@@ -1,3 +1,5 @@
+import { ERPFilterBar } from "@/components/erp/listing/filter-bar";
+import { ERPListingScope, ERPToolbarDock } from '@/components/erp/listing/listing-scope';
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
@@ -38,7 +40,7 @@ export default function VendorsPage() {
 
   const vendors: Vendor[] = Array.isArray(data) ? data : (data?.vendors ?? data?.results ?? []);
 
-  return (
+  return <ERPListingScope>{(
     <div className="space-y-6 p-6">
       {/* Header */}
       <div className="flex items-center justify-between">
@@ -49,6 +51,7 @@ export default function VendorsPage() {
           </p>
         </div>
       </div>
+<ERPToolbarDock />
 
       {/* Stats strip */}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
@@ -63,14 +66,12 @@ export default function VendorsPage() {
       </div>
 
       {/* Search */}
-      <div className="max-w-xs">
-        <Input
+      <ERPFilterBar searchSlot={<Input
           placeholder="Search vendors…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           className="h-8 text-sm"
-        />
-      </div>
+        />} />
 
       {/* Table */}
       <Card>
@@ -109,5 +110,5 @@ export default function VendorsPage() {
         </CardContent>
       </Card>
     </div>
-  );
+  )}</ERPListingScope>;
 }

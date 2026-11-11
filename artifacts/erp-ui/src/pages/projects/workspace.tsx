@@ -1,3 +1,6 @@
+import { Table } from "@/components/ui/table";
+import { ERPFilterBar } from "@/components/erp/listing/filter-bar";
+import { ERPListingScope } from "@/components/erp/listing/listing-scope";
 import {
   useProjectSettings,
   dateAfterDays,
@@ -784,7 +787,7 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
     setDateTo("");
     setPage(1);
   };
-  return (
+  return <ERPListingScope>{(
     <ERPWorkspacePage
       title={title}
       description={
@@ -797,9 +800,7 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
               : "Tasks in your projects and assigned work. Branch-wide viewing requires the corresponding permission."
       }
     >
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex min-w-0 flex-1 gap-2">
-          <div className="relative max-w-md flex-1">
+      <ERPFilterBar searchSlot={<div className="relative max-w-md flex-1">
             <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
             <Input
               className="pl-9"
@@ -812,17 +813,13 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
                 isProjects ? "Search projects..." : "Search tasks..."
               }
             />
-          </div>
-          <Button
+          </div>} filterControl={<Button
             onClick={() => setFiltersOpen((open) => !open)}
             variant={filtersActive ? "default" : "outline"}
           >
             <SlidersHorizontal className="mr-2 h-4 w-4" />
             Filters{filtersActive ? " active" : ""}
-          </Button>
-        </div>
-        <div className="flex gap-2">
-          <Button
+          </Button>} toolsSlot={<> <Button
             variant="outline"
             onClick={() => void exportRegister()}
             disabled={!records.data?.access?.can_export}
@@ -830,14 +827,12 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
             <Download className="mr-2 h-4 w-4" />
             Export CSV
           </Button>
-          {records.data?.access?.can_create && (
+{records.data?.access?.can_create && (
             <Button onClick={() => setCreateOpen(true)}>
               <Plus className="mr-2 h-4 w-4" />
               New {isProjects ? "Project" : "Task"}
             </Button>
-          )}
-        </div>
-      </div>
+          )} </>} />
       {filtersOpen && (
         <section className="mb-4 rounded-lg border bg-card p-4">
           <div className="mb-3 flex items-center justify-between">
@@ -981,7 +976,7 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
         </section>
       )}
       <div className="overflow-hidden rounded-lg border bg-card">
-        <table className="w-full text-sm">
+        <Table className="w-full text-sm">
           <thead className="border-b bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
             <tr>
               {(isProjects
@@ -1089,7 +1084,7 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
               );
             })}
           </tbody>
-        </table>
+        </Table>
         {records.isError && (
           <p role="alert" className="p-4 text-sm text-destructive">
             {records.error.message}
@@ -1384,5 +1379,5 @@ export default function ProjectsWorkspace({ mode }: { mode: PageMode }) {
         </DialogContent>
       </Dialog>
     </ERPWorkspacePage>
-  );
+  )}</ERPListingScope>;
 }

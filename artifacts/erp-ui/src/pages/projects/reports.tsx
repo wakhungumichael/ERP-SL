@@ -1,3 +1,6 @@
+import { Table } from "@/components/ui/table";
+import { ERPFilterBar } from "@/components/erp/listing/filter-bar";
+import { ERPListingScope } from "@/components/erp/listing/listing-scope";
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -182,34 +185,35 @@ export default function ProjectsReports() {
     },
   });
   const data = report.data;
-  return (
+  return <ERPListingScope>{(
     <ERPWorkspacePage
       title="Projects & Tasks Reports"
       description="Active-branch project delivery, ticket work, follow-ups, and workload."
     >
-      <div className="mb-5 space-y-3 rounded-lg border bg-card p-4">
+      <ERPFilterBar searchSlot={<Input aria-label="Search report" placeholder="Search report records" value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} />} filterSlot={<>
         <div className="flex flex-wrap items-end gap-3">
           <div className="min-w-48 flex-1"><label className="mb-1 block text-xs text-muted-foreground">Report</label>
             <Select value={kind} onValueChange={(value) => { setKind(value); setPage(1); setSearch(''); setStatus('all'); }}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>
               {[['tasks', 'Task register'], ['projects', 'Project register'], ['follow-ups', 'Follow-up register'], ['workload', 'Assignee workload'], ['milestones', 'Project milestones']].map(([value, title]) => <SelectItem key={value} value={value}>{title}</SelectItem>)}
             </SelectContent></Select>
           </div>
-          <Button variant="outline" disabled={!data?.can_export} onClick={() => void exportReport('csv')}>Export CSV</Button>
-          <Button disabled={!data?.can_export} onClick={() => void exportReport('pdf')}>Download branded PDF</Button>
+          <></>
+          <></>
         </div>
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <Input aria-label="Search report" placeholder="Search report records" value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} />
+          <></>
           <Input aria-label="From date" type="date" value={dateFrom} onChange={(event) => { setDateFrom(event.target.value); setPage(1); }} />
           <Input aria-label="To date" type="date" value={dateTo} onChange={(event) => { setDateTo(event.target.value); setPage(1); }} />
           {kind === 'tasks' && <Select value={status} onValueChange={(value) => { setStatus(value); setPage(1); }}><SelectTrigger aria-label="Task status"><SelectValue /></SelectTrigger><SelectContent>{['all','draft','todo','in_progress','blocked','reopened','in_review','completed','cancelled'].map(value => <SelectItem key={value} value={value}>{value === 'all' ? 'All statuses' : label(value)}</SelectItem>)}</SelectContent></Select>}
         </div>
-      </div>
+       </>} toolsSlot={<> <Button variant="outline" disabled={!data?.can_export} onClick={() => void exportReport('csv')}>Export CSV</Button>
+<Button disabled={!data?.can_export} onClick={() => void exportReport('pdf')}>Download branded PDF</Button> </>} />
       {report.isError && <p role="alert" className="mb-4 text-sm text-destructive">{report.error.message}</p>}
       <section className="mb-5 overflow-hidden rounded-lg border bg-card">
-        <div className="overflow-x-auto"><table className="w-full min-w-[640px] text-sm"><thead className="border-b bg-muted/40"><tr>{(data?.columns ?? []).map(column => <th className="px-4 py-3 text-left font-semibold" key={column}>{column}</th>)}</tr></thead>
+        <div className="overflow-x-auto"><Table className="w-full min-w-[640px] text-sm"><thead className="border-b bg-muted/40"><tr>{(data?.columns ?? []).map(column => <th className="px-4 py-3 text-left font-semibold" key={column}>{column}</th>)}</tr></thead>
           <tbody>{(data?.rows ?? []).map((row, index) => <tr className="border-b last:border-0" key={`${page}-${index}`}>{row.map((cell, column) => <td className="px-4 py-3" key={column}>{cell ?? '—'}</td>)}</tr>)}
           {!data?.rows?.length && <tr><td colSpan={data?.columns?.length || 1} className="p-8 text-center text-muted-foreground">{report.isLoading ? 'Loading report…' : 'No records match the current filters.'}</td></tr>}</tbody>
-        </table></div>
+        </Table></div>
         <ListingPagination page={page} pageSize={pageSize} totalCount={data?.count ?? 0} onPage={setPage} onPageSize={(value) => { setPageSize(value); setPage(1); }} />
       </section>
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -256,5 +260,5 @@ export default function ProjectsReports() {
         <UpcomingMilestones milestones={data?.upcoming_milestones ?? []} />
       </div>
     </ERPWorkspacePage>
-  );
+  )}</ERPListingScope>;
 }

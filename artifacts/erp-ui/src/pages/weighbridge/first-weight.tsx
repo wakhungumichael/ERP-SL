@@ -152,7 +152,7 @@ export default function FirstWeightPage() {
     queryKey: ['items-picker', branchId],
     queryFn: async () => {
       const token = fetchToken();
-      return fetch(`/api/commercial-weighbridge/items/?branch_id=${encodeURIComponent(branchId)}`, { headers: { Authorization: `Token ${token}` } }).then(r => r.json());
+      return fetch(`/api/commercial-weighbridge/items/?picker=1&branch_id=${encodeURIComponent(branchId)}`, { headers: { Authorization: `Token ${token}` } }).then(r => r.json());
     },
     enabled: !!branchId,
   });
@@ -316,10 +316,10 @@ export default function FirstWeightPage() {
     const item = response?.data ?? response;
     if (!item?.id) throw new Error('Commodity was created, but no commodity record was returned.');
     queryClient.setQueryData(['items-picker', branchId], (current: any) => {
-      const rows = Array.isArray(current) ? current : current?.results;
-      if (!Array.isArray(rows) || rows.some((row: any) => String(row.id) === String(item.id))) return current;
+      const rows = Array.isArray(current) ? current : current?.results ?? [];
+      if (rows.some((row: any) => String(row.id) === String(item.id))) return current;
       const next = [...rows, item].sort((left, right) => String(left.name).localeCompare(String(right.name)));
-      return Array.isArray(current) ? next : { ...current, results: next };
+      return Array.isArray(current) || !current ? next : { ...current, results: next };
     });
     await queryClient.invalidateQueries({ queryKey: ['items-picker'] });
     setItemId(String(item.id));

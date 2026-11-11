@@ -1,3 +1,7 @@
+import { ERPListingActions } from '@/components/erp/listing/listing-scope';
+import { useSearch } from "wouter";
+import { ERPFilterBar } from "@/components/erp/listing/filter-bar";
+import { ERPListingScope, ERPExistingPagination, ERPPageSizeControl, ERPToolbarDock } from '@/components/erp/listing/listing-scope';
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { useState, useCallback } from 'react';
 import { Link, useLocation } from 'wouter';
@@ -386,9 +390,7 @@ function DebtTab({ token }: { token: string | null }) {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex flex-wrap gap-3">
-            <div className="relative w-full sm:w-72">
+        <><ERPFilterBar searchSlot={<div className="relative w-full sm:w-72">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
                 placeholder="Search customer…"
@@ -396,7 +398,9 @@ function DebtTab({ token }: { token: string | null }) {
                 onChange={(e) => { setSearch(e.target.value); setPage(1); }}
                 className="pl-9"
               />
-            </div>
+            </div>} filterSlot={<>
+          <div className="flex flex-wrap gap-3">
+            <></>
             <Select value={amountFilter} onValueChange={(value: 'all' | 'small' | 'large') => { setAmountFilter(value); setPage(1); }}>
               <SelectTrigger className="w-44">
                 <SelectValue placeholder="All Amounts" />
@@ -408,7 +412,8 @@ function DebtTab({ token }: { token: string | null }) {
               </SelectContent>
             </Select>
           </div>
-          <div className="flex items-center gap-2 text-sm">
+          {null}
+         </>} /><ERPPageSizeControl><div className="flex items-center gap-2 text-sm">
             <span className="text-muted-foreground">Records:</span>
             <Select value={String(pageSize)} onValueChange={(value) => { setPageSize(Number(value)); setPage(1); }}>
               <SelectTrigger className="w-20">
@@ -420,8 +425,7 @@ function DebtTab({ token }: { token: string | null }) {
                 ))}
               </SelectContent>
             </Select>
-          </div>
-        </div>
+          </div></ERPPageSizeControl></>
         <div className="text-sm text-muted-foreground">
           {filteredRows.length} record{filteredRows.length !== 1 ? 's' : ''} found
         </div>
@@ -472,7 +476,7 @@ function DebtTab({ token }: { token: string | null }) {
           </TableBody>
         </Table>
         {filteredRows.length > 0 && (
-          <div className="flex items-center justify-between text-sm">
+          <ERPExistingPagination><div className="flex items-center justify-between text-sm">
             <span className="text-muted-foreground">
               Showing {Math.min((page - 1) * pageSize + 1, filteredRows.length)}-{Math.min(page * pageSize, filteredRows.length)} of {filteredRows.length}
             </span>
@@ -485,7 +489,7 @@ function DebtTab({ token }: { token: string | null }) {
                 Next <ChevronRight className="h-4 w-4 ml-1" />
               </Button>
             </div>
-          </div>
+          </div></ERPExistingPagination>
         )}
       </CardContent>
     </Card>
@@ -494,11 +498,12 @@ function DebtTab({ token }: { token: string | null }) {
 
 /* ════════════════════════════════════════════════════════ main page ── */
 export default function InvoicesList() {
+  const routeSearch = useSearch();
   const { token } = useAuth();
   const [, navigate] = useLocation();
   const qc = useQueryClient();
   const [activeTab, setActiveTab]     = useState<'all' | 'debt'>('all');
-  const [statusFilter, setStatusFilter] = useState(() => new URLSearchParams(window.location.search).get('status') || '');
+  const [statusFilter, setStatusFilter] = useState(() => new URLSearchParams(routeSearch).get('status') || '');
   const [search, setSearch]           = useState('');
   const [page, setPage]               = useState(1);
   const [pageSize, setPageSize]       = useState(10);
@@ -577,7 +582,7 @@ export default function InvoicesList() {
     },
   ];
 
-  return (
+  return <ERPListingScope>{(
     <div className="min-w-0 space-y-6">
       {/* Header */}
       <div className="flex flex-col gap-4 border-b pb-4 xl:flex-row xl:items-start xl:justify-between">
@@ -587,7 +592,7 @@ export default function InvoicesList() {
           </h1>
           <p className="text-sm text-muted-foreground mt-0.5">Create invoices, track payment status, and follow customer balances.</p>
         </div>
-        <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap">
+        <ERPListingActions><div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap">
           <Button
             size="sm"
             variant="outline"
@@ -613,8 +618,9 @@ export default function InvoicesList() {
           >
             <Plus className="h-3.5 w-3.5" /> New Invoice
           </Button>
-        </div>
+        </div></ERPListingActions>
       </div>
+<ERPToolbarDock />
 
       {/* Stat cards */}
       <div className="grid min-w-0 grid-cols-1 gap-3 min-[400px]:grid-cols-2 xl:grid-cols-4 sm:gap-4">
@@ -658,8 +664,7 @@ export default function InvoicesList() {
       ) : (
         <>
           {/* Filters */}
-          <div className="grid min-w-0 grid-cols-2 gap-3 md:flex">
-            <div className="relative col-span-2 min-w-0 md:flex-1">
+          <><ERPFilterBar searchSlot={<div className="relative col-span-2 min-w-0 md:flex-1">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
                 placeholder="Search by invoice # or customer…"
@@ -667,7 +672,8 @@ export default function InvoicesList() {
                 onChange={e => { setSearch(e.target.value); setPage(1); }}
                 className="h-11 pl-9 bg-card md:h-9"
               />
-            </div>
+            </div>} filterSlot={<>
+            <></>
             <Select value={statusFilter || '__all__'} onValueChange={(value) => { setStatusFilter(value === '__all__' ? '' : value); setPage(1); }}>
               <SelectTrigger className="h-11 w-full min-w-0 bg-card md:h-9 md:w-40">
                 <SelectValue placeholder="All statuses" />
@@ -680,7 +686,8 @@ export default function InvoicesList() {
                 <SelectItem value="overdue">Overdue</SelectItem>
               </SelectContent>
             </Select>
-            <Select value={String(pageSize)} onValueChange={(value) => { setPageSize(Number(value)); setPage(1); }}>
+            {null}
+           </>} /><ERPPageSizeControl><Select value={String(pageSize)} onValueChange={(value) => { setPageSize(Number(value)); setPage(1); }}>
               <SelectTrigger className="h-11 w-full min-w-0 bg-card md:h-9 md:w-28">
                 <SelectValue />
               </SelectTrigger>
@@ -689,8 +696,7 @@ export default function InvoicesList() {
                   <SelectItem key={size} value={String(size)}>{size} / page</SelectItem>
                 ))}
               </SelectContent>
-            </Select>
-          </div>
+            </Select></ERPPageSizeControl></>
 
           {/* Table */}
           <Card className="min-w-0 overflow-hidden">
@@ -774,7 +780,7 @@ export default function InvoicesList() {
             </CardContent>
           </Card>
           {!isLoading && totalCount > 0 && (
-            <div className="flex flex-col gap-3 text-sm sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+            <ERPExistingPagination><div className="flex flex-col gap-3 text-sm sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
               <span className="text-muted-foreground">
                 Showing {Math.min((page - 1) * pageSize + 1, totalCount)}-{Math.min(page * pageSize, totalCount)} of {totalCount} invoices
               </span>
@@ -787,7 +793,7 @@ export default function InvoicesList() {
                   Next <ChevronRight className="h-4 w-4 ml-1" />
                 </Button>
               </div>
-            </div>
+            </div></ERPExistingPagination>
           )}
         </>
       )}
@@ -805,5 +811,5 @@ export default function InvoicesList() {
         onSuccess={handleSuccess}
       />
     </div>
-  );
+  )}</ERPListingScope>;
 }

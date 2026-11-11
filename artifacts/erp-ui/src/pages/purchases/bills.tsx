@@ -1,3 +1,5 @@
+import { useSearch } from "wouter";
+import { ERPListingScope, ERPListingActions, ERPExistingPagination, ERPPageSizeControl, ERPToolbarDock } from '@/components/erp/listing/listing-scope';
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
@@ -63,11 +65,12 @@ const emptyForm = () => ({
 });
 
 export default function BillsPage() {
+  const routeSearch = useSearch();
   const { token, user } = useAuth();
   const { toast } = useToast();
   const tenantId = (user as any)?.tenant_id;
 
-  const [filterStatus, setFilterStatus] = useState(() => new URLSearchParams(window.location.search).get('status') || '');
+  const [filterStatus, setFilterStatus] = useState(() => new URLSearchParams(routeSearch).get('status') || '');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [page, setPage] = useState(1);
@@ -159,7 +162,7 @@ export default function BillsPage() {
 
   useEffect(() => {
     if (typeof window === 'undefined' || prefillHandled || !token) return;
-    const params = new URLSearchParams(window.location.search);
+    const params = new URLSearchParams(routeSearch);
     if (params.get('create') !== '1') {
       setPrefillHandled(true);
       return;
@@ -200,7 +203,7 @@ export default function BillsPage() {
 
   useEffect(() => {
     if (typeof window === 'undefined' || openBillHandled) return;
-    const params = new URLSearchParams(window.location.search);
+    const params = new URLSearchParams(routeSearch);
     const billId = params.get('open_bill');
     if (!billId) {
       setOpenBillHandled(true);
@@ -462,7 +465,7 @@ export default function BillsPage() {
     return { label: 'Monitor payables workflow', helper: 'Track matching, approvals, and payment queue progress from this workspace.' };
   })();
 
-  return (
+  return <ERPListingScope>{(
     <div className="space-y-6 p-6">
       {/* Header */}
       <div className="flex items-center justify-between">
@@ -476,9 +479,10 @@ export default function BillsPage() {
           <Button asChild variant="outline">
             <Link href="/procurement/payment-queue">Open payment queue</Link>
           </Button>
-          <Button onClick={openCreate}>New bill</Button>
+          <ERPListingActions><Button onClick={openCreate}>New bill</Button></ERPListingActions>
         </div>
       </div>
+<ERPToolbarDock />
 
       {/* Stats strip */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
@@ -621,7 +625,7 @@ export default function BillsPage() {
       </Card>
 
       {bills.length > 0 ? (
-        <div className="flex flex-col gap-3 rounded-lg border p-4 sm:flex-row sm:items-center sm:justify-between">
+        <ERPExistingPagination><div className="flex flex-col gap-3 rounded-lg border p-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="text-sm text-muted-foreground">
             Showing page {page} of {totalPages} with {bills.length} supplier bills
           </div>
@@ -640,7 +644,7 @@ export default function BillsPage() {
             <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage(page - 1)}>Previous</Button>
             <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage(page + 1)}>Next</Button>
           </div>
-        </div>
+        </div></ERPExistingPagination>
       ) : null}
 
       {/* Create Dialog */}
@@ -707,7 +711,7 @@ export default function BillsPage() {
                 <Button type="button" size="sm" variant="outline" onClick={addLine}>Add line</Button>
               </div>
               <div className="rounded border overflow-hidden">
-                <table className="w-full text-sm">
+                <Table className="w-full text-sm">
                   <thead className="bg-muted text-muted-foreground">
                     <tr>
                       <th className="px-2 py-1.5 text-left font-medium">Description</th>
@@ -749,7 +753,7 @@ export default function BillsPage() {
                       </tr>
                     ))}
                   </tbody>
-                </table>
+                </Table>
               </div>
 
               {/* Totals footer */}
@@ -972,5 +976,5 @@ export default function BillsPage() {
         </SheetContent>
       </Sheet>
     </div>
-  );
+  )}</ERPListingScope>;
 }

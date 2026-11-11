@@ -37,6 +37,8 @@ class DocumentPdfTests(TestCase):
         Image.new("RGB", (120, 50), color="black").save(logo, format="PNG")
         self.settings = TenantSettings.objects.create(
             tenant=self.tenant, primary_color="#000000", footer_text="Branded document footer",
+            invoice_address="Westlands Office Park\nP.O. Box 12345 - 00100, Nairobi, Kenya",
+            invoice_website="https://branded.example.com", invoice_tax_number="P012345678X",
             logo_file=SimpleUploadedFile("brand.png", logo.getvalue(), content_type="image/png"),
         )
         self.estimate = Estimate.objects.create(tenant=self.tenant, customer_name="PDF Customer", notes="Project notes", terms="Valid for 14 days")
@@ -54,6 +56,10 @@ class DocumentPdfTests(TestCase):
         self.assertIn(number, text)
         self.assertIn("Branded Tenant", text)
         self.assertIn("Branded document footer", text)
+        self.assertIn("Westlands Office Park", text)
+        self.assertIn("P.O. Box 12345", text)
+        self.assertIn("https://branded.example.com", text)
+        self.assertIn("P012345678X", text)
         self.assertTrue(any(list(page.images) for page in reader.pages), "Logo must be embedded in the PDF")
         return reader, text
 

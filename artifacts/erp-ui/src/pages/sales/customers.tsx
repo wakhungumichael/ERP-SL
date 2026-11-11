@@ -1,3 +1,5 @@
+import { ERPFilterBar } from "@/components/erp/listing/filter-bar";
+import { ERPListingScope, ERPListingActions, ERPExistingPagination, ERPPageSizeControl, ERPToolbarDock } from '@/components/erp/listing/listing-scope';
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
@@ -129,7 +131,7 @@ export default function CustomersPage() {
     }
   }
 
-  return (
+  return <ERPListingScope>{(
     <div className="space-y-6 p-6">
       <div className="flex items-start justify-between gap-4">
         <div>
@@ -139,12 +141,13 @@ export default function CustomersPage() {
           </p>
         </div>
         {canAddCustomer ? (
-          <Button onClick={openCreate} className="gap-2">
+          <ERPListingActions><Button onClick={openCreate} className="gap-2">
             <Plus className="h-4 w-4" />
             New Customer
-          </Button>
+          </Button></ERPListingActions>
         ) : null}
       </div>
+<ERPToolbarDock />
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <Card>
@@ -167,15 +170,13 @@ export default function CustomersPage() {
         </Card>
       </div>
 
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="max-w-sm">
+      <><ERPFilterBar searchSlot={<div className="max-w-sm">
           <Input
             placeholder="Search by name, phone, or email…"
             value={search}
             onChange={(e) => { setSearch(e.target.value); setPage(1); }}
           />
-        </div>
-        <div className="flex items-center gap-2 text-sm">
+        </div>} filterSlot={undefined} /><ERPPageSizeControl><div className="flex items-center gap-2 text-sm">
           <span className="text-muted-foreground">Rows:</span>
           <Select value={String(pageSize)} onValueChange={(value) => { setPageSize(Number(value)); setPage(1); }}>
             <SelectTrigger className="w-20">
@@ -187,8 +188,7 @@ export default function CustomersPage() {
               ))}
             </SelectContent>
           </Select>
-        </div>
-      </div>
+        </div></ERPPageSizeControl></>
 
       <div className="text-sm text-muted-foreground">
         {customers.length} customer record{customers.length !== 1 ? 's' : ''} found
@@ -246,7 +246,7 @@ export default function CustomersPage() {
               </TableBody>
             </Table>
           </div>
-          <div className="flex items-center justify-between text-sm">
+          <ERPExistingPagination><div className="flex items-center justify-between text-sm">
             <span className="text-muted-foreground">
               Showing {Math.min((page - 1) * pageSize + 1, customers.length)}-{Math.min(page * pageSize, customers.length)} of {customers.length}
             </span>
@@ -259,7 +259,7 @@ export default function CustomersPage() {
                 Next <ChevronRight className="h-4 w-4 ml-1" />
               </Button>
             </div>
-          </div>
+          </div></ERPExistingPagination>
         </>
       )}
 
@@ -297,5 +297,5 @@ export default function CustomersPage() {
         </DialogContent>
       </Dialog>
     </div>
-  );
+  )}</ERPListingScope>;
 }

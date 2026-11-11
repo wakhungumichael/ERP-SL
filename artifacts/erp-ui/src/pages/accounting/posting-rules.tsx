@@ -1,3 +1,5 @@
+import { ERPFilterBar } from "@/components/erp/listing/filter-bar";
+import { ERPListingScope, ERPListingActions, ERPToolbarDock } from '@/components/erp/listing/listing-scope';
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
@@ -218,7 +220,7 @@ export default function AccountingPostingRules() {
     }
   }
 
-  return (
+  return <ERPListingScope>{(
     <div className="space-y-6 p-6">
       <div className="flex items-center justify-between gap-4">
         <div>
@@ -227,10 +229,11 @@ export default function AccountingPostingRules() {
             Control how invoices, payments, bills, and manual events translate into debit and credit entries.
           </p>
         </div>
-        <Button onClick={openCreate}>
+        <ERPListingActions><Button onClick={openCreate}>
           <Plus className="mr-1 h-4 w-4" /> New Rule
-        </Button>
+        </Button></ERPListingActions>
       </div>
+<ERPToolbarDock />
 
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
         {[
@@ -248,8 +251,8 @@ export default function AccountingPostingRules() {
         ))}
       </div>
 
-      <div className="flex flex-wrap gap-3">
-        <Input value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} placeholder="Search name, journal, account, or method" className="w-full md:w-80" />
+      <ERPFilterBar searchSlot={<Input value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} placeholder="Search name, journal, account, or method" className="w-full md:w-80" />} filterSlot={<>
+        <></>
         <Select value={filterSource || '__all__'} onValueChange={(value) => { setFilterSource(value === '__all__' ? '' : value); setPage(1); }}>
           <SelectTrigger className="w-44">
             <SelectValue placeholder="All sources" />
@@ -271,7 +274,7 @@ export default function AccountingPostingRules() {
             <SelectItem value="false">Inactive</SelectItem>
           </SelectContent>
         </Select>
-      </div>
+       </>} />
 
       {isLoading ? (
         <div className="py-16 text-center text-muted-foreground">Loading…</div>
@@ -443,5 +446,5 @@ export default function AccountingPostingRules() {
         </DialogContent>
       </Dialog>
     </div>
-  );
+  )}</ERPListingScope>;
 }

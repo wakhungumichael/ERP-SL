@@ -142,7 +142,7 @@ function SearchSelect({
               {options.map((option) => (
                 <CommandItem
                   key={option.value}
-                  value={`${option.label} ${option.meta ?? ''}`}
+                  value={`${option.value} ${option.label} ${option.meta ?? ''}`}
                   onSelect={() => {
                     onChange(option.value);
                     setOpen(false);
@@ -478,7 +478,7 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
     : selectedBranchName;
   const { data: items } = useQuery({
     queryKey: ['wb-items-entry', effectiveBranchId],
-    queryFn: async () => fetch(`/api/commercial-weighbridge/items/?branch_id=${encodeURIComponent(effectiveBranchId)}`, { headers: authHeaders() }).then((res) => res.json()),
+    queryFn: async () => fetch(`/api/commercial-weighbridge/items/?picker=1&branch_id=${encodeURIComponent(effectiveBranchId)}`, { headers: authHeaders() }).then((res) => res.json()),
     enabled: !!effectiveBranchId,
   });
   const itemList = Array.isArray(items) ? items : (items as any)?.results ?? [];
@@ -536,14 +536,16 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
   useEffect(() => {
     if (!activeVehicleId || !workflowContext) return;
 
-    const activePrefillKey = `${isSecondFlow ? 'second' : 'first'}:${activeVehicleId}`;
+    if (isSecondFlow && !firstTransaction) return;
+    const activePrefillKey = isSecondFlow
+      ? `second:${activeVehicleId}:${firstTransaction.id}`
+      : `first:${activeVehicleId}`;
     if (prefillVehicleKey === activePrefillKey) return;
 
     const defaults = workflowContext.latest_transaction_defaults;
-    if (!isSecondFlow) {
-      setItemId(defaults?.item_id ? String(defaults.item_id) : '');
-      setDestination(defaults?.destination ?? '');
-    }
+    const sourceItemId = isSecondFlow ? firstTransaction.item : defaults?.item_id;
+    setItemId(sourceItemId ? String(sourceItemId) : '');
+    setDestination((isSecondFlow ? firstTransaction.destination : defaults?.destination) ?? '');
 
     // A second weight belongs to the pending first-weight ticket, so its driver
     // takes precedence over older vehicle history. Operators can still edit it.
@@ -669,10 +671,10 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
     const item = response?.data ?? response;
     if (!item?.id) throw new Error('Commodity was created, but no commodity record was returned.');
     queryClient.setQueryData(['wb-items-entry', effectiveBranchId], (current: any) => {
-      const rows = Array.isArray(current) ? current : current?.results;
-      if (!Array.isArray(rows) || rows.some((row: any) => String(row.id) === String(item.id))) return current;
+      const rows = Array.isArray(current) ? current : current?.results ?? [];
+      if (rows.some((row: any) => String(row.id) === String(item.id))) return current;
       const next = [...rows, item].sort((left, right) => String(left.name).localeCompare(String(right.name)));
-      return Array.isArray(current) ? next : { ...current, results: next };
+      return Array.isArray(current) || !current ? next : { ...current, results: next };
     });
     await queryClient.invalidateQueries({ queryKey: ['wb-items-entry'] });
     setItemId(String(item.id));
@@ -710,6 +712,7 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
     setDriverPhone('');
     setDriverDetailsPrefilled(false);
     if (isSecondFlow) {
+      setItemId('');
       setSelectedVehicle(vehicle);
       setCapturedWeight(null);
       setManualWeight('');
@@ -861,12 +864,17 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
         return;
       }
 
+      if (!itemId) {
+        transactionErrors.apply({ item: ['Select a commodity, or choose EMPTY for an empty vehicle.'] });
+        return;
+      }
+
       const payload: Record<string, unknown> = {
         branch: firstTransaction.branch,
         customer: firstTransaction.customer,
         vehicle: selectedVehicle.id,
         vehicle_type: firstTransaction.vehicle_type,
-        item: firstTransaction.item,
+        item: Number(itemId),
         operation_type: selectedOperation.id,
         weight_type: selectedOperation.legacy_weight_type ?? 'Second Weight',
         tare_weight: effectiveWeight,
@@ -1140,6 +1148,7 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
                           setPlateInput(event.target.value.toUpperCase());
                           setShowVehicleResults(true);
                           setSelectedVehicle(null);
+                          setItemId('');
                           setPlateRecognition(null);
                           setDriverName('');
                           setDriverPhone('');
@@ -1301,18 +1310,38 @@ export default function WeighmentEntryPage({ preferredFlow = 'first' }: { prefer
                 </div>
               )}
 
-              {isSecondFlow ? (
-                <div className="grid gap-4 md:grid-cols-2">
-                  {driverDetailsPrefilled ? <p className="text-xs text-muted-foreground md:col-span-2">Driver details were loaded from the pending first-weight ticket. You can edit them before completing the transaction.</p> : null}
-                  <div className="space-y-1.5">
-                    <Label>Driver Name</Label>
-                    <Input value={driverName} onChange={(event) => { setDriverName(event.target.value); setDriverDetailsPrefilled(false); }} placeholder="Driver name" />
+              {isSecondFlow && firstTransaction ? (
+                <section className="rounded-xl border border-primary/15 bg-card p-3 shadow-sm">
+                  <div className="mb-3">
+                    <h3 className="flex items-center gap-2 font-semibold"><Package className="h-4 w-4 text-primary" />Return load and driver</h3>
+                    <p className="text-xs text-muted-foreground">Loaded from the first-weight ticket. Update the commodity and driver for this visit. Choose EMPTY if the vehicle has no load.</p>
                   </div>
-                  <div className="space-y-1.5">
-                    <Label>Driver Phone</Label>
-                    <Input type="tel" value={driverPhone} onChange={(event) => { setDriverPhone(event.target.value); setDriverDetailsPrefilled(false); }} placeholder="Driver phone" />
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="space-y-1.5 sm:col-span-2">
+                      <div className="flex min-h-8 items-center justify-between gap-3">
+                        <Label required>Item / Commodity</Label>
+                        {canAddItem ? <Button type="button" variant="outline" size="sm" className="h-8 gap-1" onClick={() => setItemOpen(true)}><Plus className="h-3.5 w-3.5" /> Add Item</Button> : null}
+                      </div>
+                      <SearchSelect
+                        value={itemId}
+                        onChange={(value) => { setItemId(value); transactionErrors.clearField('item'); }}
+                        placeholder="Search commodity"
+                        searchPlaceholder="Search commodities..."
+                        emptyLabel="No commodities found."
+                        options={itemOptions}
+                      />
+                      <InlineFormError id="second-item-error" messages={transactionErrors.errors.fields.item} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="second-driver-name">Driver Name</Label>
+                      <Input id="second-driver-name" value={driverName} onChange={(event) => { setDriverName(event.target.value); setDriverDetailsPrefilled(false); }} placeholder="Driver name" />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="second-driver-phone">Driver Phone</Label>
+                      <Input id="second-driver-phone" type="tel" value={driverPhone} onChange={(event) => { setDriverPhone(event.target.value); setDriverDetailsPrefilled(false); }} placeholder="Driver phone" />
+                    </div>
                   </div>
-                </div>
+                </section>
               ) : null}
             </CardContent>
           </Card>

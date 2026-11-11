@@ -187,20 +187,26 @@ def _legacy_body(document_label: str, variant: str):
     """
 
 
-def _body(document_label, variant):
+def _body(document_label, variant, *, include_contact_details=True):
     from .document_styles import apply_layout, report_body
     if document_label == "Report":
-        layout = report_body()
+        layout = report_body(include_contact_details=include_contact_details)
     elif document_label == "Invoice":
         from .invoice_templates import body
         layout = body(variant)
     else:
         from .professional_templates import body
-        layout = body(document_label, variant)
+        layout = body(document_label, variant, include_contact_details=include_contact_details)
         if document_label == "Receipt":
             import re
             layout = re.sub(r'<table class="totals">.*?</td></tr></table>', '<table class="totals"><tr class="total-row"><td width="50%"></td><td width="25%">Amount paid</td><td class="num" width="25%">{{ totals.total_display }}</td></tr></table>', layout, count=1, flags=re.S)
-    return apply_layout(layout, variant)
+    layout = apply_layout(layout, variant)
+    if document_label == "Invoice":
+        # xhtml2pdf resets CSS cell padding while parsing nested blocks. Its
+        # cellpadding attribute keeps the letterhead clear of the border.
+        padding = "6" if variant == "compact" else "12"
+        layout = layout.replace('<table class="heading', f'<table cellpadding="{padding}" class="heading')
+    return layout
 
 
 def _stylesheet(variant, document_type=None):
@@ -209,7 +215,11 @@ def _stylesheet(variant, document_type=None):
         from .invoice_templates import stylesheet
     else:
         from .professional_templates import stylesheet
-    return stylesheet(variant) + style_overrides(variant)
+    css = stylesheet(variant) + style_overrides(variant)
+    if document_type == "invoice":
+        from .invoice_templates import alignment_stylesheet
+        css += alignment_stylesheet()
+    return css
 
 
 def upgrade_shared_template(template):
@@ -218,16 +228,28 @@ def upgrade_shared_template(template):
         return template
     from .professional_templates import body as previous_body, stylesheet as previous_stylesheet
     from .invoice_templates import body as invoice_body, stylesheet as invoice_stylesheet, previous_print_layout
+    from .document_styles import apply_layout, stylesheet as style_overrides
     for document_type, label in DOCUMENTS:
-        for variant, title in VARIANTS[:3]:
+        for variant, title in VARIANTS:
             if template.document_type != document_type or template.name != f"{label} {title}":
                 continue
+            current = (_body(label, variant), _stylesheet(variant, document_type))
+            if (template.body_template, template.stylesheet) == current:
+                return template
+            current_layout = (_body(label, variant), _stylesheet(variant, document_type))
+            if (template.body_template, template.stylesheet) == current_layout:
+                return template
             previous = [(_legacy_body(label, variant), _legacy_stylesheet(variant))]
+            previous.append((_body(label, variant, include_contact_details=False), _stylesheet(variant, document_type)))
             if label != "Report":
                 previous.append((previous_body(label, variant), previous_stylesheet(variant)))
+                previous.append((previous_body(label, variant, include_contact_details=False), previous_stylesheet(variant)))
             if label == "Invoice":
+                from .document_styles import apply_layout
+                previous.append((apply_layout(invoice_body(variant, include_preparer=True), variant), _stylesheet(variant, document_type)))
                 previous.append((invoice_body(variant), invoice_stylesheet(variant)))
                 previous.append(previous_print_layout(variant))
+                previous.append((apply_layout(invoice_body(variant), variant), invoice_stylesheet(variant) + style_overrides(variant)))
             if (template.body_template, template.stylesheet) in previous:
                 template.body_template = _body(label, variant)
                 template.stylesheet = _stylesheet(variant, document_type)

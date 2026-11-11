@@ -1,3 +1,4 @@
+import { ERPListingScope, ERPListingActions, ERPToolbarDock } from '@/components/erp/listing/listing-scope';
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
@@ -208,7 +209,7 @@ export default function ChartOfAccounts() {
 
   const parentOptions = accounts.filter((a) => !editAccount || a.id !== editAccount.id);
 
-  return (
+  return <ERPListingScope>{(
     <div className="space-y-6 p-6">
       {/* Header */}
       <div className="flex items-center justify-between">
@@ -220,9 +221,10 @@ export default function ChartOfAccounts() {
           <Button variant="outline" onClick={handleResync} disabled={resyncing}>
             <RefreshCw className="mr-1 h-4 w-4" /> {resyncing ? 'Re-syncing…' : 'Re-sync Postings'}
           </Button>
-          <Button onClick={openCreate}>+ New Account</Button>
+          <ERPListingActions><Button onClick={openCreate}>+ New Account</Button></ERPListingActions>
         </div>
       </div>
+<ERPToolbarDock />
 
       {/* Stats strip */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
@@ -422,5 +424,5 @@ export default function ChartOfAccounts() {
         </DialogContent>
       </Dialog>
     </div>
-  );
+  )}</ERPListingScope>;
 }

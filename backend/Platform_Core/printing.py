@@ -1,4 +1,4 @@
-"""Platform-wide QR policy for generated printouts. Never encode private amounts."""
+"""Platform and organization QR policy for printouts. Never encode private amounts."""
 import base64
 from io import BytesIO
 from html import escape
@@ -6,12 +6,17 @@ from html import escape
 import qrcode
 from django.conf import settings
 from reportlab.lib.utils import ImageReader
-from Platform_Core.models import PlatformBrandingSettings
+from Platform_Core.models import PlatformBrandingSettings, TenantSettings
 
 
-def print_qr_codes_enabled():
+def print_qr_codes_enabled(tenant=None):
     profile = PlatformBrandingSettings.objects.filter(pk=1).only("login_page_config").first()
-    return profile.print_qr_codes_enabled if profile else True
+    if profile and not profile.print_qr_codes_enabled:
+        return False
+    if tenant is not None:
+        enabled = TenantSettings.objects.filter(tenant_id=tenant.pk).values_list("print_qr_codes_enabled", flat=True).first()
+        return enabled is not False
+    return True
 
 
 PRINT_LINK_SALT = "sl-erp.printed-document.v1"
@@ -53,17 +58,17 @@ def qr_png(reference):
     return output.getvalue()
 
 
-def qr_html(reference, number=""):
-    if not print_qr_codes_enabled():
+def qr_html(reference, number="", *, tenant=None):
+    if not print_qr_codes_enabled(tenant):
         return ""
     data = base64.b64encode(qr_png(reference)).decode("ascii")
     return f'<table class="print-document-qr" style="width:100%;margin-top:8px;page-break-inside:avoid;"><tr><td style="width:88px;border:0;padding:0;"><img alt="Document QR code" src="data:image/png;base64,{data}" width="84" height="84" style="width:22mm;height:22mm;" /></td><td style="border:0;font-size:8pt;color:#64748b;">Document reference<br />{escape(str(number))}<br />Scan to view document details.</td></tr></table>'
 
 
 def append_document_qr(body, *, tenant=None, kind="document", number="", path=None, request=None):
-    if not print_qr_codes_enabled():
+    if not print_qr_codes_enabled(tenant):
         return body
-    block = qr_html(document_reference(tenant=tenant, kind=kind, number=number, path=path, request=request), number)
+    block = qr_html(document_reference(tenant=tenant, kind=kind, number=number, path=path, request=request), number, tenant=tenant)
     index = body.rfind('<div class="document-footer">')
     if index >= 0:
         return body[:index] + block + body[index:]
@@ -74,6 +79,6 @@ def append_document_qr(body, *, tenant=None, kind="document", number="", path=No
     return body[:index] + block + body[index:] if index >= 0 else body + block
 
 
-def draw_print_qr(canvas, reference, *, x, y, size=48):
-    if print_qr_codes_enabled():
+def draw_print_qr(canvas, reference, *, x, y, size=48, tenant=None):
+    if print_qr_codes_enabled(tenant):
         canvas.drawImage(ImageReader(BytesIO(qr_png(reference))), x, y, width=size, height=size)

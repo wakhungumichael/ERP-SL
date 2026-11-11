@@ -1,3 +1,4 @@
+import { Table } from "@/components/ui/table";
 import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/context/use-auth";
@@ -233,7 +234,7 @@ export function OrganizationUnits({
       )}
       <div className="overflow-hidden rounded-lg border">
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm">
+          <Table className="w-full text-left text-sm">
             <thead className="bg-muted/40">
               <tr>
                 {[
@@ -332,7 +333,7 @@ export function OrganizationUnits({
                 </tr>
               ))}
             </tbody>
-          </table>
+          </Table>
         </div>
         {!rows.isLoading && !rows.data?.results.length && (
           <p className="p-6 text-center text-sm text-muted-foreground">

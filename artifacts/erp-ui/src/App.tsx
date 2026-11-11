@@ -3,7 +3,7 @@ import SharedDocument from "@/pages/public/shared-document";
 import MyPayslips from "@/pages/hr/my-payslips";
 import ProjectSettingsPage from "@/pages/projects/settings";
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
-import { useAppBranding } from '@/hooks/use-app-branding';
+import { useAppBranding } from "@/hooks/use-app-branding";
 import {
   QueryCache,
   QueryClient,
@@ -16,12 +16,15 @@ import { ERPErrorBoundary } from "@/components/erp/error-boundary";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Route, Switch, Redirect, Router as WouterRouter } from "wouter";
 import { Shell } from "@/components/shell";
+import { useLocation } from "wouter";
+import { WorkspaceProvider } from "@/context/workspace-context";
+import { WorkspaceOutlet } from "@/components/erp/workspace/workspace-outlet";
+import WorkspaceHome from "@/pages/home";
 import { AuthProvider } from "@/context/auth-context";
 
 import { useAuth } from "@/context/use-auth";
 import type { AppRole } from "@/lib/roles";
 import { CAN_VIEW_REPORTS_WORKSPACE } from "@/lib/roles";
-import { getWorkspaceHomePath } from "@/lib/workspace-home";
 import Login from "@/pages/login";
 import LandingPage from "@/pages/landing";
 import MarketingAppsPage from "@/pages/marketing-apps";
@@ -184,29 +187,19 @@ function Router() {
       );
     }
 
-    if (token && user) {
-      return role === "superadmin" ? (
-        <Shell>
-          <BillingCenter />
-        </Shell>
-      ) : (
-        <Shell>
-          {getWorkspaceHomePath(role, user as Record<string, unknown>) ===
-          "/weighbridge/weighment-entry" ? (
-            <WeighmentEntryPage />
-          ) : (
-            <Dashboard />
-          )}
-        </Shell>
-      );
-    }
+    if (token && user) return <WorkspaceHome />;
 
     return <LandingPage />;
   })();
 
-  return (
+  const routeContent = (
     <Switch>
-      <Route path="/documents/scan/:token">{params => <SharedDocument token={params.token} />}</Route>
+      <Route path="/home">
+        <WorkspaceHome />
+      </Route>
+      <Route path="/documents/scan/:token">
+        {(params) => <SharedDocument token={params.token} />}
+      </Route>
       <Route path="/landing/apps">
         <MarketingAppsPage />
       </Route>
@@ -254,623 +247,429 @@ function Router() {
       </Route>
       <Route path="/">{homeContent}</Route>
       <Route path="/dashboard">
-        <Shell>
-          <RoleGuard
-            allowedRoles={["superadmin", "tenant_admin", "finance", "operator"]}
-          >
-            {role === "superadmin" ? <BillingCenter /> : <Dashboard />}
-          </RoleGuard>
-        </Shell>
+        <RoleGuard
+          allowedRoles={["superadmin", "tenant_admin", "finance", "operator"]}
+        >
+          {role === "superadmin" ? <BillingCenter /> : <Dashboard />}
+        </RoleGuard>
       </Route>
       <Route path="/workflows/approvals">
-        <Shell>
-          <WorkflowApprovals />
-        </Shell>
+        <WorkflowApprovals />
       </Route>
       <Route path="/projects/overview">
-        <Shell>
-          <ProjectsWorkspace mode="overview" />
-        </Shell>
+        <ProjectsWorkspace mode="overview" />
       </Route>
       <Route path="/projects/tasks">
-        <Shell>
-          <ProjectsWorkspace mode="tasks" />
-        </Shell>
+        <ProjectsWorkspace mode="tasks" />
       </Route>
       <Route path="/projects/tasks/:id">
-        {(params) => (
-          <Shell>
-            <TaskDetail id={params.id} />
-          </Shell>
-        )}
+        {(params) => <TaskDetail id={params.id} />}
       </Route>
       <Route path="/projects/board">
-        <Shell>
-          <ProjectKanban />
-        </Shell>
+        <ProjectKanban />
       </Route>
       <Route path="/projects/calendar">
-        <Shell>
-          <ProjectCalendar />
-        </Shell>
+        <ProjectCalendar />
       </Route>
       <Route path="/projects/reports">
-        <Shell>
-          <ProjectsReports />
-        </Shell>
+        <ProjectsReports />
       </Route>
       <Route path="/projects/follow-ups">
-        <Shell>
-          <ProjectFollowUps />
-        </Shell>
+        <ProjectFollowUps />
       </Route>
       <Route path="/projects/my-tasks">
-        <Shell>
-          <ProjectsWorkspace mode="mine" />
-        </Shell>
+        <ProjectsWorkspace mode="mine" />
       </Route>
       <Route path="/projects/team-tasks">
-        <Shell>
-          <ProjectsWorkspace mode="team" />
-        </Shell>
+        <ProjectsWorkspace mode="team" />
       </Route>
       <Route path="/projects">
-        <Shell>
-          <ProjectsWorkspace mode="projects" />
-        </Shell>
+        <ProjectsWorkspace mode="projects" />
       </Route>
-      <Route path="/projects/settings"><Shell><ProjectSettingsPage /></Shell></Route>
+      <Route path="/projects/settings">
+        <ProjectSettingsPage />
+      </Route>
       <Route path="/projects/:id">
-        {(params) => (
-          <Shell>
-            <ProjectDetail id={params.id} />
-          </Shell>
-        )}
+        {(params) => <ProjectDetail id={params.id} />}
       </Route>
       <Route path="/workspace/operations/dashboard">
-        <Shell>
-          <RoleGuard
-            allowedRoles={["superadmin", "tenant_admin", "finance", "operator"]}
-          >
-            {role === "superadmin" ? <BillingCenter /> : <Dashboard />}
-          </RoleGuard>
-        </Shell>
+        <RoleGuard
+          allowedRoles={["superadmin", "tenant_admin", "finance", "operator"]}
+        >
+          {role === "superadmin" ? <BillingCenter /> : <Dashboard />}
+        </RoleGuard>
       </Route>
 
       {/* Weighbridge */}
       <Route path="/weighbridge/overview">
-        <Shell>
-          <WeighbridgeOverview />
-        </Shell>
+        <WeighbridgeOverview />
       </Route>
       <Route path="/weighbridge/transactions">
-        <Shell>
-          <TransactionsList />
-        </Shell>
+        <TransactionsList />
       </Route>
       <Route path="/weighbridge/transactions/:id">
-        {(params) => (
-          <Shell>
-            <TransactionDetail id={params.id} />
-          </Shell>
-        )}
+        {(params) => <TransactionDetail id={params.id} />}
       </Route>
       <Route path="/weighbridge/first-weight">
-        <Shell>
-          <WeighmentEntryPage preferredFlow="first" />
-        </Shell>
+        <WeighmentEntryPage preferredFlow="first" />
       </Route>
       <Route path="/weighbridge/second-weight">
-        <Shell>
-          <WeighmentEntryPage preferredFlow="second" />
-        </Shell>
+        <WeighmentEntryPage preferredFlow="second" />
       </Route>
       <Route path="/weighbridge/weighment-entry">
-        <Shell>
-          <WeighmentEntryPage />
-        </Shell>
+        <WeighmentEntryPage />
       </Route>
       <Route path="/weighbridge/weight-capture">
-        <Shell>
-          <WeighmentEntryPage />
-        </Shell>
+        <WeighmentEntryPage />
       </Route>
       <Route path="/weighbridge/customers">
-        <Shell>
-          <CustomersList />
-        </Shell>
+        <CustomersList />
       </Route>
       <Route path="/weighbridge/vehicles">
-        <Shell>
-          <VehiclesList />
-        </Shell>
+        <VehiclesList />
       </Route>
       <Route path="/weighbridge/live">
-        <Shell>
-          <LiveWeight />
-        </Shell>
+        <LiveWeight />
       </Route>
       <Route path="/weighbridge/settings">
-        <Shell>
-          <WeighbridgeSettings />
-        </Shell>
+        <WeighbridgeSettings />
       </Route>
       <Route path="/weighbridge/overweight-log">
-        <Shell>
-          <OverweightLog />
-        </Shell>
+        <OverweightLog />
       </Route>
       <Route path="/weighbridge/discrepancies">
-        <Shell>
-          <Discrepancies />
-        </Shell>
+        <Discrepancies />
       </Route>
 
       {/* Sales */}
       <Route path="/sales/estimates">
-        <Shell>
-          <SalesEstimates />
-        </Shell>
+        <SalesEstimates />
       </Route>
       <Route path="/sales/invoices">
-        <Shell>
-          <SalesInvoices />
-        </Shell>
+        <SalesInvoices />
       </Route>
       <Route path="/sales/orders">
-        <Shell>
-          <SalesOrders />
-        </Shell>
+        <SalesOrders />
       </Route>
       <Route path="/sales/recurring">
-        <Shell>
-          <SalesRecurring />
-        </Shell>
+        <SalesRecurring />
       </Route>
       <Route path="/sales/statements">
-        <Shell>
-          <SalesStatements />
-        </Shell>
+        <SalesStatements />
       </Route>
       <Route path="/sales/customers">
-        <Shell>
-          <SalesCustomers />
-        </Shell>
+        <SalesCustomers />
       </Route>
       <Route path="/sales/products">
-        <Shell>
-          <SalesProducts />
-        </Shell>
+        <SalesProducts />
       </Route>
 
       {/* Purchases legacy paths */}
       <Route path="/procurement/bills">
-        <Shell>
-          <PurchaseBills />
-        </Shell>
+        <PurchaseBills />
       </Route>
       <Route path="/procurement/payment-queue">
-        <Shell>
-          <PaymentQueuePage />
-        </Shell>
+        <PaymentQueuePage />
       </Route>
       <Route path="/purchases/bills">
-        <Shell>
-          <PurchaseBills />
-        </Shell>
+        <PurchaseBills />
       </Route>
       <Route path="/purchases/payment-queue">
-        <Shell>
-          <PaymentQueuePage />
-        </Shell>
+        <PaymentQueuePage />
       </Route>
       <Route path="/purchases/vendors">
-        <Shell>
-          <PurchaseVendors />
-        </Shell>
+        <PurchaseVendors />
       </Route>
       <Route path="/purchases/products">
-        <Shell>
-          <PurchaseProducts />
-        </Shell>
+        <PurchaseProducts />
       </Route>
 
       {/* Accounting legacy paths */}
       <Route path="/accounting/dashboard">
-        <Shell>
-          <AccountingDashboard />
-        </Shell>
+        <AccountingDashboard />
       </Route>
       <Route path="/accounting/reports">
-        <Shell>
-          <AccountingReports />
-        </Shell>
+        <AccountingReports />
       </Route>
       <Route path="/accounting/chart-of-accounts">
-        <Shell>
-          <ChartOfAccounts />
-        </Shell>
+        <ChartOfAccounts />
       </Route>
       <Route path="/accounting/transactions">
-        <Shell>
-          <AccountingTransactions />
-        </Shell>
+        <AccountingTransactions />
       </Route>
       <Route path="/accounting/transactions/:id">
-        {(params) => (
-          <Shell>
-            <AccountingTransactionDetail id={params.id} />
-          </Shell>
-        )}
+        {(params) => <AccountingTransactionDetail id={params.id} />}
       </Route>
       <Route path="/accounting/posting-rules">
-        <Shell>
-          <AccountingPostingRules />
-        </Shell>
+        <AccountingPostingRules />
       </Route>
 
       {/* Finance canonical paths */}
       <Route path="/finance/overview">
-        <Shell>
-          <AccountingDashboard />
-        </Shell>
+        <AccountingDashboard />
       </Route>
       <Route path="/finance/reports">
-        <Shell>
-          <AccountingReports />
-        </Shell>
+        <AccountingReports />
       </Route>
       <Route path="/finance/chart-of-accounts">
-        <Shell>
-          <ChartOfAccounts />
-        </Shell>
+        <ChartOfAccounts />
       </Route>
       <Route path="/finance/transactions">
-        <Shell>
-          <AccountingTransactions />
-        </Shell>
+        <AccountingTransactions />
       </Route>
       <Route path="/finance/transactions/:id">
-        {(params) => (
-          <Shell>
-            <AccountingTransactionDetail id={params.id} />
-          </Shell>
-        )}
+        {(params) => <AccountingTransactionDetail id={params.id} />}
       </Route>
       <Route path="/finance/posting-rules">
-        <Shell>
-          <AccountingPostingRules />
-        </Shell>
+        <AccountingPostingRules />
       </Route>
       <Route path="/finance/receivables">
-        <Shell>
-          <SalesInvoices />
-        </Shell>
+        <SalesInvoices />
       </Route>
       <Route path="/finance/payables">
-        <Shell>
-          <PurchaseBills />
-        </Shell>
+        <PurchaseBills />
       </Route>
       <Route path="/finance/payment-methods">
-        <Shell>
-          <PaymentMethods />
-        </Shell>
+        <PaymentMethods />
       </Route>
-      <Route path="/procurement/plans"><Shell><PlanningWorkspace plans /></Shell></Route>
+      <Route path="/procurement/plans">
+        <PlanningWorkspace plans />
+      </Route>
       <Route path="/finance/budgets">
-        <Shell>
-          <PlanningWorkspace />
-        </Shell>
+        <PlanningWorkspace />
       </Route>
 
       {/* Legacy Payments & Finance routes — keep for backward compat */}
       <Route path="/payments/invoices">
-        <Shell>
-          <InvoicesList />
-        </Shell>
+        <InvoicesList />
       </Route>
       <Route path="/payments/invoices/:id">
-        {(params) => (
-          <Shell>
-            <InvoiceDetail id={params.id} />
-          </Shell>
-        )}
+        {(params) => <InvoiceDetail id={params.id} />}
       </Route>
       <Route path="/payments/methods">
-        <Shell>
-          <PaymentMethods />
-        </Shell>
+        <PaymentMethods />
       </Route>
 
       {/* CRM — Relationships */}
       <Route path="/crm/dashboard">
-        <Shell>
-          <CRMDashboard />
-        </Shell>
+        <CRMDashboard />
       </Route>
       <Route path="/crm/companies">
-        <Shell>
-          <Companies />
-        </Shell>
+        <Companies />
       </Route>
       <Route path="/crm/people">
-        <Shell>
-          <People />
-        </Shell>
+        <People />
       </Route>
       <Route path="/crm/suppliers">
-        <Shell>
-          <Suppliers />
-        </Shell>
+        <Suppliers />
       </Route>
       <Route path="/crm/opportunities">
-        <Shell>
-          <Opportunities />
-        </Shell>
+        <Opportunities />
       </Route>
       <Route path="/crm/follow-ups">
-        <Shell>
-          <FollowUps />
-        </Shell>
+        <FollowUps />
       </Route>
       <Route path="/crm/performance">
-        <Shell>
-          <SalesPerformance />
-        </Shell>
+        <SalesPerformance />
       </Route>
 
       {/* Ticketing */}
       <Route path="/ticketing/overview">
-        <Shell>
-          <TicketingOverview />
-        </Shell>
+        <TicketingOverview />
       </Route>
       <Route path="/ticketing/queue">
-        <Shell>
-          <TicketingQueue />
-        </Shell>
+        <TicketingQueue />
       </Route>
       <Route path="/ticketing/forms">
-        <Shell>
-          <TicketingForms />
-        </Shell>
+        <TicketingForms />
       </Route>
       <Route path="/ticketing/automation">
-        <Shell>
-          <TicketingAutomation />
-        </Shell>
+        <TicketingAutomation />
       </Route>
       <Route path="/ticketing/settings">
-        <Shell>
-          <TicketingSettings />
-        </Shell>
+        <TicketingSettings />
       </Route>
 
       {/* Reports */}
       <Route path="/weighbridge/reports">
-        <Shell>
-          <RoleGuard allowedRoles={CAN_VIEW_REPORTS_WORKSPACE}>
-            <ReportsDashboard />
-          </RoleGuard>
-        </Shell>
+        <RoleGuard allowedRoles={CAN_VIEW_REPORTS_WORKSPACE}>
+          <ReportsDashboard />
+        </RoleGuard>
       </Route>
       <Route path="/reports/dashboard">
-        <Shell>
-          <RoleGuard allowedRoles={CAN_VIEW_REPORTS_WORKSPACE}>
-            <ReportsDashboard />
-          </RoleGuard>
-        </Shell>
+        <RoleGuard allowedRoles={CAN_VIEW_REPORTS_WORKSPACE}>
+          <ReportsDashboard />
+        </RoleGuard>
       </Route>
 
       {/* HR */}
-      <Route path="/hr/my-payslips"><Shell><MyPayslips /></Shell></Route>
-      {(['employees', 'leave', 'requests', 'settings'] as const).map(mode => <Route key={mode} path={`/hr/${mode}`}><Shell><HRWorkforce mode={mode} /></Shell></Route>)}
+      <Route path="/hr/my-payslips">
+        <MyPayslips />
+      </Route>
+      {(["employees", "leave", "requests", "settings"] as const).map((mode) => (
+        <Route key={mode} path={`/hr/${mode}`}>
+          <HRWorkforce mode={mode} />
+        </Route>
+      ))}
       <Route path="/hr/staff">
-        <Shell>
-          <HRStaff />
-        </Shell>
+        <HRStaff />
       </Route>
 
       {/* Procurement */}
-      <Route path="/platform/organization-structure"><Shell><OrganizationUnits /></Shell></Route>
-      <Route path="/procurement/departments"><Redirect to="/platform/organization-structure" /></Route>
-      <Route path="/procurement/configuration"><Shell><ProcurementConfiguration /></Shell></Route>
+      <Route path="/platform/organization-structure">
+        <OrganizationUnits />
+      </Route>
+      <Route path="/procurement/departments">
+        <Redirect to="/platform/organization-structure" />
+      </Route>
+      <Route path="/procurement/configuration">
+        <ProcurementConfiguration />
+      </Route>
       <Route path="/procurement/approval-rules">
-        <Shell>
-          <ProcurementApprovalRules />
-        </Shell>
+        <ProcurementApprovalRules />
       </Route>
       <Route path="/procurement/requisitions">
-        <Shell>
-          <ProcurementRequisitions />
-        </Shell>
+        <ProcurementRequisitions />
       </Route>
       <Route path="/procurement/receipts">
-        <Shell>
-          <GoodsReceiptsPage />
-        </Shell>
+        <GoodsReceiptsPage />
       </Route>
       <Route path="/procurement/purchase-orders">
-        <Shell>
-          <PurchaseOrders />
-        </Shell>
+        <PurchaseOrders />
       </Route>
       <Route path="/procurement/vendors">
-        <Shell>
-          <PurchaseVendors />
-        </Shell>
+        <PurchaseVendors />
       </Route>
       <Route path="/procurement/bills">
-        <Shell>
-          <PurchaseBills />
-        </Shell>
+        <PurchaseBills />
       </Route>
 
       {/* Inventory */}
       <Route path="/inventory/overview">
-        <Shell>
-          <InventoryOverview />
-        </Shell>
+        <InventoryOverview />
       </Route>
       <Route path="/inventory/stock">
-        <Shell>
-          <InventoryStock />
-        </Shell>
+        <InventoryStock />
       </Route>
       <Route path="/inventory/warehouses">
-        <Shell>
-          <InventoryWarehouses />
-        </Shell>
+        <InventoryWarehouses />
       </Route>
       <Route path="/inventory/movements">
-        <Shell>
-          <InventoryMovements />
-        </Shell>
+        <InventoryMovements />
       </Route>
 
       {/* Budgeting */}
       <Route path="/budgeting/overview">
-        <Shell>
-          <BudgetingOverview />
-        </Shell>
+        <BudgetingOverview />
       </Route>
 
       {/* Industry Packs */}
       <Route path="/manufacturing/overview">
-        <Shell>
-          <ManufacturingOverview />
-        </Shell>
+        <ManufacturingOverview />
       </Route>
       <Route path="/retail/overview">
-        <Shell>
-          <RetailOverview />
-        </Shell>
+        <RetailOverview />
       </Route>
       <Route path="/services/overview">
-        <Shell>
-          <ServicesOverview />
-        </Shell>
+        <ServicesOverview />
       </Route>
 
       {/* Platform Admin — superadmin-only pages */}
       <Route path="/platform/billing">
-        <Shell>
-          <RoleGuard allowedRoles={["superadmin"]}>
-            <BillingCenter />
-          </RoleGuard>
-        </Shell>
+        <RoleGuard allowedRoles={["superadmin"]}>
+          <BillingCenter />
+        </RoleGuard>
       </Route>
       <Route path="/platform/tenants">
-        <Shell>
-          <RoleGuard allowedRoles={["superadmin"]}>
-            <Tenants />
-          </RoleGuard>
-        </Shell>
+        <RoleGuard allowedRoles={["superadmin"]}>
+          <Tenants />
+        </RoleGuard>
       </Route>
       <Route path="/platform/industries">
-        <Shell>
-          <RoleGuard allowedRoles={["superadmin"]}>
-            <Industries />
-          </RoleGuard>
-        </Shell>
+        <RoleGuard allowedRoles={["superadmin"]}>
+          <Industries />
+        </RoleGuard>
       </Route>
       <Route path="/platform/modules">
-        <Shell>
-          <RoleGuard allowedRoles={["superadmin"]}>
-            <Modules />
-          </RoleGuard>
-        </Shell>
+        <RoleGuard allowedRoles={["superadmin"]}>
+          <Modules />
+        </RoleGuard>
       </Route>
       <Route path="/platform/plans">
-        <Shell>
-          <RoleGuard allowedRoles={["superadmin"]}>
-            <Plans />
-          </RoleGuard>
-        </Shell>
+        <RoleGuard allowedRoles={["superadmin"]}>
+          <Plans />
+        </RoleGuard>
       </Route>
       <Route path="/platform/subscriptions">
-        <Shell>
-          <RoleGuard allowedRoles={["superadmin"]}>
-            <Subscriptions />
-          </RoleGuard>
-        </Shell>
+        <RoleGuard allowedRoles={["superadmin"]}>
+          <Subscriptions />
+        </RoleGuard>
       </Route>
       <Route path="/platform/licenses">
-        <Shell>
-          <RoleGuard allowedRoles={["superadmin"]}>
-            <Licenses />
-          </RoleGuard>
-        </Shell>
+        <RoleGuard allowedRoles={["superadmin"]}>
+          <Licenses />
+        </RoleGuard>
       </Route>
       <Route path="/platform/integrations">
-        <Shell>
-          <RoleGuard allowedRoles={["superadmin"]}>
-            <Integrations />
-          </RoleGuard>
-        </Shell>
+        <RoleGuard allowedRoles={["superadmin"]}>
+          <Integrations />
+        </RoleGuard>
       </Route>
       <Route path="/platform/backups">
-        <Shell>
-          <RoleGuard allowedRoles={["superadmin", "tenant_admin"]}>
-            <Backups />
-          </RoleGuard>
-        </Shell>
+        <RoleGuard allowedRoles={["superadmin", "tenant_admin"]}>
+          <Backups />
+        </RoleGuard>
       </Route>
 
       {/* Platform Admin — superadmin + tenant_admin pages */}
       <Route path="/platform/users">
-        <Shell>
-          <RoleGuard allowedRoles={["superadmin", "tenant_admin"]}>
-            <Users />
-          </RoleGuard>
-        </Shell>
+        <RoleGuard allowedRoles={["superadmin", "tenant_admin"]}>
+          <Users />
+        </RoleGuard>
       </Route>
       <Route path="/platform/roles">
-        <Shell>
-          <RoleGuard allowedRoles={["superadmin", "tenant_admin"]}>
-            <Roles />
-          </RoleGuard>
-        </Shell>
+        <RoleGuard allowedRoles={["superadmin", "tenant_admin"]}>
+          <Roles />
+        </RoleGuard>
       </Route>
       <Route path="/platform/workspace">
-        <Shell>
-          <RoleGuard allowedRoles={["superadmin"]}>
-            <Workspace />
-          </RoleGuard>
-        </Shell>
+        <RoleGuard allowedRoles={["superadmin"]}>
+          <Workspace />
+        </RoleGuard>
       </Route>
       <Route path="/platform/workflows">
-        <Shell>
-          <RoleGuard allowedRoles={["superadmin", "tenant_admin"]}>
-            <WorkflowCenter />
-          </RoleGuard>
-        </Shell>
+        <RoleGuard allowedRoles={["superadmin", "tenant_admin"]}>
+          <WorkflowCenter />
+        </RoleGuard>
       </Route>
       <Route path="/platform/company-settings">
-        <Shell>
-          <RoleGuard allowedRoles={["superadmin", "tenant_admin"]}>
-            <OrganizationSettings />
-          </RoleGuard>
-        </Shell>
+        <RoleGuard allowedRoles={["superadmin", "tenant_admin"]}>
+          <OrganizationSettings />
+        </RoleGuard>
       </Route>
       <Route path="/platform/organization-settings">
-        <Shell>
-          <RoleGuard allowedRoles={["superadmin", "tenant_admin"]}>
-            <OrganizationSettings />
-          </RoleGuard>
-        </Shell>
+        <RoleGuard allowedRoles={["superadmin", "tenant_admin"]}>
+          <OrganizationSettings />
+        </RoleGuard>
       </Route>
       <Route path="/platform/audit">
-        <Shell>
-          <RoleGuard allowedRoles={["superadmin", "tenant_admin"]}>
-            <AuditLogsPage />
-          </RoleGuard>
-        </Shell>
+        <RoleGuard allowedRoles={["superadmin", "tenant_admin"]}>
+          <AuditLogsPage />
+        </RoleGuard>
       </Route>
 
       <Route component={NotFound} />
     </Switch>
+  );
+  const [path] = useLocation();
+  const publicPage =
+    /^\/(?:login|landing|privacy|documents\/scan)(?:\/|$)/.test(path);
+  return token && !publicPage ? (
+    <Shell>
+      <WorkspaceOutlet>{routeContent}</WorkspaceOutlet>
+    </Shell>
+  ) : (
+    routeContent
   );
 }
 
@@ -881,7 +680,9 @@ export default function App() {
         <AuthProvider>
           <TooltipProvider>
             <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
-              <Router />
+              <WorkspaceProvider>
+                <Router />
+              </WorkspaceProvider>
             </WouterRouter>
             <Toaster />
           </TooltipProvider>

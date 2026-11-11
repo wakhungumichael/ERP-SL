@@ -29,6 +29,7 @@ export interface ReceiptTransaction {
   payment_required?: boolean;
   status?: string;
   approval_status?: boolean;
+  receipt_timezone?: string;
   gross_weight_date?: string | null;
   tare_weight_date?: string | null;
   created_at?: string;
@@ -52,10 +53,11 @@ type ReceiptBranding = {
   footer_text?: string;
 };
 
-function fmt(dt?: string | null) {
+function fmt(dt?: string | null, timeZone?: string) {
   if (!dt) return '—';
   const d = new Date(dt);
   return d.toLocaleString('en-KE', {
+    ...(timeZone ? { timeZone } : {}),
     day: '2-digit', month: 'short', year: 'numeric',
     hour: '2-digit', minute: '2-digit', hour12: false,
   });
@@ -340,13 +342,13 @@ export function ReceiptDialog({ transaction: t, open, onOpenChange, token }: Rec
                 <div style={{ textAlign: 'center', flex: 1 }}>
                   <div style={{ fontSize: 10, textTransform: 'uppercase', color: '#555' }}>Gross</div>
                   <div style={{ fontWeight: 'bold', fontSize: 14 }}>{kg(t.gross_weight)}</div>
-                  <div style={{ fontSize: 9, color: '#777' }}>{fmt(t.gross_weight_date)}</div>
+                  <div style={{ fontSize: 9, color: '#777' }}>{fmt(t.gross_weight_date, t.receipt_timezone)}</div>
                 </div>
                 <div style={{ padding: '0 8px', display: 'flex', alignItems: 'center', fontSize: 16, fontWeight: 'bold' }}>−</div>
                 <div style={{ textAlign: 'center', flex: 1 }}>
                   <div style={{ fontSize: 10, textTransform: 'uppercase', color: '#555' }}>Tare</div>
                   <div style={{ fontWeight: 'bold', fontSize: 14 }}>{kg(t.tare_weight)}</div>
-                  <div style={{ fontSize: 9, color: '#777' }}>{fmt(t.tare_weight_date)}</div>
+                  <div style={{ fontSize: 9, color: '#777' }}>{fmt(t.tare_weight_date, t.receipt_timezone)}</div>
                 </div>
               </div>
               <div style={{ borderTop: '1px solid #000', paddingTop: 6, textAlign: 'center' }}>
@@ -383,11 +385,11 @@ export function ReceiptDialog({ transaction: t, open, onOpenChange, token }: Rec
             {/* Timestamps */}
             <div style={{ borderTop: '1px dashed #000', paddingTop: 8, marginTop: 8, fontSize: 10, color: '#555' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>First Weight:</span><span>{fmt(t.gross_weight_date ?? t.created_at)}</span>
+                <span>First Weight:</span><span>{fmt(t.gross_weight_date ?? t.created_at, t.receipt_timezone)}</span>
               </div>
               {t.tare_weight_date && (
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span>Second Weight:</span><span>{fmt(t.tare_weight_date)}</span>
+                  <span>Second Weight:</span><span>{fmt(t.tare_weight_date, t.receipt_timezone)}</span>
                 </div>
               )}
             </div>

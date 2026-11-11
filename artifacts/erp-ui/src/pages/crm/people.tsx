@@ -1,3 +1,5 @@
+import { ERPFilterBar } from "@/components/erp/listing/filter-bar";
+import { ERPListingScope, ERPToolbarDock } from '@/components/erp/listing/listing-scope';
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -109,7 +111,7 @@ export default function PeoplePage() {
     withPhone: people.filter((person: Person) => !!person.phone).length,
   }), [people]);
 
-  return (
+  return <ERPListingScope>{(
     <div className="space-y-6">
       <div className="flex items-center justify-between border-b pb-4">
         <div>
@@ -118,6 +120,7 @@ export default function PeoplePage() {
         </div>
         <AddPersonDialog organisations={orgs} />
       </div>
+<ERPToolbarDock />
 
       <div className="grid gap-4 md:grid-cols-4">
         <Card><CardContent className="p-4"><div className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Visible Contacts</div><div className="mt-2 text-2xl font-semibold">{summary.total}</div></CardContent></Card>
@@ -126,18 +129,18 @@ export default function PeoplePage() {
         <Card><CardContent className="p-4"><div className="text-xs font-bold uppercase tracking-wide text-muted-foreground">With Phone</div><div className="mt-2 text-2xl font-semibold text-emerald-600">{summary.withPhone}</div></CardContent></Card>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-card px-3 py-1 shadow-sm">
-        <Search className="h-4 w-4 text-muted-foreground shrink-0" />
-        <Input
+      <ERPFilterBar searchSlot={<Input
           placeholder="Search contacts…"
           value={search}
           onChange={e => setSearch(e.target.value)}
           className="h-9 border-0 shadow-none focus-visible:ring-0 text-sm"
-        />
+        />} filterSlot={<>
+        <Search className="h-4 w-4 text-muted-foreground shrink-0" />
+        <></>
         <Select value={companyFilter || 'all'} onValueChange={setCompanyFilter}><SelectTrigger className="h-8 w-[170px]"><SelectValue placeholder="Company" /></SelectTrigger><SelectContent><SelectItem value="all">All companies</SelectItem>{orgs.map((org: any) => <SelectItem key={org.id} value={String(org.id)}>{org.name}</SelectItem>)}</SelectContent></Select>
         <Select value={ownerFilter || 'all'} onValueChange={(value) => setOwnerFilter(value === 'all' ? '' : value)}><SelectTrigger className="h-8 w-[150px]"><SelectValue placeholder="Owner" /></SelectTrigger><SelectContent><SelectItem value="all">All owners</SelectItem>{users.map((user: any) => <SelectItem key={user.id} value={String(user.id)}>{user.full_name || user.username || user.email}</SelectItem>)}</SelectContent></Select>
         <Input className="h-8 w-[150px]" placeholder="Relationship role" value={roleFilter} onChange={(event) => setRoleFilter(event.target.value)} />
-      </div>
+       </>} />
 
       <div className="bg-card rounded-lg border shadow-sm overflow-hidden">
         <Table>
@@ -195,7 +198,7 @@ export default function PeoplePage() {
         onOpenChange={(open) => { if (!open) setSelectedPerson(null); }}
       />
     </div>
-  );
+  )}</ERPListingScope>;
 }
 
 function PersonWorkspaceSheet({

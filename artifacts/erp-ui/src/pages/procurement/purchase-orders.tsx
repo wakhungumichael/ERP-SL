@@ -1,3 +1,5 @@
+import { ERPFilterBar } from "@/components/erp/listing/filter-bar";
+import { ERPListingScope, ERPExistingPagination, ERPPageSizeControl, ERPToolbarDock } from '@/components/erp/listing/listing-scope';
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { downloadDocumentPdf } from '@/lib/document-download';
 import { useState, useCallback } from 'react';
@@ -271,7 +273,7 @@ function PODetail({ po, token, onBack, onRefresh }: { po: any; token: string | n
     }
   };
 
-  return (
+  return <ERPListingScope>{(
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
@@ -350,7 +352,7 @@ function PODetail({ po, token, onBack, onRefresh }: { po: any; token: string | n
         </div>
       )}
     </div>
-  );
+  )}</ERPListingScope>;
 }
 
 /* ════════════════════════════════════════════════════════════════ main ── */
@@ -401,7 +403,7 @@ export default function PurchaseOrders() {
     qc.invalidateQueries({ queryKey: ['procurement-dashboard'] });
   }, [qc]);
 
-  return (
+  return <ERPListingScope>{(
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-start justify-between gap-4 border-b pb-4">
@@ -421,6 +423,7 @@ export default function PurchaseOrders() {
           </Button>
         )}
       </div>
+<ERPToolbarDock />
 
       {/* Stats */}
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
@@ -445,12 +448,12 @@ export default function PurchaseOrders() {
       ) : (
         <>
           {/* Filters */}
-          <div className="flex items-center gap-2">
-            <div className="bg-card border rounded-lg px-3 py-1.5 flex items-center gap-2 flex-1">
+          <ERPFilterBar searchSlot={<div className="bg-card border rounded-lg px-3 py-1.5 flex items-center gap-2 flex-1">
               <Search className="h-4 w-4 text-muted-foreground shrink-0" />
               <Input placeholder="Search by reference or supplier…" value={search} onChange={e => setSearch(e.target.value)}
                 className="border-0 shadow-none focus-visible:ring-0 text-sm h-7" />
-            </div>
+            </div>} filterSlot={<>
+            <></>
             <Select value={statusFilter} onValueChange={(value) => { setStatusFilter(value); setPage(1); }}>
               <SelectTrigger className="w-36 h-9 text-sm">
                 <SelectValue placeholder="All statuses" />
@@ -460,7 +463,7 @@ export default function PurchaseOrders() {
                 {ALL_STATUSES.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
               </SelectContent>
             </Select>
-          </div>
+           </>} />
 
           {/* PO list */}
           <Card>
@@ -525,7 +528,7 @@ export default function PurchaseOrders() {
           </Card>
 
           {orders.length > 0 ? (
-            <div className="flex flex-col gap-3 rounded-lg border p-4 sm:flex-row sm:items-center sm:justify-between">
+            <ERPExistingPagination><div className="flex flex-col gap-3 rounded-lg border p-4 sm:flex-row sm:items-center sm:justify-between">
               <div className="text-sm text-muted-foreground">
                 Showing page {page} of {totalPages} with {orders.length} purchase orders
               </div>
@@ -544,7 +547,7 @@ export default function PurchaseOrders() {
                 <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage(page - 1)}>Previous</Button>
                 <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage(page + 1)}>Next</Button>
               </div>
-            </div>
+            </div></ERPExistingPagination>
           ) : null}
         </>
       )}
@@ -556,5 +559,5 @@ export default function PurchaseOrders() {
         onSuccess={handleRefresh}
       />
     </div>
-  );
+  )}</ERPListingScope>;
 }

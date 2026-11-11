@@ -1,3 +1,5 @@
+import { ERPListingActions } from '@/components/erp/listing/listing-scope';
+import { ERPListingScope, ERPToolbarDock } from '@/components/erp/listing/listing-scope';
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { useMemo } from 'react';
 import { Link } from 'wouter';
@@ -58,7 +60,7 @@ export default function InventoryWarehousesPage() {
     });
   }, [balances, movements, reservations, warehouses]);
 
-  return (
+  return <ERPListingScope>{(
     <div className="space-y-6 p-6">
       <div className="flex flex-col gap-3 border-b pb-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
@@ -67,10 +69,11 @@ export default function InventoryWarehousesPage() {
             Review warehouse stock, movements, reservations, and operating roles from one page.
           </p>
         </div>
-        <Button asChild variant="outline">
+        <ERPListingActions><Button asChild variant="outline">
           <Link href="/inventory/movements">View stock movements</Link>
-        </Button>
+        </Button></ERPListingActions>
       </div>
+<ERPToolbarDock />
 
       <ProcessFlow
         title="Warehouse Flow"
@@ -209,5 +212,5 @@ export default function InventoryWarehousesPage() {
         </Card>
       </div>
     </div>
-  );
+  )}</ERPListingScope>;
 }

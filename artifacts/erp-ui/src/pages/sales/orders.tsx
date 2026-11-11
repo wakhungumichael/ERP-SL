@@ -1,3 +1,5 @@
+import { ERPFilterBar } from "@/components/erp/listing/filter-bar";
+import { ERPListingScope, ERPListingActions, ERPExistingPagination, ERPPageSizeControl, ERPToolbarDock } from '@/components/erp/listing/listing-scope';
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
@@ -129,7 +131,7 @@ export default function SalesOrdersPage() {
     setPage(1);
   }
 
-  return (
+  return <ERPListingScope>{(
     <div className="space-y-6 p-6">
       <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
         <div>
@@ -138,8 +140,9 @@ export default function SalesOrdersPage() {
             Track confirmed customer orders, monitor fulfillment, and create invoices at the right time.
           </p>
         </div>
-        <Button onClick={() => setCreateOpen(true)}><Plus className="mr-2 h-4 w-4" /> New Sales Order</Button>
+        <ERPListingActions><Button onClick={() => setCreateOpen(true)}><Plus className="mr-2 h-4 w-4" /> New Sales Order</Button></ERPListingActions>
       </div>
+<ERPToolbarDock />
 
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
         {[
@@ -157,14 +160,14 @@ export default function SalesOrdersPage() {
         ))}
       </div>
 
-      <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-        <div className="flex flex-1 flex-wrap gap-3">
-          <Input
+      <><ERPFilterBar searchSlot={<Input
             value={search}
             onChange={(e) => { setSearch(e.target.value); setPage(1); }}
             placeholder="Search order number, customer, or notes"
             className="w-full md:w-72"
-          />
+          />} filterSlot={<>
+        <div className="flex flex-1 flex-wrap gap-3">
+          <></>
           <Select value={statusFilter || '__all__'} onValueChange={(value) => applyQuickStatus(value === '__all__' ? '' : value)}>
             <SelectTrigger className="w-full md:w-44">
               <SelectValue placeholder="All statuses" />
@@ -181,7 +184,8 @@ export default function SalesOrdersPage() {
           <Input type="date" value={dateFrom} onChange={(e) => { setDateFrom(e.target.value); setPage(1); }} className="w-full md:w-44" />
           <Input type="date" value={dateTo} onChange={(e) => { setDateTo(e.target.value); setPage(1); }} className="w-full md:w-44" />
         </div>
-        <div className="flex items-center gap-3">
+        {null}
+       </>} /><ERPPageSizeControl><div className="flex items-center gap-3">
           <span className="text-sm text-muted-foreground">Rows</span>
           <Select value={pageSize} onValueChange={(value) => { setPageSize(value); setPage(1); }}>
             <SelectTrigger className="w-24">
@@ -193,8 +197,7 @@ export default function SalesOrdersPage() {
               <SelectItem value="50">50</SelectItem>
             </SelectContent>
           </Select>
-        </div>
-      </div>
+        </div></ERPPageSizeControl></>
 
       {isLoading ? (
         <p className="text-muted-foreground">Loading…</p>
@@ -277,7 +280,7 @@ export default function SalesOrdersPage() {
         </div>
       )}
 
-      <div className="flex flex-col gap-3 rounded-lg border p-4 sm:flex-row sm:items-center sm:justify-between">
+      <ERPExistingPagination><div className="flex flex-col gap-3 rounded-lg border p-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="text-sm text-muted-foreground">
           Showing page {data?.page ?? 1} of {totalPages} with {totalCount} orders
           {isFetching && !isLoading ? ' • refreshing…' : ''}
@@ -290,10 +293,10 @@ export default function SalesOrdersPage() {
             Next
           </Button>
         </div>
-      </div>
+      </div></ERPExistingPagination>
       <NewSalesOrderDialog open={createOpen} onOpenChange={setCreateOpen} token={token} onSaved={() => { setCreateOpen(false); void refetch(); }} />
     </div>
-  );
+  )}</ERPListingScope>;
 }
 
 type OrderLine = { product: number | null; description: string; quantity: number; unit_price: number; tax_rate: number; discount_amount: number; sort_order: number };

@@ -1,3 +1,5 @@
+import { ERPFilterBar } from "@/components/erp/listing/filter-bar";
+import { ERPListingScope } from "@/components/erp/listing/listing-scope";
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -112,14 +114,12 @@ export default function ProjectKanban() {
     },
   });
   const list = tasks.data?.results ?? [];
-  return (
+  return <ERPListingScope>{(
     <ERPWorkspacePage
       title="Task Board"
       description="A branch-scoped view of work. Use the task record to update progress or forward it through approval."
     >
-      <div className="mb-5 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <div className="flex flex-1 flex-col gap-3 sm:flex-row">
-          <Input
+      <ERPFilterBar searchSlot={<Input
             value={search}
             onChange={(event) => {
               setSearch(event.target.value);
@@ -127,7 +127,9 @@ export default function ProjectKanban() {
             }}
             placeholder="Search task number, title, or description"
             className="sm:max-w-md"
-          />
+          />} filterSlot={<>
+        <div className="flex flex-1 flex-col gap-3 sm:flex-row">
+          <></>
           <Select
             value={project}
             onValueChange={(value) => {
@@ -148,7 +150,8 @@ export default function ProjectKanban() {
             </SelectContent>
           </Select>
         </div>
-        {tasks.data?.access.can_create && (
+        <></>
+       </>} toolsSlot={<> {tasks.data?.access.can_create && (
           <Link
             href={
               project === "all"
@@ -161,8 +164,7 @@ export default function ProjectKanban() {
               New task
             </Button>
           </Link>
-        )}
-      </div>
+        )} </>} />
       {tasks.isError && (
         <p role="alert" className="mb-4 text-sm text-destructive">
           {tasks.error.message}
@@ -240,5 +242,5 @@ export default function ProjectKanban() {
         }}
       />
     </ERPWorkspacePage>
-  );
+  )}</ERPListingScope>;
 }

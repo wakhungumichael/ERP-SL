@@ -1,3 +1,4 @@
+import { ERPListingScope } from "@/components/erp/listing/listing-scope";
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { useMemo, useState } from 'react';
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
@@ -417,7 +418,7 @@ export default function Discrepancies() {
     (msg) => toast({ title: 'Sweep failed', description: msg, variant: 'destructive' }),
   );
 
-  return (
+  return <ERPListingScope>{(
     <ERPWorkspacePage
       title={(
         <span className="flex items-center gap-2">
@@ -589,5 +590,5 @@ export default function Discrepancies() {
         onSuccess={refresh}
       />
     </ERPWorkspacePage>
-  );
+  )}</ERPListingScope>;
 }

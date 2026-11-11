@@ -964,6 +964,7 @@ class TenantSettings(TimeStampedModel):
     invoice_tax_number = models.CharField(max_length=80, blank=True)
     invoice_website = models.URLField(max_length=500, blank=True)
     invoice_payment_instructions = models.TextField(blank=True)
+    print_qr_codes_enabled = models.BooleanField(default=True)
 
     footer_text = models.TextField(blank=True)
     default_tax_name = models.CharField(max_length=100, blank=True, default="VAT")

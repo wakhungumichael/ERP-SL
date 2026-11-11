@@ -1,3 +1,4 @@
+import { ERPListingScope } from "@/components/erp/listing/listing-scope";
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, BadgeCheck, BookOpen, RotateCcw, Send } from 'lucide-react';
@@ -121,7 +122,7 @@ export default function AccountingTransactionDetail({ id }: { id: string }) {
   const lineCreditSum = (entry.lines ?? []).reduce((sum, line) => sum + Number(line.credit_amount ?? 0), 0);
   const unbalanced = Math.abs(Number(entry.debit_total) - Number(entry.credit_total)) > 0.001;
 
-  return (
+  return <ERPListingScope>{(
     <div className="space-y-6 p-6">
       <RecordWorkspaceHeader
         backHref="/finance/transactions"
@@ -294,5 +295,5 @@ export default function AccountingTransactionDetail({ id }: { id: string }) {
         </div>
       </div>
     </div>
-  );
+  )}</ERPListingScope>;
 }

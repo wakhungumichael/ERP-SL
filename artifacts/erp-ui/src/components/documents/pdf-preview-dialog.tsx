@@ -77,9 +77,11 @@ export function PDFPreviewDialog({ title, url, token, open, onOpenChange, onDown
       <DialogHeader className="shrink-0 border-b px-4 py-4 pr-12"><DialogTitle className="break-words">Preview {title}</DialogTitle></DialogHeader>
       <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b px-3 py-2">
         <div className="flex flex-wrap items-center gap-1">
-          <Button variant="outline" size="icon" aria-label="Previous PDF page" disabled={!pdf || page <= 1} onClick={() => setPage(value => value-1)}><ChevronLeft className="h-4 w-4" /></Button>
-          <span className="px-2 text-xs">Page {page} of {pdf?.numPages ?? 1}</span>
-          <Button variant="outline" size="icon" aria-label="Next PDF page" disabled={!pdf || page >= pdf.numPages} onClick={() => setPage(value => value+1)}><ChevronRight className="h-4 w-4" /></Button>
+          {pdf && pdf.numPages > 1 && <>
+            <Button variant="outline" size="icon" aria-label="Previous PDF page" disabled={!pdf || page <= 1} onClick={() => setPage(value => value-1)}><ChevronLeft className="h-4 w-4" /></Button>
+            <span className="px-2 text-xs">Page {page} of {pdf?.numPages ?? 1}</span>
+            <Button variant="outline" size="icon" aria-label="Next PDF page" disabled={!pdf || page >= pdf.numPages} onClick={() => setPage(value => value+1)}><ChevronRight className="h-4 w-4" /></Button>
+          </>}
           <Button variant="outline" size="icon" aria-label="Zoom out" disabled={!pdf || zoom <= .5} onClick={() => setZoom(value => Math.max(.5,value-.25))}><Minus className="h-4 w-4" /></Button>
           <span className="min-w-10 text-center text-xs">{Math.round(zoom*100)}%</span>
           <Button variant="outline" size="icon" aria-label="Zoom in" disabled={!pdf || zoom >= 3} onClick={() => setZoom(value => Math.min(3,value+.25))}><Plus className="h-4 w-4" /></Button>

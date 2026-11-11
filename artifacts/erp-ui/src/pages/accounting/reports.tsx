@@ -1,3 +1,6 @@
+import { useSearch } from "wouter";
+import { ERPFilterBar } from "@/components/erp/listing/filter-bar";
+import { ERPListingScope, ERPToolbarDock } from '@/components/erp/listing/listing-scope';
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
@@ -383,10 +386,11 @@ function BalanceBadge({ row }: { row: ReportBalanceRow }) {
 }
 
 export default function AccountingReports() {
+  const routeSearch = useSearch();
   const { token } = useAuth();
   const { toast } = useToast();
   const drilldown = useMemo(() => {
-    const params = new URLSearchParams(window.location.search);
+    const params = new URLSearchParams(routeSearch);
     return {
       type: params.get('drill'),
       search: params.get('search'),
@@ -395,9 +399,9 @@ export default function AccountingReports() {
     };
   }, []);
 
-  const [dateFrom, setDateFrom] = useState(() => new URLSearchParams(window.location.search).get('date_from') || getYearStartISO());
-  const [dateTo, setDateTo] = useState(() => new URLSearchParams(window.location.search).get('date_to') || getTodayISO());
-  const [activeTab, setActiveTab] = useState(() => new URLSearchParams(window.location.search).get('tab') || 'trial-balance');
+  const [dateFrom, setDateFrom] = useState(() => new URLSearchParams(routeSearch).get('date_from') || getYearStartISO());
+  const [dateTo, setDateTo] = useState(() => new URLSearchParams(routeSearch).get('date_to') || getTodayISO());
+  const [activeTab, setActiveTab] = useState(() => new URLSearchParams(routeSearch).get('tab') || 'trial-balance');
   const [selectedAccountId, setSelectedAccountId] = useState('');
   const [accountDrawerOpen, setAccountDrawerOpen] = useState(false);
   const [guidanceOpen, setGuidanceOpen] = useState(false);
@@ -405,7 +409,7 @@ export default function AccountingReports() {
   const [accountPanelTab, setAccountPanelTab] = useState<'summary' | 'transactions' | 'documents' | 'analysis'>('summary');
   const [selectedFinancialYearId, setSelectedFinancialYearId] = useState('');
   const [selectedPeriodId, setSelectedPeriodId] = useState('');
-  const [search, setSearch] = useState(() => new URLSearchParams(window.location.search).get('search') || '');
+  const [search, setSearch] = useState(() => new URLSearchParams(routeSearch).get('search') || '');
   const [tbPage, setTbPage] = useState(1);
   const [tbPageSize, setTbPageSize] = useState(10);
   const [tbTableSearch, setTbTableSearch] = useState('');
@@ -1304,7 +1308,7 @@ export default function AccountingReports() {
 
   const reportRefreshing = tbLoading || isLoadingIncome || bsLoading;
 
-  return (
+  return <ERPListingScope>{(
     <div className="w-full space-y-5 p-4 md:p-6">
       <div className="flex flex-col gap-4 border-b pb-4 xl:flex-row xl:items-end xl:justify-between">
         <div>
@@ -1370,9 +1374,9 @@ export default function AccountingReports() {
           </div>
         </div>
       </div>
+<ERPToolbarDock />
 
-      <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
-        {activeTab !== 'trial-balance' && <div className="flex flex-wrap gap-3">
+      <ERPFilterBar searchSlot={activeTab !== 'trial-balance' && <div className="flex flex-wrap gap-3">
           <div className="space-y-2">
             <Label htmlFor="report-search">Search</Label>
             <Input
@@ -1383,16 +1387,19 @@ export default function AccountingReports() {
               className="w-80"
             />
           </div>
-        </div>}
+        </div>} filterSlot={<>
+        <></>
         <div className="flex flex-wrap gap-2">
-          <Button variant="outline" onClick={refreshAll}>
+          <></>
+          <Button variant={comparisonEnabled ? 'secondary' : 'outline'} onClick={() => setComparisonEnabled((enabled) => !enabled)}><Scale className="mr-1 h-4 w-4" /> Compare Period</Button>
+          <></>
+          <></>
+        </div>
+       </>} toolsSlot={<> <Button variant="outline" onClick={refreshAll}>
             <RefreshCw className="mr-1 h-4 w-4" /> {reportRefreshing ? 'Refreshing…' : 'Refresh'}
           </Button>
-          <Button variant={comparisonEnabled ? 'secondary' : 'outline'} onClick={() => setComparisonEnabled((enabled) => !enabled)}><Scale className="mr-1 h-4 w-4" /> Compare Period</Button>
-          <Button onClick={handleExportCurrentView}><Download className="mr-1 h-4 w-4" /> Export</Button>
-          <Button variant="outline" onClick={handlePrintCurrentView}><Printer className="mr-1 h-4 w-4" /> Print</Button>
-        </div>
-      </div>
+<Button onClick={handleExportCurrentView}><Download className="mr-1 h-4 w-4" /> Export</Button>
+<Button variant="outline" onClick={handlePrintCurrentView}><Printer className="mr-1 h-4 w-4" /> Print</Button> </>} />
 
       {drilldown.type && (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-primary/30 bg-primary/5 px-4 py-3 text-sm">
@@ -1439,9 +1446,9 @@ export default function AccountingReports() {
             ].map((metric) => <Card key={metric.label} className="shadow-sm"><CardContent className="flex items-center gap-3 p-4"><div className={`rounded-full p-3 ${metric.tone}`}><Scale className="h-5 w-5" /></div><div><p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">{metric.label}</p><p className="mt-1 font-mono text-base font-black">{metric.value}</p><p className="mt-1 text-[10px] text-muted-foreground">{metric.detail}</p></div></CardContent></Card>)}
           </div>
 
-          <div className="flex flex-col gap-3 rounded-lg border bg-card p-3 xl:flex-row xl:items-center xl:justify-between">
+          <ERPFilterBar searchSlot={<Input aria-label="Search trial balance accounts" value={tbTableSearch} onChange={(event) => setTbTableSearch(event.target.value)} placeholder="Search accounts, codes, descriptions..." className="h-9 min-w-[220px] flex-1 xl:max-w-sm" />} filterSlot={<>
             <div className="flex flex-1 flex-wrap items-center gap-2">
-              <Input aria-label="Search trial balance accounts" value={tbTableSearch} onChange={(event) => setTbTableSearch(event.target.value)} placeholder="Search accounts, codes, descriptions..." className="h-9 min-w-[220px] flex-1 xl:max-w-sm" />
+              <></>
               <Select value={tbAccountType} onValueChange={setTbAccountType}><SelectTrigger className="h-9 w-[160px]"><SelectValue placeholder="All account types" /></SelectTrigger><SelectContent><SelectItem value="all">All account types</SelectItem>{Object.entries(accountTypeLabel).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select>
               <Select value={tbAccountGroup} onValueChange={setTbAccountGroup}><SelectTrigger className="h-9 w-[170px]"><SelectValue placeholder="All account groups" /></SelectTrigger><SelectContent><SelectItem value="all">All account groups</SelectItem>{trialBalanceGroups.map((group) => <SelectItem key={group} value={group}>{group}</SelectItem>)}</SelectContent></Select>
               <Select value={tbAccountStatus} onValueChange={setTbAccountStatus}><SelectTrigger className="h-9 w-[135px]"><SelectValue placeholder="All statuses" /></SelectTrigger><SelectContent><SelectItem value="all">All statuses</SelectItem><SelectItem value="active">Active</SelectItem><SelectItem value="inactive">Inactive</SelectItem></SelectContent></Select>
@@ -1449,7 +1456,7 @@ export default function AccountingReports() {
               <Button variant="outline" size="sm" onClick={() => { setTbTableSearch(''); setTbAccountType('all'); setTbAccountGroup('all'); setTbAccountStatus('all'); setTbShowZeroBalance(false); }}>Clear filters</Button>
             </div>
             <div className="flex items-center gap-3 text-xs font-medium"><span className="text-muted-foreground">View by:</span><label className="flex items-center gap-1.5"><input type="radio" name="trial-balance-view" checked={tbViewBy === 'account'} onChange={() => setTbViewBy('account')} className="accent-primary" /> Account</label><label className="flex items-center gap-1.5"><input type="radio" name="trial-balance-view" checked={tbViewBy === 'group'} onChange={() => setTbViewBy('group')} className="accent-primary" /> Account group</label></div>
-          </div>
+           </>} />
 
           <Card className="overflow-hidden shadow-sm">
             <CardHeader className="border-b py-3"><div className="flex items-center justify-between"><div><CardTitle className="text-sm font-bold uppercase tracking-widest">Trial Balance</CardTitle><CardDescription>Opening, period movement, and closing balances. Select an account to inspect its ledger.</CardDescription></div><Badge variant={trialBalance?.summary?.balanced ? 'default' : 'destructive'}>{trialBalance?.summary?.balanced ? 'Balanced' : 'Review needed'}</Badge></div></CardHeader>
@@ -1477,10 +1484,10 @@ export default function AccountingReports() {
                 <Card className="border-emerald-200 bg-emerald-50/50 shadow-sm"><CardContent className="p-4"><p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Comparison Period</p><p className="mt-2 font-mono text-lg font-black">{money(comparativeIncome?.comparison.summary.net_income ?? 0)}</p><p className="mt-1 text-[11px] text-muted-foreground">{comparativeIncome?.comparison.date_from} to {comparativeIncome?.comparison.date_to}</p></CardContent></Card>
                 <Card className="border-violet-200 bg-violet-50/50 shadow-sm"><CardContent className="p-4"><p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Variance</p><p className="mt-2 font-mono text-lg font-black">{money((comparativeIncome?.current.summary.net_income ?? 0) - (comparativeIncome?.comparison.summary.net_income ?? 0))}</p><p className="mt-1 text-[11px] text-muted-foreground">Current period minus comparison</p></CardContent></Card>
               </div>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <Input aria-label="Search revenue accounts" value={incomeTableSearch} onChange={(event) => setIncomeTableSearch(event.target.value)} placeholder="Search revenue accounts..." className="h-9 text-xs" />
+              <ERPFilterBar searchSlot={<Input aria-label="Search revenue accounts" value={incomeTableSearch} onChange={(event) => setIncomeTableSearch(event.target.value)} placeholder="Search revenue accounts..." className="h-9 text-xs" />} filterSlot={<>
+                <></>
                 <Input aria-label="Search expense accounts" value={expenseTableSearch} onChange={(event) => setExpenseTableSearch(event.target.value)} placeholder="Search expense accounts..." className="h-9 text-xs" />
-              </div>
+               </>} />
               {[{ title: 'Revenue', rows: incomePaged.rows, totalRows: incomeFiltered.length, total: incomeStatement?.summary?.total_income ?? 0, className: 'text-emerald-600', page: incomePaged.page, totalPages: incomePaged.totalPages, pageSize: incomePageSize, setPage: setIncomePage, setPageSize: setIncomePageSize }, { title: 'Expenses', rows: expensePaged.rows, totalRows: expenseFiltered.length, total: incomeStatement?.summary?.total_expenses ?? 0, className: 'text-orange-600', page: expensePaged.page, totalPages: expensePaged.totalPages, pageSize: expensePageSize, setPage: setExpensePage, setPageSize: setExpensePageSize }].map((section) => <Card key={section.title} className="overflow-hidden shadow-sm"><CardHeader className="border-b py-3"><CardTitle className={`text-xs font-bold uppercase tracking-wide ${section.className}`}>{section.title}</CardTitle></CardHeader><div className="overflow-x-auto"><Table className="min-w-[790px]"><TableHeader><TableRow className="bg-muted/40"><TableHead>Account Code</TableHead><TableHead>Account Name</TableHead><TableHead className="text-right">Current Period</TableHead><TableHead className="text-right">% of {section.title}</TableHead><TableHead className="text-right">Comparison</TableHead><TableHead className="text-right">Variance</TableHead><TableHead className="text-right">Variance %</TableHead></TableRow></TableHeader><TableBody>{section.rows.length ? section.rows.map((row) => { const previous = Number(comparisonRows.get(row.account_id)?.display_amount ?? 0); const current = Number(row.display_amount ?? 0); const variance = current - previous; const share = section.total ? (current / Number(section.total)) * 100 : 0; const variancePercent = previous ? (variance / Math.abs(previous)) * 100 : 0; return <TableRow key={row.account_id ?? row.code} className="cursor-pointer hover:bg-muted/40" onClick={() => openAccount(row.account_id)}><TableCell className="font-mono text-xs">{row.code}</TableCell><TableCell className="font-medium"><button type="button" className="text-left hover:text-primary hover:underline">{row.name}</button></TableCell><TableCell className="text-right font-mono text-xs">{money(current)}</TableCell><TableCell className="text-right text-xs">{share.toFixed(1)}%</TableCell><TableCell className="text-right font-mono text-xs">{money(previous)}</TableCell><TableCell className={`text-right font-mono text-xs ${variance >= 0 ? section.title === 'Revenue' ? 'text-emerald-600' : 'text-orange-600' : 'text-destructive'}`}>{money(variance)}</TableCell><TableCell className="text-right text-xs">{previous ? `${variancePercent >= 0 ? '+' : ''}${variancePercent.toFixed(1)}%` : '—'}</TableCell></TableRow>; }) : <TableRow><TableCell colSpan={7} className="py-8 text-center text-sm text-muted-foreground">{isLoadingIncome ? 'Loading statement...' : 'No rows found for the selected filters.'}</TableCell></TableRow>}<TableRow className="bg-muted/40"><TableCell /><TableCell className="font-semibold">Total {section.title}</TableCell><TableCell className="text-right font-mono font-semibold">{money(section.total)}</TableCell><TableCell className="text-right font-semibold">100%</TableCell><TableCell /><TableCell /><TableCell /></TableRow></TableBody></Table></div><TablePager page={section.page} totalPages={section.totalPages} onPageChange={section.setPage} pageSize={section.pageSize} onPageSizeChange={section.setPageSize} totalRows={section.totalRows} /></Card>)}
               <Card className="border-red-200 bg-red-50/50 shadow-sm"><CardContent className="flex items-center justify-between p-4"><span className="text-xs font-bold uppercase tracking-wide text-red-600">Net Income (Loss)</span><span className="font-mono font-black text-red-600">{money(incomeStatement?.summary?.net_income ?? 0)}</span></CardContent></Card>
             </div>
@@ -2577,5 +2584,5 @@ export default function AccountingReports() {
         </DialogContent>
       </Dialog>
     </div>
-  );
+  )}</ERPListingScope>;
 }

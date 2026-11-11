@@ -31,6 +31,7 @@ from rest_framework.views import APIView
 from PIL import Image, UnidentifiedImageError
 
 from Platform_Core.documents import render_business_document, render_transaction_receipt
+from Platform_Core.receipt_time import format_receipt_datetime, receipt_timezone
 from Platform_Core.branch_sync import get_operational_branches_for_tenant
 from Platform_Core.accounting import assert_posting_allowed, sync_transaction_posting
 from Platform_Core.models import OrganizationMembership, Tenant, TenantSettings, TenantUserProfile
@@ -219,6 +220,7 @@ class VehicleSerializer(serializers.ModelSerializer):
 
 
 class TransactionSerializer(serializers.ModelSerializer):
+    item = serializers.PrimaryKeyRelatedField(queryset=Item.objects.all(), required=False)
     camera_snapshot = serializers.CharField(write_only=True, required=False, allow_blank=True)
     camera_image_url = serializers.SerializerMethodField()
     manual_evidence_upload = serializers.CharField(write_only=True, required=False, allow_blank=True)
@@ -239,6 +241,10 @@ class TransactionSerializer(serializers.ModelSerializer):
     actor_user_id = serializers.SerializerMethodField()
     actor_display_name = serializers.SerializerMethodField()
     actor_username = serializers.SerializerMethodField()
+    receipt_timezone = serializers.SerializerMethodField()
+
+    def get_receipt_timezone(self, obj):
+        return str(receipt_timezone(getattr(obj, "tenant", None)))
 
     def get_item_name(self, obj):
         return getattr(getattr(obj, "item", None), "name", "")
@@ -374,6 +380,10 @@ class TransactionSerializer(serializers.ModelSerializer):
         return normalized or "Draft"
 
     def validate(self, attrs):
+        if self.instance is None and not self.partial and "item" not in attrs and _resolve_payload_flow_kind(
+            operation_type=attrs.get("operation_type"), weight_type=attrs.get("weight_type", "")
+        ) != "second":
+            raise serializers.ValidationError({"item": "Choose a commodity for this transaction."})
         payment_status = (attrs.get("payment_status") or "").strip()
         current_status = (getattr(self.instance, "status", "") or "").strip()
         if payment_status == "Paid" and self.instance and current_status != "Completed":
@@ -410,7 +420,7 @@ class TransactionSerializer(serializers.ModelSerializer):
             "vehicle", "vehicle_plate",
             "vehicle_type", "vehicle_type_name",
             "operation_type", "operation_type_name", "operation_type_flow_kind", "payment_required",
-            "actor_user_id", "actor_display_name", "actor_username",
+            "actor_user_id", "actor_display_name", "actor_username", "receipt_timezone",
             "operator", "driver_name", "driver_phone", "item", "item_name",
             "gross_weight", "tare_weight", "net_weight",
             "gross_weight_date", "tare_weight_date",
@@ -826,6 +836,9 @@ def _finalize_transaction_workflow(transaction):
             transaction.tare_weight_date = transaction.tare_weight_date or now
             transaction.save()
 
+            first.item = transaction.item
+            first.driver_name = transaction.driver_name
+            first.driver_phone = transaction.driver_phone
             first.tare_weight = transaction.tare_weight
             first.net_weight = transaction.net_weight
             first.status = finalized_status
@@ -905,6 +918,9 @@ def _approve_transaction(transaction):
             transaction.gross_weight_date = transaction.gross_weight_date or first.gross_weight_date or first.created_at or now
             transaction.tare_weight_date = transaction.tare_weight_date or now
 
+            first.item = transaction.item
+            first.driver_name = transaction.driver_name
+            first.driver_phone = transaction.driver_phone
             first.tare_weight = transaction.tare_weight
             first.net_weight = transaction.net_weight
             first.status = "Completed"
@@ -1253,6 +1269,17 @@ class TransactionListCreateView(generics.ListCreateAPIView):
                         "Select an unpaired first weight for this vehicle that is within the branch's maximum first-weight age."
                     )
                 })
+            # Omitted fields inherit the pending ticket for older clients.
+            # Empty vehicles use the existing EMPTY commodity catalogue entry.
+            validated.setdefault("item", first_weight.item)
+            validated.setdefault("driver_name", first_weight.driver_name)
+            validated.setdefault("driver_phone", first_weight.driver_phone)
+            selected_item = validated.get("item")
+            if selected_item is not None and (
+                selected_item.tenant_id not in (None, getattr(user_tenant, "pk", None))
+                or selected_item.branch_id not in (None, first_weight.branch_id)
+            ):
+                raise serializers.ValidationError({"item": "Choose a commodity available in the first ticket's organization and branch."})
 
         duplicate = _find_open_transaction_duplicate(
             tenant=user_tenant,
@@ -1991,7 +2018,7 @@ class TransactionEmailReceiptView(APIView):
         def _dt(v):
             if not v:
                 return "—"
-            return v.strftime("%d %b %Y %H:%M") if hasattr(v, "strftime") else str(v)
+            return format_receipt_datetime(v, tenant=tx.tenant, date_format="d M Y H:i")
 
         is_completed = tx.status == "Completed"
         status_color = "#16a34a" if is_completed else "#d97706"
@@ -2584,6 +2611,13 @@ class ItemListCreateView(generics.ListCreateAPIView):
     serializer_class = ItemSerializer
     permission_classes = [IsAuthenticated]
     queryset = Item.objects.all().order_by("name")
+
+    def paginate_queryset(self, queryset):
+        # Transaction pickers need the complete scoped catalogue so an item
+        # remains selectable after creating it, refetching, or reopening a form.
+        if self.request.query_params.get("picker") == "1":
+            return None
+        return super().paginate_queryset(queryset)
 
     def get_queryset(self):
         queryset = _tenant_scoped_reference_queryset(self.queryset, self.request.user)

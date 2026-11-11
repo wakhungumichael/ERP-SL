@@ -1,3 +1,5 @@
+import { Table } from "@/components/ui/table";
+import { ERPListingScope } from "@/components/erp/listing/listing-scope";
 import { useSearch } from "wouter";
 import { PDFPreviewDialog } from "@/components/documents/pdf-preview-dialog";
 import { useEffect, useState } from "react";
@@ -68,7 +70,7 @@ export default function MyPayslips() {
     },
     onError: (error: Error) => toast({ title: "Unable to download payslip", description: error.message, variant: "destructive" }),
   });
-  return (
+  return <ERPListingScope>{(
     <ERPWorkspacePage title="My Payslips" description="Your individual payslips from completed payroll periods. Preview or download each payslip.">
       <Input aria-label="Search your payslips" placeholder="Search by pay period..." className="sm:max-w-md" value={search} onChange={event => { setSearch(event.target.value); setPage(1); }} />
       {payslips.isLoading && <p role="status" className="py-8 text-sm text-muted-foreground">Loading your payslips...</p>}
@@ -78,7 +80,7 @@ export default function MyPayslips() {
       )}
       {!payslips.isError && (
         <div className="min-w-0 overflow-x-auto rounded-lg border bg-card">
-          <table className="w-full text-sm" aria-label="Your payslips">
+          <Table className="w-full text-sm" aria-label="Your payslips">
             <thead className="border-b bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground"><tr>{["Pay period", "Basic pay", "Allowances", "Gross pay", "Deductions", "Net pay", "Actions"].map(label => <th key={label} className={`whitespace-nowrap px-4 py-3 ${["Pay period", "Actions"].includes(label) ? "text-left" : "text-right"}`}>{label}</th>)}</tr></thead>
             <tbody>{payslips.data?.results.map(row => (
               <tr key={row.id} className="border-b last:border-0 hover:bg-muted/20">
@@ -87,11 +89,11 @@ export default function MyPayslips() {
                 <td className="px-4 py-3"><div className="flex gap-2"><Button size="sm" variant="outline" aria-label={`Preview ${row.period_name} payslip`} onClick={() => setPreview(row)}><Eye className="mr-2 h-4 w-4" />Preview</Button><Button size="sm" variant="outline" aria-label={`Download ${row.period_name} payslip PDF`} disabled={download.isPending} onClick={() => download.mutate(row)}><Download className="mr-2 h-4 w-4" />{download.isPending && download.variables?.id===row.id ? "Downloading..." : "Download"}</Button></div></td>
               </tr>
             ))}</tbody>
-          </table>
+          </Table>
         </div>
       )}
       <PDFPreviewDialog title={preview?.period_name ?? "Payslip"} url={`/api/hr/my-payslips/${preview?.id ?? 0}/download/`} token={token} open={!!preview} onOpenChange={open => { if (!open) setPreview(null); }} onDownload={() => { if (preview) download.mutate(preview); }} downloading={download.isPending} />
       {!payslips.isError && !!payslips.data?.count && <ListingPagination page={page} pageSize={pageSize} totalCount={payslips.data.count} onPage={setPage} onPageSize={value => { setPageSize(value); setPage(1); }} wrap />}
     </ERPWorkspacePage>
-  );
+  )}</ERPListingScope>;
 }

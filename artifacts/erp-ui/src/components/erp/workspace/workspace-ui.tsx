@@ -1,5 +1,6 @@
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import type { ReactNode } from 'react';
+import { ERPListingActions, ERPToolbarDock } from '@/components/erp/listing/listing-scope';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
 export function ERPPageHeader({
@@ -12,13 +13,16 @@ export function ERPPageHeader({
   actions?: ReactNode;
 }) {
   return (
+    <>
     <header className="flex flex-col gap-3 border-b border-border/80 pb-4 sm:flex-row sm:items-end sm:justify-between">
       <div className="min-w-0">
         <h1 className="text-2xl font-semibold tracking-tight text-foreground">{title}</h1>
         {description ? <p className="mt-1 text-sm text-muted-foreground">{description}</p> : null}
       </div>
-      {actions ? <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div> : null}
+      {actions ? <div className="flex shrink-0 flex-wrap items-center gap-2"><ERPListingActions>{actions}</ERPListingActions></div> : null}
     </header>
+    <ERPToolbarDock />
+    </>
   );
 }
 

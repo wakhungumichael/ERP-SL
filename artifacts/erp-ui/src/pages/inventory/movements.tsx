@@ -1,3 +1,5 @@
+import { ERPFilterBar } from "@/components/erp/listing/filter-bar";
+import { ERPListingScope, ERPToolbarDock } from '@/components/erp/listing/listing-scope';
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { useMemo, useState } from 'react';
 import { Link } from 'wouter';
@@ -97,10 +99,11 @@ export default function InventoryMovementsPage() {
     releases: rows.filter((movement) => movement.type === 'release').length,
   };
 
-  return (
+  return <ERPListingScope>{(
     <div className="space-y-6 p-6">
       <div className="border-b pb-4">
         <h1 className="text-3xl font-bold tracking-tight">Stock Movements</h1>
+<ERPToolbarDock />
         <p className="mt-1 text-sm text-muted-foreground">
           Review stock receipts, reservations, issues, releases, and adjustments from one movement history page.
         </p>
@@ -165,8 +168,7 @@ export default function InventoryMovementsPage() {
       <Card>
         <CardHeader className="flex-col gap-3 border-b bg-muted/20 py-3 xl:flex-row xl:items-center xl:justify-between">
           <CardTitle className="text-sm font-bold uppercase tracking-widest">Movement History</CardTitle>
-          <div className="flex flex-1 flex-col gap-3 xl:flex-row xl:justify-end">
-            <div className="relative w-full xl:w-72">
+          <ERPFilterBar searchSlot={<div className="relative w-full xl:w-72">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 value={search}
@@ -174,7 +176,8 @@ export default function InventoryMovementsPage() {
                 placeholder="Search document, product, or warehouse"
                 className="pl-9"
               />
-            </div>
+            </div>} filterSlot={<>
+            <></>
             <Select value={movementFilter} onValueChange={(value) => setMovementFilter(value as 'all' | MovementType)}>
               <SelectTrigger className="w-full xl:w-44">
                 <SelectValue />
@@ -188,7 +191,7 @@ export default function InventoryMovementsPage() {
                 <SelectItem value="adjustment">Adjustment</SelectItem>
               </SelectContent>
             </Select>
-          </div>
+           </>} />
         </CardHeader>
         <CardContent className="p-0">
           {isLoading ? (
@@ -263,5 +266,5 @@ export default function InventoryMovementsPage() {
         </CardContent>
       </Card>
     </div>
-  );
+  )}</ERPListingScope>;
 }

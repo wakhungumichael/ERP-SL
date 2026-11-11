@@ -1,3 +1,4 @@
+import { ERPListingScope, ERPToolbarDock } from '@/components/erp/listing/listing-scope';
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { type ReactNode, useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
@@ -906,6 +907,7 @@ function ReportsDashboardContent() {
       <Card className="border-border/70 shadow-sm">
         <CardContent className="p-10 text-center">
           <h1 className="text-xl font-bold">Access Denied</h1>
+<ERPToolbarDock />
           <p className="mt-2 text-sm text-muted-foreground">
             Your role does not have permission to view weighbridge reports.
           </p>
@@ -1017,7 +1019,7 @@ function ReportsDashboardContent() {
     }
   }
 
-  return (
+  return <ERPListingScope>{(
     <ERPWorkspacePage
       title="Reports"
     >
@@ -1047,11 +1049,7 @@ function ReportsDashboardContent() {
               </div>
             </Tabs>
 
-            <div className="border-b border-border px-3 py-3">
-              <Label className="mb-2 block text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">
-                Find Report
-              </Label>
-              <div className="relative">
+            <ERPFilterBar searchSlot={<div className="relative">
                 <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                 <Input
                   className="pl-9"
@@ -1059,8 +1057,7 @@ function ReportsDashboardContent() {
                   onChange={(event) => setReportSearch(event.target.value)}
                   placeholder="Search report names..."
                 />
-              </div>
-            </div>
+              </div>} />
 
             <div className="max-h-[22rem] overflow-y-auto px-3 py-4 xl:max-h-[calc(100vh-15rem)]">
               {libraryGroups
@@ -1248,7 +1245,7 @@ function ReportsDashboardContent() {
         </Card>
       ) : null}
     </ERPWorkspacePage>
-  );
+  )}</ERPListingScope>;
 }
 
 export default function ReportsDashboard() {

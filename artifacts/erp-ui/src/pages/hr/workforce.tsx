@@ -1,3 +1,6 @@
+import { Table } from "@/components/ui/table";
+import { ERPFilterBar } from "@/components/erp/listing/filter-bar";
+import { ERPListingScope } from "@/components/erp/listing/listing-scope";
 import { useEffect, useState } from "react";
 import { Link } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -295,7 +298,7 @@ export default function HRWorkforce({ mode = "employees" }: { mode?: Mode }) {
     setNotes("");
     setAction({ row, action: value });
   };
-  return (
+  return <ERPListingScope>{(
     <ERPWorkspacePage
       title={titles[mode]}
       description="Organization-scoped HR records, private documents, employee requests and leave approvals."
@@ -445,8 +448,7 @@ export default function HRWorkforce({ mode = "employees" }: { mode?: Mode }) {
               ))}
             </div>
           ) : null}
-          <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:justify-between">
-            <Input
+          <ERPFilterBar searchSlot={<Input
               aria-label="Search HR records"
               className="sm:max-w-md"
               value={search}
@@ -455,10 +457,7 @@ export default function HRWorkforce({ mode = "employees" }: { mode?: Mode }) {
                 setPage(1);
               }}
               placeholder="Search records…"
-            />
-            {mode !== "my-payslips" ? (
-              <div className="flex gap-2">
-                <Button
+            />} toolsSlot={<> <Button
                   disabled={
                     mode === "employees"
                       ? !access.add_employee
@@ -474,7 +473,7 @@ export default function HRWorkforce({ mode = "employees" }: { mode?: Mode }) {
                       ? "Request leave"
                       : "New HR request"}
                 </Button>
-                {mode === "leave" && access.change_leaveallocation ? (
+{mode === "leave" && access.change_leaveallocation ? (
                   <Button
                     variant="outline"
                     onClick={() => {
@@ -490,12 +489,9 @@ export default function HRWorkforce({ mode = "employees" }: { mode?: Mode }) {
                   >
                     Adjust balance
                   </Button>
-                ) : null}
-              </div>
-            ) : null}
-          </div>
+                ) : null} </>} />
           <div className="overflow-x-auto rounded-md border">
-            <table className="w-full text-sm">
+            <Table className="w-full text-sm">
               <thead className="bg-muted text-left">
                 <tr>
                   {(mode === "employees"
@@ -732,7 +728,7 @@ export default function HRWorkforce({ mode = "employees" }: { mode?: Mode }) {
                   </tr>
                 ) : null}
               </tbody>
-            </table>
+            </Table>
           </div>
           {mode !== "my-payslips" ? (
             <ListingPagination
@@ -1117,5 +1113,5 @@ export default function HRWorkforce({ mode = "employees" }: { mode?: Mode }) {
         </DialogContent>
       </Dialog>
     </ERPWorkspacePage>
-  );
+  )}</ERPListingScope>;
 }

@@ -1,3 +1,6 @@
+import { useSearch } from "wouter";
+import { ERPFilterBar } from "@/components/erp/listing/filter-bar";
+import { ERPListingScope, ERPListingActions, ERPExistingPagination, ERPPageSizeControl, ERPToolbarDock } from '@/components/erp/listing/listing-scope';
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'wouter';
@@ -82,18 +85,19 @@ function getTodayISO() {
 }
 
 export default function Transactions() {
+  const routeSearch = useSearch();
   const { token } = useAuth();
   const { toast } = useToast();
 
-  const [filterStatus, setFilterStatus] = useState(() => new URLSearchParams(window.location.search).get('status') || 'all');
-  const [filterSource, setFilterSource] = useState(() => new URLSearchParams(window.location.search).get('source_type') || 'all');
+  const [filterStatus, setFilterStatus] = useState(() => new URLSearchParams(routeSearch).get('status') || 'all');
+  const [filterSource, setFilterSource] = useState(() => new URLSearchParams(routeSearch).get('source_type') || 'all');
   const [filterDateFrom, setFilterDateFrom] = useState('');
   const [filterDateTo, setFilterDateTo] = useState('');
   const [search, setSearch] = useState('');
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [actingId, setActingId] = useState<number | null>(null);
-  const [selectedEntryId, setSelectedEntryId] = useState<number | null>(() => Number(new URLSearchParams(window.location.search).get('entry')) || null);
+  const [selectedEntryId, setSelectedEntryId] = useState<number | null>(() => Number(new URLSearchParams(routeSearch).get('entry')) || null);
   const [detailsDismissed, setDetailsDismissed] = useState(false);
   const [detailTab, setDetailTab] = useState<'details' | 'lines' | 'audit'>('details');
   const [entryTab, setEntryTab] = useState<EntryTab>('all');
@@ -308,7 +312,7 @@ export default function Transactions() {
     }
   }
 
-  return (
+  return <ERPListingScope>{(
     <div className="w-full space-y-5 p-4 md:p-6">
       <div className="flex flex-wrap items-end justify-between gap-4 border-b pb-5">
         <div>
@@ -319,9 +323,9 @@ export default function Transactions() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Button onClick={openCreate} className="h-10 font-bold uppercase tracking-wide">
+          <ERPListingActions><Button onClick={openCreate} className="h-10 font-bold uppercase tracking-wide">
             <Plus className="mr-2 h-4 w-4" /> Manual Entry
-          </Button>
+          </Button></ERPListingActions>
           <DropdownMenu>
             <DropdownMenuTrigger asChild><Button variant="outline" className="h-10 gap-2 font-semibold">More Actions <ChevronDown className="h-4 w-4" /></Button></DropdownMenuTrigger>
             <DropdownMenuContent align="end">
@@ -334,6 +338,7 @@ export default function Transactions() {
           </DropdownMenu>
         </div>
       </div>
+<ERPToolbarDock />
 
       <div className="flex gap-5 overflow-x-auto border-b px-1" role="tablist" aria-label="Journal entry status">
         {[
@@ -383,9 +388,7 @@ export default function Transactions() {
         <Card><CardContent className="p-4"><div className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Posted Credits</div><div className="mt-2 text-xl font-semibold">{fmt(totalPostedCredits)}</div></CardContent></Card>
       </div>
 
-      <div className="rounded-xl border-2 border-primary/40 bg-card p-1 shadow-sm">
-        <div className="flex flex-wrap items-center gap-3 p-3">
-          <div className="flex min-w-[220px] flex-1 items-center gap-2">
+      <ERPFilterBar searchSlot={<div className="flex min-w-[220px] flex-1 items-center gap-2">
             <Search className="h-4 w-4 text-muted-foreground shrink-0" />
             <Input
               placeholder="Search entry number, journal, memo, source…"
@@ -393,7 +396,9 @@ export default function Transactions() {
               onChange={(e) => setSearch(e.target.value)}
               className="h-8 border-0 shadow-none focus-visible:ring-0"
             />
-          </div>
+          </div>} filterSlot={<>
+        <div className="flex flex-wrap items-center gap-3 p-3">
+          <></>
           <Select value={filterStatus} onValueChange={setFilterStatus}>
             <SelectTrigger className="h-8 w-[160px]"><SelectValue /></SelectTrigger>
             <SelectContent>
@@ -421,7 +426,7 @@ export default function Transactions() {
           </div>
           {(search || filterStatus !== 'all' || filterSource !== 'all' || filterDateFrom || filterDateTo) && <Button variant="ghost" size="sm" className="h-8 text-xs text-muted-foreground hover:text-destructive" onClick={() => { setSearch(''); setFilterStatus('all'); setFilterSource('all'); setFilterDateFrom(''); setFilterDateTo(''); }}>Clear filters</Button>}
         </div>
-      </div>
+       </>} />
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_310px]">
       <Card className="min-w-0 overflow-hidden">
@@ -505,10 +510,10 @@ export default function Transactions() {
             </Table>
           )}
         </CardContent>
-        {totalCount > 0 && <div className="flex flex-wrap items-center justify-between gap-3 border-t px-4 py-3 text-xs text-muted-foreground">
+        {totalCount > 0 && <ERPExistingPagination><div className="flex flex-wrap items-center justify-between gap-3 border-t px-4 py-3 text-xs text-muted-foreground">
           <span>Showing {pageStart}-{pageEnd} of {totalCount} entries</span>
           <div className="flex items-center gap-2"><Select value={String(pageSize)} onValueChange={(value) => setPageSize(Number(value))}><SelectTrigger className="h-8 w-32 text-xs" aria-label="Records per page"><SelectValue /></SelectTrigger><SelectContent>{[10, 25, 50, 100].map((size) => <SelectItem key={size} value={String(size)}>{size} records</SelectItem>)}</SelectContent></Select><Button variant="outline" size="icon" className="h-8 w-8" disabled={page === 1} onClick={() => setPage(page - 1)}><ChevronLeft className="h-4 w-4" /></Button><span className="min-w-16 text-center">{page} / {totalPages}</span><Button variant="outline" size="icon" className="h-8 w-8" disabled={page === totalPages} onClick={() => setPage(page + 1)}><ChevronRight className="h-4 w-4" /></Button></div>
-        </div>}
+        </div></ERPExistingPagination>}
       </Card>
 
       <Card className="h-fit xl:sticky xl:top-4">
@@ -667,5 +672,5 @@ export default function Transactions() {
         </DialogContent>
       </Dialog>
     </div>
-  );
+  )}</ERPListingScope>;
 }

@@ -1,6 +1,6 @@
 # Invoice billing details
 
-Open **Organization Settings → Invoicing** to enter the issuer's postal or physical
+Open **Organization Settings > Documents > Edit defaults** to enter the issuer's postal or physical
 address, tax ID / PIN, website, and payment instructions. The organization name,
 email, phone and logo come from its existing profile and branding settings.
 

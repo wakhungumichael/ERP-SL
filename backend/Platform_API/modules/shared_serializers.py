@@ -214,6 +214,10 @@ class TenantSummarySerializer(serializers.ModelSerializer):
 
 
 class TenantSerializer(serializers.ModelSerializer):
+    # Profile and Invoicing edit the same issuer details, without duplicating data.
+    postal_address = serializers.CharField(source="settings.invoice_address", required=False, allow_blank=True)
+    website = serializers.URLField(source="settings.invoice_website", required=False, allow_blank=True, max_length=500)
+    tax_number = serializers.CharField(source="settings.invoice_tax_number", required=False, allow_blank=True, max_length=80)
     industry = IndustrySerializer(read_only=True)
     industry_id = serializers.PrimaryKeyRelatedField(
         source="industry",
@@ -235,6 +239,9 @@ class TenantSerializer(serializers.ModelSerializer):
             "public_ip_address",
             "contact_email",
             "contact_phone",
+            "postal_address",
+            "website",
+            "tax_number",
             "industry",
             "industry_id",
             "default_currency",
@@ -245,6 +252,30 @@ class TenantSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         )
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        for field in ("postal_address", "website", "tax_number"):
+            data[field] = data.get(field) or ""
+        return data
+
+    @transaction.atomic
+    def create(self, validated_data):
+        issuer_details = validated_data.pop("settings", {})
+        tenant = super().create(validated_data)
+        if issuer_details:
+            TenantSettings.objects.update_or_create(tenant=tenant, defaults=issuer_details)
+        return tenant
+
+    @transaction.atomic
+    def update(self, instance, validated_data):
+        issuer_details = validated_data.pop("settings", {})
+        tenant = super().update(instance, validated_data)
+        if issuer_details:
+            TenantSettings.objects.update_or_create(tenant=tenant, defaults=issuer_details)
+            # DRF may serialize the previously cached reverse one-to-one relation.
+            tenant._state.fields_cache.pop("settings", None)
+        return tenant
 
 
 class PricingRuleTypeSerializer(serializers.ModelSerializer):
@@ -891,6 +922,7 @@ class TenantSettingsSerializer(serializers.ModelSerializer):
             "login_page_config", "footer_menu", "landing_page_config", "support_email",
             "invoice_prefix", "footer_text", "default_tax_name", "default_tax_rate",
             "invoice_address", "invoice_tax_number", "invoice_website", "invoice_payment_instructions",
+            "print_qr_codes_enabled",
             "invoice_template", "invoice_template_id",
             "estimate_template", "estimate_template_id",
             "receipt_template", "receipt_template_id",

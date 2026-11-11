@@ -6,7 +6,7 @@ from django.contrib.auth.models import User
 from django.test import TestCase, override_settings
 from pypdf import PdfReader
 from rest_framework.test import APIClient
-from Platform_Core.models import OrganizationMembership, PlatformBrandingSettings, Tenant
+from Platform_Core.models import OrganizationMembership, PlatformBrandingSettings, Tenant, TenantSettings
 from Platform_Core.printing import append_document_qr, document_reference, print_qr_codes_enabled
 from Platform_Core.documents import render_invoice_document
 from Platform_Core.document_pdf import document_pdf_bytes
@@ -83,6 +83,62 @@ class GlobalPrintQRTests(TestCase):
         with patch('SL_Weighbridge.models.qrcode.make') as make:
             self.assertIsNone(Transaction().generate_qr_code())
         make.assert_not_called()
+
+
+    def test_organization_admin_can_disable_qr_across_documents_and_enable_it_again(self):
+        self.client.force_authenticate(self.user)
+        url = f"/api/platform/tenants/{self.tenant.pk}/settings/"
+        other = Tenant.objects.create(name="Other QR issuer", code="other-qr-issuer")
+        for enabled in (False, True):
+            response = self.client.patch(url, {"print_qr_codes_enabled": enabled}, format="json")
+            self.assertEqual(response.status_code, 200, response.data)
+            self.assertEqual(self.client.get(url).data["data"]["print_qr_codes_enabled"], enabled)
+            self.assertEqual(print_qr_codes_enabled(self.tenant), enabled)
+            self.assertTrue(print_qr_codes_enabled(other))
+            html = render_invoice_document(self.invoice).html
+            self.assertEqual('class="print-document-qr"' in html, enabled)
+            invoice_pdf = PdfReader(BytesIO(document_pdf_bytes(html)))
+            self.assertEqual(len(invoice_pdf.pages), 1)
+            self.assertNotIn("Page 1 of 1", invoice_pdf.pages[0].extract_text())
+            self.assertEqual(bool(list(invoice_pdf.pages[0].images)), enabled)
+            payslip = PdfReader(BytesIO(payslip_pdf(self.pay)))
+            self.assertEqual(bool(list(payslip.pages[0].images)), enabled)
+            for kind in ("quotation", "receipt", "purchase_order", "statement", "report"):
+                html = append_document_qr('<main>Content</main>', tenant=self.tenant, kind=kind)
+                self.assertEqual('class="print-document-qr"' in html, enabled, kind)
+            from reportlab.pdfgen.canvas import Canvas
+            from Platform_Core.printing import draw_print_qr
+            with patch.object(Canvas, "drawImage") as draw:
+                draw_print_qr(Canvas(BytesIO()), "reference", x=0, y=0, tenant=self.tenant)
+                self.assertEqual(draw.called, enabled)
+            from SL_Weighbridge.models import Transaction
+            if not enabled:
+                with patch('SL_Weighbridge.models.qrcode.make') as make:
+                    self.assertIsNone(Transaction(tenant=self.tenant).generate_qr_code())
+                make.assert_not_called()
+
+    def test_platform_disable_overrides_organization_enable(self):
+        TenantSettings.objects.create(tenant=self.tenant, print_qr_codes_enabled=True)
+        self.set_enabled(False)
+        self.assertFalse(print_qr_codes_enabled(self.tenant))
+        self.assertNotIn('class="print-document-qr"', render_invoice_document(self.invoice).html)
+
+    def test_qr_settings_cannot_be_changed_by_members_or_other_organizations(self):
+        settings = TenantSettings.objects.create(tenant=self.tenant)
+        other = Tenant.objects.create(name="Protected QR issuer", code="protected-qr-issuer")
+        other_settings = TenantSettings.objects.create(tenant=other)
+        self.client.force_authenticate(self.user)
+        response = self.client.patch(f"/api/platform/tenants/{other.pk}/settings/", {"print_qr_codes_enabled": False}, format="json")
+        self.assertIn(response.status_code, (403, 404))
+        OrganizationMembership.objects.filter(user=self.user).update(is_org_admin=False)
+        self.user = User.objects.get(pk=self.user.pk)
+        self.client.force_authenticate(self.user)
+        response = self.client.patch(f"/api/platform/tenants/{self.tenant.pk}/settings/", {"print_qr_codes_enabled": False}, format="json")
+        self.assertEqual(response.status_code, 403)
+        settings.refresh_from_db()
+        other_settings.refresh_from_db()
+        self.assertTrue(settings.print_qr_codes_enabled)
+        self.assertTrue(other_settings.print_qr_codes_enabled)
 
 
 class PublicPrintLinkTests(GlobalPrintQRTests):

@@ -130,6 +130,7 @@ export function evaluateWorkspaceRouteAccess({
   }
 
   const normalizedPath = normalizePath(path);
+  if (normalizedPath === '/home') return { allowed: true, rule: null };
   const rule = ROUTE_ACCESS_RULES.find((candidate) => pathMatchesPrefix(normalizedPath, candidate.pathPrefix)) ?? null;
   if (!rule) {
     return { allowed: true, rule: null };

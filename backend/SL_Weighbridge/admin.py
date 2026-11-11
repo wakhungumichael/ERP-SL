@@ -954,7 +954,7 @@ class TransactionAdmin(UnfoldModelAdmin) :
 
         from Platform_Core.printing import print_qr_codes_enabled, document_reference
         qr_io = BytesIO()
-        if print_qr_codes_enabled():
+        if print_qr_codes_enabled(getattr(transaction, "tenant", None)):
             # QR Code generation
             qr_data = document_reference(tenant=getattr(transaction, "tenant", None), kind="receipt", number=f"TX-{transaction.pk:05d}", path=f"/weighbridge/transactions/{transaction.pk}")
             qr = qrcode.QRCode(version=1, error_correction=qrcode.constants.ERROR_CORRECT_L, box_size=5, border=4)
@@ -1085,7 +1085,7 @@ class TransactionAdmin(UnfoldModelAdmin) :
             elements.append(table)
 
             from Platform_Core.printing import print_qr_codes_enabled, document_reference
-            if print_qr_codes_enabled():
+            if print_qr_codes_enabled(getattr(transaction, "tenant", None)):
                 # Generate QR code based on transaction details
                 qr_data = document_reference(tenant=getattr(transaction, "tenant", None), kind="receipt", number=f"TX-{transaction.pk:05d}", path=f"/weighbridge/transactions/{transaction.pk}")
                 qr = qrcode.make(qr_data)
@@ -1184,7 +1184,7 @@ class TransactionAdmin(UnfoldModelAdmin) :
             y_pos += 10
 
             from Platform_Core.printing import print_qr_codes_enabled, document_reference
-            if print_qr_codes_enabled():
+            if print_qr_codes_enabled(getattr(transaction, "tenant", None)):
                 # Generate QR code
                 qr_data = document_reference(tenant=getattr(transaction, "tenant", None), kind="receipt", number=f"TX-{transaction.pk:05d}", path=f"/weighbridge/transactions/{transaction.pk}")
                 qr = qrcode.make(qr_data)

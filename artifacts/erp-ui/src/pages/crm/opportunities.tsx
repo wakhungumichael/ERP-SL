@@ -1,3 +1,5 @@
+import { ERPFilterBar } from "@/components/erp/listing/filter-bar";
+import { ERPListingScope, ERPToolbarDock } from '@/components/erp/listing/listing-scope';
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'wouter';
@@ -246,7 +248,7 @@ export default function OpportunitiesPage() {
   const wonCount = opportunities.filter((item: Opportunity) => item.stage === 'won').length;
   const atRiskCount = opportunities.filter((item: Opportunity) => item.stage === 'negotiation' || item.stage === 'proposal').length;
 
-  return (
+  return <ERPListingScope>{(
     <div className="space-y-6">
       <div className="flex items-center justify-between border-b pb-4">
         <div>
@@ -255,18 +257,19 @@ export default function OpportunitiesPage() {
         </div>
         <AddOpportunityDialog />
       </div>
+<ERPToolbarDock />
 
       <section className="grid grid-cols-2 gap-3 border-y py-3 md:grid-cols-4">
         {[['Open Pipeline', formatMoney(pipelineValue)], ['Closing This Month', opportunities.filter((item: Opportunity) => item.expected_close_date?.slice(0, 7) === new Date().toISOString().slice(0, 7) && !['won', 'lost'].includes(item.stage)).length], ['Won Deals', wonCount], ['Deals at Risk', atRiskCount]].map(([label, value]) => <div key={String(label)} className="border-l px-3 first:border-l-0"><div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{label}</div><div className="mt-1 text-lg font-semibold">{value}</div></div>)}
       </section>
 
-      <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-card p-2">
-        <Input
+      <ERPFilterBar searchSlot={<Input
           placeholder="Search deals, companies, or contacts…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           className="h-8 min-w-[220px] flex-1 border-0 text-sm shadow-none focus-visible:ring-0"
-        />
+        />} filterSlot={<>
+        <></>
         <ToggleGroup type="single" value={viewMode} onValueChange={(value) => value && setViewMode(value as 'board' | 'list')} className="rounded-md border p-0.5">
           <ToggleGroupItem value="board" className="h-7 gap-1 px-2 text-xs"><KanbanSquare className="h-3.5 w-3.5" />Board</ToggleGroupItem>
           <ToggleGroupItem value="list" className="h-7 gap-1 px-2 text-xs"><Rows3 className="h-3.5 w-3.5" />List</ToggleGroupItem>
@@ -276,7 +279,7 @@ export default function OpportunitiesPage() {
             Clear filter
           </button>
         )}
-      </div>
+       </>} />
 
       {viewMode === 'board' ? (
         <div className="space-y-4">
@@ -440,7 +443,7 @@ export default function OpportunitiesPage() {
         productCatalog={productCatalog}
       />
     </div>
-  );
+  )}</ERPListingScope>;
 }
 
 function InlineStageEditor({ opportunity }: { opportunity: Opportunity }) {

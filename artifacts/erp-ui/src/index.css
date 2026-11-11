@@ -170,3 +170,57 @@
     background-clip: padding-box;
   }
 }
+
+
+/* Shared ERP table surface: one branded toolbar, with record controls below. */
+.erp-table-toolbar {
+  display:flex; align-items:center; flex-wrap:nowrap; gap:.5rem; min-width:0;
+  margin-top:.85rem; margin-bottom:.65rem; padding:.5rem .65rem;
+  border:1px solid color-mix(in srgb,hsl(var(--primary)) 80%,transparent);
+  border-radius:.65rem; background:hsl(var(--primary)); color:hsl(var(--primary-foreground));
+  overflow-x:auto; scrollbar-width:thin; scroll-padding:.65rem;
+}
+.erp-toolbar-controls { display:flex; align-items:center; flex-wrap:nowrap; gap:.5rem; flex:1 1 auto; min-width:11rem; }
+.erp-toolbar-controls>div { min-width:0; }
+.erp-toolbar-controls .flex { flex-wrap:nowrap; }
+.erp-toolbar-search { flex:1 1 16rem; min-width:11rem!important; max-width:25rem; }
+.erp-toolbar-controls input:not([type=checkbox]):not([type=radio]) { height:2.25rem; min-width:9rem; background:hsl(var(--background)); color:hsl(var(--foreground)); }
+.erp-toolbar-controls [role=combobox] { min-width:8rem; max-width:13rem; height:2.25rem; background:hsl(var(--background)); color:hsl(var(--foreground)); }
+.erp-toolbar-actions,.erp-toolbar-page-actions { display:flex; flex-wrap:nowrap; align-items:center; gap:.35rem; flex-shrink:0; }
+.erp-table-toolbar button { height:2.25rem; flex-shrink:0; white-space:nowrap; border-color:color-mix(in srgb,hsl(var(--primary-foreground)) 35%,transparent); }
+.erp-table-toolbar .erp-toolbar-actions button,.erp-table-toolbar .erp-toolbar-controls>button {
+  color:hsl(var(--foreground)); background:hsl(var(--background)); box-shadow:none;
+}
+.erp-table-toolbar button:hover { filter:brightness(.96); }
+.erp-toolbar-page-actions>button,.erp-toolbar-page-actions>a { max-width:15rem; overflow:hidden; text-overflow:ellipsis; }
+.erp-toolbar-filter-panel [role=combobox],.erp-toolbar-filter-panel input { width:100%; min-width:0; }
+.erp-table-frame { clear:both; }
+.erp-table-frame .erp-table-toolbar { margin-left:.5rem; margin-right:.5rem; }
+.erp-table-frame [data-table-search-hidden=true],.erp-table-frame [data-table-page-hidden=true] { display:none; }
+.erp-table-frame tr[data-toolbar-selected=true] { background:color-mix(in srgb,hsl(var(--primary)) 8%,hsl(var(--background))); box-shadow:inset 3px 0 hsl(var(--primary)); }
+[data-erp-pagination] { margin-top:.5rem; }
+[data-workspace-record-page] { animation:none!important; transition:none!important; padding-right:2.5rem; }
+[data-workspace-record-page]>* { min-width:0; }
+[data-workspace-record-page] form { min-width:0; }
+@media(max-width:640px) {
+  .erp-table-toolbar { margin-top:.65rem; }
+  .erp-toolbar-search { min-width:10rem!important; }
+  [data-erp-pagination] { gap:.75rem; }
+  [data-erp-pagination]>div { max-width:100%; flex-wrap:wrap; }
+  [data-workspace-record-page] { padding:1rem; padding-right:2.5rem; }
+}
+
+.erp-toolbar-dock>.erp-table-toolbar { margin-top:0; margin-bottom:0; }
+.erp-workspace>[class~=p-6],.erp-workspace>[class~=p-4] { padding:0; }
+
+.erp-toolbar-overflow-panel .erp-toolbar-actions,.erp-toolbar-overflow-panel .erp-toolbar-page-actions { flex-wrap:wrap; }
+.erp-toolbar-overflow-panel button { gap:.4rem; }
+@media(max-width:640px) {
+  .erp-toolbar-controls { min-width:0; }
+  .erp-toolbar-search { min-width:7rem!important; }
+  .erp-toolbar-controls .erp-toolbar-search input { width:100%; min-width:0; }
+  .erp-table-toolbar { overflow-x:auto; }
+}
+
+.erp-toolbar-page-actions>div { display:flex; width:auto; flex-wrap:nowrap; align-items:center; gap:.35rem; }
+.erp-toolbar-overflow-panel .erp-toolbar-page-actions>div { flex-wrap:wrap; }

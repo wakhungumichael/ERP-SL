@@ -1,3 +1,5 @@
+import { Table } from "@/components/ui/table";
+import { ERPListingScope, ERPToolbarDock } from '@/components/erp/listing/listing-scope';
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useAuth } from '@/context/use-auth';
@@ -189,7 +191,7 @@ export default function LiveWeight() {
   const minW = validWeights.length ? Math.min(...validWeights) : null;
   const maxW = validWeights.length ? Math.max(...validWeights) : null;
 
-  return (
+  return <ERPListingScope>{(
     <div className="w-full space-y-6">
       {/* Header */}
       <div className="flex items-start justify-between border-b pb-4">
@@ -213,6 +215,7 @@ export default function LiveWeight() {
           </div>
         </div>
       </div>
+<ERPToolbarDock />
 
       {/* Branch selector */}
       {branches.length > 1 && (
@@ -339,7 +342,7 @@ export default function LiveWeight() {
             <div className="text-[10px] font-mono text-muted-foreground/60">newest first</div>
           </div>
           <div className="overflow-y-auto max-h-48">
-            <table className="w-full text-xs">
+            <Table className="w-full text-xs">
               <thead>
                 <tr className="border-b">
                   <th className="px-4 py-2 text-left font-bold uppercase tracking-widest text-[10px] text-muted-foreground">Time</th>
@@ -369,10 +372,10 @@ export default function LiveWeight() {
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </Table>
           </div>
         </div>
       )}
     </div>
-  );
+  )}</ERPListingScope>;
 }

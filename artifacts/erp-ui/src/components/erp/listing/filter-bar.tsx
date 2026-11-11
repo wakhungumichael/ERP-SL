@@ -1,24 +1,27 @@
-/* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
-import type { ReactNode } from 'react';
-
+/* Copyright (c) 2026 Siakora Labs Limited. */
+import type { ReactNode } from "react";
+import { ERPTableToolbar } from "./table-toolbar";
 export function ERPFilterBar({
   searchSlot,
   filterSlot,
+  filterControl,
   toolsSlot,
+  controlsSlot,
 }: {
-  searchSlot: ReactNode;
+  searchSlot?: ReactNode;
   filterSlot?: ReactNode;
+  filterControl?: ReactNode;
   toolsSlot?: ReactNode;
+  controlsSlot?: ReactNode;
 }) {
   return (
-    <div className="rounded-xl border border-border/80 bg-card shadow-sm">
-      <div className="flex flex-wrap items-center gap-3 p-3">
-        <div className="flex min-w-[220px] flex-1 items-center gap-2">
-          {searchSlot}
-        </div>
-        {filterSlot}
-        {toolsSlot}
-      </div>
-    </div>
+    <ERPTableToolbar
+      external
+      searchSlot={searchSlot}
+      filterSlot={filterSlot}
+      filterControl={filterControl}
+      toolsSlot={toolsSlot}
+      controlsSlot={controlsSlot}
+    />
   );
 }

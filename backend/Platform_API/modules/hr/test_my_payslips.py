@@ -6,7 +6,7 @@ from django.test import TestCase
 from pypdf import PdfReader
 from rest_framework.test import APIClient
 
-from Platform_Core.models import OrganizationMembership, Tenant
+from Platform_Core.models import OrganizationMembership, Tenant, TenantSettings
 from SL_HR.models import Employee, PayPeriod, PayRecord
 
 
@@ -117,3 +117,11 @@ class PersonalPayslipTests(TestCase):
         self.client.force_authenticate(user=None)
         self.assertIn(self.client.get('/api/hr/my-payslips/').status_code, [401, 403])
         self.assertIn(self.client.get(f'/api/hr/my-payslips/{self.current.pk}/download/').status_code, [401, 403])
+
+    def test_payslip_includes_shared_organization_contact_details(self):
+        TenantSettings.objects.create(tenant=self.tenant, invoice_address="Office Park\nP.O. Box 98765, Nairobi", invoice_website="https://payroll.example.com", invoice_tax_number="P098765432X")
+        response = self.client.get(f'/api/hr/my-payslips/{self.current.pk}/download/')
+        self.assertEqual(response.status_code, 200)
+        text = "\n".join(page.extract_text() for page in PdfReader(BytesIO(response.content)).pages)
+        for value in ["Office Park", "P.O. Box 98765, Nairobi", "https://payroll.example.com", "P098765432X"]:
+            self.assertIn(value, text)

@@ -1,3 +1,5 @@
+import { ERPFilterBar } from "@/components/erp/listing/filter-bar";
+import { ERPListingScope, ERPToolbarDock } from '@/components/erp/listing/listing-scope';
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 /**
  * Second Weight — tare capture that auto-populates from the matching First Weight.
@@ -151,7 +153,7 @@ export default function SecondWeightPage() {
     });
   };
 
-  return (
+  return <ERPListingScope>{(
     <div className="max-w-2xl mx-auto space-y-6">
       <div className="flex items-center gap-4 border-b pb-4">
         <div className="h-10 w-10 rounded-lg bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center">
@@ -162,6 +164,7 @@ export default function SecondWeightPage() {
           <p className="text-sm text-muted-foreground">Search by plate — system matches the pending first weight automatically</p>
         </div>
       </div>
+<ERPToolbarDock />
 
       <form onSubmit={handleSubmit} className="space-y-5">
 
@@ -171,7 +174,19 @@ export default function SecondWeightPage() {
             <CardTitle className="text-sm font-bold uppercase tracking-widest">1 · Operation & Number Plate</CardTitle>
           </CardHeader>
           <CardContent className="p-5">
-            <div className="space-y-4">
+            <ERPFilterBar searchSlot={<div className="flex items-center gap-2 border rounded-lg px-3 py-2 bg-background focus-within:ring-2 focus-within:ring-primary">
+                <Search className="h-4 w-4 text-muted-foreground shrink-0" />
+                <input
+                  ref={plateInputRef}
+                  className="flex-1 bg-transparent outline-none font-mono font-bold text-lg uppercase tracking-widest placeholder:font-normal placeholder:lowercase placeholder:text-muted-foreground placeholder:tracking-normal"
+                  placeholder="type plate to search…"
+                  value={plateInput}
+                  onChange={e => { setPlateInput(e.target.value.toUpperCase()); setShowDropdown(true); setSelectedVehicle(null); }}
+                  onFocus={() => setShowDropdown(true)}
+                  autoComplete="off"
+                />
+                {searching && <span className="text-xs text-muted-foreground animate-pulse">searching…</span>}
+              </div>} filterSlot={<>
               <div className="space-y-1.5">
                 <label className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Operation Type *</label>
                 <select
@@ -186,19 +201,7 @@ export default function SecondWeightPage() {
                 </select>
               </div>
               <div className="relative">
-              <div className="flex items-center gap-2 border rounded-lg px-3 py-2 bg-background focus-within:ring-2 focus-within:ring-primary">
-                <Search className="h-4 w-4 text-muted-foreground shrink-0" />
-                <input
-                  ref={plateInputRef}
-                  className="flex-1 bg-transparent outline-none font-mono font-bold text-lg uppercase tracking-widest placeholder:font-normal placeholder:lowercase placeholder:text-muted-foreground placeholder:tracking-normal"
-                  placeholder="type plate to search…"
-                  value={plateInput}
-                  onChange={e => { setPlateInput(e.target.value.toUpperCase()); setShowDropdown(true); setSelectedVehicle(null); }}
-                  onFocus={() => setShowDropdown(true)}
-                  autoComplete="off"
-                />
-                {searching && <span className="text-xs text-muted-foreground animate-pulse">searching…</span>}
-              </div>
+              <></>
 
               {/* Dropdown results */}
               {showDropdown && plateInput.length >= 2 && (
@@ -218,7 +221,7 @@ export default function SecondWeightPage() {
                 </div>
               )}
             </div>
-            </div>
+             </>} />
           </CardContent>
         </Card>
 
@@ -330,5 +333,5 @@ export default function SecondWeightPage() {
         )}
       </form>
     </div>
-  );
+  )}</ERPListingScope>;
 }

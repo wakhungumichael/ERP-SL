@@ -24,6 +24,7 @@ interface LayoutTemplate {
 }
 
 interface Props {
+  documentType?: string;
   templates: LayoutTemplate[];
   settings: Record<string, any>;
   pending: boolean;
@@ -51,8 +52,9 @@ function LayoutThumbnail({ style, label }: { style: string; label: string }) {
   </div>;
 }
 
-export function DocumentTemplateGallery({ templates, settings, pending, onSelect, onPreview }: Props) {
-  const [type, setType] = useState('invoice');
+export function DocumentTemplateGallery({ templates, settings, pending, onSelect, onPreview, documentType }: Props) {
+  const [localType, setType] = useState('invoice');
+  const type = documentType ?? localType;
   const document = DOCUMENT_LAYOUT_TYPES.find(item => item.value === type)!;
   const options = templates.filter(template => template.document_type === type && template.is_active !== false);
   const selected = settings[document.field]?.id;
@@ -61,7 +63,7 @@ export function DocumentTemplateGallery({ templates, settings, pending, onSelect
   return <section aria-label="Document layouts" className="space-y-4">
     <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
       <div className="space-y-1"><h3 className="font-semibold">Document layouts</h3><p className="text-sm text-muted-foreground">Choose a layout for each document. Your organization’s logo, colors and details are included.</p></div>
-      <div className="w-full shrink-0 sm:w-56"><label htmlFor="document-layout-type" className="mb-1 block text-xs font-medium">Document type</label><Select value={type} onValueChange={setType}><SelectTrigger id="document-layout-type"><SelectValue /></SelectTrigger><SelectContent>{DOCUMENT_LAYOUT_TYPES.map(item => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectContent></Select></div>
+      {!documentType && <div className="w-full shrink-0 sm:w-56"><label htmlFor="document-layout-type" className="mb-1 block text-xs font-medium">Document type</label><Select value={type} onValueChange={setType}><SelectTrigger id="document-layout-type"><SelectValue /></SelectTrigger><SelectContent>{DOCUMENT_LAYOUT_TYPES.map(item => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectContent></Select></div>}
     </div>
     <div className="flex flex-col gap-2 rounded-lg border bg-muted/20 p-3 text-sm sm:flex-row sm:items-center sm:justify-between">
       <div><p><span className="font-medium">Current layout: </span>{current?.name ?? (selected ? 'Selected organization template' : 'Automatic default')}{!selected && current ? ' (automatic)' : ''}</p><p className="mt-1 text-xs text-muted-foreground">Applies across this organization to {document.scope}. Selection saves immediately.</p></div>

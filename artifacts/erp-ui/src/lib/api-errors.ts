@@ -58,6 +58,7 @@ function fieldLabel(field: string) {
 
 /** Converts HTTP, browser, and server diagnostics into a message an ERP user can act on. */
 export function toUserFriendlyError(value: unknown, fallback = 'We could not complete that request. Please try again.') {
+  if (value != null && typeof value === 'object' && !(value instanceof Error)) return fallback;
   const raw = value instanceof Error ? value.message : String(value ?? '');
   const clean = raw.trim().replace(/\s+/g, ' ');
   if (!clean) return fallback;
@@ -228,7 +229,7 @@ export function getUserFacingError(
 export async function apiErrorFromResponse(response: Response, fallback?: string) {
   const raw = await response.text().catch(() => '');
   const validationErrors = parseFormErrors(raw);
-  const message = formatApiError(validationErrors, fallback);
+  const message = formatApiError(raw, fallback);
   if (Object.keys(validationErrors.fields).length === 0 && validationErrors.form.length === 0) {
     validationErrors.form = [message];
   }

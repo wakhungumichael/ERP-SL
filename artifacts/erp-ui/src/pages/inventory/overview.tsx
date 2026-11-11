@@ -1,3 +1,4 @@
+import { ERPListingScope, ERPToolbarDock } from '@/components/erp/listing/listing-scope';
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { Link } from 'wouter';
 import {
@@ -110,7 +111,7 @@ export default function InventoryOverviewPage() {
     },
   ];
 
-  return (
+  return <ERPListingScope>{(
     <div className="space-y-6 p-6">
       <div className="flex flex-col gap-3 border-b pb-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
@@ -123,6 +124,7 @@ export default function InventoryOverviewPage() {
           Stock now moves through real warehouse transactions instead of manual quantity edits.
         </div>
       </div>
+<ERPToolbarDock />
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {[
@@ -280,5 +282,5 @@ export default function InventoryOverviewPage() {
         ))}
       </div>
     </div>
-  );
+  )}</ERPListingScope>;
 }

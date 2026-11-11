@@ -1,3 +1,6 @@
+import { ERPFilterBar } from '@/components/erp/listing/filter-bar';
+import { Table } from "@/components/ui/table";
+import { ERPListingScope } from "@/components/erp/listing/listing-scope";
 import { useProjectSettings } from "./module-settings";
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -128,39 +131,15 @@ function useRegister<T>(
   };
 }
 type RegisterState = ReturnType<typeof useRegister>;
-function Controls({
-  state,
-  sorts,
-  children,
-}: {
-  state: RegisterState;
-  sorts: Array<[string, string]>;
-  children?: React.ReactNode;
+function Controls({ state, sorts, children, filterToggle = false }: {
+  state: RegisterState; sorts: Array<[string, string]>; children?: React.ReactNode; filterToggle?: boolean;
 }) {
-  return (
-    <div className="flex flex-wrap items-center gap-3 border-b p-3">
-      <Input
-        aria-label="Search records"
-        className="min-w-40 flex-1"
-        placeholder="Search records…"
-        value={state.search}
-        onChange={(e) => state.setSearch(e.target.value)}
-      />
-      <Select value={state.ordering} onValueChange={state.setOrdering}>
-        <SelectTrigger aria-label="Sort records" className="w-full sm:w-48">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          {sorts.map(([value, label]) => (
-            <SelectItem key={value} value={value}>
-              {label}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-      {children}
-    </div>
-  );
+  const sorting = <Select value={state.ordering} onValueChange={state.setOrdering}>
+    <SelectTrigger aria-label="Sort records" className="w-full sm:w-48"><SelectValue /></SelectTrigger>
+    <SelectContent>{sorts.map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent>
+  </Select>;
+  return <ERPFilterBar searchSlot={<Input aria-label="Search records" className="min-w-40 flex-1" placeholder="Search records..." value={state.search} onChange={event => state.setSearch(event.target.value)} />}
+    filterControl={filterToggle ? children : undefined} filterSlot={filterToggle ? undefined : <>{sorting}{children}</>} toolsSlot={filterToggle ? sorting : undefined} />;
 }
 function Pager({ state }: { state: RegisterState }) {
   return (
@@ -204,9 +183,10 @@ export function ProjectTaskRegister({ projectId }: { projectId: string }) {
     },
     "due_date",
   );
-  return (
+  return <ERPListingScope>{(
     <div className="rounded-lg border">
       <Controls
+        filterToggle
         state={state}
         sorts={[
           ["due_date", "Due date · earliest"],
@@ -307,7 +287,7 @@ export function ProjectTaskRegister({ projectId }: { projectId: string }) {
         </div>
       )}
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[1000px]">
+        <Table className="w-full min-w-[1000px]">
           <thead className="border-b bg-muted/30">
             <tr>
               {[
@@ -365,12 +345,12 @@ export function ProjectTaskRegister({ projectId }: { projectId: string }) {
               </tr>
             ))}
           </tbody>
-        </table>
+        </Table>
       </div>
       <Empty state={state} />
       <Pager state={state} />
     </div>
-  );
+  )}</ERPListingScope>;
 }
 
 export function ProjectMilestoneRegister({
@@ -396,7 +376,7 @@ export function ProjectMilestoneRegister({
     { status },
     "due_date",
   );
-  return (
+  return <ERPListingScope>{(
     <div className="rounded-lg border">
       <Controls
         state={state}
@@ -431,7 +411,7 @@ export function ProjectMilestoneRegister({
         </Select>
       </Controls>
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[700px]">
+        <Table className="w-full min-w-[700px]">
           <thead className="border-b bg-muted/30">
             <tr>
               {[
@@ -510,12 +490,12 @@ export function ProjectMilestoneRegister({
               </tr>
             ))}
           </tbody>
-        </table>
+        </Table>
       </div>
       <Empty state={state} />
       <Pager state={state} />
     </div>
-  );
+  )}</ERPListingScope>;
 }
 
 export function DocumentPreview({
@@ -671,7 +651,7 @@ export function ProjectDocumentRegister({
       setDownloading(false);
     }
   };
-  return (
+  return <ERPListingScope>{(
     <div className="rounded-lg border">
       <Controls
         state={state}
@@ -701,7 +681,7 @@ export function ProjectDocumentRegister({
         </Select>
       </Controls>
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[800px]">
+        <Table className="w-full min-w-[800px]">
           <thead className="border-b bg-muted/30">
             <tr>
               {[
@@ -792,7 +772,7 @@ export function ProjectDocumentRegister({
               </tr>
             ))}
           </tbody>
-        </table>
+        </Table>
       </div>
       {downloadError && (
         <p role="alert" className="p-3 text-sm text-destructive">
@@ -807,5 +787,5 @@ export function ProjectDocumentRegister({
         onClose={() => setPreview(null)}
       />
     </div>
-  );
+  )}</ERPListingScope>;
 }

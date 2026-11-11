@@ -33,6 +33,15 @@ def payslip_pdf(record, employee_profile=None, request=None):
     contact = " | ".join(value for value in [tenant.contact_email, tenant.contact_phone] if value)
     if contact:
         story.append(text(contact, "PayslipLabel"))
+    from Platform_Core.documents import _get_settings, organization_document_details
+    issuer = organization_document_details(_get_settings(tenant))
+    for line in issuer["address"].splitlines():
+        if line.strip():
+            story.append(text(line, "PayslipLabel"))
+    if issuer["website"]:
+        story.append(text(issuer["website"], "PayslipLabel"))
+    if issuer["tax_number"]:
+        story.append(text(f'Tax ID / PIN: {issuer["tax_number"]}', "PayslipLabel"))
     story.extend([Spacer(1, 12*mm), text("PAYSLIP", "Heading1"), text(period.name, "Heading2"), Spacer(1, 6*mm)])
     details = Table([
         [text("EMPLOYEE", "PayslipLabel"), text("PAY PERIOD", "PayslipLabel")],
@@ -60,7 +69,7 @@ def payslip_pdf(record, employee_profile=None, request=None):
     ]))
     story.extend([amounts, Spacer(1,8*mm),text("This payslip reflects the recorded amounts for the completed payroll period.", "PayslipLabel")])
     from Platform_Core.printing import print_qr_codes_enabled, document_reference, qr_png
-    if print_qr_codes_enabled():
+    if print_qr_codes_enabled(tenant):
         reference = document_reference(tenant=tenant, kind="payslip", number=f"PAY-{record.pk:06d}", path=f"/hr/my-payslips?payslip={record.pk}", request=request)
         qr = Image(BytesIO(qr_png(reference)), width=22*mm, height=22*mm)
         qr.hAlign = "LEFT"

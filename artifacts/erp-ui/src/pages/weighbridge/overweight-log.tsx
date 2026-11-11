@@ -1,3 +1,4 @@
+import { ERPListingScope } from "@/components/erp/listing/listing-scope";
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -354,7 +355,7 @@ export default function OverweightLog() {
     },
   ];
 
-  return (
+  return <ERPListingScope>{(
     <ERPWorkspacePage
       title={(
         <span className="flex items-center gap-2">
@@ -498,5 +499,5 @@ export default function OverweightLog() {
 
       <EventDrawer event={selected} open={!!selected} onClose={() => setSelected(null)} />
     </ERPWorkspacePage>
-  );
+  )}</ERPListingScope>;
 }

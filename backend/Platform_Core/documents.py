@@ -10,6 +10,7 @@ from django.template.engine import Engine
 from django.utils import timezone
 
 from Platform_Core.models import DocumentTemplate, TenantSettings
+from Platform_Core.receipt_time import format_receipt_datetime
 
 
 DOCUMENT_SETTINGS_FIELD_MAP = {
@@ -425,6 +426,9 @@ def _default_body(document_type):
               {% if company.phone or company.email %}
                 <div class="wb-receipt__contact">{{ company.phone }}{% if company.phone and company.email %} | {% endif %}{{ company.email }}</div>
               {% endif %}
+              {% if company.address %}<div class="wb-receipt__contact">{{ company.address|linebreaksbr }}</div>{% endif %}
+              {% if company.website %}<div class="wb-receipt__contact">{{ company.website }}</div>{% endif %}
+              {% if company.tax_number %}<div class="wb-receipt__contact">Tax ID / PIN: {{ company.tax_number }}</div>{% endif %}
             </header>
 
             <section class="wb-receipt__title-row">
@@ -606,6 +610,9 @@ def _default_body(document_type):
             <div><strong>{{{{ company.name|default:"SL-ERP" }}}}</strong></div>
             {{% if company.email %}}<div>{{{{ company.email }}}}</div>{{% endif %}}
             {{% if company.phone %}}<div>{{{{ company.phone }}}}</div>{{% endif %}}
+            {{% if company.address %}}<div>{{{{ company.address|linebreaksbr }}}}</div>{{% endif %}}
+            {{% if company.website %}}<div>{{{{ company.website }}}}</div>{{% endif %}}
+            {{% if company.tax_number %}}<div>Tax ID / PIN: {{{{ company.tax_number }}}}</div>{{% endif %}}
           </div>
         </div>
 
@@ -954,7 +961,7 @@ def _receipt_context(transaction, settings_obj, request=None):
         "document": {
             "number": f"TX-{transaction.pk:05d}",
             "status": payment_status,
-            "issue_date": date_filter(transaction.created_at, "d M Y h:i A"),
+            "issue_date": format_receipt_datetime(transaction.created_at, tenant=tenant),
             "due_date": "",
             "currency": currency,
             "notes": "\n".join(
@@ -997,8 +1004,8 @@ def _receipt_context(transaction, settings_obj, request=None):
             "gross_weight_display": f"{int(transaction.gross_weight or 0):,} kg" if transaction.gross_weight is not None else "-",
             "tare_weight_display": f"{int(transaction.tare_weight or 0):,} kg" if transaction.tare_weight is not None else "-",
             "net_weight_display": f"{int(transaction.net_weight or 0):,} kg" if transaction.net_weight is not None else "-",
-            "gross_weight_date": date_filter(transaction.gross_weight_date, "d M Y h:i A") if transaction.gross_weight_date else "",
-            "tare_weight_date": date_filter(transaction.tare_weight_date, "d M Y h:i A") if transaction.tare_weight_date else "",
+            "gross_weight_date": format_receipt_datetime(transaction.gross_weight_date, tenant=tenant),
+            "tare_weight_date": format_receipt_datetime(transaction.tare_weight_date, tenant=tenant),
         },
         "transaction_image_url": transaction_image_url,
         "generated_at": timezone.now(),
@@ -1066,8 +1073,18 @@ def _purchase_order_context(purchase_order, settings_obj, request=None):
     }
 
 
+def organization_document_details(settings_obj):
+    """Shared issuer details used by standard documents and reports."""
+    return {
+        "address": getattr(settings_obj, "invoice_address", "") or "",
+        "website": getattr(settings_obj, "invoice_website", "") or "",
+        "tax_number": getattr(settings_obj, "invoice_tax_number", "") or "",
+    }
+
+
 def render_business_document(*, tenant, document_type, context, request=None, pdf_optimized=False):
     template, settings_obj = resolve_document_template(tenant=tenant, document_type=document_type)
+    context.setdefault("company", {}).update(organization_document_details(settings_obj))
     branding = context.get("branding") or {}
     primary_color = branding.get("primary_color") or "#E85D26"
 
@@ -1114,6 +1131,9 @@ def render_business_document(*, tenant, document_type, context, request=None, pd
 
 
 def render_document_template_preview(template, *, tenant=None, request=None):
+    if template.tenant_id is None:
+        from .template_library import upgrade_shared_template
+        template = upgrade_shared_template(template)
     _, settings_obj = resolve_document_template(tenant=tenant, document_type=template.document_type)
     if settings_obj is None and tenant is not None:
         settings_obj = _get_settings(tenant)

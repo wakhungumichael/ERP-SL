@@ -8,6 +8,7 @@ from urllib.parse import unquote, urlparse
 from django.conf import settings
 from django.http import HttpResponse
 from django.utils.http import content_disposition_header
+from pypdf import PdfReader
 from xhtml2pdf import pisa
 
 
@@ -39,11 +40,24 @@ def document_pdf_bytes(html):
         html,
     )
     html = re.sub(r"color-mix\([^)]*\)", "#f1f5f9", html)
-    output = BytesIO()
-    result = pisa.CreatePDF(html, dest=output, encoding="utf-8", link_callback=document_asset)
-    if result.err:
-        raise ValueError("Unable to generate this document PDF.")
-    return output.getvalue()
+
+    def render(source):
+        output = BytesIO()
+        result = pisa.CreatePDF(source, dest=output, encoding="utf-8", link_callback=document_asset)
+        if result.err:
+            raise ValueError("Unable to generate this document PDF.")
+        return output.getvalue()
+
+    # Keep the footer frame empty on one-page invoices. Its reserved space stays
+    # the same so adding page numbers cannot change pagination on longer ones.
+    without_numbers, footer_count = re.subn(
+        r'(<div\b[^>]*\bid=["\']invoice-page-footer["\'][^>]*>).*?(</div>)',
+        r"\1\2", html, flags=re.S,
+    )
+    data = render(without_numbers)
+    if footer_count and len(PdfReader(BytesIO(data)).pages) > 1:
+        return render(html)
+    return data
 
 
 def document_pdf_response(rendered, filename, *, attachment=True):

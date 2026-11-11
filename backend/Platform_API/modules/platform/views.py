@@ -3135,7 +3135,18 @@ class WorkflowInboxActionAPIView(APIView):
             log_business_event(event_group="workflow", event_type="rejected", tenant=item.tenant, actor=request.user, obj=item, note=f"{item.reference or item.title} rejected.")
             submitter_id = (item.metadata or {}).get("submitted_by")
             if submitter_id:
-                SystemNotification.objects.create(tenant=item.tenant, recipient_id=submitter_id, category="workflow", title=f"Workflow rejected: {item.reference or item.title}", message=f"{request.user.get_full_name() or request.user.username} rejected this request.", route_path=item.route_path, source_type="workflow_inbox", source_id=item.id)
+                # Assignment and outcome are separate events, including when the submitter
+                # also belongs to the approval group. Keep each event idempotent.
+                SystemNotification.objects.get_or_create(
+                    tenant=item.tenant, recipient_id=submitter_id,
+                    source_type="workflow_inbox_rejected", source_id=item.id,
+                    defaults={
+                        "category": "workflow",
+                        "title": f"Workflow rejected: {item.reference or item.title}",
+                        "message": f"{request.user.get_full_name() or request.user.username} rejected this request.",
+                        "route_path": item.route_path,
+                    },
+                )
             return success_response("Workflow item rejected.", data=WorkflowInboxItemSerializer(item).data)
 
         next_node = _workflow_next_actionable_node(item)
@@ -3168,7 +3179,18 @@ class WorkflowInboxActionAPIView(APIView):
             return success_response("Approval recorded and forwarded to the next step.", data=WorkflowInboxItemSerializer(next_item).data)
         submitter_id = (item.metadata or {}).get("submitted_by")
         if submitter_id:
-            SystemNotification.objects.create(tenant=item.tenant, recipient_id=submitter_id, category="workflow", title=f"Workflow completed: {item.reference or item.title}", message=f"{request.user.get_full_name() or request.user.username} completed this request.", route_path=item.route_path, source_type="workflow_inbox", source_id=item.id)
+            # Assignment and outcome are separate events, including when the submitter
+            # also belongs to the approval group. Keep each event idempotent.
+            SystemNotification.objects.get_or_create(
+                tenant=item.tenant, recipient_id=submitter_id,
+                source_type="workflow_inbox_completed", source_id=item.id,
+                defaults={
+                    "category": "workflow",
+                    "title": f"Workflow completed: {item.reference or item.title}",
+                    "message": f"{request.user.get_full_name() or request.user.username} completed this request.",
+                    "route_path": item.route_path,
+                },
+            )
         return success_response("Workflow completed.", data=WorkflowInboxItemSerializer(item).data)
 
 
@@ -3507,7 +3529,7 @@ class AuditExportAPIView(APIView):
             body.append(table)
             from Platform_Core.printing import document_reference, draw_print_qr
             def print_footer(canvas, doc):
-                draw_print_qr(canvas, document_reference(tenant=_request_tenant_or_none(user), kind="audit", number=dataset, path="/platform/audit", request=request), x=page_size[0]-72, y=10, size=48)
+                draw_print_qr(canvas, document_reference(tenant=_request_tenant_or_none(user), kind="audit", number=dataset, path="/platform/audit", request=request), x=page_size[0]-72, y=10, size=48, tenant=_request_tenant_or_none(user))
             document.build(body, onFirstPage=print_footer, onLaterPages=print_footer)
             response = HttpResponse(buffer.getvalue(), content_type="application/pdf")
             response["Content-Disposition"] = f'attachment; filename="{filename}.pdf"'

@@ -1,3 +1,5 @@
+import { ERPFilterBar } from "@/components/erp/listing/filter-bar";
+import { ERPListingScope } from "@/components/erp/listing/listing-scope";
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, useSearch } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -384,7 +386,7 @@ export default function PlanningWorkspace({
   const planBudget = options.data?.budgets?.find(
     (row) => row.id === Number(form?.annual_budget),
   );
-  return (
+  return <ERPListingScope>{(
     <ERPWorkspacePage
       title={plans ? "Procurement plans" : "Budgets"}
       actions={
@@ -433,31 +435,13 @@ export default function PlanningWorkspace({
             ) : null}
           </div>
         ) : null}
-        <div className="flex flex-wrap gap-3">
-          <Input
+        <ERPFilterBar searchSlot={<Input
             aria-label="Search"
             className="w-full sm:max-w-sm"
             placeholder={plans ? "Search procurement plans" : "Search budgets"}
             value={search}
             onChange={(event) => setSearch(event.target.value)}
-          />
-          <select
-            aria-label="Approval status"
-            className={`${selectClass} sm:w-48`}
-            value={status}
-            onChange={(event) => setStatus(event.target.value)}
-          >
-            <option value="">All statuses</option>
-            {(plans
-              ? ["draft", "submitted", "approved", "rejected"]
-              : ["draft", "submitted", "approved", "rejected", "consolidated"]
-            ).map((value) => (
-              <option key={value} value={value}>
-                {label(value)}
-              </option>
-            ))}
-          </select>
-        </div>
+          />} />
         {rows.error || options.error ? (
           <p role="alert" className="text-sm text-destructive">
             {(rows.error || options.error)?.message}
@@ -1095,5 +1079,5 @@ export default function PlanningWorkspace({
         </DialogContent>
       </Dialog>
     </ERPWorkspacePage>
-  );
+  )}</ERPListingScope>;
 }

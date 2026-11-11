@@ -1,4 +1,6 @@
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
+import { useId, useLayoutEffect } from 'react';
+import { useListingScope } from './listing-scope';
 import {
   ChevronLeft,
   ChevronRight,
@@ -21,6 +23,7 @@ export function ListingPagination({
   onPage,
   onPageSize,
   wrap = false,
+  internal = false,
 }: {
   page: number;
   pageSize: number;
@@ -28,7 +31,11 @@ export function ListingPagination({
   onPage: (page: number) => void;
   onPageSize: (pageSize: number) => void;
   wrap?: boolean;
+  internal?: boolean;
 }) {
+  const id = useId();
+  const scope = useListingScope();
+  useLayoutEffect(() => { if (!internal) scope?.pageControls(id, true); return () => { if (!internal) scope?.pageControls(id, false); }; }, [id, internal, scope?.pageControls]);
   const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
   const from = totalCount === 0 ? 0 : (page - 1) * pageSize + 1;
   const to = Math.min(page * pageSize, totalCount);
@@ -51,7 +58,8 @@ export function ListingPagination({
 
   return (
     <div
-      className={`flex items-center justify-between gap-4 rounded-b-lg border-t bg-card px-1 py-2 ${wrap ? "flex-wrap" : ""}`}
+      data-erp-pagination
+      className={`flex min-w-0 flex-wrap items-center justify-between gap-3 rounded-b-lg border-t bg-card px-3 py-3 ${wrap ? "flex-wrap" : ""}`}
     >
       <div className="flex items-center gap-3 text-xs text-muted-foreground">
         <span className={wrap ? "font-mono" : "hidden font-mono sm:inline"}>
@@ -87,9 +95,10 @@ export function ListingPagination({
           variant="outline"
           size="icon"
           className="h-7 w-7"
-          disabled={page === 1}
+          disabled={page <= 1}
           onClick={() => onPage(1)}
           title="First page"
+          aria-label="First page"
         >
           <ChevronsLeft className="h-3.5 w-3.5" />
         </Button>
@@ -97,9 +106,10 @@ export function ListingPagination({
           variant="outline"
           size="icon"
           className="h-7 w-7"
-          disabled={page === 1}
+          disabled={page <= 1}
           onClick={() => onPage(page - 1)}
           title="Previous"
+          aria-label="Previous"
         >
           <ChevronLeft className="h-3.5 w-3.5" />
         </Button>
@@ -127,9 +137,10 @@ export function ListingPagination({
           variant="outline"
           size="icon"
           className="h-7 w-7"
-          disabled={page === totalPages}
+          disabled={page >= totalPages}
           onClick={() => onPage(page + 1)}
           title="Next"
+          aria-label="Next"
         >
           <ChevronRight className="h-3.5 w-3.5" />
         </Button>
@@ -137,9 +148,10 @@ export function ListingPagination({
           variant="outline"
           size="icon"
           className="h-7 w-7"
-          disabled={page === totalPages}
+          disabled={page >= totalPages}
           onClick={() => onPage(totalPages)}
           title="Last page"
+          aria-label="Last page"
         >
           <ChevronsRight className="h-3.5 w-3.5" />
         </Button>

@@ -1,3 +1,6 @@
+import { ERPListingActions } from '@/components/erp/listing/listing-scope';
+import { ERPFilterBar } from "@/components/erp/listing/filter-bar";
+import { ERPListingScope, ERPToolbarDock } from '@/components/erp/listing/listing-scope';
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
@@ -49,7 +52,7 @@ export default function PurchaseProductsPage() {
 
   const products: Product[] = Array.isArray(data) ? data : (data?.products ?? data?.results ?? []);
 
-  return (
+  return <ERPListingScope>{(
     <div className="space-y-6 p-6">
       {/* Header */}
       <div className="flex items-center justify-between">
@@ -60,10 +63,11 @@ export default function PurchaseProductsPage() {
             <span className="font-medium">Sales → Products &amp; Services</span>.
           </p>
         </div>
-        <Button variant="outline" onClick={() => navigate('/sales/products')}>
+        <ERPListingActions><Button variant="outline" onClick={() => navigate('/sales/products')}>
           Go to Sales Products
-        </Button>
+        </Button></ERPListingActions>
       </div>
+<ERPToolbarDock />
 
       {/* Stats strip */}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
@@ -78,14 +82,12 @@ export default function PurchaseProductsPage() {
       </div>
 
       {/* Search */}
-      <div className="max-w-xs">
-        <Input
+      <ERPFilterBar searchSlot={<Input
           placeholder="Search products…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           className="h-8 text-sm"
-        />
-      </div>
+        />} />
 
       {/* Table */}
       <Card>
@@ -136,5 +138,5 @@ export default function PurchaseProductsPage() {
         </CardContent>
       </Card>
     </div>
-  );
+  )}</ERPListingScope>;
 }

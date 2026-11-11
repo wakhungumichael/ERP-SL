@@ -1,3 +1,5 @@
+import { ERPFilterBar } from "@/components/erp/listing/filter-bar";
+import { ERPListingScope, ERPToolbarDock } from '@/components/erp/listing/listing-scope';
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -37,7 +39,7 @@ export default function SuppliersPage() {
 
   const suppliers = Array.isArray(data) ? data : data?.results ?? [];
 
-  return (
+  return <ERPListingScope>{(
     <div className="space-y-6">
       <div className="flex items-center justify-between border-b pb-4">
         <div>
@@ -46,12 +48,10 @@ export default function SuppliersPage() {
         </div>
         <AddSupplierDialog />
       </div>
+<ERPToolbarDock />
 
-      <div className="flex items-center gap-2 max-w-sm bg-card border rounded-lg px-3 shadow-sm">
-        <Search className="h-4 w-4 text-muted-foreground shrink-0" />
-        <Input placeholder="Search suppliers or contacts…" value={search} onChange={e => setSearch(e.target.value)}
-          className="h-9 border-0 shadow-none focus-visible:ring-0 text-sm" />
-      </div>
+      <ERPFilterBar searchSlot={<Input placeholder="Search suppliers or contacts…" value={search} onChange={e => setSearch(e.target.value)}
+          className="h-9 border-0 shadow-none focus-visible:ring-0 text-sm" />} />
 
       <div className="bg-card rounded-lg border shadow-sm overflow-hidden">
         <Table>
@@ -91,7 +91,7 @@ export default function SuppliersPage() {
         </Table>
       </div>
     </div>
-  );
+  )}</ERPListingScope>;
 }
 
 function AddSupplierDialog() {

@@ -1,3 +1,6 @@
+import { ERPListingActions } from '@/components/erp/listing/listing-scope';
+import { ERPFilterBar } from "@/components/erp/listing/filter-bar";
+import { ERPListingScope, ERPToolbarDock } from '@/components/erp/listing/listing-scope';
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { useMemo, useState } from 'react';
 import { Link } from 'wouter';
@@ -102,7 +105,7 @@ export default function InventoryStockPage() {
     watch: rows.filter((row) => row.readiness === 'watch').length,
   };
 
-  return (
+  return <ERPListingScope>{(
     <div className="space-y-6 p-6">
       <div className="flex flex-col gap-3 border-b pb-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
@@ -111,10 +114,11 @@ export default function InventoryStockPage() {
             Review stock items using live balances, reservations, warehouses, and item value.
           </p>
         </div>
-        <Button asChild variant="outline">
+        <ERPListingActions><Button asChild variant="outline">
           <Link href="/sales/products">View Product Catalog</Link>
-        </Button>
+        </Button></ERPListingActions>
       </div>
+<ERPToolbarDock />
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {[
@@ -138,8 +142,7 @@ export default function InventoryStockPage() {
       <Card>
         <CardHeader className="flex-col gap-3 border-b bg-muted/20 py-3 xl:flex-row xl:items-center xl:justify-between">
           <CardTitle className="text-sm font-bold uppercase tracking-widest">Stock Readiness</CardTitle>
-          <div className="flex flex-1 flex-col gap-3 xl:flex-row xl:justify-end">
-            <div className="relative w-full xl:w-72">
+          <ERPFilterBar searchSlot={<div className="relative w-full xl:w-72">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 value={search}
@@ -147,7 +150,8 @@ export default function InventoryStockPage() {
                 placeholder="Search item, code, or warehouse"
                 className="pl-9"
               />
-            </div>
+            </div>} filterSlot={<>
+            <></>
             <Select value={roleFilter} onValueChange={(value) => setRoleFilter(value as 'all' | InventoryRole)}>
               <SelectTrigger className="w-full xl:w-44">
                 <SelectValue />
@@ -169,7 +173,7 @@ export default function InventoryStockPage() {
                 <SelectItem value="service-only">Service only</SelectItem>
               </SelectContent>
             </Select>
-          </div>
+           </>} />
         </CardHeader>
         <CardContent className="p-0">
           {isLoading ? (
@@ -268,5 +272,5 @@ export default function InventoryStockPage() {
         ))}
       </div>
     </div>
-  );
+  )}</ERPListingScope>;
 }

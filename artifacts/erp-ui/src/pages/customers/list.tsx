@@ -1,3 +1,4 @@
+import { ERPListingScope } from "@/components/erp/listing/listing-scope";
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
@@ -347,7 +348,7 @@ export default function CustomersList() {
       .filter(Boolean);
   }, [canChangeCustomer, visibleKeys]);
 
-  return (
+  return <ERPListingScope>{(
     <ERPWorkspacePage
       title="Customer Directory"
       actions={canAddCustomer ? <Button onClick={openCreate} className="gap-2"><Plus className="h-4 w-4" /> Register Customer</Button> : undefined}
@@ -467,7 +468,7 @@ export default function CustomersList() {
         editTarget={editTarget}
       />
     </ERPWorkspacePage>
-  );
+  )}</ERPListingScope>;
 }
 
 function CustomerFormDialog({

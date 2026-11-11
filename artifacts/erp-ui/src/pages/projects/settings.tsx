@@ -1,3 +1,6 @@
+import { ERPFilterBar } from '@/components/erp/listing/filter-bar';
+import { Table } from "@/components/ui/table";
+import { ERPListingScope, ERPListingActions, ERPPageSizeControl } from '@/components/erp/listing/listing-scope';
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "wouter";
@@ -151,7 +154,7 @@ export default function ProjectSettingsPage() {
         row.value === value ? { ...row, ...changes } : row,
       ),
     });
-  return (
+  return <ERPListingScope>{(
     <ERPWorkspacePage
       title="Project Configuration"
       description="Configure task types, defaults, statuses, follow-ups, and ticket sync for your organization."
@@ -271,7 +274,7 @@ export default function ProjectSettingsPage() {
                   Add type
                 </Button>
               </div>
-              <Input
+              <ERPFilterBar searchSlot={<Input
                 aria-label="Search task types"
                 placeholder="Search task types"
                 value={search}
@@ -279,9 +282,9 @@ export default function ProjectSettingsPage() {
                   setSearch(event.target.value);
                   setPage(1);
                 }}
-              />
+              />} />
               <div className="overflow-x-auto">
-                <table className="w-full text-left text-sm">
+                <Table className="w-full text-left text-sm">
                   <thead>
                     <tr>
                       {["No.", "Code", "Name", "Category", "Active"].map(
@@ -350,7 +353,7 @@ export default function ProjectSettingsPage() {
                         </tr>
                       ))}
                   </tbody>
-                </table>
+                </Table>
               </div>
               <div className="overflow-x-auto">
                 <ListingPagination
@@ -612,5 +615,5 @@ export default function ProjectSettingsPage() {
         </div>
       )}
     </ERPWorkspacePage>
-  );
+  )}</ERPListingScope>;
 }

@@ -1,3 +1,5 @@
+import { ERPFilterBar } from "@/components/erp/listing/filter-bar";
+import { ERPListingScope, ERPListingActions, ERPToolbarDock } from '@/components/erp/listing/listing-scope';
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { useEffect, useState } from "react";
 import { useAuth } from "@/context/use-auth";
@@ -1206,7 +1208,7 @@ export default function Users() {
   const users: any[] = data?.results ?? [];
   const totalUsers = Number(data?.count ?? users.length);
 
-  return (
+  return <ERPListingScope>{(
     <div className="space-y-6">
       {passwordResult && (
         <PasswordBanner
@@ -1226,19 +1228,19 @@ export default function Users() {
           <Button size="sm" variant="outline" onClick={() => refetch()}>
             <RefreshCw className="h-3.5 w-3.5" />
           </Button>
-          <Button
+          <ERPListingActions><Button
             size="sm"
             onClick={() => setShowInvite(true)}
             className="gap-1.5"
           >
             <Plus className="h-3.5 w-3.5" /> Invite User
-          </Button>
+          </Button></ERPListingActions>
         </div>
       </div>
+<ERPToolbarDock />
 
       {/* Filters */}
-      <div className="flex flex-wrap gap-3">
-        <div className="relative flex-1 min-w-[200px]">
+      <ERPFilterBar searchSlot={<div className="relative flex-1 min-w-[200px]">
           <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
           <Input
             className="pl-8"
@@ -1249,7 +1251,8 @@ export default function Users() {
               setPage(1);
             }}
           />
-        </div>
+        </div>} filterSlot={<>
+        <></>
         {role === "superadmin" && (
           <Select
             value={tenantFilter}
@@ -1271,7 +1274,7 @@ export default function Users() {
             </SelectContent>
           </Select>
         )}
-      </div>
+       </>} />
 
       <Card>
         <CardHeader className="bg-muted/20 border-b py-3 px-4">
@@ -1417,5 +1420,5 @@ export default function Users() {
         />
       )}
     </div>
-  );
+  )}</ERPListingScope>;
 }

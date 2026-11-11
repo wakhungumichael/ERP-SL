@@ -1,3 +1,5 @@
+import { ERPListingActions } from '@/components/erp/listing/listing-scope';
+import { ERPListingScope, ERPExistingPagination, ERPPageSizeControl, ERPToolbarDock } from '@/components/erp/listing/listing-scope';
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { useMemo, useState } from 'react';
 import { Link } from 'wouter';
@@ -75,7 +77,7 @@ export default function PaymentQueuePage() {
     readyAmount: rows.filter((item) => item.status === 'ready').reduce((sum, item) => sum + Number(item.amount ?? 0), 0),
   }), [rows]);
 
-  return (
+  return <ERPListingScope>{(
     <div className="space-y-6 p-6">
       <div className="flex items-start justify-between gap-4">
         <div>
@@ -84,10 +86,11 @@ export default function PaymentQueuePage() {
             See which supplier bills are ready to pay, which ones are blocked, and what finance should act on next.
           </p>
         </div>
-        <Button asChild variant="outline">
+        <ERPListingActions><Button asChild variant="outline">
           <Link href="/procurement/bills">Open supplier bills</Link>
-        </Button>
+        </Button></ERPListingActions>
       </div>
+<ERPToolbarDock />
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
         {[
@@ -217,7 +220,7 @@ export default function PaymentQueuePage() {
           )}
 
           {rows.length > 0 ? (
-            <div className="flex flex-col gap-3 rounded-lg border p-4 sm:flex-row sm:items-center sm:justify-between">
+            <ERPExistingPagination><div className="flex flex-col gap-3 rounded-lg border p-4 sm:flex-row sm:items-center sm:justify-between">
               <div className="text-sm text-muted-foreground">
                 Showing page {page} of {totalPages} with {rows.length} payment items
               </div>
@@ -236,10 +239,10 @@ export default function PaymentQueuePage() {
                 <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage(page - 1)}>Previous</Button>
                 <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage(page + 1)}>Next</Button>
               </div>
-            </div>
+            </div></ERPExistingPagination>
           ) : null}
         </CardContent>
       </Card>
     </div>
-  );
+  )}</ERPListingScope>;
 }

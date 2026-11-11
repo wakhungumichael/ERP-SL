@@ -524,7 +524,7 @@ def _statement_pdf_response(*, payload, customer_id, request, tenant):
     ]))
     from Platform_Core.printing import print_qr_codes_enabled
     notes_table.wrapOn(pdf, right - left, y)
-    if y < 120 or (print_qr_codes_enabled() and y - notes_table._height < 108):
+    if y < 120 or (print_qr_codes_enabled(tenant) and y - notes_table._height < 108):
         pdf.showPage()
         y = page_height - 60
     notes_table.wrapOn(pdf, right - left, y)
@@ -537,7 +537,7 @@ def _statement_pdf_response(*, payload, customer_id, request, tenant):
     pdf.drawRightString(right, 28, f"Printed {timezone.now().strftime('%d %b %Y %H:%M')}")
 
     from Platform_Core.printing import document_reference, draw_print_qr
-    draw_print_qr(pdf, document_reference(tenant=tenant, kind="statement", number=str(customer_id), path="/sales/statements", request=request), x=right-48, y=42)
+    draw_print_qr(pdf, document_reference(tenant=tenant, kind="statement", number=str(customer_id), path="/sales/statements", request=request), x=right-48, y=42, tenant=tenant)
     pdf.showPage()
     pdf.save()
     pdf_bytes = buffer.getvalue()

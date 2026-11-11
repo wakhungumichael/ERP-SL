@@ -6,8 +6,9 @@ import * as SheetPrimitive from '@radix-ui/react-dialog';
 import { cn } from '@/lib/utils';
 import { cva, type VariantProps } from 'class-variance-authority';
 import { X } from 'lucide-react';
+import { Dialog, DialogContent, useDialogPresentation } from '@/components/ui/dialog';
 
-const Sheet = SheetPrimitive.Root;
+const Sheet = Dialog;
 
 const SheetTrigger = SheetPrimitive.Trigger;
 
@@ -56,7 +57,10 @@ interface SheetContentProps
 const SheetContent = React.forwardRef<
   React.ElementRef<typeof SheetPrimitive.Content>,
   SheetContentProps
->(({ side = 'right', className, children, ...props }, ref) => (
+>(({ side = 'right', className, children, ...props }, ref) => {
+  const presentation = useDialogPresentation();
+  if (presentation?.page) return <DialogContent ref={ref} className={className} {...props}>{children}</DialogContent>;
+  return (
   <SheetPortal>
     <SheetOverlay />
     <SheetPrimitive.Content
@@ -71,7 +75,8 @@ const SheetContent = React.forwardRef<
       {children}
     </SheetPrimitive.Content>
   </SheetPortal>
-));
+  );
+});
 SheetContent.displayName = SheetPrimitive.Content.displayName;
 
 const SheetHeader = ({

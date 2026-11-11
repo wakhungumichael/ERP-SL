@@ -1,3 +1,5 @@
+import { ERPFilterBar } from "@/components/erp/listing/filter-bar";
+import { ERPListingScope, ERPListingActions, ERPToolbarDock } from '@/components/erp/listing/listing-scope';
 /* Copyright (c) 2026 Siakora Labs Limited. Author: Michael Wakhungu. */
 import { useState } from 'react';
 import { useAuth } from '@/context/use-auth';
@@ -507,7 +509,7 @@ export default function Tenants() {
     { label: 'Suspended', value: tenants.filter(t => t.status === 'suspended').length, color: 'text-red-600' },
   ];
 
-  return (
+  return <ERPListingScope>{(
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-4">
         <div>
@@ -516,11 +518,12 @@ export default function Tenants() {
         </div>
         <div className="flex gap-2">
           <Button size="sm" variant="outline" onClick={() => refetch()}><RefreshCw className="h-3.5 w-3.5" /></Button>
-          <Button size="sm" onClick={() => setShowNew(true)} className="gap-1.5">
+          <ERPListingActions><Button size="sm" onClick={() => setShowNew(true)} className="gap-1.5">
             <Plus className="h-3.5 w-3.5" /> New Tenant
-          </Button>
+          </Button></ERPListingActions>
         </div>
       </div>
+<ERPToolbarDock />
 
       {/* Stats */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
@@ -535,11 +538,11 @@ export default function Tenants() {
       </div>
 
       {/* Filters */}
-      <div className="flex flex-wrap gap-3">
-        <div className="relative flex-1 min-w-[200px]">
+      <ERPFilterBar searchSlot={<div className="relative flex-1 min-w-[200px]">
           <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
           <Input className="pl-8" placeholder="Search tenants…" value={search} onChange={e => setSearch(e.target.value)} />
-        </div>
+        </div>} filterSlot={<>
+        <></>
         <Select value={statusFilter} onValueChange={setStatusFilter}>
           <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
           <SelectContent>
@@ -551,7 +554,7 @@ export default function Tenants() {
             <SelectItem value="archived">Archived</SelectItem>
           </SelectContent>
         </Select>
-      </div>
+       </>} />
 
       {/* Table */}
       <Card>
@@ -596,5 +599,5 @@ export default function Tenants() {
       <NewTenantDialog open={showNew} onClose={() => setShowNew(false)} />
       {selected && <TenantSheet tenant={selected} onClose={() => setSelected(null)} />}
     </div>
-  );
+  )}</ERPListingScope>;
 }

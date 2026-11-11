@@ -588,7 +588,7 @@ class Transaction(models.Model):
 
     def generate_qr_code(self):
         from Platform_Core.printing import print_qr_codes_enabled, document_reference
-        if not print_qr_codes_enabled():
+        if not print_qr_codes_enabled(getattr(self, "tenant", None)):
             return None
         qr_data = document_reference(tenant=getattr(self, "tenant", None), kind="receipt", number=f"TX-{self.pk:05d}", path=f"/weighbridge/transactions/{self.pk}")
         qr = qrcode.make(qr_data)
@@ -930,8 +930,13 @@ class Invoice(models.Model):
     def _next_invoice_number(self):
         from django.utils import timezone as tz
         year = tz.now().year
-        seq  = Invoice.objects.filter(invoice_number__startswith=f"INV-{year}-").count() + 1
-        return f"INV-{year}-{seq:04d}"
+        prefix = f"INV-{year}-"
+        numbers = Invoice.objects.filter(invoice_number__startswith=prefix).values_list("invoice_number", flat=True)
+        # Cleared test invoices and historical imports leave gaps. Counting rows
+        # can reuse an existing reference; continue after the highest real number.
+        highest = max((int(number[len(prefix):]) for number in numbers.iterator()
+                       if number[len(prefix):].isascii() and number[len(prefix):].isdigit()), default=0)
+        return f"{prefix}{highest + 1:04d}"
 
     def save(self, *args, **kwargs):
         if self._state.adding and self.customer_id:

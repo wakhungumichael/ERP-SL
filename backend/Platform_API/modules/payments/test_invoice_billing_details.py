@@ -112,9 +112,12 @@ class InvoiceBillingDetailsTests(TestCase):
                 data = document_pdf_bytes(render_invoice_document(invoice).html)
                 pdf = PdfReader(BytesIO(data))
                 text = " ".join(" ".join(page.extract_text().split()) for page in pdf.pages)
-                for expected in ["Client House", "Issuer House", "Finance Manager", "CLIENT-TAX", "ISSUER-TAX", "PO-2026-010", "Accounts Officer", "VAT (16%)", "Delivery", "KES 126.00", "Page 1 of 1"]:
+                for expected in ["Client House", "Issuer House", "Finance Manager", "CLIENT-TAX", "ISSUER-TAX", "PO-2026-010", "VAT (16%)", "Delivery", "KES 126.00"]:
                     self.assertIn(expected, text)
                 self.assertEqual(len(pdf.pages), 1)
+                self.assertNotIn("Page 1 of 1", text)
+                self.assertNotIn("Prepared by:", text)
+                self.assertNotIn("Accounts Officer", text)
                 self.assertNotIn("Discount", text)
 
     def test_previous_shared_invoice_layouts_upgrade_but_custom_edits_are_preserved(self):
@@ -132,6 +135,24 @@ class InvoiceBillingDetailsTests(TestCase):
         template.refresh_from_db()
         self.assertIn("Custom company styling", template.stylesheet)
 
+    def test_existing_styled_invoice_layouts_receive_alignment_fix_without_replacing_edits(self):
+        from Platform_Core.document_styles import apply_layout, stylesheet as style_overrides
+        from Platform_Core.invoice_templates import body, stylesheet
+        ensure_shared_document_template_library()
+        for variant, title in [("classic", "Classic"), ("modern", "Modern"), ("compact", "Compact"), ("executive", "Executive"), ("minimal", "Minimal")]:
+            template = DocumentTemplate.objects.get(tenant=None, name=f"Invoice {title}")
+            template.body_template = apply_layout(body(variant), variant)
+            template.stylesheet = stylesheet(variant) + style_overrides(variant)
+            template.save()
+            ensure_shared_document_template_library()
+            template.refresh_from_db()
+            self.assertIn(".heading .document-title { line-height: 32pt;", template.stylesheet)
+            template.stylesheet += "\n/* Keep customized alignment */"
+            template.save()
+            ensure_shared_document_template_library()
+            template.refresh_from_db()
+            self.assertIn("Keep customized alignment", template.stylesheet)
+
     def test_long_invoice_repeats_headers_and_numbers_every_page(self):
         invoice = self.create_invoice()
         InvoiceLine.objects.bulk_create([InvoiceLine(invoice=invoice, description=f"Service line {index:03d} with a detailed description", quantity=1, unit_price=100, total_amount=100) for index in range(65)])
@@ -140,6 +161,7 @@ class InvoiceBillingDetailsTests(TestCase):
         self.assertGreater(len(pdf.pages), 1)
         text = " ".join(page.extract_text() for page in pdf.pages)
         self.assertIn("Service line 064", text)
+        self.assertIn("Invoice total", pdf.pages[-1].extract_text())
         for index, page in enumerate(pdf.pages, 1):
             self.assertIn(f"Page {index} of {len(pdf.pages)}", " ".join(page.extract_text().split()))
         for page in pdf.pages[1:-1]:
