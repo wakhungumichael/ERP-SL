@@ -178,3 +178,42 @@ class InclusiveInvoiceTaxTests(TestCase):
         self.assertEqual(context["totals"]["tax"], Decimal("160"))
         self.assertEqual(context["totals"]["total"], Decimal("1160"))
         self.assertEqual(context["totals"]["tax_label"], "VAT (16%) included")
+
+    def test_entered_milestone_prices_survive_combined_tax_save_and_reopen(self):
+        items = [
+            {"description": "Milestone 1", "qty": 1, "unit_price": "737500.00"},
+            {"description": "Milestone 2", "qty": 1, "unit_price": "590000.00"},
+        ]
+        invoice = self.invoice(line_items=items)
+        for _ in range(2):
+            data = self.client.get(reverse("invoice-detail", args=[invoice.pk])).data
+            self.assertEqual([line["unit_price"] for line in data["lines"]], [737500, 590000])
+            self.assertEqual(data["subtotal_amount"], 1144396.55)
+            self.assertEqual(data["tax_total"], 183103.45)
+            self.assertEqual(data["total_amount"], 1327500)
+            response = self.client.patch(reverse("invoice-detail", args=[invoice.pk]), {"line_items": items}, format="json")
+            self.assertEqual(response.status_code, 200, response.data)
+
+    def test_combined_tax_uses_configured_rates_and_all_lines_total(self):
+        self.settings.default_tax_name = "Configured tax"
+        self.settings.default_tax_rate = Decimal("15")
+        self.settings.save()
+        for rate in [Decimal("0"), Decimal("7.5"), Decimal("15"), Decimal("20")]:
+            with self.subTest(rate=rate):
+                gross = Decimal("100") + rate
+                inclusive = self.invoice(currency="ZAR", combined_tax_rate=str(rate), line_items=[
+                    {"description": "A", "qty": 1, "unit_price": str(gross / 2)},
+                    {"description": "B", "qty": 1, "unit_price": str(gross / 2)},
+                ])
+                self.assertEqual(inclusive.subtotal_amount, Decimal("100"))
+                self.assertEqual(inclusive.tax_total, rate)
+                self.assertEqual(inclusive.total_amount, gross)
+                self.assertEqual(inclusive.combined_tax_name, "Configured tax")
+                self.assertEqual(inclusive.currency, "ZAR")
+                exclusive = self.invoice(prices_include_tax=False, combined_tax_rate=str(rate), line_items=[
+                    {"description": "A", "qty": 1, "unit_price": "40"},
+                    {"description": "B", "qty": 1, "unit_price": "60"},
+                ])
+                self.assertEqual(exclusive.subtotal_amount, Decimal("100"))
+                self.assertEqual(exclusive.tax_total, rate)
+                self.assertEqual(exclusive.total_amount, gross)

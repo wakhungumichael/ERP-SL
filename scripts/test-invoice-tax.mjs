@@ -4,7 +4,7 @@ import ts from 'typescript';
 import { chromium, expect } from '@playwright/test';
 
 const source = fs.readFileSync('artifacts/erp-ui/src/lib/invoice-totals.ts', 'utf8');
-const { invoiceTotals } = await import('data:text/javascript;base64,' + Buffer.from(ts.transpile(source, {
+const { invoiceLineTotals, invoiceTotals } = await import('data:text/javascript;base64,' + Buffer.from(ts.transpile(source, {
   module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022,
 })).toString('base64'));
 const item = (price, qty = 1) => ({ qty, unit_price: price, tax_rate: 16 });
@@ -22,6 +22,15 @@ assert.deepEqual(invoiceTotals([item(1160)], 'combined', 16, true, [
   {calculation_type:'percentage',rate:-2}, {calculation_type:'fixed',rate:-50},
 ]), {subtotal:1000,taxTotal:160,chargeTotal:-70,total:1090});
 assert.doesNotThrow(()=>invoiceTotals([item(1e25)], 'combined', Infinity, true, []));
+assert.deepEqual(invoiceLineTotals([item(737500),item(590000)]), [737500,590000]);
+assert.deepEqual(invoiceLineTotals([item(.01,.333),item(.01,.333)]), [.01,0]);
+assert.deepEqual(invoiceLineTotals([item(.01,.5)]), [0]);
+assert.deepEqual(invoiceTotals([item(737500),item(590000)], 'combined', 16, true, []), {subtotal:1144396.55,taxTotal:183103.45,chargeTotal:0,total:1327500});
+for (const rate of [0,7.5,15,20]) {
+  const gross=100+rate;
+  assert.deepEqual(invoiceTotals([item(gross/2),item(gross/2)],'combined',rate,true,[]), {subtotal:100,taxTotal:rate,chargeTotal:0,total:gross});
+  assert.deepEqual(invoiceTotals([item(40),item(60)],'combined',rate,false,[]), {subtotal:100,taxTotal:rate,chargeTotal:0,total:gross});
+}
 console.log('PASS inclusive/exclusive preview, charges, fractional quantities and half-even rounding');
 
 fs.mkdirSync('tmp/invoice-tax', {recursive:true});
@@ -64,7 +73,9 @@ try {
           const body=req.postDataJSON(); writes.push(body);
           if(body.line_items) {
             const totals=invoiceTotals(body.line_items,body.tax_mode,body.combined_tax_rate,body.prices_include_tax,[]);
-            invoice={...invoice,prices_include_tax:body.prices_include_tax,tax_mode:body.tax_mode,combined_tax_rate:body.combined_tax_rate,subtotal_amount:totals.subtotal,tax_total:totals.taxTotal,total_amount:totals.total};
+            invoice={...invoice,prices_include_tax:body.prices_include_tax,tax_mode:body.tax_mode,combined_tax_rate:body.combined_tax_rate,subtotal_amount:totals.subtotal,tax_total:totals.taxTotal,total_amount:totals.total,
+              lines:body.line_items.map((line,index)=>({...line,id:index+1,product:line.product_id,product_name:invoice.lines[index]?.product_name || '',quantity:line.qty,net_unit_price:line.unit_price/(body.prices_include_tax ? 1+body.combined_tax_rate/100 : 1),total:line.qty*line.unit_price/(body.prices_include_tax ? 1+body.combined_tax_rate/100 : 1)})),
+            };
           }
           invoice={...invoice,notes:body.notes ?? invoice.notes};
         }
@@ -92,15 +103,19 @@ try {
     await active().getByLabel('Description',{exact:true}).fill('Service');
     await active().getByLabel('Unit price',{exact:true}).fill('1160');
     await active().getByLabel('Tax method',{exact:true}).click();
-    await page.getByRole('option',{name:'Combined invoice tax',exact:true}).click();
-    await active().getByLabel('VAT rate (%)',{exact:true}).fill('16');
-    await active().getByLabel('Tax treatment',{exact:true}).click();
-    await page.getByRole('option',{name:'Prices include tax',exact:true}).click();
+    await page.getByRole('option',{name:'Combined tax — exclusive',exact:true}).click();
+    await expect(active().getByLabel('VAT rate (%)',{exact:true})).toHaveValue('16');
+    await expectTotal('Tax added','185.60');
+    await expectTotal('Grand total','1,345.60');
+    await active().getByLabel('Tax method',{exact:true}).click();
+    await page.getByRole('option',{name:'Combined tax — inclusive',exact:true}).click();
+    await expect(active().locator('#invoice-line-0-tax')).toHaveValue('16');
+    await expectTotal('Entered subtotal (tax incl.)','1,160.00');
     await expectTotal('Subtotal (excl. tax)','1,000.00');
-    await expectTotal('Tax included','160.00');
+    await expectTotal('Less: included VAT (16%)','-160.00');
     await expectTotal('Grand total','1,160.00');
-    const geometry=await active().getByLabel('Tax treatment',{exact:true}).boundingBox();
-    assert.ok(geometry && geometry.width>100 && geometry.x+geometry.width<=viewport.width,'Tax treatment fits viewport');
+    const geometry=await active().getByLabel('Tax method',{exact:true}).boundingBox();
+    assert.ok(geometry && geometry.width>100 && geometry.x+geometry.width<=viewport.width,'Tax method fits viewport');
     await expect(active().getByLabel('Description',{exact:true})).toHaveValue('Service');
     await page.screenshot({path:'tmp/invoice-tax/inclusive-'+viewport.width+'.png',fullPage:true});
     await active().getByRole('button',{name:'Create Invoice',exact:true}).click();
@@ -108,9 +123,11 @@ try {
     assert.equal(writes[0].prices_include_tax,true);
     assert.equal(writes[0].line_items[0].unit_price,1160);
     await active().getByRole('heading',{name:'INV-2026-0009',exact:true}).waitFor();
-    await expect(active().getByRole('definition').filter({hasText:'KES 160.00'})).toHaveCount(1);
+    await expect(active().locator('th:visible').filter({hasText:'Unit Price (incl. tax)'})).toHaveCount(1);
+    await expect(active().getByRole('cell',{name:'KES 1,160.00',exact:true})).toHaveCount(2);
+    await expect(active().getByRole('definition').filter({hasText:'KES -160.00'})).toHaveCount(1);
     await clickAction('Edit invoice');
-    await expect(active().getByLabel('Tax treatment',{exact:true})).toHaveText('Prices include tax');
+    await expect(active().getByLabel('Tax method',{exact:true})).toHaveText('Combined tax — inclusive');
     await expect(active().getByLabel('Unit price (incl. tax)',{exact:true})).toHaveValue('1160');
     await active().getByLabel('Notes',{exact:true}).fill('Contact details only');
     await active().getByRole('button',{name:'Save changes',exact:true}).click();
@@ -118,12 +135,40 @@ try {
     assert.equal('prices_include_tax' in writes[1],false,'Metadata edits do not recalculate finances');
     await clickAction('Edit invoice');
     await active().getByLabel('Quantity',{exact:true}).fill('2');
+    await expectTotal('Entered subtotal (tax incl.)','2,320.00');
+    await expectTotal('Less: included VAT (16%)','-320.00');
     await expectTotal('Grand total','2,320.00');
     await active().getByRole('button',{name:'Save changes',exact:true}).click();
     await expect.poll(()=>writes.length).toBe(3);
     assert.equal(writes[2].prices_include_tax,true);
     assert.equal(writes[2].line_items[0].qty,2);
     assert.equal(writes[2].line_items[0].unit_price,1160);
+    await expect(active().getByRole('cell',{name:'KES 2,320.00',exact:true})).toHaveCount(1);
+    const scenarios=[
+      {currency:'KES',name:'VAT',rate:16,prices:[737500,590000],net:1144396.55,tax:183103.45,gross:1327500},
+      {currency:'ZAR',name:'Configured tax',rate:15,prices:[115,230],net:300,tax:45,gross:345},
+    ];
+    for (const scenario of scenarios) {
+      invoice={...invoice,currency:scenario.currency,combined_tax_name:scenario.name,combined_tax_rate:scenario.rate,subtotal_amount:scenario.net,tax_total:scenario.tax,total_amount:scenario.gross,
+        lines:scenario.prices.map((price,index)=>({id:index+1,product:null,product_name:'Milestone '+(index+1),description:'Deliverable '+(index+1),quantity:1,unit_price:price,net_unit_price:price/(1+scenario.rate/100),tax_rate:0,tax_amount:0,total:price/(1+scenario.rate/100)})),
+      };
+      await page.reload({waitUntil:'domcontentloaded'});
+      await active().getByRole('heading',{name:'INV-2026-0009',exact:true}).waitFor();
+      for (const [index,price] of scenario.prices.entries()) {
+        const row=active().getByRole('row').filter({hasText:'Milestone '+(index+1)});
+        await expect(row.getByRole('cell',{name:scenario.currency+' '+price.toLocaleString('en-KE',{minimumFractionDigits:2,maximumFractionDigits:2}),exact:true})).toHaveCount(2);
+      }
+      await expect(active().getByText('Entered subtotal (tax incl.)',{exact:true}).locator('..').getByRole('definition')).toHaveText(scenario.currency+' '+scenario.gross.toLocaleString('en-KE',{minimumFractionDigits:2,maximumFractionDigits:2}));
+      await expect(active().getByText('Less: included '+scenario.name+' ('+scenario.rate+'%)',{exact:true}).locator('..').getByRole('definition')).toHaveText(scenario.currency+' '+(-scenario.tax).toLocaleString('en-KE',{minimumFractionDigits:2,maximumFractionDigits:2}));
+      if (scenario.currency==='KES') await page.screenshot({path:'tmp/invoice-tax/saved-lines-'+viewport.width+'.png',fullPage:true});
+      await clickAction('Edit invoice');
+      await expect(active().getByLabel('Currency',{exact:true})).toHaveText(scenario.currency);
+      await expect(active().getByLabel(scenario.name+' rate (%)',{exact:true})).toHaveValue(String(scenario.rate));
+      await expect(active().locator('#invoice-line-0-price')).toHaveValue(String(scenario.prices[0]));
+      await expect(active().locator('#invoice-line-1-price')).toHaveValue(String(scenario.prices[1]));
+      await expect(summary().getByText('Less: included '+scenario.name+' ('+scenario.rate+'%)',{exact:true}).locator('..').getByRole('definition')).toHaveText(scenario.currency+' '+(-scenario.tax).toLocaleString('en-KE',{minimumFractionDigits:2,maximumFractionDigits:2}));
+      await active().getByRole('button',{name:'Cancel',exact:true}).click();
+    }
     assert.deepEqual(errors,[]);
     await context.close();
     console.log('PASS invoice creation, persisted tax treatment and safe editing at '+viewport.width+'px');

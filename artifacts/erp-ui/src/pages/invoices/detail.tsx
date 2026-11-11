@@ -4,6 +4,7 @@ import { ERPListingScope, ERPToolbarDock } from '@/components/erp/listing/listin
 import { downloadDocumentPdf } from '@/lib/document-download';
 import { useEffect, useState } from 'react';
 import { InvoiceFormDialog } from '@/components/invoices/invoice-form-dialog';
+import { invoiceLineTotals } from '@/lib/invoice-totals';
 import { InvoicePreviewDialog } from '@/components/invoices/invoice-preview-dialog';
 import { useLocation } from 'wouter';
 import {
@@ -244,6 +245,7 @@ export default function InvoiceDetail({ id }: { id: string }) {
 
   const inv = data;
   const lines: any[]  = inv.lines        ?? [];
+  const inclusiveLineTotals = invoiceLineTotals(lines.map(line => ({ qty: Number(line.quantity), unit_price: Number(line.unit_price) })));
   const txns: any[]   = inv.transactions ?? [];
   const isOverdue = inv.due_date && inv.status === 'issued' && new Date(inv.due_date) < new Date();
   const displayStatus = isOverdue ? 'overdue' : inv.status;
@@ -394,22 +396,22 @@ export default function InvoiceDetail({ id }: { id: string }) {
                   <TableHead className="text-[10px] font-bold uppercase tracking-widest">Product / Service</TableHead>
                   <TableHead className="text-[10px] font-bold uppercase tracking-widest">Description</TableHead>
                   <TableHead className="text-[10px] font-bold uppercase tracking-widest text-right">Qty</TableHead>
-                  <TableHead className="text-[10px] font-bold uppercase tracking-widest text-right">Unit Price{inv.prices_include_tax ? " (excl. tax)" : ""}</TableHead>
-                  <TableHead className="text-[10px] font-bold uppercase tracking-widest text-right">Amount{inv.prices_include_tax ? " (excl. tax)" : ""}</TableHead>
+                  <TableHead className="text-[10px] font-bold uppercase tracking-widest text-right">Unit Price{inv.prices_include_tax ? " (incl. tax)" : ""}</TableHead>
+                  <TableHead className="text-[10px] font-bold uppercase tracking-widest text-right">Amount{inv.prices_include_tax ? " (incl. tax)" : ""}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
               {lines.length === 0 ? (
                 <TableRow><TableCell colSpan={inv.source_module === 'weighbridge' ? 6 : 5} className="py-6 text-center text-sm text-muted-foreground">No items.</TableCell></TableRow>
-              ) : lines.map((line: any) => (
+              ) : lines.map((line: any, index: number) => (
                 <TableRow key={line.id} className="hover:bg-muted/30">
                   {inv.source_module === 'weighbridge' && <TableCell className="py-2 text-sm font-medium">{line.vehicle_type || 'General'}</TableCell>}
                   <TableCell className="py-2 text-sm font-medium">{line.product_name || 'Custom line'}</TableCell>
                   <TableCell className="py-2 text-sm">{line.description || line.product_name || 'General item'}</TableCell>
                   <TableCell className="py-2 text-right font-mono text-sm">{line.quantity}</TableCell>
-                  <TableCell className="py-2 text-right font-mono text-sm">{kes(line.net_unit_price ?? line.unit_price, inv.currency)}</TableCell>
+                  <TableCell className="py-2 text-right font-mono text-sm">{kes(line.unit_price, inv.currency)}</TableCell>
                   <TableCell className="py-2 text-right font-mono font-bold text-sm">
-                    {kes(line.total, inv.currency)}
+                    {kes(inv.prices_include_tax ? inclusiveLineTotals[index] : line.total, inv.currency)}
                   </TableCell>
                 </TableRow>
               ))}
@@ -417,8 +419,9 @@ export default function InvoiceDetail({ id }: { id: string }) {
           </Table>
           {inv.prices_include_tax && <dl className="space-y-2 border-t p-4 text-sm">
             {[
+              ['Entered subtotal (tax incl.)', Number(inv.total_amount) - Number(inv.charge_total || 0)],
+              [`Less: included ${inv.combined_tax_name || 'Tax'} (${inv.combined_tax_rate}%)`, -Number(inv.tax_total) || 0],
               ['Subtotal (excl. tax)', inv.subtotal_amount],
-              [`${inv.combined_tax_name || 'Tax'} included (${inv.combined_tax_rate}%)`, inv.tax_total],
               ['Additional charges', inv.charge_total],
             ].map(([label, amount]) => <div key={String(label)} className="flex flex-wrap justify-between gap-2"><dt className="text-muted-foreground">{label}</dt><dd className="font-mono">{kes(Number(amount), inv.currency)}</dd></div>)}
           </dl>}

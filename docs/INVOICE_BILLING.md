@@ -41,14 +41,27 @@ updated backend. These changes do not seed, replace, or delete existing invoices
 
 ## Tax-inclusive invoice prices
 
-For a manual invoice, choose **Combined invoice tax**, enter the tax rate, and set
-**Tax treatment** to **Prices include tax**. Enter each item's agreed price including
+For a manual invoice, choose **Combined tax — inclusive** and enter the tax rate. Enter each item's agreed price including
 tax. At 16%, KES 1,160 is split into KES 1,000 before tax and KES 160 tax; the total
 stays KES 1,160. The tax is extracted using total × rate ÷ (100 + rate).
 
-The summary, saved invoice and printable document show the same subtotal, tax and
-total. Additional charges are added separately; percentage charges use the subtotal
+The summary shows the entered subtotal including tax, deducts the included tax,
+and shows the subtotal before tax. The total payable keeps the entered amount.
+Choose **Combined tax — exclusive** to add tax on top instead. The saved invoice
+and printable document use the same subtotal, tax and total. Additional charges are added separately; percentage charges use the subtotal
 before tax. Draft edits retain the entered inclusive prices and tax treatment.
 Existing invoices and new invoices default to prices excluding tax.
 
 This option requires migration `SL_Weighbridge.0086_invoice_prices_include_tax`.
+
+Saved invoice screens retain the entered unit prices and line amounts. Inclusive
+lines are labelled **incl. tax**; the summary separately shows the included tax
+deduction and the subtotal before tax. Editing and saved views use the same line
+rounding so the displayed lines add up to the entered subtotal.
+
+Combined tax is calculated once on the sum of all lines. For rate R:
+inclusive tax = gross total × R ÷ (100 + R); exclusive tax = net subtotal × R ÷ 100.
+This follows the net/gross relationship in [KRA's VAT example](https://www.kra.go.ke/individual/filing-paying/types-of-taxes/value-added-tax).
+The organization controls its tax name and rate; the calculation does not
+hardcode Kenya's 16%. Use the applicable rate for the country and supply.
+Existing invoice tax names, rates and currencies are retained when reopened.

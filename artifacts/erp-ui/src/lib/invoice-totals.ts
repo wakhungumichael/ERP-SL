@@ -16,6 +16,18 @@ function rounded(numerator: bigint, denominator: bigint): bigint {
   return quotient + (remainder * 2n > denominator || (remainder * 2n === denominator && quotient % 2n !== 0n) ? 1n : 0n);
 }
 
+/** Allocate rounded line amounts so displayed lines add up to the entered subtotal. */
+export function invoiceLineTotals(lines: Pick<Line, 'qty' | 'unit_price'>[]): number[] {
+  const raw = lines.map(line => scaled(line.qty, 3) * scaled(line.unit_price, 2));
+  const cents = raw.map(amount => amount / 1000n);
+  const target = rounded(raw.reduce((sum, amount) => sum + amount, 0n), 1000n);
+  const remainder = Number(target - cents.reduce((sum, amount) => sum + amount, 0n));
+  const order = raw.map((amount, index) => ({ index, fraction: amount % 1000n }))
+    .sort((a, b) => a.fraction === b.fraction ? a.index - b.index : a.fraction > b.fraction ? -1 : 1);
+  for (const { index } of order.slice(0, remainder)) cents[index] += 1n;
+  return cents.map(amount => Number(amount) / 100);
+}
+
 export function invoiceTotals(lines: Line[], taxMode: 'per_line' | 'combined', taxRate: number, pricesIncludeTax: boolean, charges: Charge[]) {
   // Quantity has three decimal places; unit prices and rates have two.
   const rawAmounts = lines.map(line => scaled(line.qty, 3) * scaled(line.unit_price, 2));
