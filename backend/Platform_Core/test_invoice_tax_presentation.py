@@ -127,6 +127,9 @@ class InvoiceTaxPresentationTests(TestCase):
         self.assertEqual(len(reader.pages), 1)
         self.assertIn("Subtotal (excl. tax)", text)
         self.assertIn("KES 348.00", text)
+        self.assertEqual(text.count("KES 48.00"), 1)
+        self.assertNotIn("Tax amount", text)
+        self.assertNotIn("Tax summary", text)
 
     def test_mixed_per_line_rates_are_summarized_separately(self):
         invoice = self.create_invoice(prices_include_tax=False, tax_mode="per_line", line_items=[
@@ -140,6 +143,11 @@ class InvoiceTaxPresentationTests(TestCase):
         self.assertEqual(groups["VAT (0%)"]["net"], Decimal("60"))
         self.assertEqual(groups["VAT (0%)"]["tax"], 0)
         self.assertEqual(sum(group["gross"] for group in groups.values()), invoice.total_amount)
+        reader, text, _ = self.render(invoice, sample_name="invoice-per-line.pdf")
+        self.assertEqual(len(reader.pages), 1)
+        for expected in ["Tax amount", "Tax summary", "VAT (16%)", "VAT (0%)", "KES 6.40", "KES 46.40"]:
+            self.assertIn(expected, text)
+
 
     def test_fractional_net_subtotal_does_not_fabricate_tax(self):
         invoice = self.create_invoice(prices_include_tax=False, tax_mode="per_line", line_items=[
@@ -169,16 +177,19 @@ class InvoiceTaxPresentationTests(TestCase):
         self.assertEqual(context["totals"]["total"], Decimal("1210"))
         self.assertEqual(context["charges"][0]["amount_display"], "KES 50.00")
 
-    def test_every_shared_variant_renders_tax_columns_and_original_prices(self):
+    def test_every_shared_variant_shows_combined_tax_once_and_original_prices(self):
         invoice = self.create_invoice()
         for title in ["Classic", "Modern", "Compact", "Executive", "Minimal"]:
             with self.subTest(title=title):
                 sample = "invoice-inclusive-" + title.lower() + ".pdf" if title in {"Classic", "Modern", "Compact"} else None
                 reader, text, _ = self.render(invoice, title, sample)
                 self.assertEqual(len(reader.pages), 1)
-                for expected in ["Unit price", "incl. tax", "Amount excl. tax", "Tax amount", "Tax summary", "VAT (16%)", "KES 737,500.00", "KES 590,000.00", "KES 635,775.86", "KES 101,724.14", "KES 508,620.69", "KES 81,379.31", "Subtotal (incl. tax)", "KES 1,144,396.55", "KES 183,103.45", "KES 1,327,500.00"]:
+                for expected in ["Unit price", "incl. tax", "VAT (16%)", "KES 737,500.00", "KES 590,000.00", "Subtotal (incl. tax)", "Subtotal (excl. tax)", "Less: included VAT (16%)", "KES 1,144,396.55", "KES -183,103.45", "KES 1,327,500.00"]:
                     self.assertIn(expected, text, title)
                 self.assertNotIn("Prepared by:", text)
+                self.assertEqual(text.count("VAT (16%)"), 1)
+                for hidden in ["Tax amount", "Tax summary", "KES 101,724.14", "KES 81,379.31", "KES 635,775.86", "KES 508,620.69"]:
+                    self.assertNotIn(hidden, text)
 
     def test_branded_invoice_with_bank_notes_keeps_totals_on_first_page(self):
         import base64
@@ -249,6 +260,44 @@ class InvoiceTaxPresentationTests(TestCase):
         private.refresh_from_db()
         self.assertEqual(private.body_template, old_body)
 
+    def test_current_shared_layout_upgrades_without_replacing_customer_edits(self):
+        from Platform_Core.document_styles import apply_layout, stylesheet as overrides
+        from Platform_Core.invoice_templates_v2 import body, stylesheet, alignment_stylesheet
+        for variant, title in [("classic", "Classic"), ("modern", "Modern"), ("compact", "Compact"), ("executive", "Executive"), ("minimal", "Minimal")]:
+            with self.subTest(title=title):
+                template = DocumentTemplate.objects.get(tenant=None, name="Invoice " + title)
+                old_body = apply_layout(body(variant), variant)
+                padding = 6 if variant in {"compact", "minimal"} else 8
+                old_body = old_body.replace('<table class="heading', f'<table cellpadding="{padding}" class="heading')
+                old_body = old_body.replace('cellpadding="6" class="line-items"', 'cellpadding="4" class="line-items"')
+                old_css = stylesheet(variant) + overrides(variant) + alignment_stylesheet()
+                template.body_template, template.stylesheet = old_body, old_css
+                template.save()
+                ensure_shared_document_template_library()
+                template.refresh_from_db()
+                self.assertIn("document.tax_mode", template.body_template)
+                self.assertIn("totals.included_tax_deduction_display", template.body_template)
+                template.body_template = old_body + "<!-- customer customization -->"
+                template.stylesheet = old_css
+                template.save()
+                ensure_shared_document_template_library()
+                template.refresh_from_db()
+                self.assertEqual(template.body_template, old_body + "<!-- customer customization -->")
+                self.assertEqual(template.stylesheet, old_css)
+
+    def test_combined_inclusive_uses_configured_tax_name_rate_and_currency(self):
+        self.settings.default_tax_name = "GST"
+        self.settings.save()
+        invoice = self.create_invoice(currency="USD", combined_tax_rate="7.5", line_items=[
+            {"description": "Configured-rate service", "qty": 1, "unit_price": "107.50"},
+        ])
+        reader, text, _ = self.render(invoice)
+        self.assertEqual(len(reader.pages), 1)
+        for expected in ["USD 107.50", "Less: included GST (7.5%)", "USD -7.50", "USD 100.00"]:
+            self.assertIn(expected, text)
+        self.assertEqual(text.count("GST (7.5%)"), 1)
+        self.assertNotIn("Tax amount", text)
+
     def test_invoice_gallery_preview_uses_configured_tax_name_rate_and_currency(self):
         self.tenant.default_currency = "USD"
         self.tenant.save()
@@ -259,5 +308,5 @@ class InvoiceTaxPresentationTests(TestCase):
         template = DocumentTemplate.objects.get(tenant=None, name="Invoice Classic")
         rendered = render_document_template_preview(template, tenant=self.tenant)
         text = " ".join(PdfReader(BytesIO(document_pdf_bytes(rendered.html))).pages[0].extract_text().split())
-        for expected in ["Configured tax (7.5%)", "USD 900.00", "USD 12,900.00", "USD 4,500.00", "USD 675.00"]:
+        for expected in ["Configured tax (7.5%)", "USD 900.00", "USD 12,900.00", "USD 4,500.00"]:
             self.assertIn(expected, text)

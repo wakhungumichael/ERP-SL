@@ -760,6 +760,8 @@ def _invoice_context(invoice, settings_obj, request=None):
     rates = {Decimal(line.tax_rate) for line in invoice.lines.all() if line.tax_amount}
     tax_rate = invoice.combined_tax_rate if invoice.tax_mode == "combined" else (next(iter(rates)) if len(rates) == 1 else None)
     tax_label = f"{tax_name} ({Decimal(str(tax_rate)).normalize():f}%)" if tax_rate else tax_name
+    included_rate_label = f"{tax_name} ({Decimal(str(tax_rate)).normalize():f}%)" if tax_rate is not None and (tax_rate or not tax) else tax_name
+    included_tax_label = "Less: included " + included_rate_label
     if invoice.prices_include_tax:
         tax_label += " included"
     breakdown = invoice_line_breakdown(
@@ -836,6 +838,7 @@ def _invoice_context(invoice, settings_obj, request=None):
             "issue_date": date_filter(getattr(invoice, "invoice_date", None) or getattr(invoice, "issued_at", None) or invoice.issued_date, "d M Y"),
             "due_date": date_filter(invoice.due_date, "d M Y") if invoice.due_date else "",
             "currency": invoice.currency or "KES",
+            "tax_mode": invoice.tax_mode,
             "prices_include_tax": invoice.prices_include_tax,
             "unit_price_basis": "incl. tax" if invoice.prices_include_tax else "excl. tax",
             "notes": "\n".join(note_parts),
@@ -859,6 +862,8 @@ def _invoice_context(invoice, settings_obj, request=None):
             "tax": tax,
             "tax_display": _money(tax, invoice.currency or "KES"),
             "tax_label": tax_label,
+            "included_tax_label": included_tax_label,
+            "included_tax_deduction_display": _money(-tax, invoice.currency or "KES"),
             "unitemized_charge": unitemized_charge,
             "unitemized_charge_display": _money(unitemized_charge, invoice.currency or "KES"),
             "discount": Decimal("0.00"),
@@ -1378,7 +1383,7 @@ def render_document_template_preview(template, *, tenant=None, request=None):
         sample_tax = (Decimal("12000") * sample_rate / Decimal("100")).quantize(Decimal("0.01"))
         sample_gross = Decimal("12000") + sample_tax
         sample_label = f"{sample_tax_name} ({sample_rate.normalize():f}%)"
-        context["document"].update({"prices_include_tax": False, "unit_price_basis": "excl. tax"})
+        context["document"].update({"tax_mode": "combined", "prices_include_tax": False, "unit_price_basis": "excl. tax"})
         for line in sample_lines:
             amount_tax = (line["total"] * sample_rate / Decimal("100")).quantize(Decimal("0.01"))
             line.update({

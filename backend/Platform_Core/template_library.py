@@ -246,6 +246,12 @@ def upgrade_shared_template(template):
                 previous.append((previous_body(label, variant), previous_stylesheet(variant)))
                 previous.append((previous_body(label, variant, include_contact_details=False), previous_stylesheet(variant)))
             if label == "Invoice":
+                from .invoice_templates_v2 import body as prior_body, stylesheet as prior_css, alignment_stylesheet as prior_alignment
+                for include_preparer in (False, True):
+                    prior_layout = apply_layout(prior_body(variant, include_preparer=include_preparer), variant)
+                    prior_layout = prior_layout.replace('<table class="heading', f'<table cellpadding="{6 if variant in {"compact", "minimal"} else 8}" class="heading')
+                    prior_layout = prior_layout.replace('cellpadding="6" class="line-items"', 'cellpadding="4" class="line-items"')
+                    previous.append((prior_layout, prior_css(variant) + style_overrides(variant) + prior_alignment()))
                 from .invoice_templates_v1 import body as old_invoice_body, stylesheet as old_invoice_stylesheet, alignment_stylesheet as old_invoice_alignment
                 old_css = old_invoice_stylesheet(variant)
                 old_final_css = old_css + style_overrides(variant) + old_invoice_alignment()

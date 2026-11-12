@@ -39,6 +39,9 @@ def stylesheet(variant):
       .line-items .quantity { width: 5%; }
       .line-items .price, .line-items .net, .line-items .gross { width: 16%; }
       .line-items .tax { width: 15%; }
+      .line-items .combined-description { width: 49%; }
+      .line-items .combined-quantity { width: 6%; }
+      .line-items .combined-price, .line-items .combined-amount { width: 21%; }
       .tax-summary-title { margin-top: 6pt; margin-bottom: 4pt; }
       .invoice-tax-summary { margin-bottom: 14pt; }
       .invoice-tax-summary th, .invoice-tax-summary td { padding: 6pt 4pt; font-size: 8.5pt; line-height: 12pt; }
@@ -102,21 +105,33 @@ def body(variant, *, include_preparer=False):
         </td>
       </tr></table>
       <table class="line-items" repeat="1"><thead><tr>
+        {% if document.tax_mode == 'combined' %}
+        <th width="3%" class="row-number">#</th><th width="49%" class="combined-description">Description</th><th width="6%" class="combined-quantity num">Qty</th>
+        <th width="21%" class="combined-price num">Unit price<br/>({{ document.unit_price_basis }})</th>
+        <th width="21%" class="combined-amount num">Amount<br/>({{ document.unit_price_basis }})</th>
+        {% else %}
         <th width="3%" class="row-number">#</th><th width="29%" class="description">Description</th><th width="5%" class="quantity num">Qty</th>
         <th width="16%" class="price num">Unit price<br/>({{ document.unit_price_basis }})</th>
         <th width="16%" class="net num">Amount<br/>excl. tax</th>
         <th width="15%" class="tax num">Tax<br/>amount</th>
         <th width="16%" class="gross num">Amount<br/>incl. tax</th>
+        {% endif %}
       </tr></thead><tbody>
         {% for line in lines %}<tr>
           <td class="row-number">{{ forloop.counter }}</td>
-          <td class="description">{{ line.description|linebreaksbr }}</td><td class="quantity num">{{ line.quantity|floatformat:'-3' }}</td>
-          <td class="price num">{{ line.entered_unit_price_display }}</td>
+          <td class="{% if document.tax_mode == 'combined' %}combined-description{% else %}description{% endif %}">{{ line.description|linebreaksbr }}</td>
+          <td class="num {% if document.tax_mode == 'combined' %}combined-quantity{% else %}quantity{% endif %}">{{ line.quantity|floatformat:'-3' }}</td>
+          <td class="num {% if document.tax_mode == 'combined' %}combined-price{% else %}price{% endif %}">{{ line.entered_unit_price_display }}</td>
+          {% if document.tax_mode == 'combined' %}
+          <td class="combined-amount num">{% if document.prices_include_tax %}{{ line.gross_amount_display }}{% else %}{{ line.net_amount_display }}{% endif %}</td>
+          {% else %}
           <td class="net num">{{ line.net_amount_display }}</td>
           <td class="tax num">{{ line.line_tax_display }}</td>
           <td class="gross num">{{ line.gross_amount_display }}</td>
-        </tr>{% empty %}<tr><td colspan="7">No line items.</td></tr>{% endfor %}
+          {% endif %}
+        </tr>{% empty %}<tr><td colspan="{% if document.tax_mode == 'combined' %}5{% else %}7{% endif %}">No line items.</td></tr>{% endfor %}
       </tbody></table>
+      {% if document.tax_mode != 'combined' %}
       <div class="label tax-summary-title">Tax summary</div>
       <table cellpadding="3" class="invoice-tax-summary" repeat="1"><thead><tr>
         <th width="28%">Tax rate</th><th width="24%" class="num">Amount excl. tax</th>
@@ -129,15 +144,19 @@ def body(variant, *, include_preparer=False):
         {% if tax_summary|length > 1 %}<tr class="tax-summary-total"><td>Items total</td><td class="num">{{ totals.subtotal_display }}</td>
           <td class="num">{{ totals.tax_display }}</td><td class="num">{{ totals.items_gross_display }}</td></tr>{% endif %}
       </tbody></table>
+      {% endif %}
       <table class="invoice-settlement"><tr>
         <td class="invoice-payment">
           {% if document.payment_instructions %}<div class="label">Payment instructions</div><div class="payment-text">{{ document.payment_instructions|linebreaksbr }}</div>{% endif %}
-          {% if document.prices_include_tax %}<div class="muted">Tax is included in the line prices. See the tax summary above.</div>{% endif %}
+          {% if document.prices_include_tax %}<div class="muted">Tax is included in the line prices and deducted once in the invoice summary.</div>{% endif %}
           <div class="muted" style="margin-top:8pt;">Please quote {{ document.number }} with your payment.</div>
         </td>
         <td class="invoice-totals"><table>
           <tr><td>{{ totals.items_subtotal_label }}</td><td class="num">{{ totals.items_subtotal_display }}</td></tr>
-          {% if not document.prices_include_tax %}<tr><td>{{ totals.tax_label }}</td><td class="num">{{ totals.tax_display }}</td></tr>{% endif %}
+          {% if document.prices_include_tax %}
+          <tr><td>{{ totals.included_tax_label }}</td><td class="num">{{ totals.included_tax_deduction_display }}</td></tr>
+          <tr><td>Subtotal (excl. tax)</td><td class="num">{{ totals.subtotal_display }}</td></tr>
+          {% else %}<tr><td>{{ totals.tax_label }}</td><td class="num">{{ totals.tax_display }}</td></tr>{% endif %}
           {% for charge in charges %}<tr><td>{{ charge.name }}</td><td class="num">{{ charge.amount_display }}</td></tr>{% endfor %}
           {% if totals.unitemized_charge %}<tr><td>Other charges</td><td class="num">{{ totals.unitemized_charge_display }}</td></tr>{% endif %}
           <tr class="total-row"><td>Invoice total</td><td class="num">{{ totals.total_display }}</td></tr>

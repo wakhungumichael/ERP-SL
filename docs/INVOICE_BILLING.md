@@ -68,13 +68,12 @@ Existing invoice tax names, rates and currencies are retained when reopened.
 
 ## Printed tax breakdown
 
-All five shared invoice layouts retain the original entered unit price and show
-separate columns for amounts excluding tax, tax, and amounts including tax.
-A tax summary groups the invoice's actual tax rates and reconciles all three
-columns. For inclusive combined tax, the subtotal is the sum of the inclusive
-line amounts and tax is not added again. For exclusive prices, the subtotal
-excludes tax and the summary adds tax before the invoice total. Additional
-charges remain separate.
+All five shared invoice layouts retain the original entered unit price and
+follow the selected tax method. Combined-tax invoices show the entered line
+amounts and apply tax once in the invoice summary. Inclusive prices show the
+included-tax deduction and net subtotal; exclusive prices show tax added above
+the invoice total. Per-line-tax invoices retain separate net, tax, and gross
+columns and a summary grouped by tax rate. Additional charges remain separate.
 
 For example, inclusive prices of KES 737,500 and KES 590,000 total KES 1,327,500.
 At 16%, the tax summary shows KES 1,144,396.55 excluding tax and KES 183,103.45
