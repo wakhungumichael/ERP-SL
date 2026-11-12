@@ -186,9 +186,9 @@ class InvoiceTaxPresentationTests(TestCase):
         from PIL import Image
 
         image = BytesIO()
-        Image.new("RGB", (180, 60), "#2563eb").save(image, format="PNG")
+        Image.new("RGB", (180, 90), "#2563eb").save(image, format="PNG")
         logo = "data:image/png;base64," + base64.b64encode(image.getvalue()).decode()
-        invoice = self.create_invoice(notes="\n".join([
+        invoice = self.create_invoice(customer_tax_number="EXAMPLE-CLIENT-TAX-ID", notes="\n".join([
             "Bank Name: Example Bank Limited",
             "Branch: Business Centre Branch",
             "Bank Code: 000",

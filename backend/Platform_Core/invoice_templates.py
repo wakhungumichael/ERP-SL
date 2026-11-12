@@ -7,10 +7,10 @@ def stylesheet(variant):
     base = base_stylesheet(variant).replace("@page { size: a4; margin: 18mm 16mm 20mm; }", "")
     return base + """
       @page {
-        size: a4; margin: 16mm 16mm 22mm;
+        size: a4; margin: 16mm 16mm 16mm;
         @frame invoice_footer {
           -pdf-frame-content: invoice-page-footer;
-          left: 16mm; right: 16mm; bottom: 7mm; height: 10mm;
+          left: 16mm; right: 16mm; bottom: 5mm; height: 7mm;
         }
       }
       body { font-family: Helvetica, Arial, sans-serif; font-size: 9.5pt; line-height: 13pt; }
