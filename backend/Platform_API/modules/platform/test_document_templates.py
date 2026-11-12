@@ -228,7 +228,7 @@ class TenantDocumentTemplateTests(TestCase):
         from Platform_Core.document_pdf import document_pdf_bytes
         from Platform_Core.documents import render_document_template_preview
         ensure_shared_document_template_library()
-        TenantSettings.objects.create(tenant=self.tenant, primary_color="#224466", footer_text="Template export footer")
+        TenantSettings.objects.create(tenant=self.tenant, primary_color="#224466", footer_text="Template export footer", default_tax_name="VAT", default_tax_rate=16)
         for layout in DocumentTemplate.objects.filter(tenant=None):
             with self.subTest(layout=layout.name):
                 rendered = render_document_template_preview(layout, tenant=self.tenant)

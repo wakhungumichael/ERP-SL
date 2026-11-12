@@ -65,3 +65,31 @@ This follows the net/gross relationship in [KRA's VAT example](https://www.kra.g
 The organization controls its tax name and rate; the calculation does not
 hardcode Kenya's 16%. Use the applicable rate for the country and supply.
 Existing invoice tax names, rates and currencies are retained when reopened.
+
+## Printed tax breakdown
+
+All five shared invoice layouts retain the original entered unit price and show
+separate columns for amounts excluding tax, tax, and amounts including tax.
+A tax summary groups the invoice's actual tax rates and reconciles all three
+columns. For inclusive combined tax, the subtotal is the sum of the inclusive
+line amounts and tax is not added again. For exclusive prices, the subtotal
+excludes tax and the summary adds tax before the invoice total. Additional
+charges remain separate.
+
+For example, inclusive prices of KES 737,500 and KES 590,000 total KES 1,327,500.
+At 16%, the tax summary shows KES 1,144,396.55 excluding tax and KES 183,103.45
+tax. The invoice total remains KES 1,327,500 before any additional charges.
+The renderer balances rounding to the stored invoice totals without saving or
+recalculating financial records.
+
+Custom templates retain the legacy net-price fields. New explicit fields are
+`line.entered_unit_price_display`, `line.net_amount_display`,
+`line.line_tax_display`, `line.gross_amount_display`, `document.unit_price_basis`,
+`totals.items_subtotal_label`, `totals.items_subtotal_display`, and
+`totals.items_gross_display`. Iterate `tax_summary` for `label`, `net_display`,
+`tax_display`, and `gross_display`. Untouched shared layouts upgrade automatically;
+tenant-owned templates and customized shared layouts are preserved.
+
+Invoice notes flow across pages as needed. Totals and the QR code are kept
+readable individually, without forcing all payment details, notes, and the
+footer onto the next page as one large block.

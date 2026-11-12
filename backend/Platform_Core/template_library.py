@@ -204,8 +204,9 @@ def _body(document_label, variant, *, include_contact_details=True):
     if document_label == "Invoice":
         # xhtml2pdf resets CSS cell padding while parsing nested blocks. Its
         # cellpadding attribute keeps the letterhead clear of the border.
-        padding = "6" if variant == "compact" else "12"
+        padding = "6" if variant in {"compact", "minimal"} else "8"
         layout = layout.replace('<table class="heading', f'<table cellpadding="{padding}" class="heading')
+        layout = layout.replace('cellpadding="6" class="line-items"', 'cellpadding="4" class="line-items"')
     return layout
 
 
@@ -245,6 +246,14 @@ def upgrade_shared_template(template):
                 previous.append((previous_body(label, variant), previous_stylesheet(variant)))
                 previous.append((previous_body(label, variant, include_contact_details=False), previous_stylesheet(variant)))
             if label == "Invoice":
+                from .invoice_templates_v1 import body as old_invoice_body, stylesheet as old_invoice_stylesheet, alignment_stylesheet as old_invoice_alignment
+                old_css = old_invoice_stylesheet(variant)
+                old_final_css = old_css + style_overrides(variant) + old_invoice_alignment()
+                for include_preparer in (False, True):
+                    old_body = old_invoice_body(variant, include_preparer=include_preparer)
+                    laid_out = apply_layout(old_body, variant)
+                    padded = laid_out.replace('<table class="heading', f'<table cellpadding="{6 if variant == "compact" else 12}" class="heading')
+                    previous.extend([(padded, old_final_css), (laid_out, old_final_css), (old_body, old_css), (laid_out, old_css + style_overrides(variant))])
                 from .document_styles import apply_layout
                 previous.append((apply_layout(invoice_body(variant, include_preparer=True), variant), _stylesheet(variant, document_type)))
                 previous.append((invoice_body(variant), invoice_stylesheet(variant)))

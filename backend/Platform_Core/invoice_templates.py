@@ -33,11 +33,16 @@ def stylesheet(variant):
       .party .billing-contact { width: 38%; }
       .party .party-name { font-size: 11pt; line-height: 15pt; margin-bottom: 5pt; }
       .line-items { margin-top: 4pt; margin-bottom: 10pt; }
-      .line-items th, .line-items td { padding: 8pt 5pt; line-height: 13pt; }
-      .line-items .row-number { width: 5%; color: #5b6573; }
-      .line-items .description { width: 45%; }
-      .line-items .quantity { width: 8%; }
-      .line-items .amount { width: 21%; }
+      .line-items th, .line-items td { padding: 6pt 4pt; font-size: 8pt; line-height: 11pt; }
+      .line-items .row-number { width: 3%; color: #5b6573; }
+      .line-items .description { width: 29%; }
+      .line-items .quantity { width: 5%; }
+      .line-items .price, .line-items .net, .line-items .gross { width: 16%; }
+      .line-items .tax { width: 15%; }
+      .tax-summary-title { margin-top: 6pt; margin-bottom: 4pt; }
+      .invoice-tax-summary { margin-bottom: 14pt; }
+      .invoice-tax-summary th, .invoice-tax-summary td { padding: 6pt 4pt; font-size: 8.5pt; line-height: 12pt; }
+      .invoice-tax-summary .tax-summary-total td { font-weight: bold; border-top: 1px solid #c8d0d8; }
       .invoice-settlement > tbody > tr > td, .invoice-settlement > tr > td { padding: 0; }
       .invoice-payment { width: 48%; }
       .invoice-totals { width: 52%; }
@@ -97,22 +102,42 @@ def body(variant, *, include_preparer=False):
         </td>
       </tr></table>
       <table class="line-items" repeat="1"><thead><tr>
-        <th width="5%" class="row-number">#</th><th width="45%" class="description">Description</th><th width="8%" class="quantity num">Qty</th><th width="21%" class="amount num">Unit price</th><th width="21%" class="amount num">Amount</th>
+        <th width="3%" class="row-number">#</th><th width="29%" class="description">Description</th><th width="5%" class="quantity num">Qty</th>
+        <th width="16%" class="price num">Unit price<br/>({{ document.unit_price_basis }})</th>
+        <th width="16%" class="net num">Amount<br/>excl. tax</th>
+        <th width="15%" class="tax num">Tax<br/>amount</th>
+        <th width="16%" class="gross num">Amount<br/>incl. tax</th>
       </tr></thead><tbody>
         {% for line in lines %}<tr>
           <td class="row-number">{{ forloop.counter }}</td>
           <td class="description">{{ line.description|linebreaksbr }}</td><td class="quantity num">{{ line.quantity|floatformat:'-3' }}</td>
-          <td class="amount num">{{ line.unit_price_display }}</td><td class="amount num">{{ line.total_display }}</td>
-        </tr>{% empty %}<tr><td colspan="5">No line items.</td></tr>{% endfor %}
+          <td class="price num">{{ line.entered_unit_price_display }}</td>
+          <td class="net num">{{ line.net_amount_display }}</td>
+          <td class="tax num">{{ line.line_tax_display }}</td>
+          <td class="gross num">{{ line.gross_amount_display }}</td>
+        </tr>{% empty %}<tr><td colspan="7">No line items.</td></tr>{% endfor %}
+      </tbody></table>
+      <div class="label tax-summary-title">Tax summary</div>
+      <table cellpadding="3" class="invoice-tax-summary" repeat="1"><thead><tr>
+        <th width="28%">Tax rate</th><th width="24%" class="num">Amount excl. tax</th>
+        <th width="24%" class="num">Tax amount</th><th width="24%" class="num">Amount incl. tax</th>
+      </tr></thead><tbody>
+        {% for group in tax_summary %}<tr>
+          <td>{{ group.label }}</td><td class="num">{{ group.net_display }}</td>
+          <td class="num">{{ group.tax_display }}</td><td class="num">{{ group.gross_display }}</td>
+        </tr>{% endfor %}
+        {% if tax_summary|length > 1 %}<tr class="tax-summary-total"><td>Items total</td><td class="num">{{ totals.subtotal_display }}</td>
+          <td class="num">{{ totals.tax_display }}</td><td class="num">{{ totals.items_gross_display }}</td></tr>{% endif %}
       </tbody></table>
       <table class="invoice-settlement"><tr>
         <td class="invoice-payment">
           {% if document.payment_instructions %}<div class="label">Payment instructions</div><div class="payment-text">{{ document.payment_instructions|linebreaksbr }}</div>{% endif %}
+          {% if document.prices_include_tax %}<div class="muted">Tax is included in the line prices. See the tax summary above.</div>{% endif %}
           <div class="muted" style="margin-top:8pt;">Please quote {{ document.number }} with your payment.</div>
         </td>
         <td class="invoice-totals"><table>
-          <tr><td>Subtotal</td><td class="num">{{ totals.subtotal_display }}</td></tr>
-          <tr><td>{{ totals.tax_label }}</td><td class="num">{{ totals.tax_display }}</td></tr>
+          <tr><td>{{ totals.items_subtotal_label }}</td><td class="num">{{ totals.items_subtotal_display }}</td></tr>
+          {% if not document.prices_include_tax %}<tr><td>{{ totals.tax_label }}</td><td class="num">{{ totals.tax_display }}</td></tr>{% endif %}
           {% for charge in charges %}<tr><td>{{ charge.name }}</td><td class="num">{{ charge.amount_display }}</td></tr>{% endfor %}
           {% if totals.unitemized_charge %}<tr><td>Other charges</td><td class="num">{{ totals.unitemized_charge_display }}</td></tr>{% endif %}
           <tr class="total-row"><td>Invoice total</td><td class="num">{{ totals.total_display }}</td></tr>
@@ -131,23 +156,8 @@ def body(variant, *, include_preparer=False):
 
 
 def previous_print_layout(variant):
-    """Exact pre-spacing-update layout; recognize untouched built-ins only."""
-    layout = body(variant, include_preparer=True)
-    layout = layout.replace('<div class="invoice-notes"><strong class="label">Notes</strong><br/>', '<div class="notes"><div class="label">Notes</div>')
-    layout = layout.replace('<div class="invoice-notes"><strong class="label">Terms &amp; conditions</strong><br/>', '<div class="notes"><div class="label">Terms &amp; conditions</div>')
-    layout = layout.replace('<div id="invoice-page-footer">{{ document.number }} | Page <pdf:pagenumber /> of <pdf:pagecount /></div>', '<div id="invoice-page-footer"><table><tr><td>{{ document.number }}</td><td class="num">Page <pdf:pagenumber /> of <pdf:pagecount /></td></tr></table></div>')
-    css = stylesheet(variant)
-    replacements = [
-        ('bottom: 7mm; height: 10mm;', 'bottom: 9mm; height: 7mm;'),
-        ('.party { background-color: #ffffff; margin: 0 0 6pt; }', '.party { background-color: #ffffff; margin: 0 0 12pt; }'),
-        ('.line-items { margin-top: 4pt; margin-bottom: 10pt; }', '.line-items { margin-top: 8pt; margin-bottom: 14pt; }'),
-        ('.invoice-notes { margin-top: 10pt; font-size: 9pt; line-height: 12pt; }', '.notes { margin-top: 14pt; padding-top: 10pt; }'),
-        ('.prepared-by { margin-top: 10pt;', '.prepared-by { margin-top: 16pt;'),
-        ('#invoice-page-footer { color: #5b6573; font-size: 8pt; line-height: 10pt; text-align: right; }', '#invoice-page-footer { color: #5b6573; font-size: 8pt; border-top: 1px solid #e1e5ea; }'),
-    ]
-    for before, after in replacements:
-        css = css.replace(before, after)
-    return layout, css
+    from .invoice_templates_v1 import previous_print_layout as previous
+    return previous(variant)
 
 
 def alignment_stylesheet():
@@ -156,9 +166,31 @@ def alignment_stylesheet():
       .heading .document-title { line-height: 32pt; margin: 0 0 6pt; }
       .banner-heading .identity, .banner-heading .document-reference { padding: 16pt 12pt; }
       .centered-heading .identity, .centered-heading .document-reference { padding: 6pt 0; }
-      .invoice-meta td { vertical-align: top; }
+      .invoice-meta td { vertical-align: top; padding: 5pt; }
+      .heading { margin-bottom: 8pt; }
+      .invoice-meta { margin-bottom: 8pt; }
+      .party { margin-bottom: 6pt; }
+      .line-items { margin-top: 4pt; margin-bottom: 6pt; }
+      .line-items td, .line-items th { font-size: 8pt; line-height: 10pt; }
+      .invoice-tax-summary { margin-bottom: 8pt; }
+      .invoice-tax-summary td, .invoice-tax-summary th { padding: 3pt; font-size: 8pt; line-height: 10pt; }
+      .heading .identity, .heading .document-reference { padding-top: 8pt; padding-bottom: 8pt; }
+      .banner-heading .identity, .banner-heading .document-reference { padding: 10pt 12pt; }
+      .centered-heading .identity, .centered-heading .document-reference { padding: 4pt 0; }
+      .centered-heading .muted { font-size: 8pt; line-height: 10pt; }
+      .centered-heading .company-name { font-size: 14pt; line-height: 16pt; margin: 2pt 0; }
+      .centered-heading .document-title { font-size: 19pt; line-height: 22pt; margin: 0 0 2pt; }
+      .centered-heading .invoice-number { font-size: 10pt; line-height: 12pt; }
+      .centered-heading .invoice-status { font-size: 8pt; line-height: 10pt; margin: 2pt 0; }
+      .heading .muted { font-size: 8pt; line-height: 10pt; }
+      .party td { line-height: 11pt; }
+      .invoice-notes { font-size: 8pt; line-height: 10pt; margin-top: 6pt; }
       .invoice-settlement td { vertical-align: top; }
-      .invoice-settlement, .invoice-notes, .prepared-by, .print-document-qr { -pdf-keep-with-next: true; }
+      /* Keep each total/QR block intact without chaining the whole closing
+         section onto a new page. Notes can flow across page boundaries. */
+      .invoice-settlement, .invoice-notes, .prepared-by, .print-document-qr { -pdf-keep-with-next: false; }
+      .tax-summary-title, .print-document-qr { -pdf-keep-with-next: true; }
+      .document-footer { margin-top: 3pt; padding-top: 3pt; font-size: 7.5pt; line-height: 9pt; }
       .invoice-totals table { width: 100%; }
       .invoice-totals .num { text-align: right; white-space: nowrap; }
     """

@@ -684,6 +684,7 @@ def _render_template_string(template_string, context):
 def _invoice_context(invoice, settings_obj, request=None):
     customer = getattr(invoice, "customer", None)
     from SL_Weighbridge.invoice_tax import net_unit_price
+    from SL_Weighbridge.invoice_presentation import invoice_line_breakdown
 
     lines = []
     subtotal = Decimal("0.00")
@@ -697,6 +698,9 @@ def _invoice_context(invoice, settings_obj, request=None):
                 or getattr(getattr(line, "vehicle_type", None), "name", "")
                 or "Service",
                 "quantity": line.quantity,
+                "entered_unit_price": Decimal(line.unit_price or 0),
+                "tax_rate": Decimal(line.tax_rate or 0),
+                "tax_amount": Decimal(line.tax_amount or 0),
                 "unit_price": unit_price,
                 "unit_price_display": _money(unit_price, invoice.currency or "KES"),
                 "total": line_total,
@@ -730,6 +734,9 @@ def _invoice_context(invoice, settings_obj, request=None):
                 {
                     "description": f"{tx['number']} • {tx['vehicle_plate']} • {tx['item_name']}",
                     "quantity": 1,
+                    "entered_unit_price": amount_decimal,
+                    "tax_rate": Decimal("0"),
+                    "tax_amount": Decimal("0"),
                     "unit_price": amount_decimal,
                     "unit_price_display": amount_text,
                     "total": amount_decimal,
@@ -737,6 +744,9 @@ def _invoice_context(invoice, settings_obj, request=None):
                 }
             )
 
+    # New invoices store the canonical subtotal. Legacy records may only have lines.
+    if invoice.subtotal_amount:
+        subtotal = Decimal(invoice.subtotal_amount)
     total = Decimal(invoice.total_amount or 0)
     tax = Decimal(invoice.tax_total or 0)
     charge_total = Decimal(invoice.charge_total or 0)
@@ -752,6 +762,32 @@ def _invoice_context(invoice, settings_obj, request=None):
     tax_label = f"{tax_name} ({Decimal(str(tax_rate)).normalize():f}%)" if tax_rate else tax_name
     if invoice.prices_include_tax:
         tax_label += " included"
+    breakdown = invoice_line_breakdown(
+        lines, subtotal, tax,
+        inclusive=invoice.prices_include_tax,
+        combined=invoice.tax_mode == "combined",
+    )
+    summary = {}
+    for line, amounts in zip(lines, breakdown):
+        rate = invoice.combined_tax_rate if invoice.tax_mode == "combined" else line["tax_rate"]
+        # Old invoices can have tax without a recorded rate; do not call that 0%.
+        recorded_rate = rate if rate or not amounts["tax"] else None
+        label = f"{tax_name} ({Decimal(recorded_rate).normalize():f}%)" if recorded_rate is not None else tax_name
+        line.update({
+            "entered_unit_price_display": _money(line["entered_unit_price"], invoice.currency or "KES"),
+            "net_amount": amounts["net"],
+            "net_amount_display": _money(amounts["net"], invoice.currency or "KES"),
+            "line_tax": amounts["tax"],
+            "line_tax_display": _money(amounts["tax"], invoice.currency or "KES"),
+            "gross_amount": amounts["gross"],
+            "gross_amount_display": _money(amounts["gross"], invoice.currency or "KES"),
+        })
+        group = summary.setdefault(label, {"label": label, "net": Decimal("0"), "tax": Decimal("0"), "gross": Decimal("0")})
+        for key in ("net", "tax", "gross"):
+            group[key] += amounts[key]
+    for group in summary.values():
+        for key in ("net", "tax", "gross"):
+            group[key + "_display"] = _money(group[key], invoice.currency or "KES")
     creator = invoice.created_by
 
     tenant = getattr(invoice, "tenant", None)
@@ -800,6 +836,8 @@ def _invoice_context(invoice, settings_obj, request=None):
             "issue_date": date_filter(getattr(invoice, "invoice_date", None) or getattr(invoice, "issued_at", None) or invoice.issued_date, "d M Y"),
             "due_date": date_filter(invoice.due_date, "d M Y") if invoice.due_date else "",
             "currency": invoice.currency or "KES",
+            "prices_include_tax": invoice.prices_include_tax,
+            "unit_price_basis": "incl. tax" if invoice.prices_include_tax else "excl. tax",
             "notes": "\n".join(note_parts),
             "terms": "",
             "source_module": getattr(invoice, "source_module", "manual"),
@@ -807,9 +845,15 @@ def _invoice_context(invoice, settings_obj, request=None):
             "payment_instructions": getattr(settings_obj, "invoice_payment_instructions", "") or "",
         },
         "lines": lines,
+        "tax_summary": list(summary.values()),
         "charges": charges,
         "transaction_highlights": transaction_highlights,
         "totals": {
+            "items_subtotal": subtotal + tax if invoice.prices_include_tax else subtotal,
+            "items_subtotal_display": _money(subtotal + tax if invoice.prices_include_tax else subtotal, invoice.currency or "KES"),
+            "items_subtotal_label": "Subtotal (incl. tax)" if invoice.prices_include_tax else "Subtotal (excl. tax)",
+            "items_gross": subtotal + tax,
+            "items_gross_display": _money(subtotal + tax, invoice.currency or "KES"),
             "subtotal": subtotal,
             "subtotal_display": _money(subtotal, invoice.currency or "KES"),
             "tax": tax,
@@ -1327,6 +1371,36 @@ def render_document_template_preview(template, *, tenant=None, request=None):
         },
         "generated_at": timezone.now(),
     }
+
+    if template.document_type == "invoice":
+        sample_rate = Decimal(str(getattr(settings_obj, "default_tax_rate", 16) or 0))
+        sample_tax_name = getattr(settings_obj, "default_tax_name", "") or "Tax"
+        sample_tax = (Decimal("12000") * sample_rate / Decimal("100")).quantize(Decimal("0.01"))
+        sample_gross = Decimal("12000") + sample_tax
+        sample_label = f"{sample_tax_name} ({sample_rate.normalize():f}%)"
+        context["document"].update({"prices_include_tax": False, "unit_price_basis": "excl. tax"})
+        for line in sample_lines:
+            amount_tax = (line["total"] * sample_rate / Decimal("100")).quantize(Decimal("0.01"))
+            line.update({
+                "entered_unit_price_display": line["unit_price_display"],
+                "net_amount_display": line["total_display"],
+                "line_tax_display": _money(amount_tax, currency),
+                "gross_amount_display": _money(line["total"] + amount_tax, currency),
+            })
+        context["tax_summary"] = [{
+            "label": sample_label,
+            "net_display": _money(Decimal("12000"), currency),
+            "tax_display": _money(sample_tax, currency),
+            "gross_display": _money(sample_gross, currency),
+        }]
+        context["totals"].update({
+            "items_subtotal_label": "Subtotal (excl. tax)",
+            "items_subtotal_display": _money(Decimal("12000"), currency),
+            "items_gross_display": _money(sample_gross, currency),
+            "tax": sample_tax, "tax_display": _money(sample_tax, currency),
+            "tax_label": sample_label, "total": sample_gross,
+            "total_display": _money(sample_gross, currency),
+        })
 
     if template.document_type == "receipt":
         context["document"]["terms"] = ""
