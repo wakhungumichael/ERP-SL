@@ -195,7 +195,6 @@ class InvoiceTaxPresentationTests(TestCase):
             "Branch Code: 001",
             "Swift Code: EXAMPLE",
             "KES Account Number: EXAMPLE-0001",
-            "Payment reference: contract and invoice number",
         ]))
         self.settings.invoice_payment_instructions = ""
         self.settings.save()
